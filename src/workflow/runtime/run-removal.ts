@@ -18,7 +18,12 @@ import { isErrno, sweepStrays, withRunGuard } from './lock.js';
 import { legacyRunPath, resolveStateDir, runDirectory } from './paths.js';
 import { OrphanProcessesError } from './process-registry.js';
 import { missingRunError, readRequiredRun } from './read-required-run.js';
-import { removalRefusal, removalVerdict, type RemovalVerdict } from './removal-decision.js';
+import {
+  ownershipHold,
+  removalRefusal,
+  removalVerdict,
+  type RemovalVerdict,
+} from './removal-decision.js';
 import { RunRefusedError } from './run-errors.js';
 import { openFileOwnedRun, type ReleasableOwnedRun } from './run-store.js';
 import { runBytes, runSiblingPaths } from './run-size.js';
@@ -309,7 +314,7 @@ export async function removeRun(
     return {
       kind: 'removed',
       result: leftover
-        ? await planLeftoverRemoval(stateDir, options, leftover)
+        ? await planLeftoverRemoval(stateDir, options, leftover, live.commandLauncher)
         : await planRemoval(stateDir, options, live.commandLauncher),
     };
   }
@@ -607,17 +612,25 @@ async function planLeftoverRemoval(
   stateDir: string,
   options: RemoveRunOptions,
   leftover: LaunchLeftover,
+  launcher?: CommandLauncher,
 ): Promise<RunRemovalResult> {
   const { runId } = options;
+  // A settled leftover is still refused while the legacy guard (or a lock beside it) is held, as
+  // the real removal's guard acquisition would refuse it; an in-flight leftover stays `run.active`.
+  const hold = leftover.removable
+    ? ownershipHold(await inspectRunOwnership({ runId, stateDir }))
+    : null;
   return {
     runId,
     stateDir,
     dryRun: true,
     force: options.force ?? false,
     refs: options.refs ?? false,
-    verdict: leftover.removable
-      ? 'remove'
-      : { code: 'run.active', message: inFlightLeftoverMessage(runId, leftover.launches) },
+    verdict: hold
+      ? pick(removalRefusal(runId, stateDir, hold, launcher))
+      : leftover.removable
+        ? 'remove'
+        : { code: 'run.active', message: inFlightLeftoverMessage(runId, leftover.launches) },
     removed: false,
     launchOnly: true,
     paths: [leftover.path],
@@ -636,6 +649,7 @@ async function planLeftoverRemoval(
  * legacy guard, which start's allocation and the runner's lock also take first, it re-checks that
  * no record exists (`run.exists`) and that the directory is still a settled leftover, renames
  * `<runId>/` to a tombstone (the commit point), flushes the container and deletes the tombstone.
+ * The signal is honoured up to the rename: an abort until then leaves the directory in place.
  */
 async function removeLaunchLeftover(
   stateDir: string,
@@ -666,6 +680,8 @@ async function removeLaunchLeftover(
       throw await missingRunError({ runId, stateDir });
     }
     if (!current.removable) throw inFlightRefusal(runId, current);
+    // The last point where an abort leaves the directory in place.
+    signal?.throwIfAborted();
     const tombstone = join(stateDir, tombstoneName(runId));
     await rename(runDirectory(stateDir, runId), tombstone);
     await syncDirectory(stateDir);

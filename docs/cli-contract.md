@@ -254,7 +254,10 @@ Otherwise it takes only the legacy guard, without registering a project (a held 
 `run.locked`), re-checks under it (`run.exists` when a run now holds the ID, `run.active` when a new
 launch appeared) and renames the directory to a tombstone before deleting it. The result has
 `launchOnly: true` (false for every real run), `paths` naming `<runId>/`, no caches or refs, and
-`--refs` changes nothing. A dry run of a leftover exits 0 with the same verdict.
+`--refs` changes nothing. A dry run of a leftover exits 0 and reports the verdict a real rm would
+meet now: `run.active` for an in-flight leftover, otherwise `run.locked` while the legacy guard (or
+a lock beside it) is held, otherwise `remove`. A cancellation signal is honoured up to the rename;
+an abort until then leaves the directory in place.
 
 `workflow prune [--older-than DURATION] [--status S[,S]] [--missing-cwd] [--all] [--refs] [--dry-run] --json`
 removes finished runs in bulk without importing workflow code

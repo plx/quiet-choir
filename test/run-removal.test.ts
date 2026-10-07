@@ -1375,6 +1375,68 @@ describe('workflow rm of a leftover launch directory', () => {
     expect(await snapshot(directory)).toEqual(before);
   });
 
+  it('previews run.locked for a held legacy guard, as the real rm refuses it', async () => {
+    const directory = await leftover('guarded');
+    await plant(join(stateDir, 'guarded.json.lock'), {
+      owner: owner(process.pid, 'live', hostname(), {
+        osStartTime: processIdentity(process.pid)?.start ?? null,
+      }),
+    });
+    const before = await snapshot(directory);
+    const preview = removed(await remove('guarded', { dryRun: true }));
+    expect(preview).toMatchObject({ launchOnly: true, removed: false });
+    expect(preview.verdict).toMatchObject({ code: 'run.locked' });
+    const real = refused(await remove('guarded'), 'run.locked');
+    expect((preview.verdict as { code: string }).code).toBe(real.code);
+    expect(await snapshot(directory)).toEqual(before);
+  });
+
+  it('previews run.locked for an unreadable legacy guard', async () => {
+    await leftover('murky');
+    await plant(join(stateDir, 'murky.json.lock'), {
+      owner: null,
+      files: { 'owner.json': '{bad' },
+    });
+    const preview = removed(await remove('murky', { dryRun: true }));
+    expect(preview.verdict).toMatchObject({ code: 'run.locked' });
+    refused(await remove('murky'), 'run.locked');
+  });
+
+  it('keeps run.active ahead of a held guard in the preview of an in-flight leftover', async () => {
+    await leftover('flying', { runner: liveRunner() });
+    await plant(join(stateDir, 'flying.json.lock'), {
+      owner: owner(process.pid, 'live', hostname(), {
+        osStartTime: processIdentity(process.pid)?.start ?? null,
+      }),
+    });
+    const preview = removed(await remove('flying', { dryRun: true }));
+    expect(preview.verdict).toMatchObject({ code: 'run.active' });
+  });
+
+  it('leaves the directory in place when aborted before the rename', async () => {
+    const directory = await leftover('aborted');
+    const controller = new AbortController();
+    let guardHeld = false;
+    await expect(
+      removeRun({ runId: 'aborted', stateDir }, processRunner, {
+        signal: controller.signal,
+        // The settle clock is read again under the guard; abort there, just before the rename.
+        launchSettle: {
+          floorMs: 0,
+          now: () => {
+            if (guardHeld) controller.abort();
+            return Date.now();
+          },
+        },
+        beforeLock: () => {
+          guardHeld = true;
+        },
+      }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(await gone(join(directory, 'launch'))).toBe(false);
+    expect(await gone(join(stateDir, 'aborted.json.lock'))).toBe(true);
+  });
+
   it('refuses with run.active when a new launch was allocated before the guard', async () => {
     const directory = await leftover('again');
     await expect(

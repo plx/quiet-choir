@@ -47,7 +47,8 @@ start.
   re-checks that no record exists (`run.exists`) and that the directory is still a settled leftover
   (`run.active` for a launch allocated meanwhile). It renames `<runId>/` to a tombstone and flushes
   the container (the commit point), then deletes the tombstone. The result is the ordinary
-  `workflow.rm.result` with `launchOnly: true`; `--refs` is accepted and does nothing.
+  `workflow.rm.result` with `launchOnly: true`; `--refs` is accepted and does nothing. A dry run
+  takes no guard but reports the same verdict, including `run.locked` for a held guard.
 - `workflow clean` and `workflow prune` are unchanged. Clean works on a run's recorded worktree
   ledger, which a leftover does not have, and prune selects runs by their records (ADR 0050).
 
