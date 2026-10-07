@@ -11,6 +11,7 @@ import {
   ExecError,
   writeAnswer,
   FixtureHarness,
+  HarnessError,
   NodeProcessRunner,
   parseHarnessFixtures,
   readRun,
@@ -425,6 +426,27 @@ it('latch preserves the fallback decision without repaying a healed primary', as
   expect(result.output).toEqual({ source: 'fallback', answer: 'fallback answer' });
   expect(harness.count('primary')).toBe(1);
   expect(result.steps['primary']?.status).toBe('settled-failed');
+});
+
+it('latch retries a transient overload before choosing the fallback', async () => {
+  const harness = new Fake((request) => {
+    if (request.call.stepId === 'primary' && request.call.attempt === 1)
+      throw new HarnessError({
+        harness: 'claude',
+        kind: 'overloaded',
+        exit: { code: 1, signal: null },
+        failure: null,
+        reason: 'overloaded',
+        stderr: '',
+        stdout: '',
+        usage: { inputTokens: null, outputTokens: null, costUsd: null },
+      });
+    return request.call.stepId === 'primary' ? 'primary answer' : 'fallback answer';
+  });
+  const result = await runWorkflow(latch, { ...options(), input: { topic: 't' }, harness });
+  expect(result.output).toEqual({ source: 'primary', answer: 'primary answer' });
+  expect(harness.count('primary')).toBe(2);
+  expect(harness.count('fallback')).toBe(0);
 });
 
 it('work then extract retries only extraction after local schema rejection', async () => {

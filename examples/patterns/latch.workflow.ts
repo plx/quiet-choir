@@ -9,7 +9,7 @@ export default defineWorkflow({
     const primary = await ctx.claude.value('primary', {
       prompt: input.topic,
       onError: 'return',
-      retry: { maxAttempts: 2, delayMs: 1, on: ['rate-limit'] },
+      retry: { maxAttempts: 2, delayMs: 1, on: ['transient'] },
     });
     if (primary.ok) return { source: 'primary', answer: primary.value };
     const answer = await ctx.codex.value('fallback', { prompt: input.topic });

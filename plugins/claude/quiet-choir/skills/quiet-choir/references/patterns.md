@@ -410,9 +410,9 @@ without fork reuse repeats all calls. **Supersession:** forks replace manual out
 
 **Rule:** persist the failure that selects the fallback. `onError: 'return'` freezes the final
 outcome after allowed retries. A healed primary cannot erase a completed fallback on resume. The
-retry policy uses the same ID and retries only classified rate limits; cancellations, configuration
-errors, and checkpoint failures never latch; keep process/authentication/permission kinds out of
-`retry.on`.
+retry policy uses the same ID and retries only transient failures (rate limit, overload, timeout,
+idle timeout); cancellations, configuration errors, and checkpoint failures never latch; keep
+process/authentication/permission kinds out of `retry.on`.
 
 <!-- skills-check: example pattern-latch -->
 
@@ -428,7 +428,7 @@ export default defineWorkflow({
     const primary = await ctx.claude.value('primary', {
       prompt: input.topic,
       onError: 'return',
-      retry: { maxAttempts: 2, delayMs: 1, on: ['rate-limit'] },
+      retry: { maxAttempts: 2, delayMs: 1, on: ['transient'] },
     });
     if (primary.ok) return { source: 'primary', answer: primary.value };
     const answer = await ctx.codex.value('fallback', { prompt: input.topic });
@@ -437,9 +437,9 @@ export default defineWorkflow({
 });
 ```
 
-**Cost:** up to two primary attempts for a rate limit, otherwise one, plus one fallback call if
-needed. Replaying a saved failure pays for neither branch again. **Supersession:** durable failure
-outcomes replace a manual "call then record a latch" step; retry policy is a step option.
+**Cost:** up to two primary attempts for a transient failure, otherwise one, plus one fallback call
+if needed. Replaying a saved failure pays for neither branch again. **Supersession:** durable
+failure outcomes replace a manual "call then record a latch" step; retry policy is a step option.
 
 ## Work, then extract
 
