@@ -1402,6 +1402,18 @@ describe('workflow rm of a leftover launch directory', () => {
     refused(await remove('murky'), 'run.locked');
   });
 
+  it('judges an empty legacy guard directory run.locked in both the preview and the real rm', async () => {
+    const directory = await leftover('hollow');
+    await mkdir(join(stateDir, 'hollow.json.lock'), { recursive: true });
+    const before = await snapshot(directory);
+    const preview = removed(await remove('hollow', { dryRun: true }));
+    expect(preview.verdict).toMatchObject({ code: 'run.locked' });
+    const real = refused(await remove('hollow'), 'run.locked');
+    expect(real.code).toBe((preview.verdict as { code: string }).code);
+    expect(await snapshot(directory)).toEqual(before);
+    expect(await gone(join(stateDir, 'hollow.json.lock'))).toBe(false);
+  });
+
   it('keeps run.active ahead of a held guard in the preview of an in-flight leftover', async () => {
     await leftover('flying', { runner: liveRunner() });
     await plant(join(stateDir, 'flying.json.lock'), {

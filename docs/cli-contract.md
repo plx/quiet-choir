@@ -250,14 +250,15 @@ no `run.json` or `<runId>.json` and names a leftover, rm takes a separate path i
 still be in flight (a recorded runner that is alive, unverifiable or remote, an unreadable runner
 record, or, without one, files less than an hour old); `error.details` is
 `{status:"starting", waiting:[], launches}` with each launch as `{n, pid, host, state, inFlight}`.
-Otherwise it takes only the legacy guard, without registering a project (a held guard is
-`run.locked`), re-checks under it (`run.exists` when a run now holds the ID, `run.active` when a new
-launch appeared) and renames the directory to a tombstone before deleting it. The result has
-`launchOnly: true` (false for every real run), `paths` naming `<runId>/`, no caches or refs, and
-`--refs` changes nothing. A dry run of a leftover exits 0 and reports the verdict a real rm would
-meet now: `run.active` for an in-flight leftover, otherwise `run.locked` while the legacy guard (or
-a lock beside it) is held, otherwise `remove`. A cancellation signal is honoured up to the rename;
-an abort until then leaves the directory in place.
+Otherwise it takes only the legacy guard, without registering a project (a held or unreadable guard,
+or a lock beside it, is refused as `run.locked` before the guard is taken), re-checks under it
+(`run.exists` when a run now holds the ID, `run.active` when a new launch appeared) and renames the
+directory to a tombstone before deleting it. The result has `launchOnly: true` (false for every real
+run), `paths` naming `<runId>/`, no caches or refs, and `--refs` changes nothing. A dry run of a
+leftover exits 0 and reports the verdict a real rm would meet now: `run.active` for an in-flight
+leftover, otherwise `run.locked` while the legacy guard (or a lock beside it) is held, otherwise
+`remove`. A cancellation signal is honoured up to the rename; an abort until then leaves the
+directory in place.
 
 `workflow prune [--older-than DURATION] [--status S[,S]] [--missing-cwd] [--all] [--refs] [--dry-run] --json`
 removes finished runs in bulk without importing workflow code

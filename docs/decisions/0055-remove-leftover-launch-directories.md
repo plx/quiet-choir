@@ -42,13 +42,15 @@ start.
   the ID names a leftover, it sweeps dead tombstones and judges every launch. In flight, it refuses
   with `run.active` (`details.status: "starting"`), and `--force` never overrides that: there is no
   record to force over, and a live runner would lose its log. Otherwise it takes only the legacy
-  guard, without a working directory, so it never registers a project. Start's allocation and the
-  runner's `lockRun` take the same guard first, so nothing can interleave. Under the guard it
-  re-checks that no record exists (`run.exists`) and that the directory is still a settled leftover
-  (`run.active` for a launch allocated meanwhile). It renames `<runId>/` to a tombstone and flushes
-  the container (the commit point), then deletes the tombstone. The result is the ordinary
-  `workflow.rm.result` with `launchOnly: true`; `--refs` is accepted and does nothing. A dry run
-  takes no guard but reports the same verdict, including `run.locked` for a held guard.
+  guard, without a working directory, so it never registers a project. A held or unreadable guard
+  (or a lock beside it, even an empty directory) is refused as `run.locked` before the guard is
+  taken, as for an ordinary run. Start's allocation and the runner's `lockRun` take the same guard
+  first, so nothing can interleave. Under the guard it re-checks that no record exists
+  (`run.exists`) and that the directory is still a settled leftover (`run.active` for a launch
+  allocated meanwhile). It renames `<runId>/` to a tombstone and flushes the container (the commit
+  point), then deletes the tombstone. The result is the ordinary `workflow.rm.result` with
+  `launchOnly: true`; `--refs` is accepted and does nothing. A dry run takes no guard but reports
+  the same verdict, including `run.locked` for a held guard.
 - `workflow clean` and `workflow prune` are unchanged. Clean works on a run's recorded worktree
   ledger, which a leftover does not have, and prune selects runs by their records (ADR 0050).
 

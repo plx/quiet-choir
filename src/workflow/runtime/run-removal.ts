@@ -661,6 +661,10 @@ async function removeLaunchLeftover(
   const { runId } = options;
   const { signal } = live;
   if (!leftover.removable) throw inFlightRefusal(runId, leftover);
+  // The verdict the dry run reports: a held (or unreadable) guard refuses before the guard is
+  // taken, as ordinary rm does, so an empty lock directory is `run.locked` rather than a wait.
+  const hold = ownershipHold(await inspectRunOwnership({ runId, stateDir }));
+  if (hold) throw refusalError(runId, stateDir, hold, live.commandLauncher);
   signal?.throwIfAborted();
   await live.beforeLock?.();
   const guard = `${legacyRunPath(stateDir, runId)}.lock`;
