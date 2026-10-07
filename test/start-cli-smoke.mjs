@@ -186,7 +186,7 @@ try {
   assert.equal(existsSync(join(stateDir, 'broken')), false);
 
   // 4. A usage refusal by the runner comes back the same way.
-  const usage = documentOf(start(echo, '--run-id', 'usage', '--kill-grace-ms', '0'), 2);
+  const usage = documentOf(start(echo, '--run-id', 'usage', '--max-agents', '0'), 2);
   assert.equal(usage.error.code, 'usage.flag');
   assert.equal(usage.runId, null);
   assert.equal(usage.launch.exitCode, 2);

@@ -28,6 +28,21 @@ export const worktreeFlags = {
 };
 
 /**
+ * The `--kill-grace-ms` value as milliseconds: digits only, 1 to 2147483647, default 3000. Throws a
+ * plain error for the caller to report as `usage.flag`. @internal
+ */
+export function parseKillGraceMs(value: string | undefined): number {
+  const milliseconds = value === undefined ? 3000 : Number(value);
+  if (
+    !/^[1-9][0-9]*$/u.test(value ?? '3000') ||
+    !Number.isSafeInteger(milliseconds) ||
+    milliseconds > 2_147_483_647
+  )
+    throw new Error('--kill-grace-ms must be an integer from 1 to 2147483647.');
+  return milliseconds;
+}
+
+/**
  * The plan fragment for the worktree flags: the root validated like `RunOptions.worktrees.root` and
  * resolved against `cwd`. Throws a plain error for the caller to report as `usage.flag`. @internal
  */

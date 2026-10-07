@@ -576,15 +576,16 @@ launch files while holding the run's legacy guard, so a held guard (for example 
 that ID still in progress, or a live runner of the run being resumed) is refused with `run.locked`
 (exit 3), also without `launch`; for a resume the failure carries the run's `runId`. Without an
 owned record (for a resume, an execution recorded by the runner) within `--start-timeout` (default
-`60s`), start sends SIGTERM to the runner's process group, waits `--kill-grace-ms` (default 3000)
-plus 2 s for it to save, sends SIGKILL if needed, and fails with `start.timeout` (exit 124). A
-runner that exits without a record or a readable document is `start.exited` (exit 70). A first
-signal to start stops the runner the same way and reports `workflow.interrupted` (exit 130); a
-second one kills it at once. A runner that had saved a record leaves a resumable suspension,
-reported with its `runId` and a resume entry in `next`. The launch directory of a pre-record failure
-has no `run.json`, so `inspect` reports `run.not_found`; a retry with the same ID uses the next `n`.
-Once its runner has exited, `workflow list` reports it in `leftoverLaunches` and `workflow rm ID`
-removes it ([ADR 0055](decisions/0055-remove-leftover-launch-directories.md)). See
+`60s`), start sends SIGTERM to the runner's process group, waits `--kill-grace-ms` (default 3000;
+validated as for execute, so a bad value is `usage.flag` before anything is launched) plus 2 s for
+it to save, sends SIGKILL if needed, and fails with `start.timeout` (exit 124). A runner that exits
+without a record or a readable document is `start.exited` (exit 70). A first signal to start stops
+the runner the same way and reports `workflow.interrupted` (exit 130); a second one kills it at
+once. A runner that had saved a record leaves a resumable suspension, reported with its `runId` and
+a resume entry in `next`. The launch directory of a pre-record failure has no `run.json`, so
+`inspect` reports `run.not_found`; a retry with the same ID uses the next `n`. Once its runner has
+exited, `workflow list` reports it in `leftoverLaunches` and `workflow rm ID` removes it
+([ADR 0055](decisions/0055-remove-leftover-launch-directories.md)). See
 [ADR 0036](decisions/0036-detached-start.md) and [ADR 0056](decisions/0056-detached-resume.md).
 Detached sessions are POSIX behaviour; Windows is not covered.
 

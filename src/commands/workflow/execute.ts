@@ -1,5 +1,10 @@
 import { parseRunBudget } from '../../cli/run-budget.js';
-import { executeFlags, worktreePlan, type WorkflowExecuteFlags } from '../../cli/execute-flags.js';
+import {
+  executeFlags,
+  parseKillGraceMs,
+  worktreePlan,
+  type WorkflowExecuteFlags,
+} from '../../cli/execute-flags.js';
 import { existsSync } from 'node:fs';
 import type { RunBudgetPolicy } from '../../workflow/runtime/run-budget.js';
 import { readWorkflowInput } from '../../cli/input.js';
@@ -66,13 +71,7 @@ export default class WorkflowExecute extends WorkflowCommand {
         flags['max-run-agent-attempts'],
         flags['max-window-utilization'],
       );
-      killGraceMs = flags['kill-grace-ms'] === undefined ? 3000 : Number(flags['kill-grace-ms']);
-      if (
-        !/^[1-9][0-9]*$/u.test(String(flags['kill-grace-ms'] ?? 3000)) ||
-        !Number.isSafeInteger(killGraceMs) ||
-        killGraceMs > 2_147_483_647
-      )
-        throw new Error('--kill-grace-ms must be an integer from 1 to 2147483647.');
+      killGraceMs = parseKillGraceMs(flags['kill-grace-ms']);
       harness = await readHarnessSelection(
         flags.harness ?? 'cli',
         flags['harness-config'],

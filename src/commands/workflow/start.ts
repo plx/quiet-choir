@@ -4,7 +4,11 @@ import { Args, Flags, type Interfaces } from '@oclif/core';
 
 import { BaseCommand } from '../../cli/base-command.js';
 import { parseDuration } from '../../cli/duration.js';
-import { executeFlags, type WorkflowExecuteFlags } from '../../cli/execute-flags.js';
+import {
+  executeFlags,
+  parseKillGraceMs,
+  type WorkflowExecuteFlags,
+} from '../../cli/execute-flags.js';
 import { readWorkflowInput } from '../../cli/input.js';
 import { spawnLauncher } from '../../cli/launcher.js';
 import { formatNextCommands, formatWorkflowDiagnostic } from '../../cli/presentation.js';
@@ -54,7 +58,7 @@ export default class WorkflowStart extends WorkflowCommand {
   public static override readonly summary =
     'Start or resume a workflow run in the background and return once its runner owns it';
 
-  public static override readonly description = `Launches \`workflow execute FILE … --json\` as a detached runner (its own session, stdin from /dev/null) and returns as soon as the run's record exists and is owned by that runner, or the runner fails first. With --resume --run-id ID (FILE optional, as for execute) it resumes an existing run instead and returns once the runner has recorded its own execution in the record, or reports the runner's refusal (for example run.locked, run.orphans or run.incompatible) with the run's ID; a missing run is refused with run.not_found before anything is launched. --kill-orphans and --accept-code-change work with --resume as for execute, and the start timeout covers the runner's recovery and checks (start itself recovers a dead owner's legacy guard before spawning, outside the timeout, and --kill-orphans applies to it too). --dry-run, --stub-steps and --full are refused with usage.flag and a next entry naming the foreground workflow execute command. The runner's stdout (its final JSON document) and stderr go to <state-dir>/<run-id>/launch/<n>.result.json and <n>.log, created owner-only for the smallest free n, and start records the runner's PID and host in <n>.runner.json. Without --run-id a run ID is generated and printed. A failure before the record exists reports the runner's own error (for example load.typecheck, exit 4) with no run ID; workflow list reports its leftover launch directory once the runner has exited, and workflow rm ID removes it. When the runner does not take the run within --start-timeout (default 60s), start stops the runner (SIGTERM, then SIGKILL after --kill-grace-ms plus 2s) and exits 124 (start.timeout); a runner that exits without a record or a readable document is start.exited (exit 70). An interrupted start stops the runner too, so it never leaves an unreported runner.`;
+  public static override readonly description = `Launches \`workflow execute FILE … --json\` as a detached runner (its own session, stdin from /dev/null) and returns as soon as the run's record exists and is owned by that runner, or the runner fails first. With --resume --run-id ID (FILE optional, as for execute) it resumes an existing run instead and returns once the runner has recorded its own execution in the record, or reports the runner's refusal (for example run.locked, run.orphans or run.incompatible) with the run's ID; a missing run is refused with run.not_found before anything is launched. --kill-orphans and --accept-code-change work with --resume as for execute, and the start timeout covers the runner's recovery and checks (start itself recovers a dead owner's legacy guard before spawning, outside the timeout, and --kill-orphans applies to it too). --dry-run, --stub-steps and --full are refused with usage.flag and a next entry naming the foreground workflow execute command. The runner's stdout (its final JSON document) and stderr go to <state-dir>/<run-id>/launch/<n>.result.json and <n>.log, created owner-only for the smallest free n, and start records the runner's PID and host in <n>.runner.json. Without --run-id a run ID is generated and printed. A failure before the record exists reports the runner's own error (for example load.typecheck, exit 4) with no run ID; workflow list reports its leftover launch directory once the runner has exited, and workflow rm ID removes it. When the runner does not take the run within --start-timeout (default 60s), start stops the runner (SIGTERM, then SIGKILL after --kill-grace-ms plus 2s; --kill-grace-ms is validated as for execute, before anything is launched) and exits 124 (start.timeout); a runner that exits without a record or a readable document is start.exited (exit 70). An interrupted start stops the runner too, so it never leaves an unreported runner.`;
 
   public static override readonly args: Interfaces.ArgInput<WorkflowStartArgs> = {
     file: Args.string({
@@ -137,9 +141,15 @@ export default class WorkflowStart extends WorkflowCommand {
         'usage.flag',
         'workflow start needs the path of the CLI script to launch its runner; run it as quiet-choir or node bin/run.js.',
       );
-    // The runner validates every other flag; start only needs the grace to stop it.
-    const grace = Number(flags['kill-grace-ms'] ?? 3000);
-    const killGraceMs = Number.isSafeInteger(grace) && grace > 0 ? grace : 3000;
+    // The grace is checked here as execute checks it: start uses it to stop the runner and to
+    // recover a legacy guard's children, so a bad value must not fall back silently. The runner
+    // validates every other flag.
+    let killGraceMs: number;
+    try {
+      killGraceMs = parseKillGraceMs(flags['kill-grace-ms']);
+    } catch (error) {
+      this.fail('usage.flag', error instanceof Error ? error.message : String(error));
+    }
     const child = buildStartChildArgv(this.argv, table, { runId, stateDir });
     const prefix = [...launcher, 'workflow', 'execute'];
     const stdinInput =
