@@ -2,6 +2,13 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Step error text on event lines (addition; no record format, `schemaRevision` or step identity
+  change): `WorkflowEvent` gains an optional `error` on `step.failed` and `step.settled`, the step's
+  error text bounded to one line of at most 500 characters with no stack. `--events` and
+  `workflow events` write it as `msg` on those lines (still within the 200-byte `msg` budget and
+  512-byte line cap), one per attempt on a retry. The debug log and `--notify-command` payloads are
+  unchanged (#267, ADR 0037).
+
 - `workflow start` failures (fix; no record format, `schemaRevision` or step identity change): the
   `next` entries propagated from the runner's refusal (`run.locked`, `run.orphans`,
   `run.incompatible`, `usage.*`, …) are rebuilt behind start's own launcher, so behind an installed

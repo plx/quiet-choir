@@ -5,6 +5,9 @@
 - Amended by #223: tolerated poll errors are `wait.tolerated` entries in the record's event list, so
   the follower prints them from that list (under its 500-entry cap), and a run event's identity
   includes its `stepId`.
+- Amended by #267: `step.failed` and `step.settled` lines carry the recorded attempt error (or the
+  step error for a history-less step) as `msg`, bounded as in ADR 0037, so live and record lines
+  stay identical.
 
 ## Context
 
