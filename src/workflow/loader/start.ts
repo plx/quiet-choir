@@ -384,14 +384,10 @@ export class StartWorkflowExecutor implements Executor<
         { stateDir, launch: evidence(null, null) },
       );
     }
-    // Best effort: without it, the leftover of a pre-record failure is judged by age (ADR 0055).
-    await (this.#options.recordRunner ?? writeRunnerIdentity)(
-      dirname(files.log),
-      files.n,
-      pid,
-    ).catch(() => false);
     const runner = child;
     const group = { pid, pgid: process.platform === 'win32' ? null : pid };
+    // Track before awaiting the identity write: an interrupt during that write must still reach
+    // the runner's group.
     const untrack = this.#options.processSupervisor?.track({
       ...group,
       binary: basename(argv[0] ?? 'node'),
@@ -399,6 +395,12 @@ export class StartWorkflowExecutor implements Executor<
       startedAt: new Date().toISOString(),
       osStartTime: null,
     });
+    // Best effort: without it, the leftover of a pre-record failure is judged by age (ADR 0055).
+    await (this.#options.recordRunner ?? writeRunnerIdentity)(
+      dirname(files.log),
+      files.n,
+      pid,
+    ).catch(() => false);
     const running = (): boolean => state.exit === null;
     const stop = async (): Promise<void> => {
       if (running()) {

@@ -347,6 +347,39 @@ describe('StartWorkflowExecutor', () => {
     expect(existsSync(join(stateDir, 'r1', 'launch', '1.runner.json'))).toBe(false);
   });
 
+  it('tracks the runner before the runner record write settles', async () => {
+    const tracked: number[] = [];
+    const supervisor = new ProcessSupervisor();
+    const track = supervisor.track.bind(supervisor);
+    supervisor.track = (record) => {
+      tracked.push(record.pid);
+      return track(record);
+    };
+    const write: { pid: number | null; release: (() => void) | null } = {
+      pid: null,
+      release: null,
+    };
+    const gate = new Promise<boolean>((resolve) => {
+      write.release = () => {
+        resolve(true);
+      };
+    });
+    const pending = executor({
+      processSupervisor: supervisor,
+      recordRunner: (_launchDir, _n, pid) => {
+        write.pid = pid;
+        return gate;
+      },
+    }).execute(plan(`${own} ${forever}`));
+    while (write.pid === null) await delay(10);
+    // The record write is still pending, yet an interrupt could already reach the runner.
+    expect(tracked).toEqual([write.pid]);
+    write.release?.();
+    const result = started(await pending);
+    expect(result.pid).toBe(write.pid);
+    expect(tracked).toEqual([write.pid]);
+  });
+
   it('never overwrites a runner record, and skips its slot when allocating', async () => {
     const launch = join(stateDir, 'r1', 'launch');
     await mkdir(launch, { recursive: true });
