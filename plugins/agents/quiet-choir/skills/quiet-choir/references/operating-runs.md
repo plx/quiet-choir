@@ -139,6 +139,10 @@ not saved with the run, so pass it to every resume, tick and `answer --resume`; 
 repeats lines for finished work. `--events -` writes to stdout, but is refused on `start` and with
 `--json`.
 
+For a run launched without `--events`, or by another process, `workflow events RUN --follow` prints
+the same lines from the saved record; see
+[follow a run's events](inspection.md#follow-a-runs-events).
+
 <!-- skills-difference: claude-host -->
 
 <!-- /skills-difference: claude-host -->

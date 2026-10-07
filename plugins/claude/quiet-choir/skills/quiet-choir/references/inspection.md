@@ -254,6 +254,37 @@ Unreadable files are skipped with stderr warnings. JSON is
 directory produces an empty list. Neither command imports source, takes the writer lock, or performs
 recovery.
 
+## Follow a run's events
+
+`workflow events RUN [--follow]` prints the `--events` line shape (JSONL, at most 512 bytes per
+line) derived from the saved record. It uses `inspect`'s code-free reader, so it never imports the
+workflow, never takes the writer lock, and works after the workflow file moved or stopped compiling.
+
+```sh
+npm run --silent cli -- workflow events recovery --state-dir "$qc_state_dir" --follow --timeout 9m | grep --line-buffered -E '"ev":"(step\.failed|step\.settled|wait\.opened|run\.(completed|failed|cancelled|suspended))"'
+```
+
+Use it for one line per transition of a run this process did not launch, or one started without
+`--events`, instead of polling `inspect --watch` snapshots and diffing them. Piping through
+`grep --line-buffered` keeps only failures, questions and terminal states. Still branch on the watch
+or inspect status for the outcome. When you launch the run yourself, prefer the live `--events` file
+([follow the event stream](operating-runs.md#follow-the-event-stream)): it is more complete. Lines
+from the record have limits:
+
+- Live-only `agent.*` events are not persisted.
+- The record keeps only the latest 500 run events, so `phase`, `log` and `wait.tolerated` lines can
+  be evicted before a slow follower reads them. Step and question lines are not subject to that cap.
+- `ms` is the recorded duration, and fields the record cannot supply are omitted.
+
+Without `--follow` it prints the whole record once and exits 0. With `--follow` it starts at the
+current end; `--from-start` replays the record first. `--after-execution N`, given the suspended
+snapshot's `execution`, follows a run resumed with `answer --resume` without stopping on the old
+`suspended` status. The follow exit codes match the watch: completed 0, failed 1, suspended 75,
+cancelled or interrupted 130, stale 3. `--timeout` exits 79 (`watch.timeout`) and `--wait-created`
+exits 66. Without `--wait-created`, a missing record exits 3 (`run.not_found`). Output is always
+JSONL; `--json` affects only the failure document. The in-process `onEvent` callback and debug logs
+are a different mechanism: see [live events](#live-events).
+
 ## Phases and logs
 
 `ctx.phase(title, { total })` sets the phase until the next phase in that context.
@@ -319,6 +350,8 @@ child's `failed` status inside a committed item is diagnostic history, not a pen
 journals retry only uncommitted mappers. Forks create new journals.
 
 ## Live events
+
+To follow a run from the CLI instead, see [follow a run's events](#follow-a-runs-events).
 
 Run with `--log-level debug` to log `step.started`, `step.completed`, `step.replayed`, and
 `step.waiting`, `step.failed`, `step.cancelled`, `step.settled`, `step.redefined`,

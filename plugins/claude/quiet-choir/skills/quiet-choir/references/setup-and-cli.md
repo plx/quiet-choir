@@ -92,6 +92,7 @@ errors, and answers; keep them private. See
 | `workflow fixtures RUN_ID`               | Export agent outputs, settled and absorbed agent failures as reusable fixture JSON without importing source |
 | `workflow list`                          | Lists run summaries with status filters without importing source                                            |
 | `workflow inspect RUN_ID`                | Reads the saved run without importing workflow code or acquiring a writer lock                              |
+| `workflow events RUN_ID`                 | Prints compact event lines derived from the saved record without importing source; `--follow` tails them    |
 | `workflow unlock RUN_ID`                 | Clears an abandoned lock without importing workflow code; refuses live owners and children                  |
 | `workflow unlock --worktree-admin PATH`  | Clears a repository's abandoned worktree administration lock; refuses live or unverifiable holders          |
 | `workflow rm RUN_ID`                     | Removes a saved run and its caches without importing source; `--dry-run` previews, `--force` for active     |
