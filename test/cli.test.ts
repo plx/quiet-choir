@@ -917,6 +917,17 @@ describe('monitoring command adapters', () => {
       ok: true,
       stateDir: projectRoot,
       runs: [summary],
+      leftoverLaunches: [
+        {
+          runId: 'broken',
+          stateDir: '/abs/runs dir',
+          path: '/abs/runs dir/broken',
+          bytes: 2048,
+          launches: [1],
+          newest: '2026-01-01T00:00:00.000Z',
+          log: '/abs/runs dir/broken/launch/1.log',
+        },
+      ],
       warnings: ['Skipped corrupt checkpoint'],
     });
     const output = await cli.run(WorkflowList, [
@@ -928,6 +939,12 @@ describe('monitoring command adapters', () => {
     expect(output.stdout).toContain(
       json ? '"kind":"workflow.list.result"' : 'test-run  test@1  completed',
     );
+    expect(output.stdout).toContain(
+      json
+        ? '"leftoverLaunches":[{"runId":"broken"'
+        : 'Leftover launch broken (2.0 KiB, no record): /abs/runs dir/broken/launch/1.log; remove with ',
+    );
+    if (!json) expect(output.stdout).toMatch(/workflow rm broken --state-dir '\/abs\/runs dir'$/mu);
     expect(output.stderr).toContain('Skipped corrupt checkpoint');
     expect(execute).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'workflow.list', status: 'completed' }),

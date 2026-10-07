@@ -1,14 +1,17 @@
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { defineWorkflow, runWorkflow, z } from '../src/index.js';
+import { defineWorkflow, NodeProcessRunner, runWorkflow, z } from '../src/index.js';
 import { ProcessSupervisor } from '../src/processes/supervisor.js';
 import { pidState } from '../src/processes/identity.js';
 import type { WorkflowFailure } from '../src/workflow/loader/failure.js';
+import { listRuns } from '../src/workflow/loader/inspection.js';
+import { writeRunnerIdentity } from '../src/workflow/runtime/launch-leftovers.js';
+import { removeRun } from '../src/workflow/runtime/run-removal.js';
 import {
   observeStartedRun,
   StartWorkflowExecutor,
@@ -197,6 +200,36 @@ describe('StartWorkflowExecutor', () => {
     expect(existsSync(join(stateDir, 'r1', 'run.json'))).toBe(false);
   });
 
+  it('leaves a leftover that list reports and rm removes once the runner has exited', async () => {
+    const script = `process.stdout.write(${JSON.stringify(typecheckFailure)} + '\\n'); console.error('compiler output'); process.exit(4);`;
+    const failure = failed(await executor().execute(plan(script)));
+    expect(failure.code).toBe('load.typecheck');
+    const launch = join(stateDir, 'r1', 'launch');
+    expect((await readdir(launch)).sort()).toEqual(['1.log', '1.result.json', '1.runner.json']);
+    expect(JSON.parse(await readFile(join(launch, '1.runner.json'), 'utf8'))).toMatchObject({
+      pid: failure.launch?.pid,
+      host: hostname(),
+    });
+    const listed = await listRuns({ stateDir });
+    expect(listed.runs).toEqual([]);
+    expect(listed.leftoverLaunches).toEqual([
+      expect.objectContaining({
+        runId: 'r1',
+        stateDir,
+        path: join(stateDir, 'r1'),
+        launches: [1],
+        log: join(launch, '1.log'),
+      }),
+    ]);
+    const outcome = await removeRun({ runId: 'r1', stateDir }, new NodeProcessRunner());
+    expect(outcome).toMatchObject({
+      kind: 'removed',
+      result: { launchOnly: true, removed: true, paths: [join(stateDir, 'r1')] },
+    });
+    expect(existsSync(join(stateDir, 'r1'))).toBe(false);
+    expect((await listRuns({ stateDir })).leftoverLaunches).toEqual([]);
+  });
+
   it('reports start.exited for a runner that exits without a document', async () => {
     const failure = failed(await executor().execute(plan('process.exit(9)')));
     expect(failure).toMatchObject({
@@ -277,13 +310,98 @@ describe('StartWorkflowExecutor', () => {
     expect((await readdir(launch)).sort()).toEqual([
       '1.log',
       '1.result.json',
+      '1.runner.json',
       '2.log',
       '2.result.json',
+      '2.runner.json',
     ]);
     expect((await stat(launch)).mode & 0o777).toBe(0o700);
     expect((await stat(join(stateDir, 'r1'))).mode & 0o777).toBe(0o700);
     for (const name of await readdir(launch))
       expect((await stat(join(launch, name))).mode & 0o777).toBe(0o600);
+  });
+
+  it('records the spawned runner after spawn, numbered with its log', async () => {
+    const result = started(await executor().execute(plan(`${own} ${forever}`)));
+    const recorded = join(stateDir, 'r1', 'launch', '1.runner.json');
+    expect(JSON.parse(await readFile(recorded, 'utf8'))).toEqual({
+      pid: result.pid,
+      host: hostname(),
+      osStartTime: expect.any(String) as unknown,
+    });
+    expect((await stat(recorded)).mode & 0o777).toBe(0o600);
+  });
+
+  it('starts as usual when the runner record cannot be written', async () => {
+    let calls = 0;
+    const result = started(
+      await executor({
+        recordRunner: () => {
+          calls++;
+          return Promise.reject(new Error('read-only'));
+        },
+      }).execute(plan(`${own} ${forever}`)),
+    );
+    expect(calls).toBe(1);
+    expect(result.status).toBe('running');
+    expect(existsSync(join(stateDir, 'r1', 'launch', '1.runner.json'))).toBe(false);
+  });
+
+  it('tracks the runner before the runner record write settles', async () => {
+    const tracked: number[] = [];
+    const supervisor = new ProcessSupervisor();
+    const track = supervisor.track.bind(supervisor);
+    supervisor.track = (record) => {
+      tracked.push(record.pid);
+      return track(record);
+    };
+    const write: { pid: number | null; release: (() => void) | null } = {
+      pid: null,
+      release: null,
+    };
+    const gate = new Promise<boolean>((resolve) => {
+      write.release = () => {
+        resolve(true);
+      };
+    });
+    const pending = executor({
+      processSupervisor: supervisor,
+      recordRunner: (_launchDir, _n, pid) => {
+        write.pid = pid;
+        return gate;
+      },
+    }).execute(plan(`${own} ${forever}`));
+    while (write.pid === null) await delay(10);
+    // The record write is still pending, yet an interrupt could already reach the runner.
+    expect(tracked).toEqual([write.pid]);
+    write.release?.();
+    const result = started(await pending);
+    expect(result.pid).toBe(write.pid);
+    expect(tracked).toEqual([write.pid]);
+  });
+
+  it('never overwrites a runner record, and skips its slot when allocating', async () => {
+    const launch = join(stateDir, 'r1', 'launch');
+    await mkdir(launch, { recursive: true });
+    await writeFile(join(launch, '1.runner.json'), 'kept');
+    expect(await writeRunnerIdentity(launch, 1, process.pid)).toBe(false);
+    expect(await readFile(join(launch, '1.runner.json'), 'utf8')).toBe('kept');
+    const failure = failed(await executor().execute(plan('process.exit(2)')));
+    expect(failure.launch?.log).toBe(join(launch, '2.log'));
+    expect(await readFile(join(launch, '1.runner.json'), 'utf8')).toBe('kept');
+    expect(existsSync(join(launch, '2.runner.json'))).toBe(true);
+  });
+
+  it('removes the partial runner record when writing it fails', async () => {
+    const launch = join(stateDir, 'r1', 'launch');
+    await mkdir(launch, { recursive: true });
+    const failingOpen = (async (...args: Parameters<typeof open>) => {
+      const handle = await open(...args);
+      handle.writeFile = () => Promise.reject(new Error('disk full'));
+      return handle;
+    }) as typeof open;
+    expect(await writeRunnerIdentity(launch, 1, process.pid, failingOpen)).toBe(false);
+    expect(existsSync(join(launch, '1.runner.json'))).toBe(false);
   });
 
   it('skips a slot whose result file already exists', async () => {

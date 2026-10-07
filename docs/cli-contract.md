@@ -223,7 +223,7 @@ removed and are recorded in the ledger (`error.details.removedCaches` names them
 deleted, the message and `error.details.caches` name each cache that remains,
 `error.details.warnings` carries Git's reasons, and the record stays for a retry with
 `workflow clean ID`. Success returns
-`{kind:"workflow.rm.result", ok:true, runId, stateDir, dryRun, force, refs, verdict, removed, paths, caches, refsRemoved, keptRefs, bytes, tombstones, warnings}`:
+`{kind:"workflow.rm.result", ok:true, runId, stateDir, dryRun, force, refs, verdict, removed, launchOnly, paths, caches, refsRemoved, keptRefs, bytes, tombstones, warnings}`:
 `paths` are the run's paths in the runs container, `caches` are `{path, method:"git"|"direct"}`,
 `keptRefs` lists the pins that survive without `--refs`, `bytes` is the list `bytes` measured before
 removal, and `tombstones` names the abandoned removals this rm swept. `--dry-run` takes no lock,
@@ -232,6 +232,33 @@ sweeps nothing and writes nothing; it exits 0 whenever the run exists, with `rem
 `--force` into account), and lists what would be removed, with `refsRemoved` naming the refs that
 `--refs` would delete and `tombstones` the ones a removal would sweep. See
 [storage](storage.md#removing-runs).
+
+A [leftover launch directory](storage.md#removing-runs), the record-less `<runId>/launch/` of a
+start that failed before its record
+([ADR 0055](decisions/0055-remove-leftover-launch-directories.md)), is not a run, but
+`workflow list` reports it and `workflow rm ID` removes it. The list document's `leftoverLaunches`
+(in both the compact and the `--full` form) has one
+`{runId, stateDir, path, bytes, launches, newest, log}` entry per removable leftover in every
+scanned runs container (all of them with `--all`), newest first: `launches` are the launch numbers,
+`newest` the newest launch file's modification time and `log` the highest launch's `<n>.log` (null
+when absent). A leftover whose launch may still be in flight is omitted, a scan error is a warning,
+and with `--status` the array is empty, since a leftover has no status. The text view prints one
+`Leftover launch ID (SIZE, no record): LOG; remove with COMMAND` line per leftover after the table,
+with the `workflow rm ID --state-dir DIR` command behind the invocation's launcher. When the ID has
+no `run.json` or `<runId>.json` and names a leftover, rm takes a separate path instead of reporting
+`run.not_found`. It refuses with `run.active` (exit 3), even with `--force`, while any launch may
+still be in flight (a recorded runner that is alive, unverifiable or remote, an unreadable runner
+record, or, without one, files less than an hour old); `error.details` is
+`{status:"starting", waiting:[], launches}` with each launch as `{n, pid, host, state, inFlight}`.
+Otherwise it takes only the legacy guard, without registering a project (a held or unreadable guard,
+or a lock beside it, is refused as `run.locked` before the guard is taken), re-checks under it
+(`run.exists` when a run now holds the ID, `run.active` when a new launch appeared) and renames the
+directory to a tombstone before deleting it. The result has `launchOnly: true` (false for every real
+run), `paths` naming `<runId>/`, no caches or refs, and `--refs` changes nothing. A dry run of a
+leftover exits 0 and reports the verdict a real rm would meet now: `run.active` for an in-flight
+leftover, otherwise `run.locked` while the legacy guard (or a lock beside it) is held, otherwise
+`remove`. A cancellation signal is honoured up to the rename; an abort until then leaves the
+directory in place.
 
 `workflow prune [--older-than DURATION] [--status S[,S]] [--missing-cwd] [--all] [--refs] [--dry-run] --json`
 removes finished runs in bulk without importing workflow code
@@ -477,7 +504,9 @@ when absent, and always appends `--json`. The runner is
 flags), never a PATH lookup, in its own session with stdin from `/dev/null`. Its stdout and stderr
 go to `<stateDir>/<runId>/launch/<n>.result.json` and `<n>.log`, created exclusively for the
 smallest free `n` (0600 files, 0700 directories); `--input -` is read by start and passed as
-`--input @<n>.input.json`.
+`--input @<n>.input.json`. Right after spawning the runner, start records `{pid, host, osStartTime}`
+in `<n>.runner.json` (0600, created exclusively), which judges whether the launch is still in
+flight; a failed write changes nothing else.
 
 Readiness: start polls every 50 ms. While the runner lives, start succeeds once the record is
 readable and the run lock's owner is the runner's PID; another process's lock does not count. After
@@ -525,9 +554,12 @@ fails with `start.timeout` (exit 124). A runner that exits without a record or a
 is `start.exited` (exit 70). A first signal to start stops the runner the same way and reports
 `workflow.interrupted` (exit 130); a second one kills it at once. A runner that had saved a record
 leaves a resumable suspension, reported with its `runId` and a resume entry in `next`. The launch
-directory of a pre-record failure has no `run.json`, so `list` and `inspect` ignore it; a retry with
-the same ID uses the next `n`. See [ADR 0036](decisions/0036-detached-start.md). Detached sessions
-are POSIX behaviour; Windows is not covered.
+directory of a pre-record failure has no `run.json`, so `inspect` reports `run.not_found`; a retry
+with the same ID uses the next `n`. Once its runner has exited, `workflow list` reports it in
+`leftoverLaunches` and `workflow rm ID` removes it
+([ADR 0055](decisions/0055-remove-leftover-launch-directories.md)). See
+[ADR 0036](decisions/0036-detached-start.md). Detached sessions are POSIX behaviour; Windows is not
+covered.
 
 ## Event stream
 

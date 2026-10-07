@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { open, readFile, type FileHandle } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { ExecutionPlan, ExecutionResult, Executor } from '../../application/execution.js';
 import type { ProcessSupervisor } from '../../processes/supervisor.js';
@@ -9,6 +9,8 @@ import { signalProcess } from '../../processes/identity.js';
 import { workflowArgv, type CommandLauncher } from '../runtime/commands.js';
 import type { JsonValue } from '../runtime/model.js';
 import { legacyRunPath, prepareStateDirectory, runDirectory } from '../runtime/paths.js';
+import { runnerFileName } from '../runtime/launch-leftover-decision.js';
+import { writeRunnerIdentity } from '../runtime/launch-leftovers.js';
 import { withRunGuard } from '../runtime/lock.js';
 import { isCliErrorCode, RunRefusedError } from '../runtime/run-errors.js';
 import { createStorageDirectory } from '../runtime/storage-io.js';
@@ -85,6 +87,11 @@ export interface StartWorkflowExecutorOptions {
   readonly observeRun?: (stateDir: string, runId: string) => Promise<StartRunObservation>;
   /** Time after the kill grace for the runner to save its interrupted record; default 2000 ms. */
   readonly saveMarginMs?: number;
+  /**
+   * @internal Test seam replacing {@link writeRunnerIdentity}, which records the spawned runner in
+   * `launch/<n>.runner.json`. Its failure or rejection never changes the start's outcome.
+   */
+  readonly recordRunner?: (launchDir: string, n: number, pid: number) => Promise<boolean>;
 }
 
 /** Extra time after the kill grace for the runner to save its interrupted record. */
@@ -111,6 +118,8 @@ export async function observeStartedRun(
 
 /** A launch's evidence files, created exclusively; the caller closes the two handles. @internal */
 export interface LaunchFiles {
+  /** The launch number `n` that names the files. */
+  readonly n: number;
   readonly log: string;
   readonly result: string;
   readonly input: string | null;
@@ -123,7 +132,8 @@ function errno(error: unknown, code: string): boolean {
 
 /**
  * Create `<n>.log`, `<n>.result.json` and, for stdin input, `<n>.input.json` exclusively (0600) for
- * the smallest free `n`, so an earlier launch's evidence is never overwritten.
+ * the smallest free `n`, so an earlier launch's evidence is never overwritten. An `n` whose
+ * `<n>.runner.json` survives is skipped too, so a stale runner record never describes a new launch.
  */
 async function allocateLaunchFiles(
   directory: string,
@@ -133,6 +143,7 @@ async function allocateLaunchFiles(
     const log = join(directory, `${String(n)}.log`);
     const result = join(directory, `${String(n)}.result.json`);
     const inputPath = input === undefined ? null : join(directory, `${String(n)}.input.json`);
+    if (existsSync(join(directory, runnerFileName(n)))) continue;
     let logHandle: FileHandle;
     try {
       logHandle = await open(log, 'wx', 0o600);
@@ -147,7 +158,7 @@ async function allocateLaunchFiles(
         await using inputHandle = await open(inputPath, 'wx', 0o600);
         await inputHandle.writeFile(`${JSON.stringify(input)}\n`);
       }
-      return { log, result, input: inputPath, handles: [resultHandle, logHandle] };
+      return { n, log, result, input: inputPath, handles: [resultHandle, logHandle] };
     } catch (error) {
       await resultHandle?.close();
       await logHandle.close();
@@ -375,6 +386,8 @@ export class StartWorkflowExecutor implements Executor<
     }
     const runner = child;
     const group = { pid, pgid: process.platform === 'win32' ? null : pid };
+    // Track before awaiting the identity write: an interrupt during that write must still reach
+    // the runner's group.
     const untrack = this.#options.processSupervisor?.track({
       ...group,
       binary: basename(argv[0] ?? 'node'),
@@ -382,6 +395,12 @@ export class StartWorkflowExecutor implements Executor<
       startedAt: new Date().toISOString(),
       osStartTime: null,
     });
+    // Best effort: without it, the leftover of a pre-record failure is judged by age (ADR 0055).
+    await (this.#options.recordRunner ?? writeRunnerIdentity)(
+      dirname(files.log),
+      files.n,
+      pid,
+    ).catch(() => false);
     const running = (): boolean => state.exit === null;
     const stop = async (): Promise<void> => {
       if (running()) {

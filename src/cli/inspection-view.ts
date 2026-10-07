@@ -1,7 +1,12 @@
-import type { InspectionStatus, RunSummary } from '../workflow/loader/inspection.js';
+import type {
+  InspectionStatus,
+  LeftoverLaunchSummary,
+  RunSummary,
+} from '../workflow/loader/inspection.js';
 import type { ExecSummary } from '../workflow/runtime/exec-model.js';
 import {
   formatArgv,
+  workflowArgv,
   unlockNext,
   unlockWorktreeAdminNext,
   type CommandLauncher,
@@ -388,13 +393,27 @@ export function formatBytes(bytes: number): string {
 }
 
 /** One row per run; no source loading or result payload expansion. @internal */
-export function formatRunList(runs: readonly RunSummary[], showProject = false): string {
-  if (!runs.length) return 'No runs found.';
+export function formatRunList(
+  runs: readonly RunSummary[],
+  showProject = false,
+  extra: {
+    /** Removable leftover launch directories, printed one per line after the table. */
+    readonly leftoverLaunches?: readonly LeftoverLaunchSummary[];
+    /** Program words of the `workflow rm` command each leftover line names. */
+    readonly launcher?: CommandLauncher | undefined;
+  } = {},
+): string {
+  const leftovers = (extra.leftoverLaunches ?? []).map(
+    (leftover) =>
+      `Leftover launch ${leftover.runId} (${formatBytes(leftover.bytes)}, no record): ${leftover.log ?? leftover.path}; remove with ${formatArgv(workflowArgv(extra.launcher, 'rm', leftover.runId, '--state-dir', leftover.stateDir))}`,
+  );
+  if (!runs.length) return ['No runs found.', ...leftovers].join('\n');
   return [
     `ID  WORKFLOW  STATUS  STEPS  USAGE  SIZE  UPDATED  OWNER${showProject ? '  PROJECT  STATE' : ''}`,
     ...runs.map(
       (run) =>
         `${run.id}  ${run.workflow.name}@${run.workflow.version}  ${run.status}  ${String(run.counts.completed)}/${String(run.counts.total)} completed, ${String(run.counts.running)} running, ${String(run.counts.failed)} failed, ${String(run.counts.cancelled)} cancelled, ${String(run.counts['settled-failed'])} settled-failed, ${String(run.counts.superseded)} superseded, ${String(run.counts.waiting)} waiting, ${String(run.counts.withdrawn)} withdrawn  ${cost(run)}  ${typeof run.bytes === 'number' ? formatBytes(run.bytes) : 'unknown'}  ${run.updatedAt}  ${owner(run)}${showProject ? `  ${run.cwd}  ${run.stateDir ?? 'unknown'}` : ''}`,
     ),
+    ...leftovers,
   ].join('\n');
 }

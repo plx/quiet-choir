@@ -55,7 +55,8 @@ filesystem. The CLI adapter builds a plain-data plan; `StartWorkflowExecutor` ru
 - The skill's golden path is four commands: `cd`, `validate`, `start`, `inspect`.
 - A pre-record failure leaves `<runId>/launch/` without `run.json`. `list` and `inspect` ignore it,
   and its log is the only copy of the compiler output, so it is kept; cleaning such directories is a
-  follow-up.
+  follow-up. [0055](0055-remove-leftover-launch-directories.md) later has `list` report it and `rm`
+  remove it once the runner has exited.
 - The public `CliErrorCode` union gains `start.timeout` and `start.exited`.
 - `start` does not cover `--resume` or `--dry-run`: a dry-run removes its state, so no record would
   appear, and a detached resume is a separate decision.

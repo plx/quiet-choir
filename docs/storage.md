@@ -66,6 +66,7 @@ retains typechecking, code/schema checks, grants, and step identity validation.
       launch/<n>.log                 # workflow start: the runner's stderr (0600)
       launch/<n>.result.json         # workflow start: the runner's final JSON document (0600)
       launch/<n>.input.json          # workflow start --input -: the stdin input (0600)
+      launch/<n>.runner.json         # workflow start: the spawned runner's PID, host, birth (0600)
       attempts/<sha256-full-step-id>/<attempt>.<provider>.jsonl
       artifacts/<encoded-id>--<hash>/<attempt>/
       worktrees/                     # reserved; no automatic checkout creation
@@ -89,9 +90,21 @@ their bytes need not be fsynced and are never replay inputs. Native transcripts 
 root stays outside the checkout.
 
 `workflow start` allocates the smallest free `n` exclusively, so a retry never overwrites an earlier
-launch's evidence. A launch that failed before the record existed (for example a type error) leaves
-`<runId>/launch/` without `run.json`; `list` and `inspect` ignore it, and the log keeps the only
-copy of the compiler output. Remove it by hand when it is no longer needed.
+launch's evidence, and skips an `n` whose `<n>.runner.json` survives. Right after spawning the
+runner it records `{pid, host, osStartTime}` in `<n>.runner.json` (best effort; a failed write
+changes nothing else). A launch that failed before the record existed (for example a type error)
+leaves `<runId>/launch/` without `run.json`, and the log keeps the only copy of the compiler output.
+`inspect` reports `run.not_found` for it. Such a directory is a leftover launch directory when the
+ID has no `run.json` or `<runId>.json`, no `<runId>.inbox/`, `<runId>.cancel.json` or
+`<runId>.json.v<N>` sibling, and `<runId>/` holds only `launch/` with nothing but numbered
+`<n>.log`, `<n>.result.json`, `<n>.input.json` and `<n>.runner.json` files. Each launch number is
+settled when its `<n>.runner.json` names a runner that is dead, or, without a runner record, when
+its newest file is more than an hour old. A runner that is alive, unverifiable or on another host,
+or an unreadable runner record, keeps the launch in flight. Once every launch is settled,
+`workflow list` reports the leftover (`leftoverLaunches` in JSON, a `Leftover launch` line in text,
+with the `workflow rm` command) and `workflow rm ID` removes it; see
+[ADR 0055](decisions/0055-remove-leftover-launch-directories.md). Anything else in the directory (a
+lock, a journal, an unknown file) leaves it alone, and rm keeps reporting `run.not_found`.
 
 Run records, journals, owners, and answers use 0600; new directories use 0700. Existing permissions
 are not repaired. State includes plaintext input, outputs, prompts/previews, and answers. Moving it
@@ -224,9 +237,19 @@ tombstone. `list` and `inspect` never see a half-deleted run, because the flat m
 the directory. A signal stops rm only before step 2; after that the removal finishes. Each rm,
 before reading its target, deletes the tombstones in its runs container whose PID is dead (best
 effort), leaving live and unverifiable ones alone, so a concurrent rm of another run is never
-disturbed. `--dry-run` lists them without deleting anything. A start that failed before its record
-existed (a lone `<runId>/launch/`) is not a run; rm reports `run.not_found` for it, so remove it by
-hand.
+disturbed. `--dry-run` lists them without deleting anything.
+
+A start that failed before its record existed leaves a leftover launch directory (above), which is
+not a run. When the ID has no record and names such a directory, rm takes a separate path with
+`launchOnly: true` in its result. It refuses with `run.active`, even with `--force`, while any
+launch may still be in flight, because the start's runner may still create the record. Otherwise it
+takes only the legacy guard, without a working directory, so it never registers a project. Start's
+allocation and the runner's lock take the same guard first. Under it rm re-checks that no record
+exists (`run.exists` when a run now holds the ID) and that the directory is still a settled leftover
+(a new launch allocated meanwhile refuses with `run.active`). It then renames `<runId>/` to a
+tombstone, flushes the container (the commit point), deletes the tombstone and releases the guard. A
+held guard refuses with `run.locked`. `workflow prune` never selects a leftover; remove each with
+rm.
 
 `workflow prune` removes runs in bulk, still only when asked
 ([ADR 0050](decisions/0050-select-runs-for-prune-conservatively.md)). It selects finished runs by

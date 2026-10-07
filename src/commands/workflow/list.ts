@@ -28,7 +28,8 @@ export default class WorkflowList extends WorkflowCommand {
       options: ['running', 'failed', 'completed', 'cancelled', 'stale', 'suspended'] as const,
     })({ description: 'Filter by observed status' }),
     json: Flags.boolean({
-      description: 'Print runs and unreadable-checkpoint warnings as JSON',
+      description:
+        'Print runs, leftover launch directories of pre-record start failures and unreadable-checkpoint warnings as JSON',
       default: false,
     }),
     full: Flags.boolean({
@@ -38,6 +39,8 @@ export default class WorkflowList extends WorkflowCommand {
   };
   public static override readonly summary =
     'List saved workflows, newest first, without importing code';
+  public static override readonly description =
+    'Lists every saved run with its status, step counts, usage and on-disk size. Without --status it also reports leftover launch directories: the record-less <run-id>/launch/ of a start that failed before its record, once its runner has exited (or, without a runner record, an hour after its last write), each with the workflow rm command that removes it.';
 
   public async run(): Promise<void> {
     const { flags } = await this.parse(WorkflowList);
@@ -65,7 +68,10 @@ export default class WorkflowList extends WorkflowCommand {
       for (const warning of result.warnings) this.logToStderr(`Warning: ${warning}`);
       this.output(
         flags.full ? result : { ...result, runs: result.runs.map(toRunListRow) },
-        formatRunList(result.runs, flags.all ?? false),
+        formatRunList(result.runs, flags.all ?? false, {
+          leftoverLaunches: result.leftoverLaunches,
+          launcher: this.commandLauncher,
+        }),
       );
     }
   }

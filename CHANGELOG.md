@@ -2,6 +2,15 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Leftover launch directories (addition; no record format, `schemaRevision` or step identity
+  change): `workflow start` now records its spawned runner in `launch/<n>.runner.json`
+  (`{pid, host, osStartTime}`, 0600) as additive launch evidence. The record-less `<runId>/launch/`
+  of a start that failed before its record is reported by `workflow list` (`leftoverLaunches` in
+  JSON, a `Leftover launch` line with the `workflow rm` command in text) once every launch has
+  settled: its recorded runner is dead or, without a runner record, its files are more than an hour
+  old. `workflow rm ID` removes it under the legacy guard (`launchOnly: true` in the result) and
+  refuses with `run.active`, even with `--force`, while the start may still be in flight. Prune and
+  clean are unchanged (#261, ADR 0055).
 - `workflow answer --harness` (addition; no identity or storage-format change): the flag is now
   repeatable and takes `cli`, `fixture:<file>` and `name=fixture:<file>` like `resume`, `execute`
   and `tick`, so `answer --resume` can override a run's named fixtures. Omitted, it still inherits

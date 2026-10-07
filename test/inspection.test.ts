@@ -607,6 +607,28 @@ it('lists newest first, filters stale/cancelled, skips unreadable files, and nev
   expect(formatRunList([])).toBe('No runs found.');
 });
 
+it('prints each leftover launch directory with a launcher-correct rm command', () => {
+  const leftover = {
+    runId: 'broken',
+    stateDir: '/abs/my runs',
+    path: '/abs/my runs/broken',
+    bytes: 512,
+    launches: [1, 2],
+    newest: '2026-01-01T00:00:00.000Z',
+    log: '/abs/my runs/broken/launch/2.log',
+  };
+  const launcher = [process.execPath, '/abs/bin/run.js'];
+  expect(formatRunList([], false, { leftoverLaunches: [leftover], launcher })).toBe(
+    [
+      'No runs found.',
+      `Leftover launch broken (512 B, no record): /abs/my runs/broken/launch/2.log; remove with ${process.execPath} /abs/bin/run.js workflow rm broken --state-dir '/abs/my runs'`,
+    ].join('\n'),
+  );
+  expect(formatRunList([], false, { leftoverLaunches: [{ ...leftover, log: null }] })).toContain(
+    "(512 B, no record): /abs/my runs/broken; remove with quiet-choir workflow rm broken --state-dir '/abs/my runs'",
+  );
+});
+
 it('watches only actual changes and stops after completion with one final snapshot', async () => {
   const run = record();
   await save(run);

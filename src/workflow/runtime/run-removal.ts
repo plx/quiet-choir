@@ -7,11 +7,23 @@ import type { ProcessSupervisor } from '../../processes/supervisor.js';
 import { formatArgv, workflowArgv, type CommandLauncher } from './commands.js';
 import type { ProcessRunner } from './exec-model.js';
 import { digest, jsonValue } from './json.js';
-import { isErrno, sweepStrays } from './lock.js';
+import { inFlightLeftoverMessage, type LaunchJudgement } from './launch-leftover-decision.js';
+import {
+  inspectLaunchLeftover,
+  runRecordPresent,
+  type LaunchLeftover,
+  type LaunchSettleOptions,
+} from './launch-leftovers.js';
+import { isErrno, sweepStrays, withRunGuard } from './lock.js';
 import { legacyRunPath, resolveStateDir, runDirectory } from './paths.js';
 import { OrphanProcessesError } from './process-registry.js';
-import { readRequiredRun } from './read-required-run.js';
-import { removalRefusal, removalVerdict, type RemovalVerdict } from './removal-decision.js';
+import { missingRunError, readRequiredRun } from './read-required-run.js';
+import {
+  ownershipHold,
+  removalRefusal,
+  removalVerdict,
+  type RemovalVerdict,
+} from './removal-decision.js';
 import { RunRefusedError } from './run-errors.js';
 import { openFileOwnedRun, type ReleasableOwnedRun } from './run-store.js';
 import { runBytes, runSiblingPaths } from './run-size.js';
@@ -60,6 +72,11 @@ export interface RunRemovalResult {
     | { readonly code: 'run.locked' | 'run.orphans' | 'run.active'; readonly message: string };
   /** Whether the run was removed: always false for a dry run. */
   readonly removed: boolean;
+  /**
+   * True when the ID named no run, only the leftover `<runId>/launch/` of a start that failed
+   * before its record (ADR 0055): there are no caches or refs, and `--refs` changes nothing.
+   */
+  readonly launchOnly: boolean;
   /** Paths in the runs container that existed for the run before the removal. */
   readonly paths: readonly string[];
   /** Worktree caches not yet removed by an earlier cleanup. */
@@ -104,6 +121,8 @@ export interface RemoveRunLive {
   readonly afterStep?: (step: RemovalStep) => void | Promise<void>;
   /** @internal Test seam called after the inspection and before the run lock is taken. */
   readonly beforeLock?: () => void | Promise<void>;
+  /** @internal Test seam for the settle floor and clock that judge a leftover launch directory. */
+  readonly launchSettle?: LaunchSettleOptions | undefined;
 }
 
 const tombstonePattern =
@@ -241,6 +260,7 @@ async function planRemoval(
         ? 'remove'
         : pick(removalRefusal(runId, stateDir, verdict, launcher)),
     removed: false,
+    launchOnly: false,
     paths: await existingPaths(stateDir, runId),
     caches: Object.values(ledger?.caches ?? {})
       .filter((cache) => cache.state !== 'removed')
@@ -282,11 +302,27 @@ export async function removeRun(
 ): Promise<RunRemovalOutcome> {
   const { runId } = options;
   const stateDir = resolveStateDir({ stateDir: options.stateDir });
-  if (options.dryRun)
-    return { kind: 'removed', result: await planRemoval(stateDir, options, live.commandLauncher) };
+  // Prune pins a listed record's updatedAt, and a listed run always has a record: only rm by ID
+  // reaches a leftover launch directory. A directory that cannot be inspected is left to the
+  // ordinary record read, which reports it.
+  const leftoverOf = async (): Promise<LaunchLeftover | null> =>
+    options.expectedUpdatedAt === undefined
+      ? inspectLaunchLeftover(stateDir, runId, live.launchSettle).catch(() => null)
+      : null;
+  if (options.dryRun) {
+    const leftover = await leftoverOf();
+    return {
+      kind: 'removed',
+      result: leftover
+        ? await planLeftoverRemoval(stateDir, options, leftover, live.commandLauncher)
+        : await planRemoval(stateDir, options, live.commandLauncher),
+    };
+  }
   const force = options.force ?? false;
   const { signal } = live;
   const tombstones = await sweepTombstones(stateDir);
+  const leftover = await leftoverOf();
+  if (leftover) return removeLaunchLeftover(stateDir, options, leftover, live, tombstones);
   const initial = await readRequiredRun({ runId, stateDir });
   if (options.expectedUpdatedAt !== undefined)
     checkUpdatedAt(runId, options.expectedUpdatedAt, initial.updatedAt);
@@ -480,6 +516,7 @@ async function removeOwned(
       refs: context.refs,
       verdict: 'remove',
       removed: true,
+      launchOnly: false,
       paths: context.paths,
       caches,
       refsRemoved,
@@ -548,4 +585,158 @@ async function lstatIfPresent(path: string): Promise<Stats | undefined> {
     if (isErrno(error, 'ENOENT')) return undefined;
     throw error;
   });
+}
+
+/** The `run.active` refusal of a leftover whose start may still be in flight; `--force` never overrides it. */
+function inFlightRefusal(runId: string, leftover: LaunchLeftover): RunRefusedError {
+  return new RunRefusedError(
+    'run.active',
+    runId,
+    inFlightLeftoverMessage(runId, leftover.launches),
+    jsonValue({
+      status: 'starting',
+      waiting: [],
+      launches: leftover.launches.map((launch: LaunchJudgement) => ({
+        n: launch.n,
+        pid: launch.pid,
+        host: launch.host,
+        state: launch.runner,
+        inFlight: launch.state === 'in-flight',
+      })),
+    }),
+  );
+}
+
+/** The dry run of a leftover launch directory: what {@link removeLaunchLeftover} would do now. */
+async function planLeftoverRemoval(
+  stateDir: string,
+  options: RemoveRunOptions,
+  leftover: LaunchLeftover,
+  launcher?: CommandLauncher,
+): Promise<RunRemovalResult> {
+  const { runId } = options;
+  // A settled leftover is still refused while the legacy guard (or a lock beside it) is held, as
+  // the real removal's guard acquisition would refuse it; an in-flight leftover stays `run.active`.
+  const hold = leftover.removable
+    ? ownershipHold(await inspectRunOwnership({ runId, stateDir }))
+    : null;
+  return {
+    runId,
+    stateDir,
+    dryRun: true,
+    force: options.force ?? false,
+    refs: options.refs ?? false,
+    verdict: hold
+      ? pick(removalRefusal(runId, stateDir, hold, launcher))
+      : leftover.removable
+        ? 'remove'
+        : { code: 'run.active', message: inFlightLeftoverMessage(runId, leftover.launches) },
+    removed: false,
+    launchOnly: true,
+    paths: [leftover.path],
+    caches: [],
+    refsRemoved: [],
+    keptRefs: [],
+    bytes: leftover.bytes,
+    tombstones: await deadTombstones(stateDir),
+    warnings: [],
+  };
+}
+
+/**
+ * Remove the leftover `<runId>/launch/` of a start that failed before its record (ADR 0055). It
+ * refuses with `run.active`, even with `force`, while any launch may still be in flight. Under the
+ * legacy guard, which start's allocation and the runner's lock also take first, it re-checks that
+ * no record exists (`run.exists`) and that the directory is still a settled leftover, renames
+ * `<runId>/` to a tombstone (the commit point), flushes the container and deletes the tombstone.
+ * The signal is honoured up to the rename: an abort until then leaves the directory in place.
+ */
+async function removeLaunchLeftover(
+  stateDir: string,
+  options: RemoveRunOptions,
+  leftover: LaunchLeftover,
+  live: RemoveRunLive,
+  tombstones: readonly string[],
+): Promise<RunRemovalOutcome> {
+  const { runId } = options;
+  const { signal } = live;
+  if (!leftover.removable) throw inFlightRefusal(runId, leftover);
+  // The verdict the dry run reports: a held (or unreadable) guard refuses before the guard is
+  // taken, as ordinary rm does, so an empty lock directory is `run.locked` rather than a wait.
+  const hold = ownershipHold(await inspectRunOwnership({ runId, stateDir }));
+  if (hold) throw refusalError(runId, stateDir, hold, live.commandLauncher);
+  signal?.throwIfAborted();
+  await live.beforeLock?.();
+  const guard = `${legacyRunPath(stateDir, runId)}.lock`;
+  const warnings: string[] = [];
+  // Set inside the guarded callback; an object, so the catch below reads the current values.
+  const progress = { committed: false, bodyFailed: false };
+  const removeGuarded = async (): Promise<void> => {
+    const current = await inspectLaunchLeftover(stateDir, runId, live.launchSettle);
+    if (current === null) {
+      if (await runRecordPresent(stateDir, runId))
+        throw new RunRefusedError(
+          'run.exists',
+          runId,
+          `A run now holds ID ${runId}, so its leftover launch directory was not removed; nothing was removed. Rerun rm to judge the run.`,
+          jsonValue({ stateDir }),
+        );
+      throw await missingRunError({ runId, stateDir });
+    }
+    if (!current.removable) throw inFlightRefusal(runId, current);
+    // The last point where an abort leaves the directory in place.
+    signal?.throwIfAborted();
+    const tombstone = join(stateDir, tombstoneName(runId));
+    await rename(runDirectory(stateDir, runId), tombstone);
+    await syncDirectory(stateDir);
+    progress.committed = true;
+    await live.afterStep?.('renamed');
+    await rm(tombstone, { recursive: true, force: true });
+    await live.afterStep?.('tombstone-deleted');
+  };
+  try {
+    await withRunGuard(
+      stateDir,
+      runId,
+      async () => {
+        try {
+          await removeGuarded();
+        } catch (error) {
+          progress.bodyFailed = true;
+          throw error;
+        }
+      },
+      {
+        commandLauncher: live.commandLauncher,
+        ...(signal === undefined ? {} : { signal }),
+      },
+    );
+  } catch (error) {
+    // Past the rename the directory is gone; a failed guard release then only warns.
+    if (progress.bodyFailed || !progress.committed) throw error;
+    warnings.push(
+      `Removed the leftover launch directory but could not release ${guard}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  await sweepStrays(guard);
+  return {
+    kind: 'removed',
+    result: {
+      runId,
+      stateDir,
+      dryRun: false,
+      force: options.force ?? false,
+      refs: options.refs ?? false,
+      verdict: 'remove',
+      removed: true,
+      launchOnly: true,
+      paths: [leftover.path],
+      caches: [],
+      refsRemoved: [],
+      keptRefs: [],
+      bytes: leftover.bytes,
+      tombstones,
+      warnings,
+    },
+  };
 }

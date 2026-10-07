@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { runBytes } from '../runtime/run-size.js';
+import { scanLaunchLeftovers, type LaunchSettleOptions } from '../runtime/launch-leftovers.js';
 import type { WorktreeStep } from '../runtime/worktree-schema.js';
 import type { ExecSummary, ExecDiagnostics } from '../runtime/exec-model.js';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -605,16 +606,44 @@ export async function inspectRun(options: InspectRunOptions): Promise<RunInspect
   return inspection(run, ownership);
 }
 
-/** Enumerate only checkpoint filenames, skip unreadable runs, and retain diagnostics. @internal */
+/**
+ * A leftover launch directory that `workflow list` reports: the record-less `<runId>/launch/` of a
+ * start that failed before its record, whose every launch has settled, so `workflow rm ID`
+ * removes it (ADR 0055). @internal
+ */
+export interface LeftoverLaunchSummary {
+  readonly runId: string;
+  /** Absolute runs container. */
+  readonly stateDir: string;
+  /** Absolute `<stateDir>/<runId>` directory. */
+  readonly path: string;
+  /** Apparent size of its files. */
+  readonly bytes: number;
+  /** The launch numbers `n` of its `<n>.*` files, ascending. */
+  readonly launches: readonly number[];
+  /** The newest modification time of its launch files, as an ISO timestamp. */
+  readonly newest: string;
+  /** The highest launch's `<n>.log`, which keeps the runner's stderr; null when absent. */
+  readonly log: string | null;
+}
+
+/**
+ * Enumerate only checkpoint filenames, skip unreadable runs, and retain diagnostics. Without a
+ * status filter it also scans every container for removable leftover launch directories; a
+ * leftover still in flight is omitted, and a scan error is a warning. @internal
+ */
 export async function listRuns(options: {
   readonly all?: boolean;
   readonly additionalStateDirs?: readonly string[];
   readonly stateDir: string;
   readonly status?: InspectionStatus;
   readonly commandLauncher?: CommandLauncher | undefined;
+  /** @internal Test seam for the settle floor and clock that judge leftover launch directories. */
+  readonly launchSettle?: LaunchSettleOptions | undefined;
 }): Promise<{
   readonly stateDir: string;
   readonly runs: readonly RunSummary[];
+  readonly leftoverLaunches: readonly LeftoverLaunchSummary[];
   readonly warnings: readonly string[];
 }> {
   const stateDir = resolveStateDir(options);
@@ -627,8 +656,25 @@ export async function listRuns(options: {
     ...projects.directories,
   ]);
   const runs: RunSummary[] = [];
+  const leftoverLaunches: LeftoverLaunchSummary[] = [];
   const warnings: string[] = [...projects.warnings];
   for (const directory of roots) {
+    // A leftover has no status, so a status filter never matches one.
+    if (options.status === undefined) {
+      const scanned = await scanLaunchLeftovers(directory, options.launchSettle);
+      warnings.push(...scanned.warnings);
+      for (const leftover of scanned.leftovers)
+        if (leftover.removable)
+          leftoverLaunches.push({
+            runId: leftover.runId,
+            stateDir: leftover.stateDir,
+            path: leftover.path,
+            bytes: leftover.bytes,
+            launches: leftover.launches.map((launch) => launch.n),
+            newest: leftover.newest,
+            log: leftover.log,
+          });
+    }
     const runIds = await listRunIds(directory);
     // One listing per container finds every run's backups without reading it once per run.
     const entries = runIds.length ? await readdir(directory).catch((): string[] => []) : [];
@@ -658,7 +704,13 @@ export async function listRuns(options: {
     }
   }
   runs.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id));
-  return { stateDir, runs, warnings };
+  leftoverLaunches.sort(
+    (a, b) =>
+      b.newest.localeCompare(a.newest) ||
+      a.runId.localeCompare(b.runId) ||
+      a.stateDir.localeCompare(b.stateDir),
+  );
+  return { stateDir, runs, leftoverLaunches, warnings };
 }
 
 /**

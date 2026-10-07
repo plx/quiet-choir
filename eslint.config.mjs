@@ -176,6 +176,7 @@ export default defineConfig(
       'src/workflow/runtime/replay-decision.ts',
       'src/workflow/runtime/recovery-hint.ts',
       'src/workflow/runtime/harness-config-decision.ts',
+      'src/workflow/runtime/launch-leftover-decision.ts',
       'src/workflow/loader/start-readiness.ts',
       'src/workflow/loader/prune-selection.ts',
       'src/workflow/loader/root-selection.ts',
@@ -196,7 +197,7 @@ export default defineConfig(
               ],
               allowTypeImports: true,
               message:
-                'Pure decision modules (ADR 0007 attempt failures, replay decisions, recovery decisions, recovery hints, harness configuration decisions, removal decisions, start readiness, prune selection, project-root selection) must stay free of I/O: import values only from ./step-error.js and ./configuration-error.js; everything else must be import type.',
+                'Pure decision modules (ADR 0007 attempt failures, replay decisions, recovery decisions, recovery hints, harness configuration decisions, removal decisions, leftover launch directories, start readiness, prune selection, project-root selection) must stay free of I/O: import values only from ./step-error.js and ./configuration-error.js; everything else must be import type.',
             },
           ],
         },
