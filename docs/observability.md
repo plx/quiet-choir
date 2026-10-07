@@ -126,7 +126,8 @@ exceeds **512 bytes** (UTF-8, without the newline): a longer line shrinks `msg` 
 shortens `step` and `phase` in the middle, then `run`. A `step.failed` or `step.settled` line
 carries the step's error text as `msg` (the message of the failure, never its stack). The runner
 first bounds it to one line, with newlines and whitespace runs collapsed to single spaces, anything
-from the first stack-frame line (`at ...`) on dropped, and at most 500 characters (code points,
+from the first stack-frame line (an indented `at fn (file:1:2)` or `at file:1:2` line; a message
+line that merely starts with `at ` is kept) on dropped, and at most 500 characters (code points,
 ending in `…` when cut); the usual 200-byte `msg` budget then applies. An empty message writes no
 `msg`. The full text and the stack stay in the run record and `inspect`. The text is whatever the
 step threw, so a workflow that puts a sensitive value in an exception message now sees it in the

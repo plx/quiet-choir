@@ -16,6 +16,7 @@ import {
   type WorkflowEvent,
 } from '../src/index.js';
 import { MAX_RUN_EVENTS } from '../src/workflow/runtime/observability.js';
+import { recordEventLines } from '../src/workflow/loader/event-follow.js';
 import { summarizeRun } from '../src/workflow/loader/inspection.js';
 
 let stateDir: string;
@@ -627,6 +628,46 @@ it('bounds a long multi-line step error to one line of at most 500 code points w
   expect((await readRun({ ...options(), runId: 'stacked-run' })).steps['stacked']?.error).toContain(
     'at foo',
   );
+});
+
+it('keeps a step error that starts with "at " on its events and event-follow lines', async () => {
+  const events = await failureEvents(
+    async (ctx) => {
+      await ctx.step('quorum', {
+        input: null,
+        schema: z.string(),
+        run: () => {
+          throw new Error('at least one reviewer is required');
+        },
+      });
+    },
+    { runId: 'at-message' },
+  );
+  expect(events.find((event) => event.type === 'step.failed')?.error).toBe(
+    'at least one reviewer is required',
+  );
+  const soft = await failureEvents(
+    async (ctx) => {
+      await ctx.step('soft', {
+        input: null,
+        schema: z.string(),
+        onError: 'return',
+        run: () => {
+          throw new Error('Failed:\nat noon the job stopped');
+        },
+      });
+    },
+    { runId: 'at-settled' },
+  );
+  expect(soft.find((event) => event.type === 'step.settled')?.error).toBe(
+    'Failed: at noon the job stopped',
+  );
+  const followed = async (runId: string, ev: string) =>
+    recordEventLines(await readRun({ ...options(), runId }), null, 'all')
+      .lines.map((line) => JSON.parse(line) as { ev: string; msg?: string })
+      .find((line) => line.ev === ev)?.msg;
+  expect(await followed('at-message', 'step.failed')).toBe('at least one reviewer is required');
+  expect(await followed('at-settled', 'step.settled')).toBe('Failed: at noon the job stopped');
 });
 
 it('carries the error on step.settled for onError: return and none on step.cancelled', async () => {

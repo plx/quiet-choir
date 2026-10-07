@@ -24,6 +24,40 @@ describe('stepEventError', () => {
     expect(stepEventError('failed at step 3\nand again')).toBe('failed at step 3 and again');
   });
 
+  it('keeps ordinary message lines that start with "at "', () => {
+    expect(stepEventError('at least one finding is required')).toBe(
+      'at least one finding is required',
+    );
+    expect(stepEventError('at least one recipient is required')).toBe(
+      'at least one recipient is required',
+    );
+    expect(stepEventError('Review failed:\nat least 2 approvals')).toBe(
+      'Review failed: at least 2 approvals',
+    );
+    expect(stepEventError('Job failed\nat noon the job ran out of time\nand stopped')).toBe(
+      'Job failed at noon the job ran out of time and stopped',
+    );
+    // A message line, then a real frame: only the frame and what follows are cut.
+    expect(
+      stepEventError(
+        'Error: bad\nat noon it broke\n    at foo (file.js:1:1)\n    at bar (x.js:2:2)',
+      ),
+    ).toBe('Error: bad at noon it broke');
+  });
+
+  it.each([
+    ['    at foo (file.js:1:1)'],
+    ['    at file:///a/b.js:1:1'],
+    ['    at async foo (file.js:1:1)'],
+    ['    at new Foo (file.js:1:1)'],
+    ['    at Array.map (native)'],
+    ['    at Object.<anonymous> (<anonymous>)'],
+    ['    at foo (file.js:1:1)\r'],
+  ])('treats %j as a stack frame', (frame) => {
+    expect(stepEventError(`boom\n${frame}\n    at bar (file.js:2:2)`)).toBe('boom');
+    expect(stepEventError(frame)).toBeUndefined();
+  });
+
   it.each([undefined, null, '', '  \n\t ', '    at foo (file.js:1:1)'])(
     'returns undefined when nothing remains (%j)',
     (text) => {
