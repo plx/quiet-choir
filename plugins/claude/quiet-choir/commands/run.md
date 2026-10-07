@@ -100,12 +100,11 @@ their questions, so read the open questions without loading workflow code:
 <!-- skills-check: example run-pending -->
 
 ```sh
-node "$QC_CHECKOUT/bin/run.js" workflow pending --state-dir "$QC_RUNS" --json
+node "$QC_CHECKOUT/bin/run.js" workflow pending --state-dir "$QC_RUNS" --run "$QC_RUN" --json
 ```
 
-The default listing already omits answered rows and rows of ended runs, so filter only by `runId`
-(`pending` has no `--run` flag). For each `pending[]` entry whose `runId` is this run, ask the user
-with AskUserQuestion, mapping it as the
+The listing is limited to this run and already omits answered rows and rows of ended runs. For each
+`pending[]` entry, ask the user with AskUserQuestion, mapping it as the
 [answer loop](../skills/quiet-choir/references/operating-runs.md#answer-a-suspended-run) describes,
 and never choose a human's answer yourself. Set `QC_STEP` to the entry's `stepId`, `QC_ANSWER` to
 the answer JSON, and `QC_BY` to `human:` plus the user's name (or `agent:claude-code` for an `agent`

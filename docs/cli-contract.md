@@ -85,8 +85,13 @@ the answer; every other row gets `[]`, because a running owner ingests the answe
 By default `pending` lists only rows that still need an answer: it hides rows whose delivery is
 `queued` and rows of `failed`, `cancelled` or `completed` runs, and reports how many it hid in
 `hidden`. Rows of running runs stay, so a `--wait-mode block` run's live question is listed. `--all`
-lists every row (`hidden` is then 0). The library `listPending` is not filtered: it returns every
-waiting row, with `runStatus` and `delivery` added.
+lists every row (`hidden` is then 0). `--run RUN` (repeatable; duplicates are ignored) lists only
+the named runs. It applies before default hiding and `--all`, so `hidden` counts only the named
+runs' rows, and a known run with nothing waiting returns `pending: []`. An invalid ID is
+`usage.run_id` (exit 2); an ID found in no searched container is `run.not_found` (exit 3, naming the
+first unknown ID), as for the other run commands. Only the named records are read, so a damaged
+record of another run does not fail the listing. The library `listPending` is not filtered: it
+returns every waiting row, with `runStatus` and `delivery` added.
 
 `answer.invalid` (exit 2) carries `error.details.issues`, an array of `{code, path, message}` where
 `path` locates the offending field in the answer (`["approved"]`; `[]` for the whole value). A value

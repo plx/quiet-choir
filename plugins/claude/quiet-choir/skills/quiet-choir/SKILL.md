@@ -150,8 +150,8 @@ start's error document: a usage error (2), `run.exists` (3), a type or import er
 `start.exited` (70) or `start.timeout` (124). That is why the exit alone is not enough.
 
 On 75, list the open questions with
-`node "$QC_CHECKOUT/bin/run.js" workflow pending --state-dir "$QC_RUNS" --json` (the snapshot names
-waiting steps, not their questions), map each `pending[]` entry of this run to an AskUserQuestion
+`node "$QC_CHECKOUT/bin/run.js" workflow pending --state-dir "$QC_RUNS" --run review-42 --json` (the
+snapshot names waiting steps, not their questions), map each `pending[]` entry to an AskUserQuestion
 question, then relaunch in the background the same way, with the answer and a new bounded watch, and
 re-arm Monitor:
 `workflow answer review-42 STEP --json 'VALUE' --resume --events "$QC_RUNS/review-42.events.jsonl"`

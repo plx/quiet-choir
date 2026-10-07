@@ -189,8 +189,9 @@ export default defineWorkflow({ name: 'ask', version: '1', input: z.object({}), 
   assert.equal(suspended.status, 'suspended');
   const [listed] = run('run-pending', ask);
   assert.equal(listed.kind, 'workflow.pending.result');
-  const open = listed.pending.filter((entry) => entry.runId === 'command-ask');
+  const open = listed.pending;
   assert.equal(open.length, 1);
+  assert.equal(open[0].runId, 'command-ask');
   assert.equal(open[0].prompt, 'Ship?');
   const answer = {
     ...ask,

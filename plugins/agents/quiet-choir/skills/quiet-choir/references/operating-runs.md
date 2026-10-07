@@ -160,9 +160,11 @@ node "$QC_CHECKOUT/bin/run.js" workflow pending --state-dir "$QC_RUNS" --json
 
 The listing shows only rows still awaiting an answer: rows whose answer is already queued and rows
 of failed, cancelled or completed runs are hidden, and `hidden` counts them; add `--all` to list
-everything. Each row has `runStatus`, `delivery` (`{state: "none" | "queued", at, by}`, null for a
-poll or deadline wait) and `next`: a queued row of a suspended or failed run carries the `resume`
-command that makes its owner ingest the answer, and a running run ingests it itself.
+everything. `--run RUN` (repeatable) lists only those runs, applies the same hiding and `--all`, and
+fails with `run.not_found` for an unknown ID, so a known run with nothing waiting prints
+`No pending waits.`. Each row has `runStatus`, `delivery` (`{state: "none" | "queued", at, by}`,
+null for a poll or deadline wait) and `next`: a queued row of a suspended or failed run carries the
+`resume` command that makes its owner ingest the answer, and a running run ingests it itself.
 
 Check `codeChanged` before asking the human to review possibly stale context. `true` means saved
 source bytes changed; `null` means paths were not recorded. Resolve code compatibility with
