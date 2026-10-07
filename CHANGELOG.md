@@ -2,6 +2,14 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `workflow pending --run RUN` (addition; no record format, `schemaRevision` or step identity
+  change): lists only the named runs, repeatable. It composes with the default hiding and `--all`
+  (`hidden` counts only the named runs), a known run with nothing waiting lists nothing, an invalid
+  ID is `usage.run_id` and an unknown one `run.not_found`. Only the named records are read, so a
+  damaged record of another run no longer fails the listing. Without the flag the output is
+  unchanged, and the library `listPending` stays unfiltered. `/quiet-choir:run` uses it instead of
+  filtering the JSON (#271).
+
 - Step error text on event lines (addition; no record format, `schemaRevision` or step identity
   change): `WorkflowEvent` gains an optional `error` on `step.failed` and `step.settled`, the step's
   error text bounded to one line of at most 500 characters with no stack. `--events` and

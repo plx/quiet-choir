@@ -10,6 +10,7 @@ export default class WorkflowPending extends WorkflowCommand {
     readonly 'state-dir': string | undefined;
     readonly json: boolean | undefined;
     readonly all: boolean | undefined;
+    readonly run: string[] | undefined;
   }> = {
     'state-dir': Flags.directory({
       description:
@@ -18,6 +19,10 @@ export default class WorkflowPending extends WorkflowCommand {
     json: Flags.boolean({ description: 'Print parked questions, polls, and deadlines as JSON' }),
     all: Flags.boolean({
       description: 'Include answered rows and rows of failed, cancelled or completed runs',
+    }),
+    run: Flags.string({
+      description: 'Only list this run (repeatable); an unknown run ID is an error',
+      multiple: true,
     }),
   };
   public static override readonly summary = 'List parked waits without loading workflow code';
@@ -39,6 +44,7 @@ export default class WorkflowPending extends WorkflowCommand {
           : [],
       stateDir: stateDir,
       ...(flags.all === undefined ? {} : { all: flags.all }),
+      ...(flags.run === undefined ? {} : { runIds: [...new Set(flags.run)] }),
     });
     if (!result.ok) this.failResult(result);
     if (result.kind === 'workflow.pending.result') {

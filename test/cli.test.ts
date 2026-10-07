@@ -1305,6 +1305,34 @@ describe('pending command exit and error codes', () => {
     );
   });
 
+  it('passes repeated --run IDs once each, in order, and omits runIds without the flag', async ({
+    cli,
+  }) => {
+    const stateDir = await stateDirectory();
+    const execute = vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
+      kind: 'workflow.pending.result',
+      ok: true,
+      pending: [],
+      hidden: 0,
+    });
+    await cli.run(WorkflowPending, [
+      '--state-dir',
+      stateDir,
+      '--run',
+      'a',
+      '--run',
+      'b',
+      '--run',
+      'a',
+    ]);
+    expect(execute.mock.calls[0]?.[0]).toMatchObject({
+      kind: 'workflow.pending',
+      runIds: ['a', 'b'],
+    });
+    await cli.run(WorkflowPending, ['--state-dir', stateDir]);
+    expect(execute.mock.calls[1]?.[0]).not.toHaveProperty('runIds');
+  });
+
   it('renders the pending result as JSON', async ({ cli }) => {
     const stateDir = await stateDirectory();
     vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
