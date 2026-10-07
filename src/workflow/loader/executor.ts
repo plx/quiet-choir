@@ -487,7 +487,8 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         });
       }
       if (plan.kind === 'workflow.pending') {
-        if (plan.runIds?.some((runId) => !isValidRunId(runId)))
+        const runIds = plan.runIds === undefined ? undefined : [...new Set(plan.runIds)];
+        if (runIds?.some((runId) => !isValidRunId(runId)))
           return workflowFailure('usage.run_id', runIdMessage, context);
         stage = 'run.unreadable';
         const launcher = this.#options.commandLauncher;
@@ -496,7 +497,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
           [...new Set([plan.stateDir, ...(plan.additionalStateDirs ?? [])])].map(
             async (stateDir) => {
               let groups;
-              if (plan.runIds === undefined)
+              if (runIds === undefined)
                 groups = await listPendingRuns({
                   stateDir,
                   ...(launcher === undefined ? {} : { commandLauncher: launcher }),
@@ -504,7 +505,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
               else {
                 const listed = await listPendingRunsById({
                   stateDir,
-                  runIds: plan.runIds,
+                  runIds,
                   ...(launcher === undefined ? {} : { commandLauncher: launcher }),
                 });
                 for (const runId of listed.found) found.add(runId);
@@ -514,7 +515,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
             },
           ),
         );
-        const missing = plan.runIds?.find((runId) => !found.has(runId));
+        const missing = runIds?.find((runId) => !found.has(runId));
         if (missing !== undefined)
           throw await missingRunError({ stateDir: plan.stateDir, runId: missing });
         return {

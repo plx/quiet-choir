@@ -319,6 +319,16 @@ describe('workflow.pending through the executor', () => {
     });
   });
 
+  it('lists each run once when a plan repeats a run ID', async () => {
+    await runWorkflow(ask('dup'), { stateDir: runs, runId: 'dup', input: null });
+    const listed = await new WorkflowExecutor({
+      logger: { log: () => undefined },
+      commandLauncher: launcher,
+    }).execute({ kind: 'workflow.pending', stateDir: runs, runIds: ['dup', 'dup'] });
+    if (listed.kind !== 'workflow.pending.result') throw new Error('Expected a pending result.');
+    expect(listed.pending.map((r) => [r.runId, r.stepId])).toEqual([['dup', 'gate']]);
+  });
+
   it('lists a block-mode running run with an unanswered question by default', async () => {
     const options = { stateDir: runs, runId: 'blocked', input: null, waitMode: 'block' as const };
     const running = runWorkflow(ask('blocked'), options);
