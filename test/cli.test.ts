@@ -1610,14 +1610,7 @@ describe('workflow start adapter', () => {
     const execute = vi
       .spyOn(StartWorkflowExecutor.prototype, 'execute')
       .mockResolvedValue(started(stateDir));
-    const output = await cli.run(WorkflowStart, [
-      'wf.ts',
-      '--state-dir',
-      stateDir,
-      '--json',
-      '--kill-grace-ms',
-      '0',
-    ]);
+    const output = await cli.run(WorkflowStart, ['wf.ts', '--state-dir', stateDir, '--json']);
     expect(output.error).toBeUndefined();
     const plan = execute.mock.calls[0]?.[0];
     expect(plan?.runId).toMatch(/^[0-9a-f-]{36}$/u);
