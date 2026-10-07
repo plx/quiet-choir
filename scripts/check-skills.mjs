@@ -100,9 +100,10 @@ function checkPreExecution(text, file) {
       !line.includes('!`'),
       `${where}: Claude Code runs !\`...\` at load time, before the model reads the file; put the command in a shell fence for the model to run, with exported QC_* variables as commands/run.md does`,
     );
-    // A raw line scan, not the Markdown fence parser: Claude Code's match ignores nesting and indent.
+    // A raw, unanchored line scan, not the Markdown fence parser: Claude Code's match ignores nesting,
+    // indent and any text before the marker, so a fence inside a comment or prose is still run.
     requireThat(
-      !/^\s*(?:`{3,}|~{3,})\s*!/u.test(line),
+      !/(?:`{3,}|~{3,})[ \t]*!/u.test(line),
       `${where}: Claude Code runs a fence whose info string starts with ! at load time, before the model reads the file; use a shell fence for the model to run, with exported QC_* variables as commands/run.md does`,
     );
   });

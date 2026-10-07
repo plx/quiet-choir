@@ -325,6 +325,16 @@ for (const [label, transform, expected] of [
     (text) => `${text}\n    \`\`\`!\n    date\n    \`\`\`\n`,
     /run\.md:\d+: Claude Code runs a fence whose info string starts with !/u,
   ],
+  [
+    'a command fence marker after other text in an HTML comment',
+    (text) => `${text}\n<!-- \`\`\`!printf preexecution\`\`\` -->\n`,
+    /run\.md:\d+: Claude Code runs a fence whose info string starts with !/u,
+  ],
+  [
+    'a command fence marker after other text in prose',
+    (text) => `${text}\nsee \`\`\`!date\`\`\` here\n`,
+    /run\.md:\d+: Claude Code runs a fence whose info string starts with !/u,
+  ],
 ])
   test(`rejects ${label}`, async () => {
     await fixture(async (root) => {
