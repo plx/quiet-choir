@@ -59,5 +59,7 @@ filesystem. The CLI adapter builds a plain-data plan; `StartWorkflowExecutor` ru
   remove it once the runner has exited.
 - The public `CliErrorCode` union gains `start.timeout` and `start.exited`.
 - `start` does not cover `--resume` or `--dry-run`: a dry-run removes its state, so no record would
-  appear, and a detached resume is a separate decision.
+  appear, and a detached resume is a separate decision. [0056](0056-detached-resume.md) later
+  accepts `--resume` (with `--kill-orphans` and `--accept-code-change`) under its own readiness
+  rule, and refuses `--dry-run`, `--stub-steps` and `--full` with a foreground hint.
 - Detached sessions and process-group signals are POSIX behaviour; Windows is not claimed.

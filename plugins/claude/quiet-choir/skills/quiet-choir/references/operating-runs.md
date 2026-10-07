@@ -31,6 +31,17 @@ host in `<n>.runner.json`. A pre-record failure leaves `<runId>/launch/` without
 runner has exited, `workflow list` reports it under `leftoverLaunches` (a `Leftover launch` line in
 text) with the `workflow rm` command that removes it.
 
+`workflow start --resume --run-id ID [FILE] [execute flags]` resumes an existing run detached, for
+example after a SIGTERM suspension or a crash; `--kill-orphans` and `--accept-code-change` work as
+for execute, and `--start-timeout` also covers their recovery and checks. It returns once the new
+runner has recorded its own execution in the record (`status` is then usually `running`), or, for a
+completed run, once the runner returned the stored output. A refusal by the runner (`run.locked`,
+`run.orphans`, `run.incompatible`, `run.input_changed`) comes back with its own code and the run's
+`runId`, never as a start. A missing run is `run.not_found` and a missing `--run-id` is
+`usage.resume_requires_run_id`, both before anything is launched. The launch files take the next
+`n`, so `launch/1.*` from the first start stays. `--dry-run`, `--stub-steps` and `--full` are
+refused with `usage.flag`; `next[0]` is the same command as a foreground `workflow execute`.
+
 `--json` writes one completion, suspension, or failure document to stdout; logs and workflow console
 output go to stderr. Execute, resume and `answer --resume` print a compact result by default
 (`runId`, `stateDir`, `status`, `output`, `usage`, `counts`, `rootCause`, `warnings`; a suspension

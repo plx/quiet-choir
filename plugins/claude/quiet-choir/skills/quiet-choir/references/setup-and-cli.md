@@ -87,7 +87,7 @@ errors, and answers; keep them private. See
 | `workflow typecheck FILE`                | Compiler analysis only; does not import the workflow                                                        |
 | `workflow validate FILE`                 | Typechecks, lints (QC findings exit 4), imports, checks the export and I/O schema conversion; skips `run`   |
 | `workflow execute FILE`                  | Typechecks, warns about durability lint findings, imports, and executes or resumes                          |
-| `workflow start FILE`                    | Launches execute detached; returns once the run record exists                                               |
+| `workflow start FILE`                    | Launches execute detached; returns once the run record exists; `--resume --run-id ID` resumes detached      |
 | `workflow check-resume FILE --run-id ID` | Typechecks/imports and compares run gates without a writer lock or workflow-body execution                  |
 | `workflow fixtures RUN_ID`               | Export agent outputs, settled and absorbed agent failures as reusable fixture JSON without importing source |
 | `workflow list`                          | Lists run summaries with status filters without importing source                                            |

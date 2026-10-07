@@ -114,3 +114,5 @@ part of the documentation.
 - [0054: Bound call-site Claude directories by declared profile roots](0054-bounded-call-site-adddirs.md)
 
 - [0055: Remove leftover launch directories through rm](0055-remove-leftover-launch-directories.md)
+
+- [0056: Detached resume reports a run only when its runner records an execution](0056-detached-resume.md)

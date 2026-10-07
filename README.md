@@ -183,8 +183,11 @@ and refuses with exit 3 otherwise (a plain signal saves a resumable suspension i
 `workflow start FILE [execute flags] [--json]` runs `workflow execute` as a detached background
 runner and returns the run ID once the run's record exists, so an immediate `workflow inspect` reads
 it; a failure before the record exists (such as a type error) is reported with the runner's error
-and no run ID. The runner's result document and log are kept owner-only under
-`<state>/<run>/launch/`, and `--start-timeout` (default 60s) bounds the wait (see
+and no run ID. `workflow start --resume --run-id ID` resumes an existing run detached and returns
+once its new runner has recorded an execution, or reports the runner's refusal; `--dry-run`,
+`--stub-steps` and `--full` are refused with a hint to run `workflow execute` in the foreground. The
+runner's result document and log are kept owner-only under `<state>/<run>/launch/`, and
+`--start-timeout` (default 60s) bounds the wait (see
 [workflow start](docs/cli-contract.md#workflow-start)). `workflow events RUN --follow` prints the
 run's compact event lines from its record, without importing the workflow, and exits with the watch
 codes when the run ends (see [event follower](docs/cli-contract.md#event-follower)).
