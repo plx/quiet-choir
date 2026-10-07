@@ -610,6 +610,36 @@ describe('relaunchNextCommands', () => {
     ]);
   });
 
+  describe('with the runner launcher', () => {
+    const runnerLauncher = [
+      '/usr/bin/node',
+      '--title',
+      'workflow',
+      '--import',
+      'tsx',
+      '/abs/bin/dev.js',
+    ];
+    const resumeArgs = ['resume', 'r1', '--state-dir', stateDir];
+
+    it('ends the program words after the runner launcher even when one of them is workflow', () => {
+      const next = [entry([...runnerLauncher, 'workflow', ...resumeArgs], 'Resume.')];
+      expect(relaunchNextCommands(next, ['quiet-choir'], runnerLauncher)).toEqual([
+        { why: 'Resume.', argv: ['quiet-choir', 'workflow', ...resumeArgs] },
+      ]);
+    });
+
+    it('falls back to the first workflow word for entries in other forms', () => {
+      const runner = ['/x/node', '/abs/bin/run.js', 'workflow', ...unlock];
+      const installed = ['quiet-choir', 'workflow', ...unlock];
+      expect(
+        relaunchNextCommands([entry(runner), entry(installed)], launcher, runnerLauncher),
+      ).toEqual([
+        { why: 'Release.', argv: [...prefix, ...unlock] },
+        { why: 'Release.', argv: [...prefix, ...unlock] },
+      ]);
+    });
+  });
+
   it('strips extra keys', () => {
     const next = [{ ...entry(['n', 'workflow', 'x']), extra: true }];
     expect(relaunchNextCommands(next, launcher)).toEqual([

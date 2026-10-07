@@ -228,10 +228,16 @@ describe('StartWorkflowExecutor', () => {
       });
     }
 
-    async function propagated(document: string, resume = false): Promise<WorkflowFailure> {
+    async function propagated(
+      document: string,
+      resume = false,
+      overrides: Partial<StartWorkflowPlan> = {},
+    ): Promise<WorkflowFailure> {
       const script = `process.stdout.write(${JSON.stringify(document)} + '\\n'); process.exit(3);`;
       return failed(
-        await executor({ commandLauncher: ['quiet-choir'] }).execute(plan(script, { resume })),
+        await executor({ commandLauncher: ['quiet-choir'] }).execute(
+          plan(script, { resume, ...overrides }),
+        ),
       );
     }
 
@@ -259,6 +265,20 @@ describe('StartWorkflowExecutor', () => {
           why: resumeEntry.why,
           argv: ['quiet-choir', 'workflow', 'resume', 'r1', '--state-dir', stateDir],
         },
+      ]);
+    });
+
+    it('ends the program words after the plan’s runner launcher, even one with a workflow word', async () => {
+      const launcherWithWorkflow = [process.execPath, '--title', 'workflow', '/abs/bin/dev.js'];
+      const args = ['unlock', 'r1', '--state-dir', stateDir];
+      const next = [
+        { why: 'Release the lock.', argv: [...launcherWithWorkflow, 'workflow', ...args] },
+      ];
+      const failure = await propagated(refusal('run.locked', next), false, {
+        runnerLauncher: launcherWithWorkflow,
+      });
+      expect(failure.next).toEqual([
+        { why: 'Release the lock.', argv: ['quiet-choir', 'workflow', ...args] },
       ]);
     });
 

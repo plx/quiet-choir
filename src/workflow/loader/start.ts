@@ -45,6 +45,12 @@ export interface StartWorkflowPlan extends ExecutionPlan {
   /** The runner's full argv, program words first, ending with `--json` (before any `--`). */
   readonly argv: readonly string[];
   /**
+   * The program words at the start of {@link argv} (before `workflow execute`). The runner's
+   * refusal `next` entries normally start with them, which marks where those entries' program words
+   * end when they are rebuilt behind this invocation's launcher.
+   */
+  readonly runnerLauncher?: CommandLauncher;
+  /**
    * Input read from this process's stdin. It is written to `launch/<n>.input.json` and
    * `argv[argvIndex]` (the value of `--input`) is replaced with `@<that file>`, because the runner's
    * stdin is `/dev/null`.
@@ -641,7 +647,11 @@ export class StartWorkflowExecutor implements Executor<
               diagnostics: Array.isArray(diagnostics)
                 ? (diagnostics as (TypecheckDiagnostic | DurabilityDiagnostic)[])
                 : [],
-              next: relaunchNextCommands(document?.['next'], this.#options.commandLauncher),
+              next: relaunchNextCommands(
+                document?.['next'],
+                this.#options.commandLauncher,
+                plan.runnerLauncher,
+              ),
             },
           );
         }
