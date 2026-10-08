@@ -32,6 +32,7 @@ import {
   type ProcessRunner,
   type RunOptions,
   type WorkflowContext,
+  type MergeOptions,
   type MergeResult,
   type Settled,
   ReplaySkippedError,
@@ -47,6 +48,7 @@ import {
 } from '../src/workflow/runtime/worktrees.js';
 import { repairWorktreeRegistrations } from '../src/workflow/runtime/worktree-recovery.js';
 import { cleanWorktrees } from '../src/workflow/runtime/worktree-clean.js';
+import { rehearsalState } from '../src/workflow/loader/rehearsal.js';
 import { testInvocation } from './harness-invocation.js';
 import { holdAdminLock } from './worktree-admin-holder.js';
 
@@ -1374,6 +1376,8 @@ it('synthesizes isolated calls and their merge under dry-run with read-only rev-
         inputs: 2,
         target: 'ref',
         baseSource: 'resolved',
+        merged: [],
+        conflicts: [],
       },
     ]);
     const record = await readRun({ stateDir, runId });
@@ -1557,13 +1561,6 @@ it.each([
     (ctx: WorkflowContext, handle: WorktreeHandle) =>
       ctx.codex.text('edit', { prompt: 'edit', worktree: handle }),
   ],
-  [
-    'a merge of a captured commit',
-    (ctx: WorkflowContext, handle: WorktreeHandle) =>
-      ctx.merge('integrate', [
-        { base: handle.base, commit: handle.base, ref: 'refs/x', files: [] },
-      ]),
-  ],
 ])('still refuses %s under dry-run before any Git', async (_name, body) => {
   const spy = spyRunner();
   const invoke = vi.fn<Harness['invoke']>(() => Promise.resolve(response));
@@ -1592,6 +1589,426 @@ it.each([
   expect((failure as Error).message).toContain('fixture harness in a temporary repository');
   expect(spy.commands).toEqual([]);
   expect(invoke).not.toHaveBeenCalled();
+});
+
+/** Loose and packed object counts, which any object written into the repository changes. */
+async function objectCounts(): Promise<string> {
+  return (await command('count-objects', '-v'))
+    .split('\n')
+    .filter((line) => /^(?:count|size|in-pack|packs|size-pack):/u.test(line))
+    .join('\n');
+}
+/** Everything a merge preview must leave alone: objects, refs, registered worktrees and caches. */
+async function repositoryState(): Promise<Record<string, unknown>> {
+  return { ...(await gitState()), objects: await objectCounts() };
+}
+const quarantinePrefix = 'quiet-choir-rehearsal-objects-';
+/** Point os.tmpdir() at a fresh directory, so a test sees the rehearsal's quarantine directories. */
+async function temporaryParent(): Promise<() => Promise<string[]>> {
+  const parent = join(directory, 'tmp');
+  await mkdir(parent);
+  vi.stubEnv('TMPDIR', parent);
+  return async () => (await readdir(parent)).filter((name) => name.startsWith(quarantinePrefix));
+}
+/** A runner that records each Git subcommand and the object directory it was pointed at. */
+function objectSpy() {
+  const commands: { args: string[]; objects: string | undefined }[] = [];
+  const runner: ProcessRunner = {
+    run: (request, invocation) => {
+      const argv = Array.isArray(request.command) ? [...(request.command as string[])] : [];
+      commands.push({
+        args: argv.slice(argv.indexOf('-C') + 2),
+        objects: request.env['GIT_OBJECT_DIRECTORY'],
+      });
+      return processRunner.run(request, invocation);
+    },
+  };
+  return { runner, commands };
+}
+/** A disposable copy of a run's checkpoint, as the CLI's dry-run resume makes. */
+async function copyRun(runId: string): Promise<string> {
+  const copy = await rehearsalState(runId, stateDir, true);
+  copies.push(copy.dispose);
+  return copy.stateDir;
+}
+const copies: (() => Promise<void>)[] = [];
+afterEach(async () => {
+  vi.useRealTimers();
+  vi.unstubAllEnvs();
+  for (const dispose of copies.splice(0)) await dispose();
+});
+/**
+ * Isolated edits (each appends its step ID to file.txt), then, unless `gate.stop` is set, a merge of
+ * them with `gate.options`; the output is the merge result.
+ */
+function capturedMerge(name: string, edits: readonly string[], gate: PreviewGate) {
+  return defineWorkflow({
+    name,
+    version: '1',
+    input: z.null(),
+    output: z.string(),
+    async run(ctx) {
+      const changes = [];
+      for (const edit of edits) {
+        const result = await ctx.codex.text(edit, { prompt: edit, worktree: true });
+        if (!result.worktree?.commit) throw new Error('missing captured change');
+        changes.push(result.worktree);
+      }
+      if (gate.stop) throw new Error('stopped before the merge');
+      return JSON.stringify(await ctx.merge('integrate', changes, gate.options));
+    },
+  });
+}
+interface PreviewGate {
+  stop: boolean;
+  options: MergeOptions;
+}
+/** Dry-run options for a resume or fork in `state`, reporting merge events into `events`. */
+function dryRun(runId: string, state: string, events: WorktreeEvent[], runner: ProcessRunner) {
+  return {
+    ...options(runId),
+    stateDir: state,
+    rehearsal: { onWorktree: (event: WorktreeEvent) => events.push(event) },
+    harness: {
+      kind: 'dry-run',
+      invoke: () => Promise.reject(new Error('a replayed call was invoked')),
+    } satisfies Harness,
+    allowHarnessChange: true,
+    processRunner: runner,
+  };
+}
+
+it('previews a merge of a captured commit in a dry-run resume like the real resume, writing nothing', async () => {
+  const author = { name: 'Preview', email: 'preview@localhost' };
+  const gate: PreviewGate = {
+    stop: true,
+    options: { commit: { message: 'Preview merge', author } },
+  };
+  const workflow = capturedMerge('preview', ['edit'], gate);
+  const harness = editingHarness();
+  await expect(
+    runWorkflow(workflow, { ...options('preview'), harness, input: null }),
+  ).rejects.toThrow('stopped before the merge');
+  const edit = (await readRun({ stateDir, runId: 'preview' })).steps['edit']?.worktree?.commit;
+  assert(edit);
+  const copy = await copyRun('preview');
+  const before = await repositoryState();
+  const quarantines = await temporaryParent();
+  const spy = objectSpy();
+  const events: WorktreeEvent[] = [];
+  gate.stop = false;
+  // A frozen clock gives the preview and the real merge the same attempt start, hence commit date.
+  vi.useFakeTimers({ toFake: ['Date'], now: new Date('2030-01-02T03:04:05.678Z') });
+  const dry = await runWorkflow(workflow, {
+    ...dryRun('preview', copy, events, spy.runner),
+    resume: true,
+  });
+  const preview = JSON.parse(dry.output ?? 'null') as MergeResult;
+  expect(preview).toMatchObject({ merged: [edit], conflicts: [] });
+  expect(events).toEqual([
+    expect.objectContaining({
+      kind: 'merge',
+      stepId: 'integrate',
+      commit: preview.commit,
+      merged: [edit],
+      conflicts: [],
+      baseSource: 'resolved',
+    }),
+  ]);
+  // Only the four quarantined commands ran, and every object computation used the quarantine.
+  expect([...new Set(spy.commands.map(({ args }) => args[0]))].sort()).toEqual([
+    'commit-tree',
+    'merge-tree',
+    'rev-parse',
+  ]);
+  for (const { args, objects } of spy.commands)
+    if (args[0] !== 'rev-parse') expect(objects?.includes(quarantinePrefix)).toBe(true);
+  expect(await repositoryState()).toEqual(before);
+  expect(await quarantines()).toEqual([]);
+  expect(await command('cat-file', '-t', edit)).toBe('commit');
+  const real = await runWorkflow(workflow, { ...options('preview'), harness, resume: true });
+  vi.useRealTimers();
+  // The same computation: a real resume at the same instant creates the identical commit.
+  expect(JSON.parse(real.output ?? 'null')).toEqual(preview);
+  expect(await command('show', `${preview.commit}:file.txt`)).toBe('base\nedit');
+  expect(await command('log', '-1', '--format=%s|%an|%cn', preview.commit)).toBe(
+    'Preview merge|Preview|Preview',
+  );
+  expect(harness.invoke).toHaveBeenCalledTimes(1);
+});
+
+it('previews a merge of a completed isolated step reused by a dry-run fork', async () => {
+  const gate: PreviewGate = { stop: true, options: {} };
+  const workflow = capturedMerge('fork-preview', ['edit'], gate);
+  await expect(
+    runWorkflow(workflow, { ...options('source'), harness: editingHarness(), input: null }),
+  ).rejects.toThrow('stopped before the merge');
+  const edit = (await readRun({ stateDir, runId: 'source' })).steps['edit']?.worktree?.commit;
+  assert(edit);
+  const target = join(directory, 'fork-state');
+  const before = await repositoryState();
+  const quarantines = await temporaryParent();
+  const events: WorktreeEvent[] = [];
+  gate.stop = false;
+  const dry = await runWorkflow(workflow, {
+    ...dryRun('fork', target, events, processRunner),
+    forkFrom: { runId: 'source', stateDir },
+    input: null,
+  });
+  expect(dry.steps['edit']?.reusedFrom).toBeDefined();
+  const preview = JSON.parse(dry.output ?? 'null') as MergeResult;
+  expect(preview).toMatchObject({ merged: [edit], conflicts: [] });
+  expect(preview.commit).not.toBe(await command('rev-parse', 'HEAD'));
+  expect(events).toEqual([
+    expect.objectContaining({ kind: 'merge', merged: [edit], conflicts: [] }),
+  ]);
+  expect(await repositoryState()).toEqual(before);
+  expect(await quarantines()).toEqual([]);
+  // The preview's commit was discarded with the quarantine.
+  const gone = await git.run(repo, ['cat-file', '-e', `${preview.commit}^{commit}`], invocation, {
+    codes: [0, 1, 128],
+  });
+  expect(gone.code).not.toBe(0);
+});
+
+it('keeps a preview commit resolvable by later rehearsal steps', async () => {
+  let stop = true;
+  const workflow = defineWorkflow({
+    name: 'stacked',
+    version: '1',
+    input: z.null(),
+    output: z.string(),
+    async run(ctx) {
+      const edit = await ctx.codex.text('edit', { prompt: 'edit', worktree: true });
+      if (!edit.worktree?.commit) throw new Error('missing captured change');
+      if (stop) throw new Error('stopped before the merge');
+      const merged = await ctx.merge('integrate', [edit.worktree]);
+      const review = await ctx.codex.text('review', {
+        prompt: 'review',
+        worktree: { base: { commit: merged.commit } },
+      });
+      if (!review.worktree) throw new Error('missing synthesized change');
+      const again = await ctx.merge('again', [review.worktree]);
+      return JSON.stringify({ merged, review: review.worktree.base, again });
+    },
+  });
+  await expect(
+    runWorkflow(workflow, { ...options('stacked'), harness: editingHarness(), input: null }),
+  ).rejects.toThrow('stopped before the merge');
+  const copy = await copyRun('stacked');
+  const before = await repositoryState();
+  stop = false;
+  const events: WorktreeEvent[] = [];
+  const invoke = vi.fn<Harness['invoke']>(() => Promise.resolve(response));
+  const run = await runWorkflow(workflow, {
+    ...dryRun('stacked', copy, events, processRunner),
+    harness: { kind: 'dry-run', invoke },
+    resume: true,
+  });
+  const output = JSON.parse(run.output ?? 'null') as {
+    merged: MergeResult;
+    review: string;
+    again: MergeResult;
+  };
+  expect(output.review).toBe(output.merged.commit);
+  // An unchanged change based on the preview passes the real input check (its base resolves) and
+  // integrates nothing onto the target's current commit.
+  const head = await command('rev-parse', 'HEAD');
+  expect(output.again).toEqual({ commit: head, merged: [], conflicts: [] });
+  expect(events).toEqual([
+    expect.objectContaining({ kind: 'merge', stepId: 'integrate' }),
+    expect.objectContaining({
+      kind: 'isolation',
+      stepId: 'review',
+      base: output.merged.commit,
+      baseSource: 'resolved',
+    }),
+    expect.objectContaining({ kind: 'merge', stepId: 'again', commit: head }),
+  ]);
+  expect(invoke).toHaveBeenCalledTimes(1);
+  expect(await repositoryState()).toEqual(before);
+});
+
+it('previews a merge of a replayed ctx.worktree handle from the copied ledger', async () => {
+  let stop = true;
+  const workflow = defineWorkflow({
+    name: 'handle-preview',
+    version: '1',
+    input: z.null(),
+    output: z.string(),
+    async run(ctx) {
+      const handle = await ctx.worktree('cache');
+      await ctx.codex.text('edit', { prompt: 'edit', worktree: handle });
+      if (stop) throw new Error('stopped before the merge');
+      // A git-config author is resolved with `git var`, which the quarantine also runs.
+      return JSON.stringify(
+        await ctx.merge('integrate', [handle], {
+          commit: { message: 'Handle merge', author: 'git-config' },
+        }),
+      );
+    },
+  });
+  await command('config', 'user.name', 'Configured');
+  await command('config', 'user.email', 'configured@localhost');
+  const harness = editingHarness();
+  await expect(
+    runWorkflow(workflow, { ...options('handle-preview'), harness, input: null }),
+  ).rejects.toThrow('stopped before the merge');
+  const ledger = (await readRun({ stateDir, runId: 'handle-preview' })).worktrees;
+  const latest = Object.values(ledger?.handles ?? {})[0]?.latest;
+  assert(latest);
+  const copy = await copyRun('handle-preview');
+  const before = await repositoryState();
+  const quarantines = await temporaryParent();
+  stop = false;
+  const events: WorktreeEvent[] = [];
+  vi.useFakeTimers({ toFake: ['Date'], now: new Date('2030-01-02T03:04:05.678Z') });
+  const dry = await runWorkflow(workflow, {
+    ...dryRun('handle-preview', copy, events, processRunner),
+    resume: true,
+  });
+  const preview = JSON.parse(dry.output ?? 'null') as MergeResult;
+  expect(preview).toMatchObject({ merged: [latest], conflicts: [] });
+  expect(events).toEqual([expect.objectContaining({ kind: 'merge', merged: [latest] })]);
+  expect(await repositoryState()).toEqual(before);
+  expect(await quarantines()).toEqual([]);
+  const real = await runWorkflow(workflow, { ...options('handle-preview'), harness, resume: true });
+  vi.useRealTimers();
+  expect(JSON.parse(real.output ?? 'null')).toEqual(preview);
+  expect(await command('log', '-1', '--format=%s|%an', preview.commit)).toBe(
+    'Handle merge|Configured',
+  );
+});
+
+it.each(['rebase', 'merge', 'squash'] as const)(
+  'reports conflicting captured commits like the real %s merge, and fails like it',
+  async (strategy) => {
+    const gate: PreviewGate = { stop: true, options: { strategy } };
+    const workflow = capturedMerge('conflicts', ['one', 'two'], gate);
+    const harness = editingHarness();
+    await expect(
+      runWorkflow(workflow, { ...options('conflicts'), harness, input: null }),
+    ).rejects.toThrow('stopped before the merge');
+    const steps = (await readRun({ stateDir, runId: 'conflicts' })).steps;
+    const [one, two] = ['one', 'two'].map((id) => steps[id]?.worktree?.commit);
+    assert(one && two);
+    const [report, fail, realFail] = [
+      await copyRun('conflicts'),
+      await copyRun('conflicts'),
+      await copyRun('conflicts'),
+    ];
+    const before = await repositoryState();
+    const quarantines = await temporaryParent();
+    gate.stop = false;
+    const events: WorktreeEvent[] = [];
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2030-01-02T03:04:05.678Z') });
+    const dry = await runWorkflow(workflow, {
+      ...dryRun('conflicts', report, events, processRunner),
+      resume: true,
+    });
+    const preview = JSON.parse(dry.output ?? 'null') as MergeResult;
+    expect(preview).toMatchObject({
+      merged: [one],
+      conflicts: [{ commit: two, files: ['file.txt'] }],
+    });
+    expect(events).toEqual([
+      expect.objectContaining({
+        kind: 'merge',
+        merged: [one],
+        conflicts: [{ commit: two, files: ['file.txt'] }],
+      }),
+    ]);
+    gate.options = { strategy, onConflict: 'fail' };
+    const message = `Merge input ${two} conflicts: file.txt`;
+    await expect(
+      runWorkflow(workflow, { ...dryRun('conflicts', fail, [], processRunner), resume: true }),
+    ).rejects.toThrow(message);
+    // Neither preview wrote into the repository, and both quarantines are gone, failure included.
+    expect(await repositoryState()).toEqual(before);
+    expect(await quarantines()).toEqual([]);
+    await expect(
+      runWorkflow(workflow, { ...options('conflicts'), stateDir: realFail, harness, resume: true }),
+    ).rejects.toThrow(message);
+    gate.options = { strategy };
+    const real = await runWorkflow(workflow, { ...options('conflicts'), harness, resume: true });
+    vi.useRealTimers();
+    expect(JSON.parse(real.output ?? 'null')).toEqual(preview);
+  },
+  // Five runs over real Git. measured: 1.6-1.9 s alone (dominated by Git processes).
+  20_000,
+);
+
+it('fails a preview over a commit missing from the repository like the real merge', async () => {
+  const head = await command('rev-parse', 'HEAD');
+  const spy = spyRunner();
+  const workflow = defineWorkflow({
+    name: 'missing',
+    version: '1',
+    input: z.null(),
+    output: z.null(),
+    async run(ctx) {
+      await ctx.merge('integrate', [{ base: head, commit: 'b'.repeat(40), ref: null, files: [] }]);
+      return null;
+    },
+  });
+  const quarantines = await temporaryParent();
+  await expect(
+    runWorkflow(workflow, {
+      ...options('missing'),
+      input: null,
+      rehearsal: {},
+      harness: { kind: 'dry-run', invoke: () => Promise.resolve(response) },
+      processRunner: spy.runner,
+    }),
+  ).rejects.toThrow('Merge input commit is unavailable in this repository.');
+  expect(spy.commands.every((args) => args[0] === 'rev-parse')).toBe(true);
+  expect(await quarantines()).toEqual([]);
+});
+
+it.each([
+  [
+    'a captured commit without a repository',
+    { base: 'a'.repeat(40), commit: 'b'.repeat(40), ref: null, files: [] },
+    'Dry-run needs the Git repository to preview a merge',
+  ],
+  [
+    'a foreign worktree handle',
+    { id: 'foreign', path: '/nowhere/handle', base: 'a'.repeat(40) },
+    'Worktree handle does not belong to this run; create it with ctx.worktree.',
+  ],
+])('fails a dry-run merge of %s with a configuration error', async (_name, input, text) => {
+  // A runner that answers nothing, as a synthesizing runner does: no repository resolves.
+  const run = vi.fn<ProcessRunner['run']>(() =>
+    Promise.resolve({
+      code: 0,
+      signal: null,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      durationMs: 0,
+    }),
+  );
+  const workflow = defineWorkflow({
+    name: 'no-repository',
+    version: '1',
+    input: z.null(),
+    output: z.null(),
+    async run(ctx) {
+      await ctx.merge('integrate', [input]);
+      return null;
+    },
+  });
+  const failure: unknown = await runWorkflow(workflow, {
+    ...options('no-repository'),
+    input: null,
+    rehearsal: {},
+    harness: { kind: 'dry-run', invoke: () => Promise.resolve(response) },
+    processRunner: { run },
+  }).catch((error: unknown) => error);
+  expect((failure as Error).message).toContain(text);
+  expect((failure as Error).cause).toBeInstanceOf(ConfigurationError);
+  // The handle check is pure; the repository lookup is the only command either case issues.
+  expect(run.mock.calls.length).toBeLessThanOrEqual(1);
 });
 
 /** Every checkpoint file of a run, by name, so a refusal can prove it wrote nothing. */

@@ -314,7 +314,7 @@ const rows: Row[] = [
     expected: fresh(true),
   },
   {
-    name: 'rehearsal runs a synthesized merge of unchanged changes',
+    name: 'rehearsal runs a synthesized (previewed) merge',
     input: { kind: 'merge', rehearsal: true, rehearsalSynthesized: true },
     expected: fresh(false),
   },
@@ -1255,7 +1255,7 @@ describe('replayRefusalMessage', () => {
     ],
     [
       { reason: 'rehearsal-git' },
-      'Dry-run does not simulate this Git worktree effect: it synthesizes fresh isolated agent calls and merges of unchanged changes, but not ctx.worktree, effects isolated on a worktree handle, or merges of captured commits. Use a fixture harness in a temporary repository to rehearse these without paid calls.',
+      'Dry-run does not simulate this Git worktree effect: it synthesizes fresh isolated agent calls and previews merges, but not ctx.worktree or effects isolated on a worktree handle. Use a fixture harness in a temporary repository to rehearse these without paid calls.',
     ],
   ];
 

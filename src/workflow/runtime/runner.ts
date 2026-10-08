@@ -33,7 +33,6 @@ import { effectiveWorktreePolicy } from './worktree-policy.js';
 import {
   WorktreeRehearsal,
   canSynthesizeIsolation,
-  canSynthesizeMerge,
   type RehearsalWorktreeEvent,
 } from './worktree-rehearsal.js';
 import { isolationIdentity } from './worktree-identity.js';
@@ -427,8 +426,10 @@ export interface RunOptions extends WorkflowCodeOptions {
   /**
    * Process integration for worktree Git (provisioning, snapshots, merges), always, and for
    * commands when `execRunner` is unset; the core never spawns. Under `rehearsal` it serves only
-   * the read-only `git rev-parse` that resolves a synthesized base, plus an observer's or command
-   * poll's `live: true` command; every other Git command is refused before it reaches the runner.
+   * the read-only `git rev-parse` that resolves a synthesized base, a merge preview's `git
+   * merge-tree`, `git commit-tree` and `git var` against a temporary object directory, plus an
+   * observer's or command poll's `live: true` command; every other Git command is refused before
+   * it reaches the runner.
    */
   readonly processRunner?: ProcessRunner;
   /**
@@ -519,7 +520,7 @@ export interface RunOptions extends WorkflowCodeOptions {
     readonly onSchema?: (stepId: string, schema: z.ZodType) => void;
     /**
      * Observe a synthesized worktree effect. A fresh isolated agent call is reported before its
-     * harness is invoked; a merge of unchanged changes is reported when it completes.
+     * harness is invoked; a merge is reported when its preview completes.
      */
     readonly onWorktree?: (
       event:
@@ -541,13 +542,20 @@ export interface RunOptions extends WorkflowCodeOptions {
             readonly cwd: string;
           }
         | {
-            /** A merge of unchanged changes, answered with the no-op integration. */
+            /**
+             * A merge: unchanged changes get the no-op integration; captured commits and worktree
+             * handles are previewed with the real integration in a temporary object store that
+             * is removed when the run ends, so `commit` resolves only during the rehearsal.
+             */
             readonly kind: 'merge';
             /** Fully qualified step ID. */
             readonly stepId: string;
             /** Attempt number. */
             readonly attempt: number;
-            /** The target's current commit, or forty zeros outside a Git working tree. */
+            /**
+             * The previewed integration commit, the target's current commit when nothing was
+             * merged, or forty zeros outside a Git working tree.
+             */
             readonly commit: string;
             /** Number of merged inputs. */
             readonly inputs: number;
@@ -555,6 +563,13 @@ export interface RunOptions extends WorkflowCodeOptions {
             readonly target: 'ref' | 'checkout' | 'branch';
             /** `resolved` by a read-only `git rev-parse`, or a `placeholder`. */
             readonly baseSource: 'resolved' | 'placeholder';
+            /** Input commits the preview integrated, in input order, as `MergeResult.merged`. */
+            readonly merged: readonly string[];
+            /** Inputs that conflicted and the conflicting paths, as `MergeResult.conflicts`. */
+            readonly conflicts: readonly {
+              readonly commit: string;
+              readonly files: readonly string[];
+            }[];
           },
     ) => void;
   };
@@ -1632,8 +1647,9 @@ export async function runWorkflow<
       signal,
       options.rehearsal !== undefined,
     );
-    // Dry-run synthesizes fresh isolation and unchanged merges with read-only rev-parse only. The
-    // accepted-replay probe synthesizes every Git effect and gets no runner, so it runs no Git.
+    // Dry-run synthesizes fresh isolation with read-only rev-parse only, and previews merges in a
+    // quarantined temporary object store (#310). The accepted-replay probe synthesizes every Git
+    // effect and gets no runner, so it runs no Git.
     const probe = isPreflightProbe(options.rehearsal);
     const rehearsalWorktrees =
       options.rehearsal === undefined
@@ -1698,9 +1714,9 @@ export async function runWorkflow<
       readonly meta?: Readonly<Record<string, JsonValue>>;
       readonly isolation?: EffectIsolation;
       /**
-       * Under rehearsal, the effect is synthesized instead of touching Git: a fresh isolated agent
-       * call, or a merge of unchanged changes; under the accepted-replay probe, every Git effect.
-       * Omitted means false.
+       * Under rehearsal, the effect is synthesized instead of running real worktree Git: a fresh
+       * isolated agent call, or any merge (a no-op for unchanged changes, otherwise a quarantined
+       * preview); under the accepted-replay probe, every Git effect. Omitted means false.
        */
       readonly rehearsalSynthesized?: boolean;
     }
@@ -3570,15 +3586,22 @@ export async function runWorkflow<
             schema: mergeResultSchema,
             ...(onError === undefined ? {} : { onError }),
             execution: resolvePolicy(id, 'step', {}, {}, [], matchedPolicy),
-            ...(rehearsalWorktrees && (probe || canSynthesizeMerge(inputs))
+            // Under rehearsal every merge is synthesized: unchanged inputs integrate nothing, and
+            // captured commits and handles are previewed in a discarded object store (#310).
+            ...(rehearsalWorktrees
               ? {
                   rehearsalSynthesized: true,
-                  action: async (context: StepContext) => {
+                  action: async (
+                    context: StepContext,
+                    _step: StepRecord,
+                    attempt: AttemptRecord,
+                  ) => {
                     const synthesized = await rehearsalWorktrees.merge(
                       id,
                       inputs,
                       checked,
                       context,
+                      attempt.startedAt,
                     );
                     notifyWorktree(synthesized.event);
                     return synthesized.result;
@@ -4084,6 +4107,8 @@ export async function runWorkflow<
     } finally {
       activity.close();
       await questions.close();
+      // Every exit path has drained its operations, so no merge preview still writes into it.
+      await rehearsalWorktrees?.dispose();
     }
   }
   let outcome: { ok: true; run: WorkflowResult<TOutput> } | { ok: false; error: unknown };

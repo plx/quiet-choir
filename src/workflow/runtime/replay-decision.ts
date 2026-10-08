@@ -18,7 +18,7 @@
  * - Original format-one steps migrate only on an exact old-fingerprint match, never for a terminal
  *   agent step (its isolation mode was never pinned).
  * - Dry-run refuses Git effects after terminal replay but before fork reuse, unless the runner
- *   synthesizes the effect (a fresh isolated agent call, or a merge of unchanged changes; the
+ *   synthesizes the effect (a fresh isolated agent call, or a merge, which the runner previews; the
  *   accepted-replay probe synthesizes every Git effect, `ctx.worktree` included).
  * - Fork reuse is considered only for an absent step in a forked run.
  * - Strict healed divergence permits terminal replay and fork reuse but stops before the next live
@@ -88,9 +88,10 @@ export interface ReplayInput {
   readonly isolated: boolean;
   /**
    * Whether a dry-run synthesizes this Git effect instead of running it: a fresh isolated agent
-   * call, or a merge whose inputs are all unchanged changes. The accepted-replay probe (#217)
-   * synthesizes every Git effect, and only it synthesizes a `worktree` effect. Meaningful only
-   * under `rehearsal`.
+   * call, or a merge (the runner synthesizes every merge under rehearsal, previewing captured
+   * commits in a temporary object store, #310). The accepted-replay probe (#217) synthesizes every
+   * Git effect, and only it synthesizes a `worktree` effect. Meaningful only under `rehearsal`; a
+   * caller that does not synthesize a merge still gets it refused.
    */
   readonly rehearsalSynthesized: boolean;
   /** Whether a strict replay has already recorded a healed divergence. */
@@ -472,7 +473,7 @@ export function replayRefusalMessage(
     case 'terminal-redefined':
       return `Step ${id}: ${refusal.changed.join(', ') || 'identity'} changed on a ${refusal.status} step; --accept-code-change cannot reuse it. Fork a new run with --fork-from RUN --reuse matching --invalidate ${id}.`;
     case 'rehearsal-git':
-      return 'Dry-run does not simulate this Git worktree effect: it synthesizes fresh isolated agent calls and merges of unchanged changes, but not ctx.worktree, effects isolated on a worktree handle, or merges of captured commits. Use a fixture harness in a temporary repository to rehearse these without paid calls.';
+      return 'Dry-run does not simulate this Git worktree effect: it synthesizes fresh isolated agent calls and previews merges, but not ctx.worktree or effects isolated on a worktree handle. Use a fixture harness in a temporary repository to rehearse these without paid calls.';
   }
 }
 

@@ -49,16 +49,27 @@ export interface RehearsalCall {
     readonly baseSource: 'resolved' | 'recorded' | 'placeholder';
   } | null;
 }
-/** One `ctx.merge` of unchanged changes, answered with the no-op integration. @internal */
+/**
+ * One synthesized `ctx.merge`: the no-op integration of unchanged changes, or a preview over
+ * captured commits computed in a temporary object store that is removed after the rehearsal.
+ * @internal
+ */
 export interface RehearsalMerge {
   readonly stepId: string;
   readonly synthesized: true;
-  /** The target's current commit, or forty zeros outside a Git working tree. */
+  /**
+   * The previewed integration commit (it exists only during the rehearsal), the target's current
+   * commit when nothing was merged, or forty zeros outside a Git working tree.
+   */
   readonly commit: string;
   /** Number of merged inputs. */
   readonly inputs: number;
   readonly target: 'ref' | 'checkout' | 'branch';
   readonly baseSource: 'resolved' | 'placeholder';
+  /** Input commits the preview integrated, as a real merge's `merged`. */
+  readonly merged: readonly string[];
+  /** Conflicting inputs and paths, as a real merge's `conflicts`. */
+  readonly conflicts: readonly { readonly commit: string; readonly files: readonly string[] }[];
 }
 /**
  * One command reaching the rehearsal process runner, answered by a rule or synthesized, or an
@@ -305,7 +316,7 @@ export class RehearsalHarness extends FixtureHarness {
     },
     onWorktree: (event) => {
       this.warnings.add(
-        'Worktree effects are synthesized: isolated calls are planned in a placeholder directory that is never created, report unchanged trees and run no worktrees.setup, and merges integrate nothing. A branch on a captured change can differ from a real run.',
+        'Worktree effects are synthesized: isolated calls are planned in a placeholder directory that is never created, report unchanged trees and run no worktrees.setup, and merges of unchanged changes integrate nothing. Merges of captured commits are computed in a temporary object store that is discarded after the rehearsal, so their commit exists only during the preview. A branch on a captured change can differ from a real run.',
       );
       if (event.baseSource === 'placeholder')
         this.warnings.add(
@@ -325,6 +336,8 @@ export class RehearsalHarness extends FixtureHarness {
           inputs: event.inputs,
           target: event.target,
           baseSource: event.baseSource,
+          merged: event.merged,
+          conflicts: event.conflicts,
         });
     },
   };
