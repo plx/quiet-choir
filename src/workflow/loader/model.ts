@@ -362,7 +362,10 @@ export type WorkflowCommandResult = ExecutionResult &
          * `failed` when the run ended first, or the status it already had (with no signal sent).
          */
         readonly status: 'completed' | 'failed' | 'cancelled';
-        /** SIGINTs sent to the owner: 0 for a run that had already ended, 2 only under `force`. */
+        /**
+         * SIGINTs sent to the owner: 0 for a run that had already ended or that no process owned,
+         * 2 only under `force`.
+         */
         readonly signalsSent: 0 | 1 | 2;
         /** The verified owner that was signalled, or null when no signal was sent. */
         readonly owner: {
@@ -370,6 +373,12 @@ export type WorkflowCommandResult = ExecutionResult &
           readonly host: string;
           readonly osStartTime: string;
         } | null;
+        /**
+         * The unfinished status that this cancel itself ended under the run lock, because no
+         * process owned the run (ADR 0057); null when an owner ended the run or it had already
+         * ended.
+         */
+        readonly previousStatus: 'running' | 'suspended' | null;
       }
     | WorkflowFailure
     | {

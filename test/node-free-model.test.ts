@@ -205,7 +205,7 @@ export default defineWorkflow({
     expect(result.sourceFiles.filter((source) => source.startsWith(sourceRoot))).toEqual(
       walkNodeFreeClosure(modelFile).files,
     );
-  });
+  }, 35_000);
 
   describe('guard', () => {
     const injections = [

@@ -1,13 +1,14 @@
 import { fork, spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { lstat, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { lockRun } from '../src/workflow/runtime/store.js';
 import { processIdentity } from '../src/processes/identity.js';
 import { OrphanProcessesError } from '../src/workflow/runtime/process-registry.js';
+import { openFileOwnedRun } from '../src/workflow/runtime/run-store.js';
 
 // Locks are published and retired by rename (ADR 0030), so no process may ever see a lock directory
 // without a complete owner.json. Separate processes race here, not one event loop.
@@ -130,6 +131,39 @@ it('releaseOwner gives up only the primary lock and keeps writers out until the 
   await next();
   expect(await readdir(stateDir)).toEqual(['.gitignore', 'held']);
 });
+
+it.each([
+  ['dead', { pid: 2_000_000_000, host: hostname(), token: 'stale', osStartTime: null }],
+  ['released', { pid: process.pid, host: hostname(), token: 'stale', released: true }],
+] as const)(
+  'reclaimStale: false refuses a %s owner without touching its lock; the default reclaims it',
+  async (_state, owner) => {
+    const primary = join(stateDir, 'held', 'lock');
+    const guard = join(stateDir, 'held.json.lock');
+    for (const lock of [guard, primary]) {
+      await mkdir(lock, { recursive: true });
+      await writeFile(join(lock, 'owner.json'), JSON.stringify(owner));
+    }
+    const refusal = { code: 'run.locked', details: { pid: owner.pid, next: [{}] } };
+    await expect(lockRun(stateDir, 'held', { reclaimStale: false })).rejects.toMatchObject(refusal);
+    for (const lock of [guard, primary]) {
+      expect(JSON.parse(await readFile(join(lock, 'owner.json'), 'utf8'))).toEqual(owner);
+      expect(await readdir(lock)).toEqual(['owner.json']);
+    }
+    // Through the owned store: the guard is taken and released again, the primary left alone.
+    await rm(guard, { recursive: true });
+    await expect(openFileOwnedRun(stateDir, 'held', { reclaimStale: false })).rejects.toMatchObject(
+      refusal,
+    );
+    await expect(lstat(guard)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(JSON.parse(await readFile(join(primary, 'owner.json'), 'utf8'))).toEqual(owner);
+    const release = await lockRun(stateDir, 'held');
+    expect(JSON.parse(await readFile(join(primary, 'owner.json'), 'utf8'))).toMatchObject({
+      pid: process.pid,
+    });
+    await release();
+  },
+);
 
 it.skipIf(process.platform === 'win32')(
   'releaseOwner refuses live children once, and the full release then frees only the guard',

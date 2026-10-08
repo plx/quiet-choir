@@ -116,3 +116,5 @@ part of the documentation.
 - [0055: Remove leftover launch directories through rm](0055-remove-leftover-launch-directories.md)
 
 - [0056: Detached resume reports a run only when its runner records an execution](0056-detached-resume.md)
+
+- [0057: End an unowned unfinished run as cancelled under the run lock](0057-end-an-unowned-run-as-cancelled.md)

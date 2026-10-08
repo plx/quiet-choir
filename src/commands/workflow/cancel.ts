@@ -6,7 +6,7 @@ import { WorkflowExecutor } from '../../workflow/loader/executor.js';
 export default class WorkflowCancel extends WorkflowCommand {
   public static override readonly args: Interfaces.ArgInput<{ readonly runId: string }> = {
     runId: Args.string({
-      description: 'Run whose live local execution should end',
+      description: 'Unfinished run to end as cancelled',
       required: true,
     }),
   };
@@ -30,9 +30,9 @@ export default class WorkflowCancel extends WorkflowCommand {
     json: Flags.boolean({ description: 'Print the cancel result as JSON' }),
   };
   public static override readonly summary =
-    'End a live local run as cancelled, signalling only its identity-verified owner';
+    'End an unfinished run as cancelled, signalling only its identity-verified owner';
   public static override readonly description =
-    'Signals only a live lock owner on this host whose recorded OS start time still matches, after leaving a cancel request bound to that execution, then waits for the run to end. A cancelled owner exits 130 and tick does not resume the run. Refuses (exit 3, run.locked) for a foreign, dead, released or unverifiable owner and (exit 3, run.unowned) for an unfinished run no process owns; an already finished run is a no-op (exit 0).';
+    'A run that no process owns (suspended, or running with no lock) is saved as cancelled under its lock, without a signal. Otherwise signals only a live lock owner on this host whose recorded OS start time still matches, after leaving a cancel request bound to that execution, then waits for the run to end. A cancelled owner exits 130, and tick does not resume a cancelled run. Refuses (exit 3, run.locked) for a foreign, dead, released or unverifiable owner, whose lock workflow unlock clears before a second cancel, and (exit 3, run.unowned) when the owner exits without saving cancelled; an already finished run is a no-op (exit 0).';
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(WorkflowCancel);
@@ -60,11 +60,13 @@ export default class WorkflowCancel extends WorkflowCommand {
     if (result.kind === 'workflow.cancel.result')
       this.output(
         result,
-        result.owner === null
-          ? `Run ${result.runId} is already ${result.status}; nothing to cancel.`
-          : result.status === 'cancelled'
-            ? `Run ${result.runId} cancelled.`
-            : `Run ${result.runId} ended ${result.status}.`,
+        result.previousStatus !== null
+          ? `Run ${result.runId} was ${result.previousStatus} with no owner; saved cancelled.`
+          : result.owner === null
+            ? `Run ${result.runId} is already ${result.status}; nothing to cancel.`
+            : result.status === 'cancelled'
+              ? `Run ${result.runId} cancelled.`
+              : `Run ${result.runId} ended ${result.status}.`,
       );
   }
 

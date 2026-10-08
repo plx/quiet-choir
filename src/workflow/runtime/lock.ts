@@ -337,6 +337,13 @@ export interface RunLockOptions {
    * message and `details.next`. Only shapes that text; absent means `['quiet-choir']`.
    */
   readonly commandLauncher?: CommandLauncher | undefined;
+  /**
+   * Whether a dead or released previous owner's lock is recovered (its recorded children inspected
+   * or stopped, then the lock retired) so this caller can take it. True by default. False refuses
+   * with `run.locked` and the `workflow unlock` command instead, touching nothing: `workflow cancel`
+   * ends an unowned run under the lock but never performs dead-owner recovery (ADR 0057).
+   */
+  readonly reclaimStale?: boolean;
 }
 
 /** Whether `error` is a Node system error with this errno code. @internal */
@@ -753,6 +760,23 @@ async function acquireLock(
               ? `If ${previous.host} is this machine under an old name or is permanently gone, clear it with ${command}.`
               : `Wait for it or stop it; ${command} clears the lock only once that owner is gone.`
           }`,
+          { pid: previous.pid, host: previous.host, lockPath, next: nextDetail([entry]) },
+        );
+      }
+      if (options.reclaimStale === false) {
+        const pid = String(previous.pid);
+        const entry = unlock(
+          previousState === 'released'
+            ? `Works once the children of PID ${pid} are gone; inspect the run first.`
+            : `Clears the lock of PID ${pid}, which is gone.`,
+        );
+        const command = formatArgv(entry.argv);
+        throw new RunRefusedError(
+          'run.locked',
+          runId,
+          previousState === 'released'
+            ? `Run ${runId} is locked by PID ${pid} on ${previous.host}, which released its lock while child processes survive. Inspect the run, then clear the lock with ${command} once its children are gone.`
+            : `Run ${runId} is locked by PID ${pid} on ${previous.host}, which is gone. Clear its lock with ${command}.`,
           { pid: previous.pid, host: previous.host, lockPath, next: nextDetail([entry]) },
         );
       }

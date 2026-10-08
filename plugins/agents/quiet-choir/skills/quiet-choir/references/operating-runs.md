@@ -290,23 +290,28 @@ information on the owning host. A broad `pgrep` match alone cannot establish whi
 process and must not drive automatic killing. Escaped/unregistered descendants may need manual
 investigation. External mutations remain in place after cancellation.
 
-To stop a live run on purpose, do not `kill` the owner PID: since a first signal saves a resumable
-suspension, the next tick would resume it. Use cancel, which signals only a live owner on this host
-whose recorded OS start time still matches, and waits for the run to end:
+To stop a run on purpose, do not `kill` the owner PID: since a first signal saves a resumable
+suspension, the next tick would resume it. Use cancel. A run that no process owns (parked
+`suspended`, interrupted, or `running` with no lock) is saved `cancelled` under its lock without a
+signal. A live run is signalled only through a live owner on this host whose recorded OS start time
+still matches, and cancel waits for it to end:
 
 ```sh
 node "$QC_CHECKOUT/bin/run.js" workflow cancel first --state-dir "$QC_RUNS" --json
 ```
 
-It exits 0 with `{kind: "workflow.cancel.result", status, signalsSent, owner}` once the run is
-`cancelled` (or `completed`/`failed` if it ended first; a run that already ended is a no-op with
-`signalsSent: 0`). It refuses without signalling: `run.locked` (exit 3) for a foreign, dead,
-released or unverifiable owner, and `run.unowned` (exit 3) for an unfinished run no process owns. An
-owner that exits without saving `cancelled` (an embedder, or a forced kill) is also `run.unowned`
-with `details.reason: "owner-exited"`; tick may resume that run. After `--timeout` (default 30s) it
-exits 79 with the last saved `status`; `--force` then sends one more SIGINT to the same verified
-owner, which force-kills its groups and can leave `running` for stale recovery. Cancelling a run
-that tick is executing stops that tick pass.
+It exits 0 with `{kind: "workflow.cancel.result", status, signalsSent, owner, previousStatus}` once
+the run is `cancelled` (or `completed`/`failed` if it ended first; a run that already ended is a
+no-op with `signalsSent: 0`). `previousStatus` is `suspended` or `running` when cancel itself ended
+an unowned run, and null otherwise. It refuses without signalling or writing: `run.locked` (exit 3)
+for a foreign, dead, released or unverifiable owner (for a dead or released owner, run the
+`workflow unlock` command it prints, then cancel again), and `run.incompatible` (exit 3) for an
+unowned unfinished checkpoint in format 1 to 5. An owner that exits without saving `cancelled` (an
+embedder, or a forced kill) is `run.unowned` (exit 3) with `details.reason: "owner-exited"`; tick
+may resume that run. After `--timeout` (default 30s) it exits 79 with the last saved `status`;
+`--force` then sends one more SIGINT to the same verified owner, which force-kills its groups and
+can leave `running` for stale recovery. Cancelling a run that tick is executing stops that tick
+pass.
 
 For code/schema edits use [acceptance or fork recovery](durability.md#choose-a-recovery-path);
 `--resume --accept-code-change` retains per-step compatibility checks and refuses, without changing

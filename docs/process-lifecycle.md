@@ -60,22 +60,27 @@ suspension, while any other abort reason saves `cancelled`. See
 closed terminal do not interrupt cleanup. Embedders own their signal handlers and may supply a
 `ProcessSupervisor` to `runWorkflow`, then call `forceKill()` on a second signal.
 
-A signal alone never cancels a run. To end a live local run on purpose, use
+A signal alone never cancels a run. To end a run on purpose, use
 `workflow cancel RUN [--force] [--timeout 30s]` instead of `kill`
-([ADR 0039](decisions/0039-cancel-a-live-run-through-a-token-bound-request.md)). It refuses
-(`run.locked`, exit 3) unless the lock owner is alive on this host with the OS birth identity it
-recorded, then writes `cancel.json` in the run directory bound to that owner's lock token,
-re-verifies the owner, and sends one SIGINT to its PID, never a group. The owner's executor sees the
-request in its first-signal abort and turns the interruption into a cancellation, so the runner
-saves `cancelled` and the owner still exits 130; tick never resumes it. A request names one lock
-acquisition, so a stale request never cancels a later execution, and a plain signal or tick deadline
-without one still suspends. Cancelling a run that `workflow tick` is executing signals the tick
-process: the run ends `cancelled` and that tick pass stops, as with any signal. An embedder owner
-does not read the request and suspends, which cancel reports as `run.unowned`. `--force` sends a
-second SIGINT only after the timeout, to the same re-verified owner; like a second signal (including
-a cancel that reaches an owner already draining an earlier signal), it force-kills and can leave
-`running` for tick's stale recovery. The identity check right before each signal narrows, but cannot
-close, the window for PID reuse described below.
+([ADR 0039](decisions/0039-cancel-a-live-run-through-a-token-bound-request.md)). A run that no lock
+holds, such as a parked `suspended` run, an interrupted one, or a `running` record whose crashed
+owner's lock was cleared, is saved `cancelled` under the run lock without a signal
+([ADR 0057](decisions/0057-end-an-unowned-run-as-cancelled.md)); cancel never recovers a dead or
+released owner's lock itself, so for such a lock it refuses with the `workflow unlock` command, and
+a second cancel after the unlock ends the run. For a locked run it refuses (`run.locked`, exit 3)
+unless the lock owner is alive on this host with the OS birth identity it recorded, then writes
+`cancel.json` in the run directory bound to that owner's lock token, re-verifies the owner, and
+sends one SIGINT to its PID, never a group. The owner's executor sees the request in its
+first-signal abort and turns the interruption into a cancellation, so the runner saves `cancelled`
+and the owner still exits 130; tick never resumes it. A request names one lock acquisition, so a
+stale request never cancels a later execution, and a plain signal or tick deadline without one still
+suspends. Cancelling a run that `workflow tick` is executing signals the tick process: the run ends
+`cancelled` and that tick pass stops, as with any signal. An embedder owner does not read the
+request and suspends, which cancel reports as `run.unowned`. `--force` sends a second SIGINT only
+after the timeout, to the same re-verified owner; like a second signal (including a cancel that
+reaches an owner already draining an earlier signal), it force-kills and can leave `running` for
+tick's stale recovery. The identity check right before each signal narrows, but cannot close, the
+window for PID reuse described below.
 
 `configuration doctor` uses the same signal handling and three-second cleanup grace, with an
 in-memory supervisor for probes. It has no resumable workflow or durable child registry. Embedded

@@ -7,6 +7,7 @@ import { formatArgv, nextDetail, unlockNext, type CommandLauncher } from '../run
 import { isErrno, ownerState, readContended, type Owner } from '../runtime/lock.js';
 import { resolveStateDir, runLockPath } from '../runtime/paths.js';
 import { readRequiredRun } from '../runtime/read-required-run.js';
+import { cancelUnownedRun } from '../runtime/run-cancellation.js';
 import { RunRefusedError } from '../runtime/run-errors.js';
 import type { RunRecord } from '../runtime/store.js';
 import { workflowFailure, type WorkflowFailure } from './failure.js';
@@ -28,7 +29,15 @@ export interface CancelRunOptions {
   readonly intervalMs?: number;
   /** Shapes the `workflow unlock` command that a `run.locked` refusal names. */
   readonly commandLauncher?: CommandLauncher | undefined;
+  /**
+   * Ends a run that no lock holds under its lock; `cancelUnownedRun` by default. A test seam for
+   * the race between observing no lock and taking it.
+   */
+  readonly cancelUnowned?: typeof cancelUnownedRun;
 }
+
+/** Attempts to end an unlocked run before a contended lock is reported, as in `acquireLock`. */
+const unownedAttempts = 3;
 
 type TerminalStatus = CancelResult['status'];
 
@@ -36,7 +45,7 @@ function terminal(status: RunRecord['status']): status is TerminalStatus {
   return status === 'completed' || status === 'failed' || status === 'cancelled';
 }
 
-/** How an unfinished run left behind by its owner continues. */
+/** How an unfinished run continues after its owner exited without saving a terminal status. */
 function resumeNote(status: RunRecord['status']): string {
   if (status === 'suspended') return ', and the next workflow tick may resume it';
   if (status === 'running') return ', and stale recovery by the next workflow tick may resume it';
@@ -132,11 +141,14 @@ function lockedRefusal(
 }
 
 /**
- * End a live local run as `cancelled` (ADR 0039). Refuses without signalling unless the run's lock
- * owner is a live process on this host with its recorded birth identity; leaves a request bound to
- * that owner's lock token, so only that execution honours it; re-verifies the owner immediately
- * before each SIGINT; and waits for the run to end. Refusals throw `RunRefusedError`; the bounded
- * wait returns a `watch.timeout` failure carrying the last saved record. @internal
+ * End an unfinished run as `cancelled`. A run that no lock holds is ended here, under its lock,
+ * without a signal (ADR 0057); a lock taken by an owner or tick meanwhile is observed again, up to
+ * three times. A locked run is ended through its owner (ADR 0039): refuses without signalling
+ * unless the lock owner is a live process on this host with its recorded birth identity; leaves a
+ * request bound to that owner's lock token, so only that execution honours it; re-verifies the
+ * owner immediately before each SIGINT; and waits for the run to end. Refusals throw
+ * `RunRefusedError`; the bounded wait returns a `watch.timeout` failure carrying the last saved
+ * record. @internal
  */
 export async function cancelRun(
   plan: CancelWorkflowPlan,
@@ -149,6 +161,7 @@ export async function cancelRun(
     status: TerminalStatus,
     signalsSent: number,
     owner: CancelResult['owner'],
+    previousStatus: CancelResult['previousStatus'] = null,
   ): CancelResult => ({
     kind: 'workflow.cancel.result',
     ok: true,
@@ -157,22 +170,33 @@ export async function cancelRun(
     status,
     signalsSent: signalsSent as CancelResult['signalsSent'],
     owner,
+    previousStatus,
   });
   let run = await readRequiredRun({ runId, stateDir });
   // Idempotent: a run that already ended needs nothing, whoever ended it.
   if (terminal(run.status)) return result(run.status, 0, null);
   const lockPath = runLockPath(stateDir, runId);
-  const observed = await observeOwner(lockPath);
-  if (observed.kind === 'gone') {
-    // It may have ended between the two reads.
+  const cancelUnowned = options.cancelUnowned ?? cancelUnownedRun;
+  let observed = await observeOwner(lockPath);
+  for (let attempt = 1; observed.kind === 'gone'; attempt++) {
+    // No process owns the run: end it under its lock, which a dead owner's lock never yields.
+    try {
+      const ended = await cancelUnowned({
+        stateDir,
+        runId,
+        cwd: run.cwd,
+        commandLauncher: options.commandLauncher,
+        signal: options.signal,
+      });
+      return result(ended.status, 0, null, ended.previousStatus);
+    } catch (error) {
+      if (!(error instanceof RunRefusedError && error.code === 'run.locked')) throw error;
+      // An owner, tick or another writer took the lock first: look again.
+      if (attempt >= unownedAttempts) throw error;
+    }
     run = await readRequiredRun({ runId, stateDir });
     if (terminal(run.status)) return result(run.status, 0, null);
-    throw new RunRefusedError(
-      'run.unowned',
-      runId,
-      `Run ${runId} is ${run.status} and no process owns it, so there is nothing to signal; workflow cancel ends only a live local execution.`,
-      { reason: 'unlocked', signalsSent: 0, forced: false },
-    );
+    observed = await observeOwner(lockPath);
   }
   if (observed.kind === 'unreadable')
     throw lockedRefusal(

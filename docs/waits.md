@@ -284,8 +284,11 @@ lock left by a crash is resumed; so is a run whose recoverer died, whose marker 
 reclaims. A dead or released owner with a live or unverified child record is skipped as `orphans`,
 without resuming the run or changing its checkpoint; tick never kills orphans. A `running` run with
 no lock or a reclaimable lock is stale: its owner was killed (OOM, sandbox teardown, a SIGKILLed
-tick). Tick recovers it without waiting for a due time, after re-reading it under ownership. There
-is no `workflow cancel` yet, so a run someone killed on purpose is also resumed by the next tick.
+tick). Tick recovers it without waiting for a due time, after re-reading it under ownership. A run
+someone killed on purpose is also resumed by the next tick unless it is ended first:
+`workflow cancel RUN` saves a parked or stale run that no lock holds as `cancelled` under its lock,
+and tick then observes it instead of resuming it
+([ADR 0057](decisions/0057-end-an-unowned-run-as-cancelled.md)).
 
 Recovery of a stale `running` run is capped. Before resuming, tick durably saves a `staleRecovery`
 counter `{ count, completedSteps, at }` in the checkpoint. The count grows by one while the number

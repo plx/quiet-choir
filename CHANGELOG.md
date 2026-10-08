@@ -2,6 +2,20 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `workflow cancel` ends an unowned run (behavior change; no record format, schema revision or step
+  identity change): an unfinished run that no lock holds, such as a parked or interrupted
+  `suspended` run or a `running` record whose crashed owner's lock was cleared, is now saved
+  `cancelled` under the run lock instead of being refused with `run.unowned` (`reason: "unlocked"`,
+  no longer produced), so tick observes it and never resumes it. Cancel takes the lock without
+  recovering a dead or released owner's lock, which keeps its `run.locked` refusal with the
+  `workflow unlock` command; a second cancel after the unlock ends the run. The saved record matches
+  a runner-saved cancellation (status, error, recovery cause, child frames, a new execution entry
+  and a `run.cancelled` event) and leaves steps and worktrees as they are. An unowned format-1 or
+  format 2 to 5 checkpoint is refused with `run.incompatible`, unchanged. `workflow.cancel.result`
+  gains `previousStatus` (`running`, `suspended` or null), and the text output reads
+  `Run <id> was suspended with no owner; saved cancelled.` `run.unowned` now means only that a
+  signalled owner exited without saving `cancelled`. See ADR 0057 (#292).
+
 - Development and test infrastructure: guard the Node-free authoring model (#290). Workflow type
   checks import `src/workflow/runtime/model.ts` under tsconfigs without `types`, so it and every
   module it imports, `wait-model.ts` among them, must type-check without `@types/node`; a type-only
