@@ -307,11 +307,12 @@ An accepted code change on any format writes `codeChanges`, the new `workflow` f
 cleared `output` before the body replays. `runWorkflow` therefore replays the accepted body against
 a disposable copy first; when the copy meets a changed completed step, it rejects with
 `StepIdentityChangedError`, and when the copy skips a completed step, settled map or child frame,
-with `ReplaySkippedError` (the CLI's `--accept-code-change` refuses either with `run.incompatible`),
-and the checkpoint keeps its bytes, status, fingerprint, output and `codeChanges`. A settled map
-that accepts a mapper-only change appends its own `codeChanges` entry with `map` set, and its
-journal saves per-component digests in `components` beside the aggregate `fingerprint`. See
-[ADR 0006](decisions/0006-code-change-recovery.md).
+with `ReplaySkippedError`, and when it meets a settled map changed beyond its mapper, with
+`SettledMapChangedError` (the CLI's `--accept-code-change` refuses any of them with
+`run.incompatible`), and the checkpoint keeps its bytes, status, fingerprint, output and
+`codeChanges`. A settled map that accepts a mapper-only change appends its own `codeChanges` entry
+with `map` set, and its journal saves per-component digests in `components` beside the aggregate
+`fingerprint`. See [ADR 0006](decisions/0006-code-change-recovery.md).
 
 Format 1 stored only an aggregate code/schema fingerprint. If it differs, explicit
 `--accept-code-change` is required, while name, version, cwd, input, and original step checks remain
