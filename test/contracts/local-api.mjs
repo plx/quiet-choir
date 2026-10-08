@@ -152,6 +152,30 @@ export async function fakeApi(scenario, options = {}) {
                 "Invalid schema for response_format 'output': required must include every property (fake).",
             },
           });
+        // Doctor probe scenarios: the server rejects the invalid effort or the unknown model first.
+        if (scenario === 'codex-doctor-effort-first')
+          return json(response, 400, {
+            type: 'error',
+            error: {
+              type: 'invalid_request_error',
+              code: null,
+              message:
+                "[ReasoningEffortParam] [reasoning.effort] [invalid_enum_value] Invalid value: 'bogus'. Supported values are: 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', and 'max'.",
+              param: null,
+            },
+            status: 400,
+          });
+        if (scenario === 'codex-doctor-model-first')
+          return json(response, 404, {
+            type: 'error',
+            error: {
+              type: 'invalid_request_error',
+              code: 'model_not_found',
+              message: `The model \`${body.model}\` does not exist or you do not have access to it.`,
+              param: null,
+            },
+            status: 404,
+          });
         responses(response, scenario, ++count);
       } else
         json(response, 404, { error: { message: 'No upstream API: local contract server only.' } });

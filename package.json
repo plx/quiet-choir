@@ -100,6 +100,7 @@
     "comparisons:check": "node comparisons/scripts/check-source-hashes.mjs && node comparisons/scripts/check-api-snapshot.mjs && node --test comparisons/scripts/api-snapshot.test.mjs comparisons/scripts/source-hashes.test.mjs && tsc -p comparisons/batches/01-direct-ports/tsconfig.json && tsc -p comparisons/batches/02-idiomatic-ports/tsconfig.json && node --import tsx comparisons/scripts/verify-ports.mjs --check && node --import tsx comparisons/scripts/verify-idiomatic-ports.mjs --check",
     "test:contract": "node ./test/harness-contract.mjs",
     "test:contract:isolation": "node ./test/harness-isolation-contract.mjs",
+    "test:contract:doctor": "node ./test/doctor-contract.mjs",
     "skills:check": "node scripts/check-skills.mjs && node --test test/skills-check.test.mjs",
     "test:storage-benchmark": "node ./test/storage-benchmark.mjs"
   },
