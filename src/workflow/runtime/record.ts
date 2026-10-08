@@ -461,8 +461,9 @@ export interface RunRecord {
   /**
    * Recovery advice for a failed or cancelled run, chosen by its typed failure cause: `--grant` for
    * a missing grant, `--strict-replay` for a replay divergence, re-finalizing with
-   * `--accept-code-change` for a configuration or authoring failure, or a plain resume. Absent when
-   * the run recorded nothing or was a dry-run.
+   * `--accept-code-change` for a configuration or authoring failure, resuming with a higher value
+   * of the stopping cap's flag (or the flag off) for a run-budget stop, or a plain resume. Absent
+   * when the run recorded nothing or was a dry-run.
    */
   recoveryHint?: string;
   /** ISO creation timestamp. */
