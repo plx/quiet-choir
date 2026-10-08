@@ -159,8 +159,10 @@ in the fork settled before the fork requested it. So a missing, changed, unfinis
 invalidated effect makes the steps launched after it settled run live, which avoids reusing later
 workspace-dependent work after an earlier effect reruns, while its same-tick `Promise.all` siblings
 stay reusable. Items of a named map are independent of their sibling items: an edit to one stage
-re-runs that stage in every item and reuses the rest. Shared mutable state or files between items is
-not tracked; invalidate such items explicitly. `ctx.scope`/`within` siblings are ordered by stamps
+re-runs that stage in every item and reuses the rest. Dropping a key from a named map does not make
+later steps in the surviving items rerun, except in sources saved by builds before record schema
+revision 13; steps after the map still rerun. Shared mutable state or files between items is not
+tracked; invalidate such items explicitly. `ctx.scope`/`within` siblings are ordered by stamps
 alone. Sources saved before launch stamps fall back to launch (`seq`) order. With unchanged code, a
 concurrent multi-step chain outside a named map can still run a few steps live when the fork
 requests them in a different order than the source settled them. `--reuse matching` explicitly

@@ -16,7 +16,9 @@ would skip a completed step, settled map or child frame (`ReplaySkippedError`). 
 preflight synthesizes every Git worktree effect and consumes delivered but unconsumed answers, so it
 no longer stops early at either. Amended by #284: a failed run saves its typed recovery cause, and
 its `next` entries follow that cause as its recovery hint does. Amended by #300: a terminal failure
-also appends to a bounded `failureHistory`, which makes the healed-step check per launch.
+also appends to a bounded `failureHistory`, which makes the healed-step check per launch. Amended by
+#302: steps record the named-map items that enclosed their launch, so prefix reuse also treats
+source steps under a key the fork dropped as sibling items.
 
 ## Context
 
@@ -167,6 +169,45 @@ a few extra live calls when the fork requests steps in a different order than th
 them; named maps and `--reuse matching` avoid it. Kinds that are never reused (worktree steps) and
 fresh questions run live and settle, so their later dependents run live too. Each prefix decision
 scans the source and target steps once, which is negligible for hundreds of steps.
+
+## Amendment: removed named-map keys (#302)
+
+The #145 rule recognized sibling items only by the item prefixes of the fork's own map invocation.
+When the fork's named map had a different key set from the source, for example because an input
+changed and one item was dropped, the source steps under the removed key matched none of those
+prefixes. They were judged ordinary causes, and since the fork never requests them, they were never
+reused and blocked every later-launched step in the surviving items. That is conservative, but it
+brought back the re-paying #145 targets in exactly the case where a map was edited. Item boundaries
+cannot be recovered from the step IDs alone, because keys may contain `/`.
+
+Each step launched live inside named-map items now records `mapItems` (record schema revision 13):
+one `{ item, invocation }` entry per enclosing item, outermost first. `item` is the exact item
+prefix, such as `review/gone/x/`, so keys containing `/` need no boundary recovery. `invocation` is
+a digest of the invocation's sorted item-prefix set. A bare map prefix is not enough: two
+invocations of one map ID, such as loop rounds with round-prefixed keys, share it but not their
+items, and treating them as siblings would let round 2 reuse past changed round-1 work. The digest
+covers full prefixes, so nested invocations under different outer items differ too, and it is stable
+across resumes and replays, unlike a per-run counter. Questions and waits record it as well. Storing
+a run-level table of key sets would add a top-level field, and storing every key set on every step
+would grow quadratically.
+
+`forkPrefixBlockers` now also skips a source step Y when Y's and the requested step X's recorded
+entries share an `invocation` but name different items. The rule is source-causal: in the source, X
+could not depend on a sibling item (ADR 0009), whether or not the fork kept that key, and it also
+handles a key whose boundary moved (source key `a/b`, fork key `a`), because it uses X's own source
+item. The fork-side prefix check and the rule for live fork steps are unchanged, since the fork
+never runs a removed key's steps. A reused copy records the fork's own scopes, not the source's, so
+a fork of a fork compares digests from one run.
+
+Fallbacks stay conservative. A source saved before revision 13, or a step outside every map item,
+has no `mapItems`, so it behaves as before: steps under a removed key still block the surviving
+items until the source is run again by this build. Steps outside the map, such as a root step over
+the map results, still count the removed key's steps as causes. A key set that changed between
+executions of one source run yields different digests, which only blocks more. Two invocations with
+the identical item-prefix set share a digest; the fork-side check already treats such steps as
+siblings, so this adds no new exposure. Each recorded entry adds an item prefix and a 64-hex digest
+per nesting level to a step inside a map. The limitation on items that share closure state or files
+is unchanged, and `--invalidate` still forces them live.
 
 ## Amendment: refuse divergent accepted replays (#126)
 

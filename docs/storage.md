@@ -403,6 +403,14 @@ failure a later launch could observe ([ADR 0007](decisions/0007-durable-failure-
 identity is unchanged. Revision-11 records read and resume unchanged; a failed step without the
 history keeps the conservative `failureStamp` watermark until it completes. A revision-11 build
 reads a revision-12 record, but its parse strips `failureHistory`, so it refuses to rewrite it.
+Revision 13 (#302) changes only a nested shape: a step in `steps` may carry `mapItems`, one
+`{item, invocation}` entry per named-map item that enclosed its live launch (the exact item prefix
+and a digest of the invocation's item-prefix set), which default fork prefix reuse reads to treat
+source steps under a key the fork dropped as sibling items
+([ADR 0006](decisions/0006-code-change-recovery.md#amendment-removed-named-map-keys-302)). Step
+identity is unchanged. Revision-12 records read and resume unchanged; a fork from one keeps the
+earlier, conservative behavior for removed keys. A revision-12 build reads a revision-13 record, but
+its parse strips `mapItems`, so it refuses to rewrite it.
 
 **Refusals.** A build must not rewrite a record it cannot fully read: its parse strips unknown
 top-level fields, and the next compaction would write the record back without them. When a record
