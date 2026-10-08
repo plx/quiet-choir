@@ -223,8 +223,10 @@ export interface StepRecord {
   /**
    * The `settleStamp` of this step's first terminal failure since it last completed. A healed step
    * flags only recorded steps whose `launchStamp` is at least this value (they were launched after
-   * the failure could be observed). Removed when the step completes; absent in older checkpoints
-   * and after a failure saved between retries, where the runner falls back to `seq` order.
+   * the failure could be observed). Kept through a later cancellation or interruption, so a step
+   * carrying it takes part in the healed check when it completes. Removed when the step completes;
+   * absent in older checkpoints and after a failure saved between retries, where the runner falls
+   * back to `seq` order.
    */
   failureStamp?: number;
   /** Source checkpoint of a reused completed effect. */

@@ -1855,7 +1855,10 @@ export async function runWorkflow<
         emit('step.replayed', id, prior);
         return output;
       }
-      const wasFailed = prior?.status === 'failed';
+      // failureStamp survives a later cancellation or interruption until the step completes, so it
+      // marks a step whose terminal failure the body may have observed; status 'failed' alone
+      // still covers legacy checkpoints and a failure saved between retries (no stamp).
+      const failedBefore = prior?.failureStamp !== undefined || prior?.status === 'failed';
       // Captured before this execution can mutate the prior record.
       const priorFailureStamp = prior?.failureStamp;
       if (outcome.kind === 'reuse-fork' && forkedFrom) {
@@ -2352,7 +2355,7 @@ export async function runWorkflow<
                     sessionId: metadata.sessionId,
                   },
             );
-            if (wasFailed && !healed.has(id)) {
+            if (failedBefore && !healed.has(id)) {
               const later = healedDependents(
                 { id, seq: step.seq ?? 0, failureStamp: priorFailureStamp },
                 priorSequence,

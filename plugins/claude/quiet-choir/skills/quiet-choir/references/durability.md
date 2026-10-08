@@ -116,14 +116,17 @@ body is skipped on resume, and its owned steps are claimed (see
 [child workflows](child-workflows.md)).
 
 When a previously failed step succeeds, the runner looks for recorded steps that may depend on its
-earlier failure: those launched at or after that failure settled. Each step record carries
-`launchStamp` (a run-level settlement counter's value when the body requested the effect),
-`settleStamp` (the counter after its latest terminal settlement) and `failureStamp` (the stamp of
-its first terminal failure since it last completed). A step is flagged when its `launchStamp` is at
-least the healed step's `failureStamp`, so a `Promise.all` sibling launched in the same tick as the
-failing step is not flagged, whichever settled first. If any are flagged, `replay.divergence` warns
-immediately, names the healed step and those IDs, and saves the warning. `--strict-replay` then
-stops before the next live effect, while permitting terminal replay;
+earlier failure: those launched at or after that failure settled. A step whose terminal failure was
+followed by a cancelled or interrupted relaunch (the `failureStamp` is kept through those, so the
+step still counts as failed, also when a crashed owner left it `running`) is checked the same way
+when it finally succeeds. A step that was only ever cancelled never failed and reports nothing. Each
+step record carries `launchStamp` (a run-level settlement counter's value when the body requested
+the effect), `settleStamp` (the counter after its latest terminal settlement) and `failureStamp`
+(the stamp of its first terminal failure since it last completed). A step is flagged when its
+`launchStamp` is at least the healed step's `failureStamp`, so a `Promise.all` sibling launched in
+the same tick as the failing step is not flagged, whichever settled first. If any are flagged,
+`replay.divergence` warns immediately, names the healed step and those IDs, and saves the warning.
+`--strict-replay` then stops before the next live effect, while permitting terminal replay;
 `workflow resume RUN --strict-replay` and `execute --resume --strict-replay` are equivalent.
 Concurrent work already in flight can still finish. The end-of-run skipped-path error also names
 healed steps.

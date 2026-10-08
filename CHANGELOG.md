@@ -2,6 +2,13 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- A resume reports the healed-step divergence for a step that failed, was cancelled or interrupted
+  in a later run (or left `running` by a crashed owner), and then succeeds (behavior change; no
+  record format, schema revision or step identity change): `replay.divergence`, the saved
+  `replayWarnings` entry and `healed` in `ReplaySkippedError` now cover it, as they already did for
+  a step still recorded `failed`. Under `--strict-replay` such a resume now stops before the next
+  live effect. A step that was only ever cancelled still reports nothing. See ADR 0007 (#297).
+
 - `configuration doctor`'s Codex exact-argv probe sends a fresh nonexistent model
   (`quiet-choir-nonexistent-<uuid>`) beside the invalid effort, instead of the inherited model or
   `gpt-5`, so it cannot reach inference whichever the server rejects first (behavior change). The

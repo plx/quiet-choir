@@ -1590,6 +1590,230 @@ it('keeps the earliest failure stamp across repeated failures until the step com
   );
 });
 
+/** Settles with the abort reason once `signal` aborts, as a cancellable effect would. */
+function untilAborted(signal: AbortSignal): Promise<never> {
+  return new Promise((_, reject) => {
+    const fail = () => {
+      reject(signal.reason as Error);
+    };
+    if (signal.aborted) fail();
+    else signal.addEventListener('abort', fail, { once: true });
+  });
+}
+
+/**
+ * `healer` fails in run 1 (the catch then launches `dependent` and throws `tail`), aborts the run
+ * from inside its effect in run 2, and succeeds in run 3. The catch rethrows an aborted run's error
+ * so run 2 launches nothing else.
+ */
+function healerAcrossRuns(abort: () => Error): {
+  definition: ReturnType<typeof workflow>;
+  controller: AbortController;
+  next: (mode: 'abort' | 'ok') => void;
+  ran: string[];
+} {
+  let mode: 'fail' | 'abort' | 'ok' = 'fail';
+  const controller = new AbortController();
+  const ran: string[] = [];
+  const definition = workflow(async (ctx) => {
+    try {
+      await ctx.step('healer', {
+        input: null,
+        schema: z.string(),
+        run: async ({ signal }) => {
+          ran.push('healer');
+          if (mode === 'fail') throw new Error('healer failed');
+          if (mode === 'abort') {
+            controller.abort(abort());
+            await untilAborted(signal);
+          }
+          return 'h';
+        },
+      });
+    } catch (error) {
+      if (mode !== 'fail') throw error;
+      await ctx.step('dependent', {
+        input: null,
+        schema: z.string(),
+        run: () => {
+          ran.push('dependent');
+          return 'd';
+        },
+      });
+      throw new Error('tail', { cause: error });
+    }
+    return ctx.step('later', {
+      input: null,
+      schema: z.string(),
+      run: () => {
+        ran.push('later');
+        return 'done';
+      },
+    });
+  });
+  return {
+    definition,
+    controller,
+    ran,
+    next: (next) => {
+      mode = next;
+    },
+  };
+}
+
+async function expectHealedResume(
+  definition: ReturnType<typeof workflow>,
+  ran: string[],
+  strictReplay: boolean,
+): Promise<void> {
+  ran.length = 0;
+  const events: WorkflowEvent[] = [];
+  const outcome = await runWorkflow(definition, {
+    ...options(),
+    resume: true,
+    strictReplay,
+    onEvent: (event) => {
+      if (event.type === 'replay.divergence') events.push(event);
+    },
+  }).catch((error: unknown) => error);
+  expect(events.filter((event) => event.healedStepId)).toMatchObject([
+    { healedStepId: 'healer', skippedStepIds: ['dependent'] },
+  ]);
+  const saved = await readRun(options());
+  expect(saved.replayWarnings?.[0]).toContain(
+    'Healed step healer now succeeded; later recorded steps (dependent)',
+  );
+  expect(saved.steps['healer']).toMatchObject({ status: 'completed' });
+  expect(saved.steps['healer']?.failureStamp).toBeUndefined();
+  // The recorded dependent never runs again. Strict replay stops before the next live step.
+  if (strictReplay) {
+    expect(ran).toEqual(['healer']);
+    expect(divergence(outcome)).toMatchObject({ reason: 'healed' });
+  } else {
+    expect(ran).toEqual(['healer', 'later']);
+    expect(findAcceptedReplayDivergence(outcome)).toMatchObject({
+      kind: 'steps',
+      skipped: ['dependent'],
+      healed: ['healer'],
+    });
+  }
+}
+
+it.each(
+  [false, true].flatMap((strictReplay) => [
+    { abort: 'a cancel', reason: () => new Error('stop'), status: 'cancelled', strictReplay },
+    {
+      abort: 'a marked interruption',
+      reason: () => new RunInterruptedError('Workflow interrupted by SIGINT.'),
+      status: 'suspended',
+      strictReplay,
+    },
+  ]),
+)(
+  'flags a step that failed, then ended $abort in a later run, once it succeeds (strictReplay: $strictReplay)',
+  async ({ reason, status, strictReplay }) => {
+    {
+      const { definition, controller, next, ran } = healerAcrossRuns(reason);
+      await expect(runWorkflow(definition, options())).rejects.toThrow('tail');
+      const first = await readRun(options());
+      const failureStamp = first.steps['healer']?.failureStamp;
+      expect(first.steps['healer']?.status).toBe('failed');
+      expect(failureStamp).toBeDefined();
+      expect(first.steps['dependent']?.launchStamp).toBeGreaterThanOrEqual(failureStamp ?? 0);
+
+      next('abort');
+      const aborted = await runWorkflow(definition, {
+        ...options(),
+        resume: true,
+        signal: controller.signal,
+      }).catch((error: unknown) => error);
+      expect(aborted).toBeInstanceOf(WorkflowRunError);
+      const second = await readRun(options());
+      expect(second.status).toBe(status);
+      expect(['failed', 'completed']).not.toContain(second.steps['healer']?.status);
+      expect(second.steps['healer']?.failureStamp).toBe(failureStamp);
+      expect(second.steps['dependent']).toEqual(first.steps['dependent']);
+
+      next('ok');
+      await expectHealedResume(definition, ran, strictReplay);
+    }
+  },
+);
+
+it.each([false, true])(
+  'flags a step that failed and was left running by a crashed owner once it succeeds (strictReplay: %s)',
+  async (strictReplay) => {
+    const { definition, next, ran } = healerAcrossRuns(() => new Error('stop'));
+    await expect(runWorkflow(definition, options())).rejects.toThrow('tail');
+    const record = await readRun(options());
+    const failureStamp = record.steps['healer']?.failureStamp;
+    expect(failureStamp).toBeDefined();
+    // The relaunch started and its owner died: the step is left running, with its failure stamp.
+    const healer = record.steps['healer'];
+    if (healer) healer.status = 'running';
+    await writeFile(join(stateDir, 'source', 'run.json'), JSON.stringify(record));
+    await writeFile(join(stateDir, 'source', 'journal.jsonl'), '');
+    expect((await readRun(options())).steps['healer']).toMatchObject({
+      status: 'running',
+      failureStamp,
+    });
+    next('ok');
+    await expectHealedResume(definition, ran, strictReplay);
+  },
+);
+
+it('does not flag a step that was only cancelled, whatever settled after it', async () => {
+  let cancelled = true;
+  const controller = new AbortController();
+  const definition = workflow(async (ctx) => {
+    await Promise.all([
+      ctx.step('slow', {
+        input: null,
+        schema: z.string(),
+        run: async ({ signal }) => {
+          if (!cancelled) return 'slow';
+          await untilAborted(signal);
+          return 'slow';
+        },
+      }),
+      ctx.step('sibling', {
+        input: null,
+        schema: z.string(),
+        run: () => {
+          if (cancelled)
+            setImmediate(() => {
+              controller.abort(new Error('stop'));
+            });
+          return 'sibling';
+        },
+      }),
+    ]);
+    return 'done';
+  });
+  await expect(
+    runWorkflow(definition, { ...options(), signal: controller.signal }),
+  ).rejects.toBeInstanceOf(WorkflowRunError);
+  const first = await readRun(options());
+  expect(first.steps['slow']?.status).toBe('cancelled');
+  expect(first.steps['slow']?.failureStamp).toBeUndefined();
+  expect(first.steps['sibling']).toMatchObject({ status: 'completed' });
+  // A seq fallback would flag the sibling, which was launched after the slow step.
+  expect(first.steps['sibling']?.seq).toBeGreaterThan(first.steps['slow']?.seq ?? 0);
+  cancelled = false;
+  const events: WorkflowEvent[] = [];
+  const resumed = await runWorkflow(definition, {
+    ...options(),
+    resume: true,
+    strictReplay: true,
+    onEvent: (event) => {
+      if (event.type === 'replay.divergence') events.push(event);
+    },
+  });
+  expect(resumed.status).toBe('completed');
+  expect(events.filter((event) => event.healedStepId)).toEqual([]);
+  expect((await readRun(options())).replayWarnings ?? []).toEqual([]);
+});
+
 it.each([false, true])(
   'falls back to launch order for a checkpoint without launch stamps (strictReplay: %s)',
   async (strictReplay) => {
