@@ -1481,6 +1481,16 @@
   `test/cli.test.ts` uses it and `test/cli-capture-fixture.test.ts` forces a timeout to check it. No
   runtime behavior changes; see CONTRIBUTING.md, "CLI command capture".
 
+- Development and test infrastructure: shorten the Node 24 coverage CI leg (#286), which took 13m57s
+  on `74bf584` (Vitest 819 s, `test/tick.test.ts` alone 527 s). The tick, durability-lint-loader,
+  launch-policy, loader, rehearsal, github-waits, cancel, scriptable-errors and exec-fixtures suites
+  and the GitHub rehearsal helper now share one program cache per file, which cut the local Node 24
+  coverage run from 268 s to 134 s (tick from 226 s to 98 s) and the run without coverage from 96 s
+  to 66 s. CI runs the coverage suite in three `vitest --shard` jobs that save blob reports, and a
+  coverage-gate job merges them and enforces the unchanged thresholds. The coverage slowdown comes
+  from in-process TypeScript compiles under precise coverage; coverage-v8 never instruments spawned
+  children. No runtime behavior changes; see CONTRIBUTING.md.
+
 - Add Workflow Lab Batch 02: six idiomatic ports with domain schemas, named roles, code-owned
   commands/writes, approved isolated setup, recoverable mutation tests, inline lifecycle children
   and settled bug panels. Record paired fixture metrics and actual SIGKILL recovery; keep model

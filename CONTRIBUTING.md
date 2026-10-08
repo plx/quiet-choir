@@ -35,10 +35,20 @@ real state directory (`${XDG_STATE_HOME:-~/.local/state}/quiet-choir`) gains ent
 Pass name filters and `--concurrency N` after `--` to iterate on a subset
 (`npm run test:cli -- worktrees`; a smoke's exact name, such as `cli-smoke`, selects only that
 smoke); a failing smoke prints the tail of its output and keeps its state directory. The Vitest
-suite has a similar guard (`test/setup/state-guard.ts`). CI runs coverage thresholds on the Node 24
-leg only; the Node 22.13 and 26 legs run `npm test`. Coverage slows the subprocess-heavy suites
-about 2.4x (Vitest 595 s on Node 24 against 208 s on Node 22.13 for the same tests, 2026-10-02), so
-the test jobs have a 15-minute limit; keep new CLI-driving tests lean rather than raising it again.
+suite has a similar guard (`test/setup/state-guard.ts`). The Node 22.13 and 26 legs run `npm test`.
+Node 24 runs the suite with V8 coverage in three shard jobs (`vitest --shard`, files assigned by
+path hash), each saving a Vitest blob report with its own thresholds turned off; the coverage-gate
+job merges the blobs (`vitest --merge-reports --coverage`) and is the only CI step that enforces the
+`vitest.config.ts` thresholds (locally, `npm run test:coverage` and `npm run check` still enforce
+them). Coverage slows the in-process TypeScript compiles of the tick, loader, launch-policy and lint
+suites about 2.5x, not subprocesses: coverage-v8 collects precise coverage through the inspector in
+the Vitest workers and never instruments spawned children (it sets no `NODE_V8_COVERAGE`). On
+`74bf584` the unsharded Node 24 job took 13m57s (Vitest 819 s, `test/tick.test.ts` alone 527 s)
+against 7m25s on 22.13 and 5m48s on 26. A shared program cache in every compile-heavy suite (see
+below) cut the local Node 24 coverage run from 268 s to 134 s and `test/tick.test.ts` from 226 s to
+98 s. The shard and test jobs keep a 15-minute limit until CI measures them at 5 minutes or less,
+and coverage-gate, which only merges, has 10. `test/tick.test.ts` is the slowest file and bounds its
+shard, so keep new compile-heavy tests on the suite's cache rather than adding shards.
 
 Cookbook changes must update `examples/patterns/` and the corresponding named fences in both
 physical skill copies. `skills:check` enforces source equality and the 30-line workflow limit;
@@ -159,21 +169,23 @@ files that depend on it are checked again. A changed module or type reference re
 both programs share, such as a removed package.json export, forces a full check, as does an added,
 removed or changed file that affects the global scope in its old or new version (a script, a module
 with a `declare global` block, or a UMD `export as namespace`), and the
-`assumeChangesOnlyAffectDirectDependencies` option. The replay-loader, registry, registry-cli and
-typecheck suites do this; typecheck keeps schema-only inference as an uncached full-engine check.
-Locally (macOS, Node 26.10, worst of three `npm run test:coverage` runs on a shared machine) the
-symlink case fell from 31.5 s to 8.7 s, doctor from 24.2 s to 6.4 s, the slowest registry
-invalidation case from 13.1 s to 3.6 s, and the whole run from 247-270 s to 163-164 s; schema-only
-inference stayed at about 6 s. The CLI passes no cache.
+`assumeChangesOnlyAffectDirectDependencies` option. The replay-loader, registry, registry-cli,
+typecheck, tick, durability-lint-loader, launch-policy, loader, rehearsal, github-waits, cancel,
+scriptable-errors and exec-fixtures suites do this, as does `test/github-fake.ts` for the GitHub
+suites' rehearsals; typecheck keeps schema-only inference as an uncached full-engine check. Locally
+(macOS, Node 26.10, worst of three `npm run test:coverage` runs on a shared machine) the symlink
+case fell from 31.5 s to 8.7 s, doctor from 24.2 s to 6.4 s, the slowest registry invalidation case
+from 13.1 s to 3.6 s, and the whole run from 247-270 s to 163-164 s; schema-only inference stayed at
+about 6 s. The CLI passes no cache.
 
 Timeout rule: a test or suite timeout above Vitest's 5 s default needs an adjacent comment of the
 form `// measured: 1.2 s alone, 4.1 s in the full coverage run (dominated by tsImport compile)`.
 Measure in a full parallel `npm run test:coverage` run and check the per-test durations in the CI
-log, where the Node 24 coverage leg is now usually slowest. Remove the raise when the test fits the
-default with at least 3x headroom, and otherwise set the value to about 3x the local full-run time
-and at least 2x the slowest CI leg. A timeout that flakes on a CI leg gets a new measured value and
-comment, not the old number. Subprocess, `tsImport`, typecheck and Git suites usually keep a raised
-value because compiles and process startup, not fsync, dominate them.
+logs, where the Node 24 coverage shard jobs are usually slowest. Remove the raise when the test fits
+the default with at least 3x headroom, and otherwise set the value to about 3x the local full-run
+time and at least 2x the slowest CI leg. A timeout that flakes on a CI leg gets a new measured value
+and comment, not the old number. Subprocess, `tsImport`, typecheck and Git suites usually keep a
+raised value because compiles and process startup, not fsync, dominate them.
 
 ## Per-test state directories
 
