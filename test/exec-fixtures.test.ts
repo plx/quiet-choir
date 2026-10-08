@@ -586,6 +586,95 @@ describe('fixture export of settled and absorbed exec failures', () => {
     });
   });
 
+  /** Replaying `fixtures` with `commands: 'fixture'` fails at `stepId` for lack of a matching rule. */
+  async function expectReplayFailsAt(
+    workflow: ReturnType<typeof definition<string>>,
+    fixtures: HarnessFixtures,
+    stepId: string,
+  ) {
+    await writeFile(join(root, 'export.json'), JSON.stringify(fixtures));
+    const selection = await readHarnessSelection('fixture:export.json', undefined, root);
+    const harness = new RehearsalHarness(selection);
+    await expect(
+      runWorkflow(workflow, {
+        ...options('dry'),
+        harness,
+        rehearsal: harness.hooks,
+        processRunner: harness.processRunner,
+      }),
+    ).rejects.toMatchObject({
+      stepId,
+      message: expect.stringContaining(`No exec fixture matches step ${stepId}`) as unknown,
+    });
+  }
+
+  it('exports no rule for an absorbed exec.json exit failure whose full tail could replay as parsed, and keeps commands: fixture (AC2, AC5, AC6)', async () => {
+    // Valid JSON longer than the 1024-character tail: the thrown ExecError keeps no `parsed`, but
+    // the last 1024 characters are valid JSON, so replaying them would invent a `parsed` value.
+    const padded = `${' '.repeat(1100)}{"n":1}`;
+    const workflow = definition(z.string(), async (ctx) => {
+      try {
+        await ctx.exec.json(
+          'probe',
+          node(`process.stdout.write(${JSON.stringify(padded)});process.exit(1)`),
+          {
+            schema: Shape,
+          },
+        );
+        return 'ran';
+      } catch (error) {
+        if (!(error instanceof ExecError)) throw error;
+        return error.kind;
+      }
+    });
+    const { source, fixtures } = await exportSource(workflow);
+    expect(source.output).toBe('process');
+    expect(source.steps['probe']?.status).toBe('failed');
+    expect(JSON.parse(padded.slice(-1024))).toEqual({ n: 1 });
+    expect(fixtures).toEqual({ version: 1, unmatched: 'error', calls: [], commands: 'fixture' });
+    await expectReplayFailsAt(workflow, fixtures, 'probe');
+  });
+
+  it('exports no rule for a settled exec.json exit failure with invalid stdout and a full tail (AC2, AC6)', async () => {
+    // Not JSON (so no `parsed`), but its last 1024 characters are valid JSON.
+    const hidden = `x${' '.repeat(1100)}{"n":1}`;
+    const workflow = definition(z.string(), async (ctx) => {
+      const result = await ctx.exec.json(
+        'probe',
+        node(`process.stdout.write(${JSON.stringify(hidden)});process.exit(1)`),
+        { schema: Shape, onError: 'return' },
+      );
+      return result.ok ? 'ran' : result.error.kind;
+    });
+    const { source, fixtures } = await exportSource(workflow);
+    expect(source.output).toBe('process');
+    expect(source.steps['probe']?.status).toBe('settled-failed');
+    expect(fixtures).toEqual({ version: 1, unmatched: 'error', calls: [], commands: 'fixture' });
+    await expectReplayFailsAt(workflow, fixtures, 'probe');
+  });
+
+  it('exports no rule when json: parsed would serialize past the parsed byte bound (AC2, AC6)', async () => {
+    // 15000 bytes as printed, which the runtime keeps as `parsed`, but 66000 bytes once each 1e20
+    // is re-serialized as 100000000000000000000, so the replay would lose `parsed`.
+    const printed = `[${'1e20,'.repeat(2999)}1e20]`;
+    expect(Buffer.byteLength(printed)).toBeLessThan(16_384);
+    const workflow = definition(z.string(), async (ctx) => {
+      const result = await ctx.exec.json(
+        'probe',
+        node(`process.stdout.write(${JSON.stringify(printed)});process.exit(1)`),
+        { schema: z.array(z.number()), onError: 'return' },
+      );
+      return result.ok
+        ? 'ran'
+        : `${result.error.kind}:${result.error.parsed === undefined ? 'none' : 'parsed'}`;
+    });
+    const { source, fixtures } = await exportSource(workflow);
+    expect(source.output).toBe('process:parsed');
+    expect(Buffer.byteLength(JSON.stringify(JSON.parse(printed)))).toBeGreaterThan(16_384);
+    expect(fixtures).toEqual({ version: 1, unmatched: 'error', calls: [], commands: 'fixture' });
+    await expectReplayFailsAt(workflow, fixtures, 'probe');
+  });
+
   it('still exports and replays an unparsed schema failure whose tail is under 1024 characters (AC2, AC7)', async () => {
     const workflow = definition(z.json(), async (ctx) => {
       const short = await ctx.exec.json('short', node("process.stdout.write('not json')"), {

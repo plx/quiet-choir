@@ -7,7 +7,11 @@ import {
   type HarnessFixtures,
 } from '../../harnesses/fixture.js';
 import type { ErrorKind, JsonValue } from '../runtime/model.js';
-import { EXEC_SCHEMA_FAILURE_PREFIX, execExitFailureMessage } from '../runtime/exec.js';
+import {
+  EXEC_SCHEMA_FAILURE_PREFIX,
+  SETTLED_PARSED_MAX_BYTES,
+  execExitFailureMessage,
+} from '../runtime/exec.js';
 import { EXEC_TAIL_LIMIT } from '../runtime/exec-error.js';
 import type { ExecSummary } from '../runtime/exec-model.js';
 import { execResultSchema, execSummarySchema } from '../runtime/exec-schema.js';
@@ -194,10 +198,18 @@ interface ExecFailure {
  * to it in another layout (pretty-printed output under 1024 characters keeps its bytes), so a
  * truncated tail still reproduces `parsed`, and export, replay and export again give the same rule.
  *
- * A `schema` failure without `parsed` whose stdout tail fills the tail bound (`EXEC_TAIL_LIMIT`)
- * may have lost its start, and the surviving suffix can be valid JSON that matches the schema (an
- * unparsable prefix, then more than 1024 whitespace characters, then good JSON). Replaying that
- * tail would succeed, so no rule is exported and the replay fails at the step instead.
+ * An `exec.json` failure (kind `process` or `schema`) without `parsed` whose stdout tail fills the
+ * tail bound (`EXEC_TAIL_LIMIT`) may have lost its start. For a `schema` failure the surviving
+ * suffix can be valid JSON that matches the schema (an unparsable prefix, then more than 1024
+ * whitespace characters, then good JSON), and for an exit failure it can be valid JSON that the
+ * replay would record as an invented `parsed`. Either way the replay would differ from the source,
+ * so no rule is exported and the replay fails at the step instead. A plain `exec` exit failure has
+ * no `parsed` and is unaffected.
+ *
+ * `json: parsed` is replayed as compact JSON, and the runtime keeps `parsed` only when stdout is at
+ * most `SETTLED_PARSED_MAX_BYTES` bytes. When the compact form of `parsed` is larger (such as `1e20`
+ * values that print longer than they were written), the replay would lose `parsed`, so no rule is
+ * exported.
  */
 function execFailureRule(
   key: Pick<FixtureExecCall, 'step' | 'argvPrefix' | 'envSha256' | 'inputSha256'>,
@@ -222,12 +234,14 @@ function execFailureRule(
   const stdout = failure.stdoutTail ?? '';
   const stderr = failure.stderrTail ?? '';
   const { parsed } = failure;
-  if (failure.kind === 'schema' && parsed === undefined && stdout.length >= EXEC_TAIL_LIMIT)
+  if (summary.structured && parsed === undefined && stdout.length >= EXEC_TAIL_LIMIT)
     return undefined;
-  const output =
-    parsed !== undefined && (stdout === JSON.stringify(parsed) || !parsesTo(stdout, parsed))
-      ? { json: parsed }
-      : { stdout };
+  let output: { json: JsonValue } | { stdout: string } = { stdout };
+  if (parsed !== undefined && (stdout === JSON.stringify(parsed) || !parsesTo(stdout, parsed))) {
+    if (Buffer.byteLength(JSON.stringify(parsed), 'utf8') > SETTLED_PARSED_MAX_BYTES)
+      return undefined;
+    output = { json: parsed };
+  }
   return {
     ...key,
     ...output,
