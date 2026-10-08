@@ -2,6 +2,17 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Structured owner-side rejections (addition; record `schemaRevision` 11, no format or step identity
+  change): when the run owner quarantines an inbox delivery because the answer fails the question's
+  own Zod schema or the attribution check, the rejection in `question.rejections` (and so
+  `pending --json` rows) now carries `issues`, the same `{code, path, message}` list the writer
+  reports as `answer.invalid` (`answer_author` for attribution), at most 20 per rejection with
+  bounded strings. Every other refusal, such as a malformed envelope, stale fingerprint, earlier run
+  generation or late delivery, records only `error` and has no `issues`. The owner's schema-mismatch
+  `error` text is now the writer's one-line `Answer does not match the question schema: ...` summary
+  instead of Zod's multi-line JSON dump. A revision-10 build refuses to rewrite a record that
+  carries the field (#289).
+
 - Cause-aware next entries (behavior change; record `schemaRevision` 10, no format or step identity
   change): failed and cancelled runs save the typed `recoveryCause` behind their `recoveryHint`
   (`RecoveryCause` is now a public type), and a failed run's `next` entries in failure documents,

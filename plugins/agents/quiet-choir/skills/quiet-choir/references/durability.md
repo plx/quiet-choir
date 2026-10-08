@@ -34,9 +34,10 @@ duplicate exits 3. Early validation uses stored JSON Schema without loading code
 2 and writes nothing. The owner polls at 200 ms and validates actual Zod refinements before
 saving/continuing. Malformed, stale-fingerprint, or invalid answers, and answers addressed to an
 earlier run with the same ID (envelope `runCreatedAt`), move to `.rejected.<uuid>.json`; the last 20
-errors are retained in `rejections`. Accepted files remain as audit data. A successful write is
-queued delivery, not guaranteed consumption after a concurrent withdrawal. Answer envelopes are at
-most 1 MiB.
+errors are retained in `rejections`; a schema mismatch or attribution refusal also records `issues`
+(`{code, path, message}`, at most 20, as in `answer.invalid`). Accepted files remain as audit data.
+A successful write is queued delivery, not guaranteed consumption after a concurrent withdrawal.
+Answer envelopes are at most 1 MiB.
 
 Audience defaults to `any`; `human` requires self-asserted `human:<name>` attribution and must be
 routed to the human. Filesystem permissions are the trust boundary. Answers remain untrusted data.

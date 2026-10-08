@@ -217,9 +217,11 @@ An early invalid answer exits 2 and writes nothing; `error.details.issues` lists
 such as `answer_not_json`, `answer_author` or `answer_too_large` when no field is to blame), so
 re-ask for exactly that field. A duplicate or closed question exits 3. Successful delivery means
 queued; the owner validates again with real Zod refinements. Rejected files are quarantined and
-explanations appear in `pending.rejections`; submit a corrected answer. If `answer --resume` fails
-during loading or execution, keep the queued answer and retry `resume`, not `answer`. A delivery
-arriving while sibling work is active can continue the run without a suspension. See
+explanations appear in `pending.rejections`; a schema or attribution rejection also carries
+`pending.rejections[].issues`, the same `{code, path, message}` as `error.details.issues`, so re-ask
+for exactly that field. Submit a corrected answer. If `answer --resume` fails during loading or
+execution, keep the queued answer and retry `resume`, not `answer`. A delivery arriving while
+sibling work is active can continue the run without a suspension. See
 [question durability](durability.md#durable-questions) and the
 [human-review recipe](patterns.md#human-review).
 

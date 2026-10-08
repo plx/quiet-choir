@@ -392,7 +392,11 @@ which also selects the run's `next` commands
 ([ADR 0006](decisions/0006-code-change-recovery.md#cause-aware-next-entries-284)). Revision-9
 records read and resume unchanged; without the field, a failed run gets the plain resume entry it
 had before. A revision-9 build reads a revision-10 record without the field, reports it hidden, and
-refuses to rewrite it; every failed or cancelled run this build saves carries the field.
+refuses to rewrite it; every failed or cancelled run this build saves carries the field. Revision 11
+(#289) changes only a nested shape: a rejection in `question.rejections` may carry an optional,
+bounded `issues` list of `{code, path, message}`. Revision-10 records read and resume unchanged, and
+a rejection without `issues` stays valid. A revision-10 build reads a revision-11 record, but its
+parse strips the nested field, so it refuses to rewrite it.
 
 **Refusals.** A build must not rewrite a record it cannot fully read: its parse strips unknown
 top-level fields, and the next compaction would write the record back without them. When a record

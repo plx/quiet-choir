@@ -136,8 +136,12 @@ at quiescence. It checks the envelope, fingerprint, run generation, attribution,
 schema, then saves the answer and `question.resolution` before continuing the body. JSON Schema
 loses refinements, so early validation cannot replace this authoritative check. Invalid deliveries
 move to `.rejected.<uuid>.json`; the last 20 explanations appear in `question.rejections` and
-`pending`. Submit a corrected answer after rejection. Accepted files remain beside the checkpoint
-for audit.
+`pending`. A rejection that is an authoritative schema mismatch or an attribution refusal also
+records `issues`, the writer's `answer.invalid` shape (`{code, path, message}`, at most 20, with the
+same codes and paths, so `pending --json` rows let an agent re-ask for exactly that field); every
+other refusal (malformed or non-JSON envelope, stale fingerprint, earlier run generation, late
+delivery, a refinement that throws) records only `error`, and `issues` is absent. Submit a corrected
+answer after rejection. Accepted files remain beside the checkpoint for audit.
 
 `by` is self-asserted. A human question requires `human:<name>` as a guardrail; it is not proof that
 a human answered. Filesystem access is the trust boundary. Calling agents must ask the human and
