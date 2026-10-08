@@ -20,7 +20,7 @@ import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import { TypecheckProgramCache } from '../src/workflow/typecheck/program-cache.js';
 import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
 import { readRun } from '../src/index.js';
-import { lockRun } from '../src/workflow/runtime/store.js';
+import { lockRun, writeRun } from '../src/workflow/runtime/store.js';
 import { workflowExitCodes } from '../src/cli/workflow-errors.js';
 import { harnessConfigDigest } from '../src/workflow/loader/harness-selection.js';
 
@@ -320,6 +320,161 @@ describe('source-aware loader recovery', { timeout: 50_000 }, () => {
       expect(await runFiles('source')).toEqual(bytes);
     },
   );
+
+  /** A workflow whose settled map `reviews` is completed; each option is one component the edit can move. */
+  const settledSource = ({
+    items = "[{ id: 'a', n: 1 }, { id: 'b', n: 2 }]",
+    prefix = '',
+    version = '1',
+    mapper = 'Promise.resolve(item.n * 2)',
+    tail = 'return value + JSON.stringify(rows);',
+    imports = '',
+  }: {
+    items?: string;
+    prefix?: string;
+    version?: string;
+    mapper?: string;
+    tail?: string;
+    imports?: string;
+  } = {}) =>
+    imports +
+    source(
+      undefined,
+      undefined,
+      `const rows = await ctx.map('reviews', ${items}, { concurrency: 1, onError: 'return', version: ${JSON.stringify(version)}, key: (item) => ${JSON.stringify(prefix)} + item.id }, (item) => ${mapper});\n${tail}`,
+    );
+
+  it.for([
+    {
+      name: 'items',
+      components: ['items'],
+      edit: { items: "[{ id: 'a', n: 1 }, { id: 'b', n: 5 }]" },
+    },
+    { name: 'keys', components: ['keys'], edit: { prefix: 'k-' } },
+    { name: 'version', components: ['version'], edit: { version: '2' } },
+    {
+      name: 'cwd',
+      components: ['cwd'],
+      edit: { tail: 'return value + JSON.stringify(rows) + "";' },
+    },
+    {
+      name: 'legacy',
+      components: [],
+      legacy: true,
+      edit: { mapper: 'Promise.resolve(item.n * 3)' },
+    },
+  ] as const)(
+    'refuses an accepted resume whose settled map $name changed, without changes and alike in a dry run',
+    async ({ name, components, edit, ...rest }) => {
+      await writeFile(file, settledSource());
+      expect(await execute('source')).toMatchObject({ ok: true, run: { status: 'completed' } });
+      if (name === 'cwd' || name === 'legacy') {
+        // The run-level cwd gate refuses a real move, and a legacy journal predates the digests:
+        // edit the saved journal itself.
+        const record = await readRun({ stateDir, runId: 'source' });
+        const journal = record.maps?.['reviews'];
+        if (!journal?.components) throw new Error('missing map components');
+        if (name === 'cwd') {
+          journal.components.cwd = 'moved';
+          journal.fingerprint = 'moved';
+        } else delete journal.components;
+        await writeRun(stateDir, record);
+      }
+      const saved = await readRun({ stateDir, runId: 'source' });
+      await writeFile(file, settledSource(edit));
+      const bytes = await runFiles('source');
+      const refused = await execute('source', { resume: true, acceptCodeChange: true });
+      if (refused.ok) throw new Error(JSON.stringify(refused));
+      expect(refused.code).toBe('run.incompatible');
+      expect(workflowExitCodes[refused.code]).toBe(3);
+      const details = refused.details as {
+        divergent: { stepId: string; components: string[]; map: true; legacy?: true }[];
+        next: string[][];
+      };
+      expect(details.divergent).toEqual([
+        {
+          stepId: 'reviews',
+          components,
+          map: true,
+          ...('legacy' in rest ? { legacy: true } : {}),
+        },
+      ]);
+      expect(details.next).toHaveLength(1);
+      const next = details.next[0] ?? [];
+      const at = next.indexOf('--fork-from');
+      expect(next.slice(at, at + 6)).toEqual([
+        '--fork-from',
+        'source',
+        '--reuse',
+        'matching',
+        '--invalidate',
+        'reviews',
+      ]);
+      expect(next.slice(0, 4)).toEqual([
+        'quiet-choir',
+        'workflow',
+        'execute',
+        await realpath(file),
+      ]);
+      expect(next.slice(-4)).toEqual(['--run-id', '<NEW_RUN_ID>', '--state-dir', stateDir]);
+      expect(refused.message).toContain(
+        'legacy' in rest
+          ? 'Settled map reviews: its journal predates per-component fingerprints, so the changed component is unknown changed after an item completed.'
+          : `Settled map reviews: ${components.join(', ')} changed after an item completed.`,
+      );
+      expect(refused.message).toContain('nothing was changed');
+      expect(refused.message).toContain('--fork-from source --reuse matching --invalidate reviews');
+      expect(refused.message).not.toContain('re-finalize');
+      expect(await runFiles('source')).toEqual(bytes);
+      const kept = await readRun({ stateDir, runId: 'source' });
+      expect(kept.status).toBe('completed');
+      expect(kept.workflow.fingerprint).toBe(saved.workflow.fingerprint);
+      expect(kept.output).toBe(saved.output);
+      expect(kept.codeChanges).toEqual(saved.codeChanges);
+
+      const preview = await execute('source', {
+        resume: true,
+        acceptCodeChange: true,
+        dryRun: true,
+      });
+      expect(preview).toMatchObject({ ok: false, code: refused.code, message: refused.message });
+      expect(preview.ok ? null : preview.details).toEqual(refused.details);
+      expect(await runFiles('source')).toEqual(bytes);
+    },
+  );
+
+  it('accepts a mapper-only edit to a settled map under --accept-code-change with zero repeated effects', async () => {
+    const counter = join(root, 'counter');
+    const imports = "import { appendFileSync } from 'node:fs';\n";
+    const counted = (factor: number) =>
+      `(appendFileSync(new URL('./counter', import.meta.url), 'x'), Promise.resolve(item.n * ${String(factor)}))`;
+    await writeFile(file, settledSource({ imports, mapper: counted(2) }));
+    const first = await execute('source');
+    expect(first).toMatchObject({ ok: true, run: { status: 'completed' } });
+    expect(await readFile(counter, 'utf8')).toBe('xx');
+    const saved = await readRun({ stateDir, runId: 'source' });
+    // Only the mapper changes, plus the tail so the re-finalized output shows.
+    await writeFile(
+      file,
+      settledSource({
+        imports,
+        mapper: counted(3),
+        tail: "return 'final ' + value + JSON.stringify(rows);",
+      }),
+    );
+    const accepted = await execute('source', { resume: true, acceptCodeChange: true });
+    expect(accepted).toMatchObject({ ok: true, run: { status: 'completed' } });
+    const run = await readRun({ stateDir, runId: 'source' });
+    // The completed items keep their old outcomes: the mapper edit does not rerun them.
+    if (typeof saved.output !== 'string') throw new Error('expected a string output');
+    expect(run.output).toBe(`final ${saved.output}`);
+    expect(await readFile(counter, 'utf8')).toBe('xx');
+    expect(run.codeChanges).toHaveLength(2);
+    expect(run.codeChanges?.filter((entry) => entry.map === undefined)).toHaveLength(1);
+    expect(run.codeChanges?.filter((entry) => entry.map === 'reviews')).toMatchObject([
+      { components: ['mapper'], map: 'reviews' },
+    ]);
+  });
 
   it('refuses an accepted resume whose completed agent step changed, leaving the suspended run intact', async () => {
     const ops = join(root, 'ops.workflow.ts');
