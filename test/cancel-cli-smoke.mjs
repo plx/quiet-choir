@@ -14,7 +14,8 @@ if (process.platform === 'win32') {
 // workflow cancel ends a live local run as cancelled (ADR 0039): the owner exits 130, inspect
 // agrees, tick observes the run instead of resuming it, and a repeated cancel is a no-op. One run
 // whose only step is a local wait: no harness calls. Plain-SIGINT suspension is covered by the
-// process-lifecycle smoke.
+// process-lifecycle smoke. A suspended run that no process owns is ended under its lock instead,
+// without a signal (ADR 0057).
 const repository = fileURLToPath(new URL('..', import.meta.url));
 const root = mkdtempSync(join(tmpdir(), 'choir-cancel-cli-'));
 const stateDir = join(root, 'state');
@@ -35,6 +36,17 @@ export default defineWorkflow({ name: 'wait', version: '1', input: z.null(), out
       return null;
     } });
     return 'done';
+  } });`,
+);
+
+const nap = join(root, 'nap.mts');
+writeFileSync(
+  nap,
+  `import { defineWorkflow, z } from ${JSON.stringify(join(repository, 'dist/index.js'))};
+export default defineWorkflow({ name: 'nap', version: '1', input: z.null(), output: z.null(),
+  async run(ctx) {
+    await ctx.sleep('nap', 3_600_000);
+    return null;
   } });`,
 );
 
@@ -118,6 +130,19 @@ try {
   assert.equal(again.status, 'cancelled');
   assert.equal(again.signalsSent, 0);
   assert.equal(again.owner, null);
+  assert.equal(again.previousStatus, null);
+
+  // A suspended run with no owner: saved cancelled under its lock, reported in text.
+  const parked = command(['execute', nap, '--run-id', 'napping', '--input', 'null', '--json']);
+  assert.equal(parked.status, 75, parked.stderr || parked.stdout);
+  const idle = command(['cancel', 'napping']);
+  assert.equal(idle.status, 0, idle.stderr || idle.stdout);
+  assert.match(idle.stdout, /^Run napping was suspended with no owner; saved cancelled\.$/mu);
+  const napped = document(0, 'inspect', 'napping', '--json');
+  assert.equal(napped.status, 'cancelled');
+  assert.equal(napped.ownership.locked, false);
+  const ticks = document(1, 'tick', '--run', 'napping', '--json');
+  assert.deepEqual([ticks.resumed, ticks.skipped, ticks.observed], [[], [], 1]);
   console.log('workflow cancel CLI smoke passed');
 } finally {
   if (owner.exitCode === null && owner.signalCode === null) owner.kill('SIGKILL');

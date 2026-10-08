@@ -316,15 +316,19 @@ it('refuses an unowned cancel with exit 3, like the other run refusals', () => {
   expect(workflowExitCodes['run.unowned']).toBe(3);
   expect(
     workflowErrorDocument(
-      workflowFailure('run.unowned', 'Run r1 is suspended and no process owns it.', {
-        runId: 'r1',
-        details: { reason: 'unlocked', signalsSent: 0, forced: false },
-      }),
+      workflowFailure(
+        'run.unowned',
+        "Run r1's owner PID 7 exited without saving cancelled; the run is suspended.",
+        {
+          runId: 'r1',
+          details: { reason: 'owner-exited', pid: 7, signalsSent: 1, forced: false },
+        },
+      ),
     ),
   ).toMatchObject({
     ok: false,
     exitCode: 3,
-    error: { code: 'run.unowned', details: { reason: 'unlocked' } },
+    error: { code: 'run.unowned', details: { reason: 'owner-exited' } },
   });
 });
 

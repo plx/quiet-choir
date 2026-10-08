@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ThresholdLogger } from '../src/application/execution.js';
 import { workflowErrorDocument, workflowExitCodes } from '../src/cli/workflow-errors.js';
 import { processIdentity } from '../src/processes/identity.js';
+import { cancelRun } from '../src/workflow/loader/cancel.js';
 import { cancellableRunSignal } from '../src/workflow/loader/cancel-signal.js';
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import { inspectRun } from '../src/workflow/loader/inspection.js';
@@ -15,13 +16,23 @@ import type { WorkflowFailure } from '../src/workflow/loader/failure.js';
 import type { WorkflowCommandResult } from '../src/workflow/loader/model.js';
 import { TickWorkflowExecutor } from '../src/workflow/loader/tick.js';
 import { formatArgv } from '../src/workflow/runtime/commands.js';
-import { lockRun } from '../src/workflow/runtime/store.js';
+import { cancelRecord, cancelUnownedRun } from '../src/workflow/runtime/run-cancellation.js';
+import { FileRunStore } from '../src/workflow/runtime/run-store.js';
+import { lockRun, writeRun } from '../src/workflow/runtime/store.js';
 import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
 import { TypecheckProgramCache } from '../src/workflow/typecheck/program-cache.js';
-import { defineWorkflow, readRun, runWorkflow, RunInterruptedError, z } from '../src/index.js';
+import {
+  defineWorkflow,
+  readRun,
+  runWorkflow,
+  RunInterruptedError,
+  RunRefusedError,
+  z,
+} from '../src/index.js';
 
 // Issue #288 / ADR 0039: workflow cancel ends a live local run as `cancelled`, signalling only a
-// live, identity-verified owner, through a request bound to that owner's lock token.
+// live, identity-verified owner, through a request bound to that owner's lock token. Issue #292 /
+// ADR 0057: a run no process owns is ended under its lock instead, without a signal.
 
 // One program cache for the file, so each compile of the engine source after the first reuses its
 // parse and checks (see CONTRIBUTING.md, "Test timeouts and storage sync").
@@ -144,6 +155,71 @@ async function liveRun(runId = 'run-1') {
   };
 }
 
+/** Rewrite a saved run as `running` with no lock, as a crashed owner whose lock was cleared leaves it. */
+async function crashedWhileRunning(runId = 'run-1'): Promise<void> {
+  const owned = await new FileRunStore(stateDir).open(runId);
+  try {
+    const run = await owned.read();
+    if (!run) throw new Error('missing run');
+    run.status = 'running';
+    await owned.append(run, { durable: true });
+  } finally {
+    await owned.release();
+  }
+}
+
+/** The saved bytes of a run directory's snapshot and journal, to show a refusal wrote nothing. */
+async function savedBytes(runId = 'run-1'): Promise<string[]> {
+  return Promise.all(
+    ['run.json', 'journal.jsonl'].map((name) =>
+      readFile(join(stateDir, runId, name), 'utf8').catch(() => ''),
+    ),
+  );
+}
+
+/**
+ * A workflow whose `slow` step blocks (honouring its signal) while `block` is set. `start` runs or
+ * resumes it in this process and resolves once the step is entered (or the run has ended).
+ */
+function blockingWorkflow(runId = 'run-1') {
+  const state = { block: true };
+  let entered: () => void = () => undefined;
+  const definition = defineWorkflow({
+    name: 'blocking',
+    version: '1',
+    input: z.null(),
+    output: z.null(),
+    async run(ctx) {
+      await ctx.step('slow', {
+        input: null,
+        schema: z.null(),
+        run: async ({ signal }) => {
+          entered();
+          if (state.block) await delay(60_000, undefined, { signal });
+          return null;
+        },
+      });
+      return null;
+    },
+  });
+  const start = async (resume: boolean) => {
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const controller = new AbortController();
+    const pending = runWorkflow(definition, {
+      stateDir,
+      runId,
+      input: null,
+      resume,
+      signal: controller.signal,
+    }).catch((error: unknown) => error);
+    await Promise.race([started, pending]);
+    return { controller, pending };
+  };
+  return { state, start };
+}
+
 describe('workflow cancel refusals', () => {
   async function plantOwner(owner: object): Promise<void> {
     const lock = join(stateDir, 'run-1', 'lock');
@@ -174,6 +250,7 @@ describe('workflow cancel refusals', () => {
       ...change(),
     };
     await plantOwner(owner);
+    const before = await savedBytes();
     const sendSignal = vi.fn();
     const failure = failed(await cancel(sendSignal));
     expect(failure.code).toBe('run.locked');
@@ -187,7 +264,57 @@ describe('workflow cancel refusals', () => {
     expect(failure.run?.status).toBe('suspended');
     expect(sendSignal).not.toHaveBeenCalled();
     expect(existsSync(requestPath())).toBe(false);
+    // ADR 0057: a held lock is never taken over, so the record and the planted lock are untouched.
+    expect(await savedBytes()).toEqual(before);
+    expect(
+      JSON.parse(await readFile(join(stateDir, 'run-1', 'lock', 'owner.json'), 'utf8')),
+    ).toEqual(owner);
   });
+
+  it.each([
+    ['a dead owner', () => ({ pid: DEAD }), 'dead'],
+    ['a released owner', () => ({ released: true }), 'released'],
+  ] as const)(
+    'leaves %s and the suspended record untouched, and ends the run after workflow unlock',
+    async (_name, change, reason) => {
+      await suspendedRun();
+      const owner = {
+        pid: process.pid,
+        host: hostname(),
+        token: 'held',
+        osStartTime: ownStart(),
+        ...change(),
+      };
+      await plantOwner(owner);
+      const before = await savedBytes();
+      const failure = failed(await cancel(vi.fn()));
+      expect(failure.code).toBe('run.locked');
+      expect(failure.details).toMatchObject({
+        reason,
+        next: [{ argv: expect.arrayContaining(['unlock']) as unknown }],
+      });
+      expect(await savedBytes()).toEqual(before);
+      expect(
+        JSON.parse(await readFile(join(stateDir, 'run-1', 'lock', 'owner.json'), 'utf8')),
+      ).toEqual(owner);
+
+      expect(
+        await new WorkflowExecutor({ typecheckCache, logger }).execute({
+          kind: 'workflow.unlock',
+          runId: 'run-1',
+          stateDir,
+          forceRemote: false,
+        }),
+      ).toMatchObject({ ok: true, kind: 'workflow.unlock.result' });
+      expect(await cancel(vi.fn())).toMatchObject({
+        status: 'cancelled',
+        signalsSent: 0,
+        owner: null,
+        previousStatus: 'suspended',
+      });
+      expect((await readRun({ stateDir, runId: 'run-1' })).status).toBe('cancelled');
+    },
+  );
 
   it.each([
     ['a dead owner', () => ({ pid: DEAD }), true],
@@ -242,15 +369,34 @@ describe('workflow cancel refusals', () => {
     expect(existsSync(requestPath())).toBe(false);
   });
 
-  it('refuses an unfinished run no process owns with run.unowned', async () => {
-    await suspendedRun();
-    const sendSignal = vi.fn();
-    const failure = failed(await cancel(sendSignal));
-    expect(failure.code).toBe('run.unowned');
+  it('refuses a format-1 unowned run with run.incompatible and leaves it unchanged', async () => {
+    await mkdir(stateDir, { recursive: true });
+    const time = '2026-01-01T00:00:00.000Z';
+    const legacy = join(stateDir, 'run-1.json');
+    await writeFile(
+      legacy,
+      JSON.stringify({
+        formatVersion: 1,
+        id: 'run-1',
+        workflow: { name: 'flat', version: '1', fingerprint: null },
+        status: 'running',
+        cwd: project,
+        input: null,
+        output: null,
+        error: null,
+        steps: {},
+        createdAt: time,
+        updatedAt: time,
+      }),
+    );
+    const before = await readFile(legacy, 'utf8');
+    const failure = failed(await cancel(vi.fn()));
+    expect(failure.code).toBe('run.incompatible');
     expect(workflowExitCodes[failure.code]).toBe(3);
-    expect(failure.details).toEqual({ reason: 'unlocked', signalsSent: 0, forced: false });
-    expect(sendSignal).not.toHaveBeenCalled();
-    expect(existsSync(requestPath())).toBe(false);
+    expect(failure.message).toMatch(/checkpoint format 1/u);
+    expect(await readFile(legacy, 'utf8')).toBe(before);
+    expect(existsSync(join(stateDir, 'run-1', 'lock'))).toBe(false);
+    expect(existsSync(`${legacy}.lock`)).toBe(false);
   });
 
   it('refuses a missing run with run.not_found', async () => {
@@ -287,8 +433,295 @@ describe('workflow cancel refusals', () => {
         status,
         signalsSent: 0,
         owner: null,
+        previousStatus: null,
       });
     expect(sendSignal).not.toHaveBeenCalled();
+  });
+
+  it('is a no-op for a failed run, which tick never resumes', async () => {
+    const failing = defineWorkflow({
+      name: 'failing',
+      version: '1',
+      input: z.null(),
+      output: z.null(),
+      async run(ctx) {
+        await ctx.step('boom', {
+          input: null,
+          schema: z.null(),
+          run: () => {
+            throw new Error('boom');
+          },
+        });
+        return null;
+      },
+    });
+    await expect(runWorkflow(failing, { stateDir, runId: 'run-1', input: null })).rejects.toThrow(
+      'boom',
+    );
+    const before = await savedBytes();
+    expect(await cancel(vi.fn())).toMatchObject({
+      status: 'failed',
+      signalsSent: 0,
+      owner: null,
+      previousStatus: null,
+    });
+    expect(await savedBytes()).toEqual(before);
+  });
+});
+
+describe('ending a run no process owns (ADR 0057)', () => {
+  it('ends an unowned suspended run as cancelled under the run lock', async () => {
+    await suspendedRun();
+    const before = await readRun({ stateDir, runId: 'run-1' });
+    const sendSignal = vi.fn();
+    expect(await cancel(sendSignal)).toEqual({
+      kind: 'workflow.cancel.result',
+      ok: true,
+      runId: 'run-1',
+      stateDir,
+      status: 'cancelled',
+      signalsSent: 0,
+      owner: null,
+      previousStatus: 'suspended',
+    });
+    const saved = await readRun({ stateDir, runId: 'run-1' });
+    expect(saved.status).toBe('cancelled');
+    expect(saved.error).toMatch(
+      /^Run run-1 cancelled by workflow cancel \(requested .+\) while it was suspended with no owner\.$/u,
+    );
+    expect(saved.rootCause).toEqual({
+      stepId: null,
+      error: saved.error,
+      errorKind: null,
+      effect: null,
+    });
+    expect(saved.interruptedBy).toBeUndefined();
+    expect(saved.recoveryCause).toEqual({ kind: 'cancelled' });
+    expect(saved.formatVersion).toBe(7);
+    expect(saved.executions).toHaveLength((before.executions?.length ?? 0) + 1);
+    expect(saved.executions?.at(-1)).toMatchObject({
+      outcome: 'cancelled',
+      error: saved.error,
+      pid: process.pid,
+    });
+    expect(saved.events?.at(-1)).toMatchObject({ type: 'run.cancelled', message: saved.error });
+    // Steps are left as they are: the parked sleep stays as it was saved.
+    expect(saved.steps).toEqual(before.steps);
+    expect(sendSignal).not.toHaveBeenCalled();
+    expect(existsSync(requestPath())).toBe(false);
+    expect(existsSync(join(stateDir, 'run-1', 'lock'))).toBe(false);
+    expect(existsSync(join(stateDir, 'run-1.json.lock'))).toBe(false);
+
+    // Tick observes the cancelled run instead of resuming it.
+    const ticked = await new TickWorkflowExecutor({ typecheckCache, logger }).execute({
+      kind: 'workflow.tick',
+      runId: 'run-1',
+      stateDir,
+    });
+    expect(ticked).toMatchObject({ ok: true, resumed: [], skipped: [], observed: 1 });
+    expect(await readRun({ stateDir, runId: 'run-1' })).toEqual(saved);
+
+    // Idempotent once ended.
+    expect(await cancel(sendSignal)).toMatchObject({
+      status: 'cancelled',
+      signalsSent: 0,
+      owner: null,
+      previousStatus: null,
+    });
+    expect(await readRun({ stateDir, runId: 'run-1' })).toEqual(saved);
+  });
+
+  it('ends a lockless running (stale) run as cancelled', async () => {
+    await suspendedRun();
+    await crashedWhileRunning();
+    expect((await readRun({ stateDir, runId: 'run-1' })).status).toBe('running');
+    expect(await cancel(vi.fn())).toMatchObject({
+      status: 'cancelled',
+      signalsSent: 0,
+      owner: null,
+      previousStatus: 'running',
+    });
+    const saved = await readRun({ stateDir, runId: 'run-1' });
+    expect(saved.status).toBe('cancelled');
+    expect(saved.error).toMatch(/while it was running with no owner\.$/u);
+  });
+
+  it('clears interruptedBy when cancelling an interrupted suspended run', async () => {
+    const live = await liveRun();
+    live.controller.abort(interrupt());
+    await live.stop();
+    const interrupted = await readRun({ stateDir, runId: 'run-1' });
+    expect(interrupted.status).toBe('suspended');
+    expect(interrupted.interruptedBy).toMatchObject({ reason: 'Workflow interrupted by SIGINT.' });
+    expect(await cancel(vi.fn())).toMatchObject({
+      status: 'cancelled',
+      previousStatus: 'suspended',
+    });
+    const saved = await readRun({ stateDir, runId: 'run-1' });
+    expect(saved.status).toBe('cancelled');
+    expect(saved.interruptedBy).toBeUndefined();
+    expect((await inspectRun({ stateDir, runId: 'run-1' })).summary.interruptedBy).toBeNull();
+  });
+
+  it('cancels suspended child frames', async () => {
+    const child = defineWorkflow({
+      name: 'napper',
+      version: '1',
+      input: z.null(),
+      output: z.null(),
+      async run(ctx) {
+        await ctx.sleep('nap', 3_600_000);
+        return null;
+      },
+    });
+    const parent = defineWorkflow({
+      name: 'parent',
+      version: '1',
+      input: z.null(),
+      output: z.null(),
+      children: [child],
+      async run(ctx) {
+        await ctx.workflow('child', child, null);
+        return null;
+      },
+    });
+    const suspended = await runWorkflow(parent, { stateDir, runId: 'run-1', input: null });
+    expect(suspended.status).toBe('suspended');
+    expect(suspended.children?.['child']).toMatchObject({ status: 'suspended', finishedAt: null });
+    expect(await cancel(vi.fn())).toMatchObject({
+      status: 'cancelled',
+      previousStatus: 'suspended',
+    });
+    const saved = await readRun({ stateDir, runId: 'run-1' });
+    expect(saved.children?.['child']).toMatchObject({
+      status: 'cancelled',
+      finishedAt: expect.any(String) as unknown,
+      error: saved.error,
+    });
+  });
+
+  it('restores a record exactly when its cancellation could not be saved', async () => {
+    const live = await liveRun();
+    live.controller.abort(interrupt());
+    await live.stop();
+    const record = await readRun({ stateDir, runId: 'run-1' });
+    const original = structuredClone(record);
+    const { event, restore } = cancelRecord(record, new Error('stop'), {
+      cause: () => ({ kind: 'cancelled' }),
+      sourceChanged: false,
+    });
+    expect(event).toMatchObject({ type: 'run.cancelled', message: 'stop' });
+    expect(record).toMatchObject({ status: 'cancelled', recoveryCause: { kind: 'cancelled' } });
+    expect(record.interruptedBy).toBeUndefined();
+    restore();
+    expect(record).toEqual(original);
+  });
+
+  it('refuses a run that vanished before the lock with run.not_found', async () => {
+    await expect(cancelUnownedRun({ stateDir, runId: 'run-1' })).rejects.toMatchObject({
+      code: 'run.not_found',
+    });
+  });
+
+  it('migrates a flat format-6 record as it saves the cancellation', async () => {
+    // A format-6 run left `running` by a crashed owner of an older build.
+    const workflow = blockingWorkflow();
+    workflow.state.block = false;
+    expect(await (await workflow.start(false)).pending).toMatchObject({ status: 'completed' });
+    const current = await readRun({ stateDir, runId: 'run-1' });
+    const previous = { ...current, status: 'running' as const, formatVersion: 6 as const };
+    delete previous.seq;
+    delete previous.engine;
+    await rm(join(stateDir, 'run-1'), { recursive: true });
+    await writeRun(stateDir, previous);
+    expect((await readRun({ stateDir, runId: 'run-1' })).formatVersion).toBe(6);
+    expect(await cancel(vi.fn())).toMatchObject({
+      status: 'cancelled',
+      previousStatus: 'running',
+    });
+    const saved = await readRun({ stateDir, runId: 'run-1' });
+    expect(saved).toMatchObject({ formatVersion: 7, status: 'cancelled' });
+    expect(saved.steps).toEqual(current.steps);
+  });
+});
+
+describe('a writer that takes the lock while cancel ends an unowned run', () => {
+  const plan = () => ({
+    kind: 'workflow.cancel' as const,
+    runId: 'run-1',
+    stateDir,
+    force: false,
+    timeoutMs: 10_000,
+  });
+
+  it('signals an owner that won the lock', async () => {
+    const workflow = blockingWorkflow();
+    const first = await workflow.start(false);
+    first.controller.abort(interrupt());
+    await first.pending;
+    expect((await readRun({ stateDir, runId: 'run-1' })).status).toBe('suspended');
+
+    let owner: Awaited<ReturnType<typeof workflow.start>> | undefined;
+    const cancelUnowned = vi.fn(async (options: Parameters<typeof cancelUnownedRun>[0]) => {
+      // A resume takes the lock between cancel's observation and its own attempt.
+      owner ??= await workflow.start(true);
+      return cancelUnownedRun(options);
+    });
+    const sendSignal = vi.fn(() => {
+      // An embedder honouring SIGINT with an unmarked reason, which cancels the run.
+      owner?.controller.abort(new Error('Stopped by workflow cancel.'));
+    });
+    try {
+      const result = await cancelRun(plan(), { sendSignal, cancelUnowned, intervalMs: 10 });
+      expect(result).toMatchObject({
+        status: 'cancelled',
+        signalsSent: 1,
+        owner: { pid: process.pid, host: hostname(), osStartTime: ownStart() },
+        previousStatus: null,
+      });
+    } finally {
+      owner?.controller.abort(new Error('test cleanup'));
+      await owner?.pending;
+    }
+    expect(cancelUnowned).toHaveBeenCalledOnce();
+    expect(sendSignal).toHaveBeenCalledExactlyOnceWith(process.pid, 'SIGINT');
+    expect((await readRun({ stateDir, runId: 'run-1' })).status).toBe('cancelled');
+  });
+
+  it('reports a run that completed first without writing', async () => {
+    const workflow = blockingWorkflow();
+    const first = await workflow.start(false);
+    first.controller.abort(interrupt());
+    await first.pending;
+    let completed: string[] = [];
+    const cancelUnowned = vi.fn(async (options: Parameters<typeof cancelUnownedRun>[0]) => {
+      workflow.state.block = false;
+      const resumed = await workflow.start(true);
+      expect(await resumed.pending).toMatchObject({ status: 'completed' });
+      completed = await savedBytes();
+      return cancelUnownedRun(options);
+    });
+    const sendSignal = vi.fn();
+    expect(await cancelRun(plan(), { sendSignal, cancelUnowned })).toMatchObject({
+      status: 'completed',
+      signalsSent: 0,
+      owner: null,
+      previousStatus: null,
+    });
+    expect(await savedBytes()).toEqual(completed);
+    expect(sendSignal).not.toHaveBeenCalled();
+  });
+
+  it('refuses with run.locked after three contended attempts', async () => {
+    await suspendedRun();
+    const cancelUnowned = vi.fn(() =>
+      Promise.reject(new RunRefusedError('run.locked', 'run-1', 'Run run-1 is locked.', null)),
+    );
+    await expect(cancelRun(plan(), { sendSignal: vi.fn(), cancelUnowned })).rejects.toMatchObject({
+      code: 'run.locked',
+    });
+    expect(cancelUnowned).toHaveBeenCalledTimes(3);
+    expect((await readRun({ stateDir, runId: 'run-1' })).status).toBe('suspended');
   });
 });
 
@@ -369,6 +802,7 @@ describe('workflow cancel waits', () => {
       status: 'completed',
       signalsSent: 0,
       owner: null,
+      previousStatus: null,
     });
     expect(sendSignal).toHaveBeenCalledOnce();
     expect(existsSync(requestPath())).toBe(false);
@@ -615,6 +1049,7 @@ describe('cancelling a live execution', { timeout: 60_000 }, () => {
       status: 'cancelled',
       signalsSent: 1,
       owner: { pid: process.pid, host: hostname(), osStartTime: ownStart() },
+      previousStatus: null,
     });
     expect(sendSignal).toHaveBeenCalledExactlyOnceWith(process.pid, 'SIGINT');
     expect(failed(await owner).code).toBe('workflow.interrupted');
