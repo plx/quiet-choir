@@ -1,3 +1,8 @@
+// Part of the Node-free authoring model: model.ts and everything it imports must type-check without
+// @types/node, because workflow type checks import it under tsconfigs with no Node types
+// (TypeScript 6 includes none by default). Never import store.js, record.js, node:* or a module
+// that does, even with `import type`, and never use Node globals. test/node-free-model.test.ts
+// enforces this and names the offending import.
 import type { z } from 'zod';
 import type { JsonInput, JsonValue, StepContext } from './model.js';
 import type {
