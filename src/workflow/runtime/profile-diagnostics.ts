@@ -24,7 +24,11 @@ function cloneHarnessError(error: HarnessError): HarnessError {
   return annotated;
 }
 
-/** Add recovery guidance without mutating an adapter-owned error or losing its category/usage. @internal */
+/**
+ * Add recovery guidance without mutating an adapter-owned error or losing its category/usage. A
+ * message that already carries this step's hint (a fixture rule exported from an annotated failure)
+ * is returned unchanged, so a replay records the same message instead of a second hint. @internal
+ */
 export function profileLimitError(
   error: HarnessError,
   id: string,
@@ -33,6 +37,7 @@ export function profileLimitError(
 ): HarnessError {
   if (error.kind !== 'turn-limit' && error.kind !== 'budget-limit') return error;
   const field = error.kind === 'turn-limit' ? 'maxTurns' : 'maxBudgetUsd';
+  if (error.message.includes(`Step ${id} hit ${field}=`)) return error;
   const limit = execution.policy[field];
   const next = Math.min(
     field === 'maxTurns' ? Number.MAX_SAFE_INTEGER : Number.MAX_VALUE,
@@ -49,6 +54,8 @@ export function profileLimitError(
  * Add the idle-deadline recovery hint to an `idle-timeout` failure, mirroring
  * {@link profileLimitError}. The adapter's error is not mutated: a plain process error is replaced
  * by a new error with the same code and harness evidence, and a {@link HarnessError} keeps its kind.
+ * A message that already carries this step's hint is returned unchanged, as in
+ * {@link profileLimitError}.
  * @internal
  */
 export function idleTimeoutError(
@@ -58,6 +65,7 @@ export function idleTimeoutError(
   execution: AttemptPolicy,
 ): unknown {
   if (errorKind(error) !== 'idle-timeout' || !(error instanceof Error)) return error;
+  if (error.message.includes(`Step ${id} produced no output for idleTimeoutMs=`)) return error;
   const limit = execution.policy.idleTimeoutMs;
   const next = limit === undefined ? 120_000 : Math.min(2_147_483_647, limit * 2);
   let hint = `Step ${id} produced no output for idleTimeoutMs=${String(limit ?? 'unknown')} (profile ${profile}). Retry: --resume --profile ${profile}.idleTimeoutMs=${String(next)}`;

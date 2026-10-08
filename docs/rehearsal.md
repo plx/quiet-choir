@@ -83,18 +83,24 @@ but do not pin an attempt number, and agent failures as `error` rules, all in ex
 covers settled failures (`onError: 'return'`) and failures the workflow absorbed, such as a body
 `try/catch` around an agent call or a settled map item, which leave the step `failed` in a completed
 run; the text of an absorbed failure is the step's recorded error message. On replay an error rule
-rejects with the fixture `Step <id>: ` prefix and settles with kind `unknown`; the original error
-kind is not exported as `kind`, and the attempt count is not preserved, so a workflow that branches
-on them can take a different path in rehearsal. Completed commands become `exec` rules in execution
-order, keyed by full step ID, the full argv as `argvPrefix` (omitted for a shell command), and the
-recorded `envSha256` and `inputSha256`; environment overlay values and stdin are never read or
-written, only those digests. A structured command exports its parsed value as `json`; a plain one
-exports `stdout`, plus `stderr` and `code` when they are not empty or zero. When it exports any exec
-rule it also sets `"commands": "fixture"`, so a replay whose argv or inputs drift fails at that step
-instead of running the real command; shorten `argvPrefix` or drop a digest by hand when a value
-legitimately changes per run. A run without commands exports exactly as before. A message that
-already carries the same step's prefix is exported without it, so export, replay and export again
-give the same file. It does not modify the source checkpoint.
+rejects with the fixture `Step <id>: ` prefix. An error rule carries the original `kind` (except
+`unknown`, which a rule without `kind` already replays as, and `cancelled`, which would be fatal on
+replay), so kind-based branches and `retry.on` replay as in the original run. A replayed rule always
+rejects with a `HarnessError` of the recorded kind, so failures the runtime classified from other
+error classes, such as local output validation (`schema`, which originally threw `ZodError` or
+`SyntaxError`) or plain process or idle-timeout errors, keep their kind but not their error class.
+Workflow code that must replay faithfully should branch on `kind` rather than `instanceof`. The
+attempt count is not preserved, so a workflow that branches on it can take a different path in
+rehearsal. Completed commands become `exec` rules in execution order, keyed by full step ID, the
+full argv as `argvPrefix` (omitted for a shell command), and the recorded `envSha256` and
+`inputSha256`; environment overlay values and stdin are never read or written, only those digests. A
+structured command exports its parsed value as `json`; a plain one exports `stdout`, plus `stderr`
+and `code` when they are not empty or zero. When it exports any exec rule it also sets
+`"commands": "fixture"`, so a replay whose argv or inputs drift fails at that step instead of
+running the real command; shorten `argvPrefix` or drop a digest by hand when a value legitimately
+changes per run. A run without commands exports exactly as before. A message that already carries
+the same step's prefix is exported without it, so export, replay and export again give the same
+file. It does not modify the source checkpoint.
 
 ## Command fixtures
 
