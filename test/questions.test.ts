@@ -490,6 +490,28 @@ it('bounds long issue codes, paths and messages to what the record accepts', asy
   expect(issue?.message).toHaveLength(1024);
 });
 
+it('stringifies numeric issue path segments that JSON cannot hold', async () => {
+  const definition = workflow((ctx) =>
+    ctx.ask('lossy', {
+      prompt: 'Lossy?',
+      schema: z.string().check((context) => {
+        context.issues.push({
+          code: 'custom',
+          path: [Number.NaN, Number.POSITIVE_INFINITY, -0, 3],
+          message: 'bad',
+          input: context.value,
+        });
+      }),
+    }),
+  );
+  await runWorkflow(definition, options());
+  await writeAnswer({ ...options(), stepId: 'lossy', value: 'x' });
+  expect((await runWorkflow(definition, { ...options(), resume: true })).status).toBe('suspended');
+  const step = (await readRun({ stateDir, runId: 'questions' })).steps['lossy'];
+  expect(step?.status).toBe('waiting');
+  expect(step?.question?.rejections[0]?.issues?.[0]?.path).toEqual(['NaN', 'Infinity', '-0', 3]);
+});
+
 it('records issues on the pending row of a wait with a signal source', async () => {
   const definition = workflow((ctx) =>
     ctx.wait('gate', {

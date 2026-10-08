@@ -167,13 +167,21 @@ const MAX_ISSUE_PATH = 32;
 const MAX_ISSUE_PATH_KEY = 256;
 const MAX_ISSUE_MESSAGE = 1024;
 
+/** Stringify a numeric path segment JSON cannot hold losslessly (NaN, Infinity, -0). */
+function pathNumber(part: number | string): number | string {
+  if (typeof part === 'string' || (Number.isFinite(part) && !Object.is(part, -0))) return part;
+  return Object.is(part, -0) ? '-0' : String(part);
+}
+
 /** Truncate structured issues so a recorded rejection always re-parses. */
 function boundedIssues(issues: readonly AnswerIssue[]): AnswerIssue[] {
   return issues.slice(0, MAX_REJECTION_ISSUES).map((issue) => ({
     code: issue.code.slice(0, MAX_ISSUE_CODE) || 'invalid',
     path: issue.path
       .slice(0, MAX_ISSUE_PATH)
-      .map((part) => (typeof part === 'string' ? part.slice(0, MAX_ISSUE_PATH_KEY) : part)),
+      .map((part) =>
+        typeof part === 'string' ? part.slice(0, MAX_ISSUE_PATH_KEY) : pathNumber(part),
+      ),
     message: issue.message.slice(0, MAX_ISSUE_MESSAGE),
   }));
 }
