@@ -87,6 +87,20 @@ harness-kind provenance (`fixture` or `dry-run`).
 both digests, and then sets `commands: "fixture"`, so a replay that drifts fails loudly instead of
 running a real command such as a merge. Environment overlay values and stdin are never exported.
 
+Since #306, a command failure the run settled with `onError: 'return'` or absorbed (a step left
+`failed` in a completed run) exports as the same kind of rule rather than as a new error form: a
+nonzero `code`, the recorded stderr tail, and the stdout tail or the failure's `parsed` value as
+`json`. `ctx.exec` builds its settled `ExecStepError` deterministically from a command result, the
+step's `okExitCodes` and its schema, so that rule reproduces the message, kind, code, signal, tails
+and `parsed` of an exit-code or `exec.json` schema failure; the runtime and the exporter share the
+failure messages that tell these apart. `json: parsed` is used unless the tail is complete JSON for
+it in another layout, which keeps short pretty-printed output byte for byte, still reproduces
+`parsed` when stdout was longer than its 1024-character tail, and makes export, replay and export a
+fixed point. Spawn failures, timeouts, signal kills, `output-limit` and custom runner kinds cannot
+come from a command result; they wait for exec error rules (#307). Such a failure gets no rule, but
+it still makes the export set `commands: "fixture"`, so its replay fails at that step instead of
+running the command or synthesizing a success.
+
 A fixture `error` rule may carry `kind` (an `ErrorKind`). The call then rejects with a
 `HarnessError` of that kind whose message is the unchanged `Step <id>: <error>` text, so `retry.on`,
 `StepError.kind` and kind-based branches can be rehearsed while kindless rules behave exactly as

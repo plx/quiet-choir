@@ -92,8 +92,20 @@ Completed commands become `exec` rules in execution order, keyed by full step ID
 `argvPrefix` (omitted for a shell command), and the recorded `envSha256` and `inputSha256`;
 environment overlay values and stdin are never read or written, only those digests. A structured
 command exports its parsed value as `json`; a plain one exports `stdout`, plus `stderr` and `code`
-when they are not empty or zero. When it exports any exec rule it also sets `"commands": "fixture"`,
-so a replay whose argv or inputs drift fails at that step instead of running the real command;
+when they are not empty or zero. A command failure the run settled (`onError: 'return'`) or absorbed
+(a step left `failed` in a completed run) becomes the same kind of rule when a command result can
+reproduce it: an exit code outside `okExitCodes`, or an `exec.json` stdout that did not parse or
+match its schema. The rule carries the exit `code`, the recorded stderr tail as `stderr`, and either
+the failure's `parsed` value as `json` or the recorded stdout tail as `stdout` (complete
+pretty-printed JSON under 1024 characters keeps its bytes). The replay sends that result through the
+same exit-code and schema checks, so the settled error or thrown `ExecError` has the same message,
+kind, code, signal, tails and `parsed`. Long pretty-printed JSON replays compact (its `stdoutTail`
+differs in whitespace), long `exec.json` output without `parsed` replays from its tail (the parse
+message can differ), and a replayed `ExecError` reports `truncated: false` and `durationMs: 0`.
+Spawn failures, timeouts, signal kills, `output-limit` failures and custom runner kinds get no rule
+yet. When the run has any completed, settled-failed or failed command, export also sets
+`"commands": "fixture"`, even when a failure produced no rule, so a replay whose argv or inputs
+drift, or that reaches such a failure, fails at that step instead of running the real command;
 shorten `argvPrefix` or drop a digest by hand when a value legitimately changes per run. A run
 without commands exports exactly as before. It does not modify the source checkpoint.
 

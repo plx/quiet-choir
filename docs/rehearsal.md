@@ -95,12 +95,29 @@ rehearsal. Completed commands become `exec` rules in execution order, keyed by f
 full argv as `argvPrefix` (omitted for a shell command), and the recorded `envSha256` and
 `inputSha256`; environment overlay values and stdin are never read or written, only those digests. A
 structured command exports its parsed value as `json`; a plain one exports `stdout`, plus `stderr`
-and `code` when they are not empty or zero. When it exports any exec rule it also sets
-`"commands": "fixture"`, so a replay whose argv or inputs drift fails at that step instead of
-running the real command; shorten `argvPrefix` or drop a digest by hand when a value legitimately
-changes per run. A run without commands exports exactly as before. A message that already carries
-the same step's prefix is exported without it, so export, replay and export again give the same
-file. It does not modify the source checkpoint.
+and `code` when they are not empty or zero. A command failure the run settled (`onError: 'return'`)
+or absorbed (a step left `failed` in a completed run, such as a body `try/catch`) becomes the same
+kind of rule when a command result can reproduce it: an exit code outside `okExitCodes`, or an
+`exec.json` stdout that did not parse or match its schema. The rule carries the exit `code`, the
+recorded stderr tail as `stderr`, and one output field. That is `json` with the failure's `parsed`
+value, unless the recorded stdout tail is complete JSON for it in another layout (pretty-printed
+output under 1024 characters keeps its bytes as `stdout`); without `parsed` it is the stdout tail as
+`stdout`. The replay sends that result through the same exit-code and schema checks, so the settled
+error or the thrown `ExecError` has the same message, kind, code, signal, output tails and `parsed`,
+and a retried failure fails every attempt again. The tails are the last 1024 characters, which is
+all the workflow saw. Three edges are lossy: a long pretty-printed `exec.json` output replays in
+compact form, so its `stdoutTail` differs in whitespace; an `exec.json` output longer than 1024
+characters without `parsed` (not JSON, or over 16 KiB) replays from its tail, so the parse message
+can differ; and a replayed `ExecError` reports `truncated: false` and `durationMs: 0`. Spawn
+failures, timeouts, signal kills, `output-limit` failures and kinds from a custom process runner get
+no rule until exec rules can describe errors
+([#307](https://github.com/plx/quiet-choir/issues/307)). When the run has any completed,
+settled-failed or failed command, export also sets `"commands": "fixture"`, even when a failure
+produced no rule, so a replay whose argv or inputs drift, or that reaches such a failure, fails at
+that step instead of running the real command or synthesizing a success; shorten `argvPrefix` or
+drop a digest by hand when a value legitimately changes per run. A run without commands exports
+exactly as before. A message that already carries the same step's prefix is exported without it, so
+export, replay and export again give the same file. It does not modify the source checkpoint.
 
 ## Command fixtures
 

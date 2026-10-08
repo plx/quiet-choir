@@ -390,8 +390,10 @@ requested/default state directory. `workflow fixtures ID --json` returns version
 a completed run: its agent outputs, settled agent failures and agent failures the workflow absorbed
 (a body `try/catch` or a settled map item) as `error` rules with their recorded `kind` when it is
 not `unknown`, and its completed command results as `exec` rules with environment and stdin digests
-only, plus `"commands": "fixture"` when there is at least one. See
-[workflow rehearsal](rehearsal.md).
+only. Settled and absorbed command failures that a command result reproduces (an exit code outside
+`okExitCodes` or an `exec.json` schema failure) become `exec` rules with their exit `code` and
+recorded output tails; other command failures get no rule yet. `"commands": "fixture"` is set when
+the run has at least one completed or failed command. See [workflow rehearsal](rehearsal.md).
 
 Failures have these fields:
 
