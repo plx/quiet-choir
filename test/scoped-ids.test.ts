@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, expectTypeOf, it, vi } from 'vitest';
@@ -7,7 +7,9 @@ import {
   defineWorkflow,
   readRun,
   runWorkflow,
+  SettledMapChangedError,
   stepId,
+  WorkflowRunError,
   writeAnswer,
   z,
   type Harness,
@@ -536,13 +538,69 @@ it('accepts a mapper-only change to a committed settled map only under acceptCod
   expect(workB).toHaveBeenCalledTimes(1);
 });
 
+/** Every file of a run's checkpoint directory by path, so a refusal can prove it wrote nothing. */
+async function runFiles(runId: string): Promise<Record<string, string>> {
+  const names = (await readdir(join(stateDir, runId), { recursive: true, withFileTypes: true }))
+    .filter((entry) => entry.isFile())
+    .map((entry) => join(entry.parentPath, entry.name))
+    .sort();
+  return Object.fromEntries(
+    await Promise.all(
+      names.map(async (name): Promise<[string, string]> => [name, await readFile(name, 'utf8')]),
+    ),
+  );
+}
+
+/** The accepted resume's bare pre-mutation refusal for a settled map, and the run it left alone. */
+async function expectAcceptedMapRefusal(
+  attempt: Promise<unknown>,
+  runId: string,
+  expected: { mapId: string; components: string[]; legacy: boolean; message: string },
+  before: { bytes: Record<string, string>; run: Awaited<ReturnType<typeof readRun>> },
+): Promise<SettledMapChangedError> {
+  const refusal: unknown = await attempt.catch((error: unknown) => error);
+  // Bare: not wrapped in WorkflowRunError, because the run was not touched.
+  expect(refusal).toBeInstanceOf(SettledMapChangedError);
+  expect(refusal).not.toBeInstanceOf(WorkflowRunError);
+  if (!(refusal instanceof SettledMapChangedError)) throw new Error('unreachable');
+  expect(refusal.mapId).toBe(expected.mapId);
+  expect(refusal.components).toEqual(expected.components);
+  expect(refusal.legacy).toBe(expected.legacy);
+  expect(refusal.message).toContain(expected.message);
+  expect(refusal.message).toContain(
+    `The accepted replay was refused before run ${runId} was changed.`,
+  );
+  expect(refusal.message).toContain(
+    `Fork a new run with --fork-from RUN --reuse matching --invalidate ${expected.mapId}.`,
+  );
+  // The cause is the copy's own error, with the same fields.
+  expect(refusal.cause).toBeInstanceOf(SettledMapChangedError);
+  const cause = refusal.cause as SettledMapChangedError;
+  expect(cause).not.toBe(refusal);
+  expect(cause.mapId).toBe(expected.mapId);
+  expect(cause.components).toEqual(expected.components);
+  expect(await runFiles(runId)).toEqual(before.bytes);
+  const after = await readRun({ ...options(), runId });
+  for (const field of [
+    'status',
+    'error',
+    'recoveryHint',
+    'output',
+    'workflow',
+    'codeChanges',
+    'executions',
+  ] as const)
+    expect(after[field]).toEqual(before.run[field]);
+  return refusal;
+}
+
 it.each([
   ['items', { n: 2 }],
   ['keys', { prefix: 'k-' }],
   ['version', { version: '2' }],
   ['items, mapper', { n: 2, mapper: true }],
 ] as const)(
-  'refuses a %s change to a committed settled map even under acceptCodeChange',
+  'refuses a %s change to a committed settled map before changing the run under acceptCodeChange',
   async (changed, edit) => {
     const runId = `edit-${changed.replace(', ', '-')}`;
     let current: { n: number; prefix: string; version: string; mapper: boolean } = {
@@ -564,12 +622,33 @@ it.each([
       throw new Error('tail');
     });
     await expect(runWorkflow(definition, { ...options(), runId })).rejects.toThrow('tail');
+    const before = {
+      bytes: await runFiles(runId),
+      run: await readRun({ ...options(), runId }),
+    };
     current = { ...current, ...edit };
-    await expect(
+    const components = changed.split(', ');
+    await expectAcceptedMapRefusal(
       runWorkflow(definition, { ...options(), runId, resume: true, acceptCodeChange: true }),
-    ).rejects.toThrow(
-      `Settled map items changed after an item completed (changed: ${changed}); --accept-code-change accepts only a mapper change. Fork a new run.`,
+      runId,
+      {
+        mapId: 'items',
+        components,
+        legacy: false,
+        message: `Settled map items changed after an item completed (changed: ${changed}); --accept-code-change accepts only a mapper change. Fork a new run.`,
+      },
+      before,
     );
+    expect(work).toHaveBeenCalledTimes(1);
+    // A plain resume fails the run instead: the typed error is the failure's cause, and the saved
+    // hint offers the fork and not --accept-code-change.
+    const plain: unknown = await runWorkflow(definition, {
+      ...options(),
+      runId,
+      resume: true,
+    }).catch((error: unknown) => error);
+    expect(plain).toBeInstanceOf(WorkflowRunError);
+    expect((plain as WorkflowRunError).cause).toBeInstanceOf(SettledMapChangedError);
     const saved = await readRun({ ...options(), runId });
     expect(saved.recoveryHint).toContain(`--fork-from ${runId}`);
     expect(saved.recoveryHint).not.toContain('--accept-code-change');
@@ -578,7 +657,7 @@ it.each([
   },
 );
 
-it('refuses a changed settled-map cwd component even under acceptCodeChange', async () => {
+it('refuses a changed settled-map cwd component before changing the run under acceptCodeChange', async () => {
   const definition = workflow(async (ctx) => {
     await ctx.map('items', ['a'], { concurrency: 1, onError: 'return' }, () =>
       Promise.resolve('saved'),
@@ -593,10 +672,18 @@ it('refuses a changed settled-map cwd component even under acceptCodeChange', as
   journal.components.cwd = 'moved';
   journal.fingerprint = 'moved';
   await writeRun(stateDir, record);
-  await expect(
+  const before = { bytes: await runFiles('scopes'), run: await readRun(options()) };
+  await expectAcceptedMapRefusal(
     runWorkflow(definition, { ...options(), resume: true, acceptCodeChange: true }),
-  ).rejects.toThrow(
-    'Settled map items changed after an item completed (changed: cwd); --accept-code-change accepts only a mapper change.',
+    'scopes',
+    {
+      mapId: 'items',
+      components: ['cwd'],
+      legacy: false,
+      message:
+        'Settled map items changed after an item completed (changed: cwd); --accept-code-change accepts only a mapper change.',
+    },
+    before,
   );
 });
 
@@ -617,18 +704,19 @@ it('keeps the unnamed refusal for a settled-map journal saved without components
   expect((await readRun(options())).maps?.['items']?.components).toBeUndefined();
   const original = mapper;
   mapper = () => Promise.resolve('after');
-  const refusal: unknown = await runWorkflow(definition, {
-    ...options(),
-    resume: true,
-    acceptCodeChange: true,
-  }).catch((error: unknown) => error);
-  expect(refusal).toBeInstanceOf(Error);
-  if (!(refusal instanceof Error)) throw refusal;
-  expect(refusal.message).toContain(
-    'Settled map items changed after an item completed; its journal predates per-component fingerprints',
+  const before = { bytes: await runFiles('scopes'), run: await readRun(options()) };
+  await expectAcceptedMapRefusal(
+    runWorkflow(definition, { ...options(), resume: true, acceptCodeChange: true }),
+    'scopes',
+    {
+      mapId: 'items',
+      components: [],
+      legacy: true,
+      message:
+        'Settled map items changed after an item completed; its journal predates per-component fingerprints',
+    },
+    before,
   );
-  expect(refusal.message).toContain('Fork a new run');
-  expect((await readRun(options())).recoveryHint).not.toContain('--accept-code-change');
   mapper = original;
   tail = false;
   const result = await runWorkflow(definition, { ...options(), resume: true });
