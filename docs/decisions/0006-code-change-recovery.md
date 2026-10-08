@@ -197,13 +197,14 @@ never from message text: a missing grant (`GrantRequiredError`, a `Configuration
 divergence (`ReplayDivergenceError` or `StepIdentityChangedError`), another configuration failure, a
 cancelled run, a recorded effect failure, or otherwise an authoring failure. The pure
 `recovery-hint.ts` chooses the text. A grant failure names `--resume --grant`; a divergence names
-`--strict-replay` and `--fork-from` and, with unchanged source, a value computed in the body outside
-`ctx.now` or `ctx.step`; only a configuration or authoring failure mentions `--accept-code-change`,
-keeping the re-finalize text when all recorded work is terminal; an effect failure or a cancellation
-gets a plain resume. A run with no recorded step or map, and a dry-run, get no hint, and
-`hasTerminalOutcomes` (and so check-resume's `refinalizable`) is false for a run with nothing
-recorded. The CLI appends the hint only to the invocation's own `WorkflowRunError`, never to a
-refusal or a dry-run, and a divergence refusal still never advertises the path it refused.
+`workflow resume RUN --strict-replay` and `--fork-from` and, with unchanged source, a value computed
+in the body outside `ctx.now` or `ctx.step`; only a configuration or authoring failure mentions
+`--accept-code-change`, keeping the re-finalize text when all recorded work is terminal; an effect
+failure or a cancellation gets a plain resume. A run with no recorded step or map, and a dry-run,
+get no hint, and `hasTerminalOutcomes` (and so check-resume's `refinalizable`) is false for a run
+with nothing recorded. The CLI appends the hint only to the invocation's own `WorkflowRunError`,
+never to a refusal or a dry-run, and a divergence refusal still never advertises the path it
+refused.
 
 ## Amendment: settled map acceptance (#146)
 
@@ -405,7 +406,9 @@ capability overrides ignores named-profile grants, so its cause carries `classOn
 the hint and the entry name only the access class. Resume entries repeat the recorded launch policy
 as before. A legacy (format 1) checkpoint gets no fork entry, as for `run.incompatible`. `<LIMIT>`
 is a placeholder for a higher cap or `off`; the flag parser refuses it unreplaced. The divergence
-entry is only the fork: suggesting `resume --strict-replay` belongs with the hint wording (#298).
+entry stays the fork only: a strict resume of a diverged run usually stops again before live work,
+so it diagnoses rather than recovers and is not a `next` entry. The hint names
+`workflow resume RUN --strict-replay` without a launcher prefix, as the other hints do (#298).
 Records from before revision 10 have no cause and keep the plain resume. Stale and suspended entries
 do not change.
 

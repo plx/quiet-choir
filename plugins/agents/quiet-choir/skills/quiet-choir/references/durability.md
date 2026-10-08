@@ -127,9 +127,8 @@ the effect), `settleStamp` (the counter after its latest terminal settlement) an
 the same tick as the failing step is not flagged, whichever settled first. If any are flagged,
 `replay.divergence` warns immediately, names the healed step and those IDs, and saves the warning.
 `--strict-replay` then stops before the next live effect, while permitting terminal replay;
-`workflow resume RUN --strict-replay` and `execute --resume --strict-replay` are equivalent.
-Concurrent work already in flight can still finish. The end-of-run skipped-path error also names
-healed steps.
+`--strict-replay` works the same with `workflow resume RUN` and with `execute --resume`. Concurrent
+work already in flight can still finish. The end-of-run skipped-path error also names healed steps.
 
 The rule is a watermark, not proof of dependence: a step launched after the failure by unrelated
 control flow (for example, a step started when another sibling completed after the failure had
