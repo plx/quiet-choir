@@ -23,11 +23,22 @@
  */
 
 /**
- * Why a run failed, as far as recovery advice is concerned. `grant` is a missing access grant,
- * `divergence` a replay that left the recorded path, `map-changed` a settled map that changed after
- * an item completed (`mapperOnly` when only its mapper did), `configuration` any other ConfigurationError,
- * `budget` a run-budget stop (`flag` is the CLI flag of the cap that stopped the run), `authoring` a body, output or call-site failure, `effect` a durable effect's recorded failure, and
- * `cancelled` a cancelled run. @internal
+ * Why a run failed, as far as recovery advice is concerned. The runner classifies each failed or
+ * cancelled invocation into one cause and saves it as `RunRecord.recoveryCause`; the saved
+ * `recoveryHint` and the run's `next` commands both follow it.
+ *
+ * - `grant`: a missing access grant; `profile` is the profile that needs it and `access` the
+ *   access level it requires.
+ * - `divergence`: a replay that left the recorded path.
+ * - `map-changed`: a settled map that changed after an item completed; `mapperOnly` when only its
+ *   mapper did, so `--accept-code-change` can keep the completed items.
+ * - `configuration`: any other configuration error.
+ * - `budget`: a run-budget stop; `flag` is the CLI flag of the cap that stopped the run.
+ * - `authoring`: a workflow body, output or call-site failure.
+ * - `effect`: a durable effect's recorded failure.
+ * - `cancelled`: a cancelled run.
+ *
+ * A later build may add kinds, and only together with a record schema revision.
  */
 export type RecoveryCause =
   | { readonly kind: 'grant'; readonly profile: string; readonly access: string }

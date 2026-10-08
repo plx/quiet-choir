@@ -290,6 +290,7 @@ it('advises a grant, not a code change, for a grant failure and names the agent 
   expect(saved.rootCause).toMatchObject({ stepId: 'edit', effect: 'claude' });
   expect(saved.recoveryHint).toContain('--resume --grant edit');
   expect(saved.recoveryHint).not.toContain('accept-code-change');
+  expect(saved.recoveryCause).toEqual({ kind: 'grant', profile: 'edit', access: 'write' });
   expect(invoke).not.toHaveBeenCalled();
 });
 
@@ -308,7 +309,10 @@ it('saves no recovery hint for a grant failure on the first effect', async () =>
   // The message itself still carries the grant advice; there is nothing recorded to resume.
   expect((error as Error).message).toMatch(/^Step edit \(claude\) failed:.*--grant edit/u);
   expect((error as Error).message).not.toContain('(unknown)');
-  expect((await readRun(setup())).recoveryHint).toBeUndefined();
+  const saved = await readRun(setup());
+  expect(saved.recoveryHint).toBeUndefined();
+  // The cause is saved even without a hint; a run that recorded nothing gets no next entry.
+  expect(saved.recoveryCause).toEqual({ kind: 'grant', profile: 'edit', access: 'write' });
 });
 
 it('pins named grants to capabilities across explicit source acceptance', async () => {

@@ -1131,9 +1131,9 @@ it('re-finalizes an output-validation failure with no repeated effects and recor
     return broken ? (undefined as unknown as string) : value;
   });
   await expect(runWorkflow(definition, options())).rejects.toThrow();
-  expect((await readRun(options())).recoveryHint).toContain(
-    'All recorded work has terminal outcomes',
-  );
+  const failed = await readRun(options());
+  expect(failed.recoveryHint).toContain('All recorded work has terminal outcomes');
+  expect(failed.recoveryCause).toEqual({ kind: 'authoring' });
   broken = false;
   const changed = {
     ...definition,
@@ -1156,6 +1156,9 @@ it('re-finalizes an output-validation failure with no repeated effects and recor
   expect(result.output).toBe('done');
   expect(result.codeChanges?.[0]?.components).toEqual(['code', 'output schema']);
   expect(result.recoveryHint).toBeUndefined();
+  // A successful resume clears the saved cause with the hint, in memory and on disk.
+  expect(result.recoveryCause).toBeUndefined();
+  expect((await readRun(options())).recoveryCause).toBeUndefined();
   expect(effect).toHaveBeenCalledTimes(1);
 });
 

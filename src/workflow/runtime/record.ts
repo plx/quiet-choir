@@ -42,6 +42,7 @@ import { jsonValue } from './json.js';
 import { RunRefusedError } from './run-errors.js';
 import { errorKindSchema, retryOnSchema, stepErrorSchema } from './step-error.js';
 import type { MapStepError, RootCause } from './fan-out.js';
+import type { RecoveryCause } from './recovery-hint.js';
 import type { StepIdentity } from './identity.js';
 import type { CodeChange, ForkProvenance, ReusedStep, WorkflowIdentity } from './replay-model.js';
 import { renameLegacyEffort } from './effort-compat.js';
@@ -466,6 +467,13 @@ export interface RunRecord {
    * when the run recorded nothing or was a dry-run.
    */
   recoveryHint?: string;
+  /**
+   * The typed cause behind `recoveryHint` and the failed run's `next` commands, saved on every
+   * failed or cancelled run, including one that recorded nothing or was a dry-run (which get no
+   * hint and no commands). Absent after success, on a suspension, and on records from builds before
+   * schema revision 10, whose failed runs get a plain resume command.
+   */
+  recoveryCause?: RecoveryCause;
   /** ISO creation timestamp. */
   createdAt: string;
   /** ISO timestamp of the most recent persisted change. */
@@ -977,6 +985,18 @@ const recordFieldsSchema = z.object({
     .optional(),
   replayWarnings: z.array(z.string()).optional(),
   recoveryHint: z.string().optional(),
+  recoveryCause: z
+    .discriminatedUnion('kind', [
+      z.object({ kind: z.literal('grant'), profile: z.string(), access: z.string() }),
+      z.object({ kind: z.literal('divergence') }),
+      z.object({ kind: z.literal('map-changed'), mapperOnly: z.boolean() }),
+      z.object({ kind: z.literal('configuration') }),
+      z.object({ kind: z.literal('budget'), flag: z.string() }),
+      z.object({ kind: z.literal('authoring') }),
+      z.object({ kind: z.literal('effect') }),
+      z.object({ kind: z.literal('cancelled') }),
+    ])
+    .optional(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
 });
@@ -1173,9 +1193,18 @@ export function withProjectInstructions(
  * changed only nested shapes: the child frame's `redefinitions` history in `children` and the
  * settled map's `frame` in `maps`. Revision 9 (#247) changed only a nested shape: the profile
  * field `redacted.harnesses` in `capabilities`, which holds digests of registered harness
- * `sensitiveOptions`. @internal
+ * `sensitiveOptions`. Revision 10 (#284) added the top-level `recoveryCause`, the typed cause
+ * behind a failed run's recovery hint and `next` commands. @internal
  */
-export const SUPPORTED_SCHEMA_REVISION = 9;
+export const SUPPORTED_SCHEMA_REVISION = 10;
+
+/**
+ * Whether a run recorded any work: at least one step or settled map. A failed run without any gets
+ * no recovery hint and no `next` commands, because there is nothing to reuse. @internal
+ */
+export function hasRecordedWork(record: Pick<RunRecord, 'steps' | 'maps'>): boolean {
+  return Object.keys(record.steps).length > 0 || Object.keys(record.maps ?? {}).length > 0;
+}
 
 /** The top-level run-record keys this build knows. @internal */
 export const RECORD_FIELD_KEYS: readonly string[] = Object.freeze(
