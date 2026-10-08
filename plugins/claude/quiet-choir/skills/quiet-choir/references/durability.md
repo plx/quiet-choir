@@ -147,11 +147,11 @@ changing in the first place.
 
 ## Choose a recovery path
 
-| Path                            | What stays fixed and what can change                                                                                                                                                                                                                     |
-| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--resume`                      | Same run, source/schema identity, name/version, engine, cwd, and validated input; unfinished work retries                                                                                                                                                |
-| `--resume --accept-code-change` | Explicitly waive only source/run-schema changes; keep name/version, engine, cwd, input, terminal-step identity, and replay checks; refuse without changes when a completed step changed or a completed step, settled map or child frame would be skipped |
-| `--fork-from OLD`               | New run, same workflow name; source/version/input may change, terminal outcomes are copied only when their identity matches                                                                                                                              |
+| Path                            | What stays fixed and what can change                                                                                                                                                                                                                                                                                                                           |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--resume`                      | Same run, source/schema identity, name/version, engine, cwd, and validated input; unfinished work retries                                                                                                                                                                                                                                                      |
+| `--resume --accept-code-change` | Explicitly waive only source/run-schema changes; keep name/version, engine, cwd, input, terminal-step identity, and replay checks; refuse without changes when a completed step changed, a settled map's items, keys, version or cwd changed (or its journal predates per-component digests), or a completed step, settled map or child frame would be skipped |
+| `--fork-from OLD`               | New run, same workflow name; source/version/input may change, terminal outcomes are copied only when their identity matches                                                                                                                                                                                                                                    |
 
 Forks default to `--reuse prefix`, which is causal. A matching terminal source step is copied only
 when every source step that had settled before it launched was copied too, and no step that ran live
@@ -233,14 +233,17 @@ settled child frame is refused the same way, because replay still requires every
 skipped ID gets a `{stepId, skipped}` entry (`skipped` is `step`, `map` or `child-frame`, from the
 first failing check, which tests child frames, then maps, then steps), and the fork command
 invalidates the first. That includes an accepted fix to a failed step whose `catch` fallback already
-completed; fork to adopt such a fix. `--dry-run --resume --accept-code-change` returns the same
-refusal. Any other preflight outcome lets the real resume proceed; the copy is taken under the run's
-writer lock, and the workflow body (not its unfinished callbacks) runs once more. If only the body
-tail/output validation failed, a tail-only fix can finish with zero repeated effects. `recoveryHint`
-and CLI errors identify this case, subject to step checks. The hint follows the typed failure cause:
-a grant, replay-divergence, settled-map change, run-budget stop or effect failure gets its own
-advice instead, and a run with nothing recorded or a dry-run gets none. The accepted source becomes
-the basis for later strict resumes.
+completed; fork to adopt such a fix. A settled map changed beyond its mapper is refused the same way
+(`{stepId: MAP_ID, components, map: true}`, plus `legacy: true` and no components for a journal
+saved before per-component digests), and the fork invalidates the map ID.
+`--dry-run --resume --accept-code-change` returns the same refusal. Any other preflight outcome lets
+the real resume proceed; the copy is taken under the run's writer lock, and the workflow body (not
+its unfinished callbacks) runs once more. If only the body tail/output validation failed, a
+tail-only fix can finish with zero repeated effects. `recoveryHint` and CLI errors identify this
+case, subject to step checks. The hint follows the typed failure cause: a grant, replay-divergence,
+settled-map change, run-budget stop or effect failure gets its own advice instead, and a run with
+nothing recorded or a dry-run gets none. The accepted source becomes the basis for later strict
+resumes.
 
 Local callback identity uses the loaded function's `toString()` plus optional `version`. Under the
 CLI's tsx loader, comment/formatting-only callback edits preserve that source string; logic changes
@@ -260,12 +263,14 @@ run gates without executing the supplied definition. `forkFrom` and `resume` are
 An embedded accepted resume runs the same preflight: on a changed completed or settled-failed step
 it rejects with a bare `StepIdentityChangedError` (not a `WorkflowRunError`), and on a skipped
 completed step, settled map or child frame with a bare `ReplaySkippedError` (`kind`, `skipped`,
-`healed`), and changes nothing. A `WorkflowRunError` whose cause is either error means the preflight
-could not reach it and the run did fail; a plain resume reports a skip the same way. An abort of the
-run's signal during the preflight ends the run `cancelled` (or suspended and due now for a
-`RunInterruptedError`) without recording the acceptance: the fingerprint, `codeChanges`, output and
-steps stay as they were. The saved run gains an execution entry with that outcome and a
-`run.cancelled` or `run.suspended` event, also sent to `onEvent`.
+`healed`), and on a settled map whose items, keys, version or cwd changed with a bare
+`SettledMapChangedError` (`mapId`, `components`, `legacy`), and changes nothing. A
+`WorkflowRunError` whose cause is one of these errors means the preflight could not reach it and the
+run did fail; a plain resume reports a skip the same way. An abort of the run's signal during the
+preflight ends the run `cancelled` (or suspended and due now for a `RunInterruptedError`) without
+recording the acceptance: the fingerprint, `codeChanges`, output and steps stay as they were. The
+saved run gains an execution entry with that outcome and a `run.cancelled` or `run.suspended` event,
+also sent to `onEvent`.
 
 ## Settled map replay
 
@@ -291,17 +296,21 @@ also triggers the pre-live divergence check. The journal also saves one digest p
 acceptance (`--accept-code-change`, `acceptCodeChange: true`) accepts a change to the `mapper`
 component only: completed items keep their journaled outcomes and owned step claims, unfinished
 items run with the new mapper, and `codeChanges` records the map. A change to items, keys, version
-or cwd is still refused, with fork advice. A journal saved before per-component digests cannot name
-what changed, so any change to it after a commit is refused. Only the mapper function's own source
-is hashed: a thin mapper such as `(item) => handle(ctx, item)` keeps edits to `handle` out of map
-identity, with no acceptance needed. Either way completed items keep the outcomes the old code
-produced, and leaf step identity checks still apply to items that run again. To make a helper edit
-change map identity, bump `version`; after a commit that means a fork. Inputs/results must be
-lossless JSON, and captured dependencies belong in items or the explicit version. Items are
-snapshotted when `ctx.map` is called; settled mappers receive JSON copies of the fingerprinted
-snapshot, so later caller edits cannot change the processed items. Full IDs stay run-unique; named
-maps prefix each item as `mapId/key/`. Forks start fresh map journals and apply their normal
-per-step reuse/invalidation rules, so mapper-body outcomes are re-evaluated in the new run.
+or cwd is still refused up front, with fork advice and no change to the run:
+`--resume --accept-code-change` and its `--dry-run` preview return `run.incompatible`, and an
+embedded accepted resume rejects with a bare `SettledMapChangedError`. `check-resume` never runs the
+body, so it cannot predict this; use the dry-run preview. A journal saved before per-component
+digests cannot name what changed, so any change to it after a commit is refused the same way. Only
+the mapper function's own source is hashed: a thin mapper such as `(item) => handle(ctx, item)`
+keeps edits to `handle` out of map identity, with no acceptance needed. Either way completed items
+keep the outcomes the old code produced, and leaf step identity checks still apply to items that run
+again. To make a helper edit change map identity, bump `version`; after a commit that means a fork.
+Inputs/results must be lossless JSON, and captured dependencies belong in items or the explicit
+version. Items are snapshotted when `ctx.map` is called; settled mappers receive JSON copies of the
+fingerprinted snapshot, so later caller edits cannot change the processed items. Full IDs stay
+run-unique; named maps prefix each item as `mapId/key/`. Forks start fresh map journals and apply
+their normal per-step reuse/invalidation rules, so mapper-body outcomes are re-evaluated in the new
+run.
 
 ## At-least-once effects
 

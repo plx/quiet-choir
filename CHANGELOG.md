@@ -2,6 +2,18 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `--accept-code-change` now refuses, before changing the run, a resume that would meet a settled
+  map whose `items`, `keys`, `version` or `cwd` changed after an item completed, or any changed map
+  in a journal saved before per-component digests (behavior change): the CLI and its `--dry-run`
+  preview return `run.incompatible` with `details.divergent`
+  `[{stepId: MAP_ID, components, map: true}]` (plus `legacy: true` for a legacy journal) and the
+  fork command invalidating the map ID; an embedded `runWorkflow({ resume, acceptCodeChange })`
+  rejects with a bare, new public `SettledMapChangedError` (`mapId`, `components`, `legacy`).
+  Status, the saved fingerprint, output and `codeChanges` stay unchanged, where the run used to fail
+  after recording the acceptance. A mapper-only edit is still accepted and re-finalizes with no
+  repeated effect. `check-resume` stays body-free and its code-change advice now names settled maps.
+  See ADR 0006 (#303).
+
 - Default (prefix) fork reuse no longer reruns the surviving items of a named map after the fork
   drops one of its keys (behavior change): source steps under a removed key, including keys that
   contain `/`, now count as sibling items instead of causes, so later steps in the surviving items

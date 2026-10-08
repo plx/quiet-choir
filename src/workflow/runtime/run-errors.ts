@@ -335,6 +335,71 @@ export class ReplaySkippedError extends Error {
 }
 
 /**
+ * A settled map (`ctx.map` with a `key`/`version` journal) refused its saved journal because
+ * something other than a completed item's outcome moved after an item completed: its `items`,
+ * `keys`, `version` or `cwd` changed, the `mapper` changed without `acceptCodeChange`, or the
+ * journal predates per-component fingerprints (`legacy`, where the changed component is unknown).
+ * The message names the changed components and says to fork a new run.
+ *
+ * An accepted resume (`acceptCodeChange`) admits a mapper-only change, but never any other
+ * change. It therefore replays on a disposable copy first, and when the copy meets a non-mapper
+ * refusal the resume rejects with this error itself, bare and before the run is changed (#303);
+ * the CLI's `--accept-code-change` reports that as `run.incompatible`. A plain resume, or an
+ * accepted one whose preflight could not reach the map, fails the run and reports this error as
+ * the cause of {@link WorkflowRunError}.
+ *
+ * @example
+ * ```ts
+ * for (let error: unknown = failure; error instanceof Error; error = error.cause)
+ *   if (error instanceof SettledMapChangedError) console.log(error.mapId, error.components);
+ * ```
+ */
+export class SettledMapChangedError extends Error {
+  static {
+    brandError(this, 'SettledMapChangedError');
+  }
+
+  /** Recognize an instance from any quiet-choir module instance, such as a CLI workflow's own import. */
+  public static override [Symbol.hasInstance](value: unknown): value is SettledMapChangedError {
+    return isBranded(this, value);
+  }
+
+  /** The qualified journal ID of the settled map. */
+  public readonly mapId: string;
+  /**
+   * The map components that differ (`items`, `keys`, `mapper`, `version`, `cwd`), in that order;
+   * empty for a legacy journal, where the changed component is unknown.
+   */
+  public readonly components: readonly string[];
+  /** Whether the journal predates per-component fingerprints, so no component can be named. */
+  public readonly legacy: boolean;
+
+  public constructor(
+    message: string,
+    details: {
+      readonly mapId: string;
+      readonly components: readonly string[];
+      readonly legacy: boolean;
+    },
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = 'SettledMapChangedError';
+    this.mapId = details.mapId;
+    this.components = Object.freeze([...details.components]);
+    this.legacy = details.legacy;
+  }
+}
+
+/**
+ * Whether only the mapper changed, which `acceptCodeChange` accepts. A legacy journal is never
+ * mapper-only. @internal
+ */
+export function isMapperOnlyChange(error: SettledMapChangedError): boolean {
+  return !error.legacy && error.components.length === 1 && error.components[0] === 'mapper';
+}
+
+/**
  * Strict replay left the recorded path: it stopped before a live step (`before-live`) or after a
  * healed step (`healed`). A body that finishes without revisiting recorded work raises
  * {@link ReplaySkippedError} instead. The runner reads the class to choose a recovery hint instead
@@ -386,18 +451,20 @@ export function findStepIdentityChange(
 }
 
 /**
- * The first {@link StepIdentityChangedError} or {@link ReplaySkippedError} in an error's causes,
- * aggregate members and `WorkflowRunError` cause: the divergences an accepted resume refuses before
- * it changes the run. @internal
+ * The first {@link StepIdentityChangedError}, {@link ReplaySkippedError} or non-mapper
+ * {@link SettledMapChangedError} in an error's causes, aggregate members and `WorkflowRunError`
+ * cause: the divergences an accepted resume refuses before it changes the run. A mapper-only
+ * settled-map change is skipped, because the accepted resume admits it. @internal
  */
 export function findAcceptedReplayDivergence(
   error: unknown,
   seen = new Set<unknown>(),
-): StepIdentityChangedError | ReplaySkippedError | undefined {
+): StepIdentityChangedError | ReplaySkippedError | SettledMapChangedError | undefined {
   if (!(error instanceof Error) || seen.has(error)) return undefined;
   seen.add(error);
   if (error instanceof StepIdentityChangedError || error instanceof ReplaySkippedError)
     return error;
+  if (error instanceof SettledMapChangedError && !isMapperOnlyChange(error)) return error;
   const nested: unknown[] = [
     error.cause,
     ...(error instanceof AggregateError && Array.isArray(error.errors)

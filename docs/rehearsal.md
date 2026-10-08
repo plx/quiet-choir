@@ -247,17 +247,17 @@ normal meanings. A preview deliberately allows the harness change only in its di
 never grants future native execution.
 
 `--dry-run --resume --accept-code-change` previews an accepted code change. When the replay reaches
-a completed or settled-failed step whose identity changed, or ends with a `ReplaySkippedError`
-because it skipped a completed step, settled map or child frame, it returns the same
-`run.incompatible` refusal as the real command, with `error.details.divergent` and
-`error.details.next` spelled for the real state directory (see
-[ADR 0006](decisions/0006-code-change-recovery.md)). The real command, like any `runWorkflow`
-accepted resume, runs the same replay on its own before it changes anything, with every unfinished
-agent call, local step, file effect, poll observer and command synthesized and no fixtures. That
-inner replay also synthesizes every worktree effect without Git, including the `ctx.worktree`,
-handle isolation and captured-commit merges a preview refuses, and consumes copies of the run's
-delivered but unconsumed answers. A preview skips that inner replay, since it is already a
-disposable copy.
+a completed or settled-failed step whose identity changed, meets a settled map whose items, keys,
+version or cwd changed (a `SettledMapChangedError`), or ends with a `ReplaySkippedError` because it
+skipped a completed step, settled map or child frame, it returns the same `run.incompatible` refusal
+as the real command, with `error.details.divergent` and `error.details.next` spelled for the real
+state directory (see [ADR 0006](decisions/0006-code-change-recovery.md)). The real command, like any
+`runWorkflow` accepted resume, runs the same replay on its own before it changes anything, with
+every unfinished agent call, local step, file effect, poll observer and command synthesized and no
+fixtures. That inner replay also synthesizes every worktree effect without Git, including the
+`ctx.worktree`, handle isolation and captured-commit merges a preview refuses, and consumes copies
+of the run's delivered but unconsumed answers. A preview skips that inner replay, since it is
+already a disposable copy.
 
 New records save `harness.kind`: `cli`, `fixture`, `dry-run`, `custom` for an unnamed embedded
 adapter, or `none` without an adapter. A different kind on resume or fork requires

@@ -18,7 +18,9 @@ no longer stops early at either. Amended by #284: a failed run saves its typed r
 its `next` entries follow that cause as its recovery hint does. Amended by #300: a terminal failure
 also appends to a bounded `failureHistory`, which makes the healed-step check per launch. Amended by
 #302: steps record the named-map items that enclosed their launch, so prefix reuse also treats
-source steps under a key the fork dropped as sibling items.
+source steps under a key the fork dropped as sibling items. Amended by #303: the preflight also
+refuses an accepted resume that would meet a settled map changed beyond its mapper
+(`SettledMapChangedError`).
 
 ## Context
 
@@ -284,7 +286,7 @@ before configuration. A mapper-only change suggests `--resume --accept-code-chan
 change, or a journal saved without components, suggests restoring the map or `--fork-from`, never
 `--accept-code-change`. The #126 preflight replays with acceptance, so it now passes a mapper-only
 map change; a non-mapper map refusal under acceptance still fails the real run after the run-level
-entry is written, as before.
+entry is written, as before (until #303, below).
 
 ## Amendment: embedded accepted-replay preflight (#215)
 
@@ -404,6 +406,52 @@ placeholder handle or a conflict-free merge result can steer the copy onto a bra
 would not take, which can miss a divergence or, when that branch skips completed work, refuse an
 edit the real run would accept. That needs completed work ordered after an unfinished Git effect
 whose result decides the branch; the fork in `details.next` is the escape.
+
+## Amendment: refuse non-mapper settled-map changes (#303)
+
+A settled map refused for a change to its `items`, `keys`, `version` or `cwd` (or any change to a
+journal saved before per-component digests, a legacy journal) still failed the real run after an
+accepted resume had recorded the run-level `codeChanges` entry and replaced the saved fingerprint.
+The #126 preflight ignored it: only a step identity change (#126) or a skipped record (#216) was a
+finding. The map's refusal was a plain `Error` that the runtime tracked in a module-local `WeakMap`,
+which a second quiet-choir module instance could not see.
+
+The refusal is now a public, branded `SettledMapChangedError` with `mapId` (the qualified journal
+ID), `components` (the changed component names in the fixed order `items`, `keys`, `mapper`,
+`version`, `cwd`; empty for a legacy journal) and `legacy`. The message text is unchanged, so the
+`map-changed` recovery cause and its hints (`mapperOnly` is a non-legacy change of the mapper alone)
+read the class instead of the weak map. The #215 preflight treats a non-mapper
+`SettledMapChangedError` like the other two findings: `runWorkflow` rejects with a bare
+`SettledMapChangedError` (same fields, the copy's error as cause, the fork recipe naming the map ID
+appended to the message) before anything is saved, and the CLI maps it to `run.incompatible`. A
+mapper-only change is never a finding, because the accepted resume admits it (#146) and re-finalizes
+with the completed items reused and no repeated effect. The search is still first-found, so an
+identity change or skip met earlier in the chain wins.
+
+The CLI refusal's `details.divergent` has one `{stepId, components, map: true}` entry with the map
+ID as `stepId` (a legacy journal adds `legacy: true` and has no components), and `details.next` is
+the `--fork-from RUN --reuse matching --invalidate MAP_ID` command, matching the skipped-map refusal
+(#216). The message says that `--accept-code-change` accepts only a mapper change and that nothing
+was changed. `--dry-run --resume --accept-code-change` returns the same refusal and leaves the run
+untouched.
+
+`--accept-code-change` therefore cannot clear these settled-map refusals: a changed `items`, `keys`,
+`version` or `cwd`, any of them together with a mapper change, and any change to a legacy journal.
+The remedy is the fork. Invalidating the map ID starts a fresh map journal, but `--reuse matching`
+can still reuse matching leaf steps under the map; to force the items live, invalidate `'MAP/**'`
+instead.
+
+check-resume stays body-free, as above: settled-map items, keys and version are computed by the
+workflow body, which check-resume never runs, so it cannot predict this refusal. Its code-change
+advice now names settled maps among the changes an accepted resume refuses without changes, and
+still points at the `--dry-run --resume --accept-code-change` preview, which is the dry check.
+
+The fail-open limits are those of #216. A copy that stops before the map finds nothing, and a
+synthesized value can steer the copy onto another branch. A map whose items depend on an unfinished
+effect's synthesized output can be refused in the copy although a real run would compute matching
+items, or the reverse; the fork in `details.next` is the escape. The frame-boundary refusal
+(`committed work in child frame`) and duplicate map IDs are not settled-map changes and stay
+fail-open.
 
 ## Amendment: run-budget recovery cause (#283)
 
