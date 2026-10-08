@@ -32,11 +32,12 @@ export function parseIdent(output: string): MergeIdentity | null {
 }
 
 async function configIdent(
-  runtime: MergeRuntime,
+  git: WorktreeGit,
+  repo: string,
   variable: 'GIT_AUTHOR_IDENT' | 'GIT_COMMITTER_IDENT',
   invocation: HarnessInvocation,
 ): Promise<MergeIdentity> {
-  const result = await runtime.git.run(runtime.ledger.repo, ['var', variable], invocation, {
+  const result = await git.run(repo, ['var', variable], invocation, {
     codes: [0, 1, 128],
   });
   const ident = result.code === 0 ? parseIdent(result.stdout) : null;
@@ -51,9 +52,13 @@ async function configIdent(
   return ident;
 }
 
-/** Resolve the requested message and identity once, before anything is committed. */
-async function resolveCommit(
-  runtime: MergeRuntime,
+/**
+ * Resolve the requested message and identity once, before anything is committed. Only a
+ * `'git-config'` author runs Git (the read-only `git var`). @internal
+ */
+export async function resolveCommit(
+  git: WorktreeGit,
+  repo: string,
   commit: MergeCommitOptions,
   invocation: HarnessInvocation,
 ): Promise<NonNullable<MergePreparation['commit']>> {
@@ -62,11 +67,62 @@ async function resolveCommit(
   if (author === 'git-config')
     return {
       message: commit.message,
-      author: await configIdent(runtime, 'GIT_AUTHOR_IDENT', invocation),
-      committer: await configIdent(runtime, 'GIT_COMMITTER_IDENT', invocation),
+      author: await configIdent(git, repo, 'GIT_AUTHOR_IDENT', invocation),
+      committer: await configIdent(git, repo, 'GIT_COMMITTER_IDENT', invocation),
     };
   const explicit = { name: author.name, email: author.email };
   return { message: commit.message, author: explicit, committer: explicit };
+}
+
+/**
+ * Create a commit object with `git commit-tree`, dated `date` for both author and committer.
+ * `identity` replaces the fixed quiet-choir author and committer. @internal
+ */
+export async function commitTree(
+  git: WorktreeGit,
+  repo: string,
+  tree: string,
+  parents: readonly string[],
+  message: string,
+  date: string,
+  invocation: HarnessInvocation,
+  identity: CommitIdentity = fixedIdentity,
+): Promise<string> {
+  const env = {
+    GIT_AUTHOR_NAME: identity.author.name,
+    GIT_AUTHOR_EMAIL: identity.author.email,
+    GIT_COMMITTER_NAME: identity.committer.name,
+    GIT_COMMITTER_EMAIL: identity.committer.email,
+    GIT_AUTHOR_DATE: date,
+    GIT_COMMITTER_DATE: date,
+  };
+  return commitId(
+    (
+      await git.run(
+        repo,
+        ['commit-tree', tree, ...parents.flatMap((parent) => ['-p', parent]), '-F', '-'],
+        invocation,
+        { input: `${message}\n`, env },
+      )
+    ).stdout.trim(),
+  );
+}
+
+/**
+ * The Git operations computing an integration needs: no ref, index or checkout changes, only
+ * object reads and writes. A dry-run preview supplies a quarantined driver. @internal
+ */
+export interface IntegrationRuntime {
+  readonly git: WorktreeGit;
+  readonly repo: string;
+  /** Create a commit object; `identity` replaces the fixed quiet-choir author and committer. */
+  commit(
+    tree: string,
+    parents: readonly string[],
+    message: string,
+    date: string,
+    identity?: CommitIdentity,
+  ): Promise<string>;
 }
 
 /** Git/storage operations supplied by the run owner while holding integration/handle locks. @internal */
@@ -147,6 +203,91 @@ async function checkoutBranch(
   return branch.code === 0 ? branch.stdout.trim() : null;
 }
 
+/**
+ * Integrate `changes` onto `base` in order, without an index, checkout or ref update: each input
+ * with a commit is merged with `merge-tree --write-tree` (onto a virtual commit whose parent is the
+ * input's base, except under the `merge` strategy) and committed with `commit-tree`; a conflicting
+ * input is reported and skipped, or fails the merge under `onConflict: 'fail'`. The real merge and
+ * the dry-run preview both compute through this function. @internal
+ */
+export async function computeIntegration(
+  runtime: IntegrationRuntime,
+  id: string,
+  base: string,
+  changes: readonly WorktreeChange[],
+  options: MergeOptions,
+  date: string,
+  custom: MergePreparation['commit'],
+  invocation: HarnessInvocation,
+): Promise<MergeResult> {
+  const { git, repo } = runtime;
+  let current = base;
+  const merged: string[] = [],
+    conflicts: { commit: string; files: string[] }[] = [];
+  const strategy = options.strategy ?? 'rebase';
+  const identity = custom && { author: custom.author, committer: custom.committer };
+  let last: { tree: string; parents: string[] } | undefined;
+  for (const change of changes) {
+    if (!change.commit) continue;
+    let ours = current;
+    if (strategy !== 'merge') {
+      // Git 2.38 has no --merge-base option. This virtual commit gives the current
+      // tree exactly the source base as parent, implementing its net patch in memory.
+      const tree = commitId(await git.text(repo, ['rev-parse', `${current}^{tree}`], invocation));
+      ours = await runtime.commit(
+        tree,
+        [change.base],
+        `quiet-choir merge base ${id}`,
+        date,
+        identity,
+      );
+    }
+    const result = await git.run(
+      repo,
+      ['merge-tree', '--write-tree', '--name-only', '-z', '--no-messages', ours, change.commit],
+      invocation,
+      { codes: [0, 1] },
+    );
+    const parsed = mergeTreeOutput(result);
+    if (result.code === 1) {
+      conflicts.push({ commit: change.commit, files: parsed.conflicts });
+      if (options.onConflict === 'fail')
+        throw new Error(
+          `Merge input ${change.commit} conflicts${parsed.conflicts.length ? `: ${parsed.conflicts.join(', ')}` : '.'}`,
+        );
+      continue;
+    }
+    last = {
+      tree: parsed.tree,
+      parents: strategy === 'merge' ? [...new Set([current, change.commit])] : [current],
+    };
+    current = await runtime.commit(
+      last.tree,
+      last.parents,
+      `quiet-choir integrate ${id}: ${change.commit}`,
+      date,
+      identity,
+    );
+    merged.push(change.commit);
+  }
+  if (strategy === 'squash' && merged.length) {
+    const tree = commitId(await git.text(repo, ['rev-parse', `${current}^{tree}`], invocation));
+    current = await runtime.commit(
+      tree,
+      [base],
+      custom?.message ?? `quiet-choir squash ${id}`,
+      date,
+      identity,
+    );
+  } else if (custom && last) {
+    // Which input is the last clean one is only known after the loop (later inputs may
+    // conflict), so the final commit is recreated with the same tree and parents and the
+    // requested message; the generated-message commit it replaces stays unreferenced.
+    current = await runtime.commit(last.tree, last.parents, custom.message, date, identity);
+  }
+  return { commit: current, merged, conflicts };
+}
+
 /** Compute clean trees without an index/worktree; publish only a checkpointed result. @internal */
 export async function integrate(
   runtime: MergeRuntime,
@@ -188,7 +329,7 @@ export async function integrate(
     // Only a merge that can create a commit resolves an identity, so a no-op never runs git var.
     const commit =
       options.commit && changes.some((change) => change.commit !== null)
-        ? await resolveCommit(runtime, options.commit, invocation)
+        ? await resolveCommit(git, ledger.repo, options.commit, invocation)
         : undefined;
     prepared = {
       base,
@@ -205,82 +346,16 @@ export async function integrate(
     await runtime.pin(runtime.ref(`merge-base:${id}:${step.fingerprint}`), base);
   }
   if (!prepared.result) {
-    let current = prepared.base;
-    const merged: string[] = [],
-      conflicts: { commit: string; files: string[] }[] = [];
-    const strategy = options.strategy ?? 'rebase';
-    const custom = prepared.commit;
-    const identity = custom && { author: custom.author, committer: custom.committer };
-    let last: { tree: string; parents: string[] } | undefined;
-    for (const change of prepared.changes) {
-      if (!change.commit) continue;
-      let ours = current;
-      if (strategy !== 'merge') {
-        // Git 2.38 has no --merge-base option. This virtual commit gives the current
-        // tree exactly the source base as parent, implementing its net patch in memory.
-        const tree = commitId(
-          await git.text(ledger.repo, ['rev-parse', `${current}^{tree}`], invocation),
-        );
-        ours = await runtime.commit(
-          tree,
-          [change.base],
-          `quiet-choir merge base ${id}`,
-          prepared.date,
-          identity,
-        );
-      }
-      const result = await git.run(
-        ledger.repo,
-        ['merge-tree', '--write-tree', '--name-only', '-z', '--no-messages', ours, change.commit],
-        invocation,
-        { codes: [0, 1] },
-      );
-      const parsed = mergeTreeOutput(result);
-      if (result.code === 1) {
-        conflicts.push({ commit: change.commit, files: parsed.conflicts });
-        if (options.onConflict === 'fail')
-          throw new Error(
-            `Merge input ${change.commit} conflicts${parsed.conflicts.length ? `: ${parsed.conflicts.join(', ')}` : '.'}`,
-          );
-        continue;
-      }
-      last = {
-        tree: parsed.tree,
-        parents: strategy === 'merge' ? [...new Set([current, change.commit])] : [current],
-      };
-      current = await runtime.commit(
-        last.tree,
-        last.parents,
-        `quiet-choir integrate ${id}: ${change.commit}`,
-        prepared.date,
-        identity,
-      );
-      merged.push(change.commit);
-    }
-    if (strategy === 'squash' && merged.length) {
-      const tree = commitId(
-        await git.text(ledger.repo, ['rev-parse', `${current}^{tree}`], invocation),
-      );
-      current = await runtime.commit(
-        tree,
-        [prepared.base],
-        custom?.message ?? `quiet-choir squash ${id}`,
-        prepared.date,
-        identity,
-      );
-    } else if (custom && last) {
-      // Which input is the last clean one is only known after the loop (later inputs may
-      // conflict), so the final commit is recreated with the same tree and parents and the
-      // requested message; the generated-message commit it replaces stays unreferenced.
-      current = await runtime.commit(
-        last.tree,
-        last.parents,
-        custom.message,
-        prepared.date,
-        identity,
-      );
-    }
-    prepared.result = { commit: current, merged, conflicts };
+    prepared.result = await computeIntegration(
+      { git, repo: ledger.repo, commit: runtime.commit.bind(runtime) },
+      id,
+      prepared.base,
+      prepared.changes,
+      options,
+      prepared.date,
+      prepared.commit,
+      invocation,
+    );
     // Pin before publishing a user-selected ref/checkout, so the commit remains available
     // even if publication fails. Persisted result makes a crash after CAS reconcilable.
     await runtime.save();
