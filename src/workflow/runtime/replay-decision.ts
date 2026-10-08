@@ -39,8 +39,11 @@
  * - Default (prefix) fork reuse is causal (`forkPrefixBlockers`): a requested step is reused only
  *   when every source step that had settled before its source launch is already reused into the
  *   target, and no live target step settled before its target launch. Steps in sibling items of a
- *   named map are independent by declaration and never block each other. The same per-pair
- *   stamp-or-`seq` fallback applies to source steps saved without stamps.
+ *   named map are independent by declaration and never block each other: siblings in the target's
+ *   own invocation by its item prefixes, and source siblings under keys the target dropped by the
+ *   item scopes the source recorded on each step (`mapItems`). A source saved without those scopes
+ *   recognizes only the target's items. The same per-pair stamp-or-`seq` fallback applies to
+ *   source steps saved without stamps.
  * - A settled map journal with a different fingerprint is reset only while nothing in it is
  *   committed. A committed map accepts only a mapper-only change, only under an explicit
  *   `acceptCodeChange`, and only when the journal saved per-component digests; items, keys,
@@ -50,7 +53,7 @@
  * ESLint keeps this module free of runtime imports.
  */
 import type { ErrorMode } from './model.js';
-import type { FailureEntry, MapComponents, StepRecord } from './record.js';
+import type { FailureEntry, MapComponents, StepMapItem, StepRecord } from './record.js';
 
 /** Facts about one effect invocation, all gathered by the runner before the decision. @internal */
 export interface ReplayInput {
@@ -329,10 +332,16 @@ export interface MapItemScope {
   readonly item: string;
   /** Every item prefix of the same map invocation, including this one. */
   readonly items: ReadonlySet<string>;
+  /**
+   * The digest of this invocation's sorted item prefixes (`items`). Steps record it with `item` as
+   * `StepRecord.mapItems`, so a later fork can tell sibling items of one invocation apart from
+   * another invocation of the same map ID, such as a later loop round with other keys.
+   */
+  readonly invocation: string;
 }
 
 /** The source step facts `forkPrefixBlockers` reads. @internal */
-export type ForkSourceLaunch = Pick<StepRecord, 'seq' | 'launchStamp' | 'settleStamp'>;
+export type ForkSourceLaunch = Pick<StepRecord, 'seq' | 'launchStamp' | 'settleStamp' | 'mapItems'>;
 
 /** The target step facts `forkPrefixBlockers` reads. @internal */
 export type ForkTargetStep = Pick<StepRecord, 'reusedFrom' | 'settleStamp'>;
@@ -365,6 +374,21 @@ function siblingItem(other: string, mapItems: readonly MapItemScope[]): boolean 
 }
 
 /**
+ * Whether two source steps were launched in different items of one named-map invocation, by the
+ * item scopes each recorded at launch. A step without recorded scopes (outside every map item, or
+ * saved before schema revision 13) is never a sibling this way.
+ */
+function sourceSiblingItem(
+  requested: readonly StepMapItem[] | undefined,
+  other: readonly StepMapItem[] | undefined,
+): boolean {
+  if (requested === undefined || other === undefined) return false;
+  return requested.some(({ item, invocation }) =>
+    other.some((scope) => scope.invocation === invocation && scope.item !== item),
+  );
+}
+
+/**
  * The steps that keep a default (prefix) fork from reusing `id`, source causes first and then target
  * live work, each in record order without duplicates. Reuse is allowed when the result is empty and
  * the source step also passes the identity and validity checks.
@@ -381,7 +405,13 @@ function siblingItem(other: string, mapItems: readonly MapItemScope[]): boolean 
  * covers new step IDs with no source counterpart.
  *
  * Neither rule counts a step in a sibling item of a named map that encloses the request: named-map
- * items receive only their item value (ADR 0009), so they are independent by declaration.
+ * items receive only their item value (ADR 0009), so they are independent by declaration. A source
+ * step is also skipped when its recorded `mapItems` and the requested step's share an invocation
+ * but name different items: in the source, the requested step could not depend on it, whether or
+ * not the target kept that item's key. This covers steps under keys the target dropped (which the
+ * target's own item prefixes cannot recognize) and keys containing `/`, because each step records
+ * its exact item prefix. A source step or requested step saved without `mapItems` falls back to
+ * the target's item prefixes alone.
  *
  * @internal
  */
@@ -390,7 +420,12 @@ export function forkPrefixBlockers(facts: ForkPrefixFacts): string[] {
   const requested = source[id];
   const blockers = new Set<string>();
   for (const [other, step] of Object.entries(source)) {
-    if (other === id || siblingItem(other, mapItems)) continue;
+    if (
+      other === id ||
+      siblingItem(other, mapItems) ||
+      sourceSiblingItem(requested?.mapItems, step.mapItems)
+    )
+      continue;
     const cause =
       requested?.launchStamp !== undefined && step.launchStamp !== undefined
         ? step.settleStamp !== undefined && step.settleStamp <= requested.launchStamp

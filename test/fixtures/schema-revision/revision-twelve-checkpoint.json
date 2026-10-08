@@ -1,0 +1,330 @@
+{
+  "allowModelOverride": false,
+  "capabilities": {
+    "defaultProfile": "text",
+    "defaults": {
+      "access": "read",
+      "claude": { "allowedTools": [], "isolation": "restricted", "tools": [] },
+      "claudeAccess": "none",
+      "codex": { "isolation": "restricted", "sandbox": "read-only" },
+      "codexAccess": "read",
+      "environment": {
+        "claude": {
+          "set": [],
+          "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+          "unset": []
+        },
+        "codex": {
+          "set": [],
+          "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+          "unset": []
+        }
+      },
+      "expectsToolUse": false,
+      "maxBudgetUsd": 0.5,
+      "maxTurns": 10,
+      "name": "text",
+      "onPermissionDenied": "warn",
+      "timeoutMs": 300000
+    },
+    "profiles": {
+      "edit": {
+        "access": "write",
+        "claude": {
+          "allowedTools": ["Read", "Grep", "Glob", "Edit", "Write"],
+          "isolation": "restricted",
+          "tools": ["Read", "Grep", "Glob", "Edit", "Write"]
+        },
+        "claudeAccess": "write",
+        "codex": { "isolation": "restricted", "sandbox": "workspace-write" },
+        "codexAccess": "write",
+        "environment": {
+          "claude": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          },
+          "codex": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          }
+        },
+        "expectsToolUse": true,
+        "maxBudgetUsd": 5,
+        "maxTurns": 40,
+        "name": "edit",
+        "onPermissionDenied": "warn",
+        "timeoutMs": 1800000
+      },
+      "readonly": {
+        "access": "read",
+        "claude": {
+          "allowedTools": ["Read", "Grep", "Glob"],
+          "isolation": "restricted",
+          "tools": ["Read", "Grep", "Glob"]
+        },
+        "claudeAccess": "read",
+        "codex": { "isolation": "restricted", "sandbox": "read-only" },
+        "codexAccess": "read",
+        "environment": {
+          "claude": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          },
+          "codex": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          }
+        },
+        "expectsToolUse": true,
+        "maxBudgetUsd": 2,
+        "maxTurns": 25,
+        "name": "readonly",
+        "onPermissionDenied": "warn",
+        "timeoutMs": 900000
+      },
+      "text": {
+        "access": "read",
+        "claude": { "allowedTools": [], "isolation": "restricted", "tools": [] },
+        "claudeAccess": "none",
+        "codex": { "isolation": "restricted", "sandbox": "read-only" },
+        "codexAccess": "read",
+        "environment": {
+          "claude": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          },
+          "codex": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          }
+        },
+        "expectsToolUse": false,
+        "maxBudgetUsd": 0.5,
+        "maxTurns": 10,
+        "name": "text",
+        "onPermissionDenied": "warn",
+        "timeoutMs": 300000
+      }
+    },
+    "requiredGrants": [],
+    "strictProfiles": true
+  },
+  "createdAt": "2026-10-08T16:15:16.873Z",
+  "cwd": "/",
+  "engine": { "node": "v26.10.0", "quietChoir": "0.0.0", "tsx": "4.23.11", "zod": "4.5.4" },
+  "error": "fixture tail",
+  "errorStack": "Error: fixture tail\n    at Object.run (/fixture/generate.ts:14:11)\n    at async executeOwned (/fixture/src/workflow/runtime/runner.ts:3810:22)\n    at async runWorkflow (/fixture/src/workflow/runtime/runner.ts:4054:32)\n    at async <anonymous> (/fixture/generate.ts:17:1)",
+  "eventCounts": {},
+  "events": [
+    {
+      "at": "2026-10-08T16:15:16.875Z",
+      "data": null,
+      "execution": 1,
+      "message": null,
+      "phase": null,
+      "stepId": null,
+      "total": null,
+      "type": "run.started"
+    },
+    {
+      "at": "2026-10-08T16:15:16.948Z",
+      "data": null,
+      "execution": 1,
+      "message": "fixture tail",
+      "phase": null,
+      "stepId": null,
+      "total": null,
+      "type": "run.failed"
+    }
+  ],
+  "executions": [
+    {
+      "endedAt": "2026-10-08T16:15:16.945Z",
+      "error": "fixture tail",
+      "errorStack": "Error: fixture tail\n    at Object.run (/fixture/generate.ts:14:11)\n    at async executeOwned (/fixture/src/workflow/runtime/runner.ts:3810:22)\n    at async runWorkflow (/fixture/src/workflow/runtime/runner.ts:4054:32)\n    at async <anonymous> (/fixture/generate.ts:17:1)",
+      "n": 1,
+      "outcome": "failed",
+      "pid": 80373,
+      "startedAt": "2026-10-08T16:15:16.874Z"
+    }
+  ],
+  "formatVersion": 7,
+  "grantedProfiles": {},
+  "grants": [],
+  "harness": { "kind": "none", "previousKinds": [] },
+  "id": "revision-twelve",
+  "input": null,
+  "maps": {},
+  "maxChildDepth": 8,
+  "nextWakeAt": null,
+  "output": null,
+  "phase": null,
+  "policy": [],
+  "policyWarnings": [],
+  "profileOverrides": [],
+  "recoveryCause": { "kind": "authoring" },
+  "recoveryHint": "All recorded work has terminal outcomes, including settled map items. Fix the workflow tail, output or configuration and use --resume --accept-code-change to re-finalize; unchanged identities reuse their results.",
+  "replayWarnings": [],
+  "rootCause": { "effect": null, "error": "fixture tail", "errorKind": null, "stepId": null },
+  "runBudget": { "maxRunAgentAttempts": null, "maxRunCostUsd": null, "maxWindowUtilization": null },
+  "schemaRevision": 12,
+  "seq": 7,
+  "sessionSalt": "b7ee2994-a795-499d-8ae9-75160b85be95",
+  "status": "failed",
+  "steps": {
+    "review/a/stamp": {
+      "attemptHistory": [
+        {
+          "attempt": 1,
+          "durationMs": 4,
+          "effort": null,
+          "error": null,
+          "errorStack": null,
+          "execution": 1,
+          "fingerprint": "dc5dfe8f6cc3a702a19c34ad8722dd72c8ae1e808163fb818161ebbd31b94b3f",
+          "finishedAt": "2026-10-08T16:15:16.920Z",
+          "policy": { "retry": { "delayMs": 100, "maxAttempts": 1 } },
+          "request": null,
+          "requestedModel": null,
+          "sources": { "retry.delayMs": "runtime", "retry.maxAttempts": "runtime" },
+          "startedAt": "2026-10-08T16:15:16.915Z",
+          "status": "completed",
+          "usage": null
+        }
+      ],
+      "attempts": 1,
+      "durationMs": 4,
+      "error": null,
+      "errorStack": null,
+      "fingerprint": "dc5dfe8f6cc3a702a19c34ad8722dd72c8ae1e808163fb818161ebbd31b94b3f",
+      "finishedAt": "2026-10-08T16:15:16.920Z",
+      "identity": {
+        "cwd": "df7e940f72aa93cbcb6d70cc35124b0767c7a0e353043c7c24b660ea9be7b952",
+        "input": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "kind": "0d9f50d8178cb7c5b044c4dce43f1a35c44697ac03e70407e2dda2324fa92f56",
+        "onError": "a8ae35eaddff8b9970e3075d77d711798ddfa511a5391581aef83e1a8ebbf64f",
+        "schema": "63cd27a58e68ba86d947651d017132f4047c5f4f75d0984e107921b3293f20c4",
+        "version": "ef6a278dd5d8158fa3434604272b65ef77886edc6efaf60cee77ea6e6f0d8e27"
+      },
+      "kind": "step",
+      "launchStamp": 0,
+      "output": 1791476116920,
+      "phase": null,
+      "request": null,
+      "seq": 1,
+      "settleStamp": 1,
+      "startedAt": "2026-10-08T16:15:16.915Z",
+      "status": "completed",
+      "wakeAt": null
+    },
+    "review/b/stamp": {
+      "attemptHistory": [
+        {
+          "attempt": 1,
+          "durationMs": 1,
+          "effort": null,
+          "error": null,
+          "errorStack": null,
+          "execution": 1,
+          "fingerprint": "dc5dfe8f6cc3a702a19c34ad8722dd72c8ae1e808163fb818161ebbd31b94b3f",
+          "finishedAt": "2026-10-08T16:15:16.937Z",
+          "policy": { "retry": { "delayMs": 100, "maxAttempts": 1 } },
+          "request": null,
+          "requestedModel": null,
+          "sources": { "retry.delayMs": "runtime", "retry.maxAttempts": "runtime" },
+          "startedAt": "2026-10-08T16:15:16.936Z",
+          "status": "completed",
+          "usage": null
+        }
+      ],
+      "attempts": 1,
+      "durationMs": 1,
+      "error": null,
+      "errorStack": null,
+      "fingerprint": "dc5dfe8f6cc3a702a19c34ad8722dd72c8ae1e808163fb818161ebbd31b94b3f",
+      "finishedAt": "2026-10-08T16:15:16.937Z",
+      "identity": {
+        "cwd": "df7e940f72aa93cbcb6d70cc35124b0767c7a0e353043c7c24b660ea9be7b952",
+        "input": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "kind": "0d9f50d8178cb7c5b044c4dce43f1a35c44697ac03e70407e2dda2324fa92f56",
+        "onError": "a8ae35eaddff8b9970e3075d77d711798ddfa511a5391581aef83e1a8ebbf64f",
+        "schema": "63cd27a58e68ba86d947651d017132f4047c5f4f75d0984e107921b3293f20c4",
+        "version": "ef6a278dd5d8158fa3434604272b65ef77886edc6efaf60cee77ea6e6f0d8e27"
+      },
+      "kind": "step",
+      "launchStamp": 2,
+      "output": 1791476116937,
+      "phase": null,
+      "request": null,
+      "seq": 3,
+      "settleStamp": 3,
+      "startedAt": "2026-10-08T16:15:16.936Z",
+      "status": "completed",
+      "wakeAt": null
+    },
+    "review/gone/stamp": {
+      "attemptHistory": [
+        {
+          "attempt": 1,
+          "durationMs": 1,
+          "effort": null,
+          "error": null,
+          "errorStack": null,
+          "execution": 1,
+          "fingerprint": "dc5dfe8f6cc3a702a19c34ad8722dd72c8ae1e808163fb818161ebbd31b94b3f",
+          "finishedAt": "2026-10-08T16:15:16.929Z",
+          "policy": { "retry": { "delayMs": 100, "maxAttempts": 1 } },
+          "request": null,
+          "requestedModel": null,
+          "sources": { "retry.delayMs": "runtime", "retry.maxAttempts": "runtime" },
+          "startedAt": "2026-10-08T16:15:16.928Z",
+          "status": "completed",
+          "usage": null
+        }
+      ],
+      "attempts": 1,
+      "durationMs": 1,
+      "error": null,
+      "errorStack": null,
+      "fingerprint": "dc5dfe8f6cc3a702a19c34ad8722dd72c8ae1e808163fb818161ebbd31b94b3f",
+      "finishedAt": "2026-10-08T16:15:16.929Z",
+      "identity": {
+        "cwd": "df7e940f72aa93cbcb6d70cc35124b0767c7a0e353043c7c24b660ea9be7b952",
+        "input": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "kind": "0d9f50d8178cb7c5b044c4dce43f1a35c44697ac03e70407e2dda2324fa92f56",
+        "onError": "a8ae35eaddff8b9970e3075d77d711798ddfa511a5391581aef83e1a8ebbf64f",
+        "schema": "63cd27a58e68ba86d947651d017132f4047c5f4f75d0984e107921b3293f20c4",
+        "version": "ef6a278dd5d8158fa3434604272b65ef77886edc6efaf60cee77ea6e6f0d8e27"
+      },
+      "kind": "step",
+      "launchStamp": 1,
+      "output": 1791476116929,
+      "phase": null,
+      "request": null,
+      "seq": 2,
+      "settleStamp": 2,
+      "startedAt": "2026-10-08T16:15:16.928Z",
+      "status": "completed",
+      "wakeAt": null
+    }
+  },
+  "updatedAt": "2026-10-08T16:15:16.948Z",
+  "workflow": {
+    "fingerprint": "fbd16d6260602af37e4f87392b8a896e7059d0ac8694532f2cd0e55d76565838",
+    "identity": {
+      "code": "schema-revision",
+      "engine": { "formatVersion": 6, "version": "0.0.0" },
+      "files": {},
+      "inputSchema": "199490fad0bd9dd1925ebbce2ed02f949ef0396fcbabcd41baa5ffa3b1ea49b2",
+      "outputSchema": "199490fad0bd9dd1925ebbce2ed02f949ef0396fcbabcd41baa5ffa3b1ea49b2"
+    },
+    "name": "schema-revision",
+    "version": "1"
+  }
+}

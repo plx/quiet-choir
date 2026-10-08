@@ -136,6 +136,17 @@ export interface FailureEntry {
   readonly failureStamp: number;
 }
 
+/** One named-map item that enclosed a step's launch, in {@link StepRecord.mapItems}. */
+export interface StepMapItem {
+  /** The item's exact ID prefix: the map prefix, the item key and `/`, such as `review/a/`. */
+  readonly item: string;
+  /**
+   * The digest of the map invocation's sorted item prefixes. Steps from different items of one
+   * invocation share it; another invocation of the same map ID with a different key set does not.
+   */
+  readonly invocation: string;
+}
+
 /** Most `failureHistory` entries a step keeps; the oldest is dropped first. @internal */
 export const MAX_FAILURE_HISTORY = 8;
 
@@ -272,6 +283,16 @@ export interface StepRecord {
    * not `failureStamp` (truncated), the healed check uses the `failureStamp` watermark.
    */
   failureHistory?: FailureEntry[];
+  /**
+   * The named-map items that enclosed this step when the workflow body last launched it live,
+   * outermost first. Default (prefix) fork reuse reads it from the fork source: a source step in a
+   * different item of the same map invocation as the requested step is not a possible cause, even
+   * when the fork dropped that item's key. A reused fork copy carries the fork's own scopes
+   * instead. Absent for a step launched outside every map item and in checkpoints saved before
+   * schema revision 13, where fork reuse falls back to the fork's own item prefixes. Not part of
+   * step identity.
+   */
+  mapItems?: StepMapItem[];
   /** Source checkpoint of a reused completed effect. */
   reusedFrom?: ReusedStep;
   /** Total started attempts across resumes. */
@@ -635,6 +656,14 @@ const stepSchema = z
         }),
       )
       .max(MAX_FAILURE_HISTORY)
+      .optional(),
+    mapItems: z
+      .array(
+        z.object({
+          item: z.string().min(1).endsWith('/'),
+          invocation: z.string(),
+        }),
+      )
       .optional(),
     reusedFrom: reusedStepSchema.optional(),
     fingerprint: z.string(),
@@ -1256,9 +1285,10 @@ export function withProjectInstructions(
  * behind a failed run's recovery hint and `next` commands. Revision 11 (#289) changed only a
  * nested shape: the optional structured `issues` of a rejection in `question.rejections`.
  * Revision 12 (#300) changed only a nested shape: the step field `failureHistory` in `steps`.
+ * Revision 13 (#302) changed only a nested shape: the step field `mapItems` in `steps`.
  * @internal
  */
-export const SUPPORTED_SCHEMA_REVISION = 12;
+export const SUPPORTED_SCHEMA_REVISION = 13;
 
 /**
  * Whether a run recorded any work: at least one step or settled map. A failed run without any gets

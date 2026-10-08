@@ -347,6 +347,32 @@ only `run.json` is checked in. Stack paths are scrubbed to `/fixture/...` and th
 with Prettier; its read-view digest in `test/record-schema-revision.test.ts` was computed on the
 same unmodified main from this file. No inference was used.
 
+`revision-twelve-checkpoint.json` was generated the same way at origin/main `b3ff960`, before
+removed named-map keys in fork reuse (#302) added the nested step field `mapItems` to `steps` in
+revision 13. Its run ID is `revision-twelve`, and it ran this definition once:
+
+```ts
+defineWorkflow({
+  name: 'schema-revision',
+  version: '1',
+  input: z.null(),
+  output: z.null(),
+  async run(ctx) {
+    await ctx.map('review', ['a', 'gone', 'b'], { concurrency: 1, key: (key) => key }, () =>
+      ctx.now('stamp'),
+    );
+    throw new Error('fixture tail');
+  },
+});
+```
+
+It carries `schemaRevision: 12`, three completed `ctx.now` effects `review/a/stamp`,
+`review/gone/stamp` and `review/b/stamp`, launched in that order, without `mapItems`, and a
+workflow-body failure after the map. The journal was empty, so only `run.json` is checked in. Stack
+paths are scrubbed to `/fixture/...` and the file was formatted with Prettier; its read-view digest
+in `test/record-schema-revision.test.ts` was computed on the same unmodified main from this file. No
+harness was invoked.
+
 `record-keys.json` lists the top-level run-record keys of each schema revision. Adding or changing a
 persisted run-level field adds a revision there and bumps `SUPPORTED_SCHEMA_REVISION`; a revision
 that only changes a nested shape repeats the previous key list. See `docs/storage.md`.

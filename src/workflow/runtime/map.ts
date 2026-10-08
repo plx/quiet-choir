@@ -173,7 +173,9 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
             return value;
           });
           const items = new Set(keys.map((key) => `${prefix}${key}/`));
-          itemPaths = [...items].map((item) => ({ map: prefix, item, items }));
+          // Names this invocation by its key set, stable across resumes; steps record it (#302).
+          const invocation = digest([...items].sort());
+          itemPaths = [...items].map((item) => ({ map: prefix, item, items, invocation }));
           journalId = names.qualify(id);
         } catch (error) {
           origins.markFatal(error);

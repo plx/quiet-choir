@@ -10,7 +10,7 @@ import { stepIdentity } from './identity.js';
 import { answerEnvelopeSchema, validateAnswerAuthor } from './question-schema.js';
 import type { AnswerIssue, AskOptions } from './question-model.js';
 import type { JsonValue } from './model.js';
-import type { RunRecord, StepRecord } from './store.js';
+import type { RunRecord, StepMapItem, StepRecord } from './store.js';
 import { clockNow, MAX_EPOCH_MS, SHORT_WAIT_MS, systemClock } from './clock.js';
 import { waitNote, waitRequest } from './wait-schema.js';
 import {
@@ -136,6 +136,11 @@ interface QuestionDependencies {
    * to `seq` order for it.
    */
   readonly launchStamp: (id: string) => number;
+  /**
+   * The named-map items enclosing the current call, in their persisted form, or undefined outside
+   * every map item. A live question or wait records them as `mapItems` for fork prefix reuse.
+   */
+  readonly mapItems: () => StepMapItem[] | undefined;
   /** Record a nonfatal run warning, such as an abandoned poll observation. */
   readonly warn: (message: string) => void;
   /** Run one poll observation for the wait `id`; rehearsal may replace it with a stub. */
@@ -271,6 +276,7 @@ export class RunQuestions {
   ): Promise<{ answer: Promise<JsonValue> }> {
     const { record, activity, save, emit } = this.#deps;
     const launchStamp = this.#deps.launchStamp(id);
+    const mapItems = this.#deps.mapItems();
     const finish = activity.begin();
     try {
       signal.throwIfAborted();
@@ -346,6 +352,8 @@ export class RunQuestions {
       };
       step.error = null;
       step.launchStamp = launchStamp;
+      if (mapItems === undefined) delete step.mapItems;
+      else step.mapItems = mapItems;
       await this.#deps.beforeLive(id, step);
       Object.defineProperty(record.steps, id, {
         value: step,

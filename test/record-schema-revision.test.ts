@@ -66,6 +66,8 @@ const revisionDigests: Readonly<Record<string, string>> = {
   '11': '01979d40f27afb4d663d424a519d1b89a7d840c34dfdb7f4d206d99bc60a27a5',
   // Revision 12 (#300) changed only the nested steps shape (failureHistory), so it repeats 11.
   '12': '01979d40f27afb4d663d424a519d1b89a7d840c34dfdb7f4d206d99bc60a27a5',
+  // Revision 13 (#302) changed only the nested steps shape (mapItems), so it repeats 12.
+  '13': '01979d40f27afb4d663d424a519d1b89a7d840c34dfdb7f4d206d99bc60a27a5',
 };
 // digest(readRun(...)) of the installed pre-revision fixture, computed on unmodified main 91a6d2f.
 const preRevisionReadDigest = '714b6cb068de5c933b7ba04a26d1f931f589f7c9910f76f0e5c8cc493eb13016';
@@ -91,6 +93,8 @@ const revisionNineReadDigest = 'f7d0bbb8c91058abeb5c59fad047407a6120faa6ff8616f9
 const revisionTenReadDigest = 'ef509d5e971ee33147455addee4c139aae9ca0d60b7bc20294d6dacfad4a9171';
 // digest(readRun(...)) of the installed revision-eleven fixture, computed on unmodified main 943006c.
 const revisionElevenReadDigest = 'b18862e839b487aa050160ae3b4eeea08bbc73c9d9a126634de4e9ceb6b0ffa8';
+// digest(readRun(...)) of the installed revision-twelve fixture, computed on unmodified main b3ff960.
+const revisionTwelveReadDigest = '2cb7aab642b978a2ed6fcceb5d0d139f8da680c27d83b17a4302d00a89e8f372';
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex');
 
@@ -1498,7 +1502,7 @@ describe('revision-nine records (a grant failure before recoveryCause, #284)', (
     expect(saved.recoveryCause).toBeUndefined();
     expect(recordSchemaDrift(saved)).toBeUndefined();
     expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
-    expect(SUPPORTED_SCHEMA_REVISION).toBe(12);
+    expect(SUPPORTED_SCHEMA_REVISION).toBe(13);
   });
 
   it('round-trip every recovery cause through the record parser', async () => {
@@ -1680,5 +1684,83 @@ describe('revision-eleven records (a repeated failure before failureHistory, #30
     );
     expect(recordSchemaDrift(saved)).toBeUndefined();
     expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
+  });
+});
+
+describe('revision-twelve records (named-map steps before mapItems, #302)', () => {
+  const runId = 'revision-twelve';
+  async function install(): Promise<void> {
+    const fixture = await readFile(
+      new URL('./fixtures/schema-revision/revision-twelve-checkpoint.json', import.meta.url),
+      'utf8',
+    );
+    await mkdir(join(stateDir, runId));
+    await writeFile(paths(runId).snapshot, fixture);
+    await writeFile(paths(runId).journal, '');
+  }
+  const keyed = (keys: string[], check: boolean) =>
+    defineWorkflow({
+      name: 'schema-revision',
+      version: '1',
+      input: z.null(),
+      output: z.null(),
+      async run(ctx) {
+        await ctx.map('review', keys, { concurrency: 1, key: (key) => key }, async () => {
+          await ctx.now('stamp');
+          if (check) await ctx.now('check');
+        });
+        return null;
+      },
+    });
+  const stampIds = ['review/a/stamp', 'review/b/stamp', 'review/gone/stamp'];
+
+  it('read exactly as on main, with no recorded map items', async () => {
+    await install();
+    const record = await readRun({ stateDir, runId });
+    expect(record.schemaRevision).toBe(12);
+    expect(recordSchemaDrift(record)).toBeUndefined();
+    expect(digest(record)).toBe(revisionTwelveReadDigest);
+    expect(Object.keys(record.steps).sort()).toEqual(stampIds);
+    for (const id of stampIds) {
+      expect(record.steps[id]?.status).toBe('completed');
+      expect(record.steps[id]).not.toHaveProperty('mapItems');
+    }
+  });
+
+  it('resume at the current revision: live steps record map items, replayed ones stay as saved', async () => {
+    await install();
+    const result = await runWorkflow(keyed(['a', 'gone', 'b'], true), {
+      ...options,
+      stateDir,
+      runId,
+      input: null,
+      resume: true,
+    });
+    expect(result.status).toBe('completed');
+    const saved = await readRun({ stateDir, runId });
+    const invocation = digest(['review/a/', 'review/b/', 'review/gone/']);
+    expect(saved.steps['review/b/check']?.mapItems).toEqual([{ item: 'review/b/', invocation }]);
+    expect(saved.steps['review/b/stamp']).not.toHaveProperty('mapItems');
+    expect(recordSchemaDrift(saved)).toBeUndefined();
+    expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
+  });
+
+  it('fork without the removed key conservatively: a later surviving item runs live', async () => {
+    await install();
+    const fork = await runWorkflow(keyed(['a', 'b'], false), {
+      ...options,
+      stateDir,
+      runId: 'revision-twelve-fork',
+      input: null,
+      forkFrom: { runId },
+    });
+    expect(fork.status).toBe('completed');
+    // 'b' launched after the unrecorded 'gone' item settled, so it may have depended on it.
+    expect(fork.steps['review/a/stamp']?.reusedFrom).toMatchObject({ runId });
+    expect(fork.steps['review/b/stamp']?.reusedFrom).toBeUndefined();
+    expect(fork.steps['review/b/stamp']?.mapItems).toEqual([
+      { item: 'review/b/', invocation: digest(['review/a/', 'review/b/']) },
+    ]);
+    expect(fork.forkedFrom).toMatchObject({ cursor: 1 });
   });
 });

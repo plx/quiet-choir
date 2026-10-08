@@ -1418,6 +1418,7 @@ function bareQuestions(save: () => Promise<void>): {
     beforeLive: () => Promise.resolve(),
     nextSeq: () => 0,
     launchStamp: () => 0,
+    mapItems: () => undefined,
     warn: (message) => {
       warnings.push(message);
     },
