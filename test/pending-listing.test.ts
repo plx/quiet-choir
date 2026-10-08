@@ -214,6 +214,29 @@ describe('workflow.pending through the executor', () => {
       ...(all === undefined ? {} : { all }),
     });
 
+  it('exposes the structured issues of an owner-side rejection', async () => {
+    const even = defineWorkflow({
+      name: 'even',
+      version: '1',
+      input: z.null(),
+      output: z.number(),
+      run: (ctx: WorkflowContext) =>
+        ctx.ask('gate', {
+          prompt: 'Even?',
+          schema: z.number().refine((n) => n % 2 === 0, 'Must be even'),
+        }),
+    });
+    const base = { stateDir: runs, runId: 'even', input: null };
+    await runWorkflow(even, base);
+    await writeAnswer({ stateDir: runs, runId: 'even', stepId: 'gate', value: 3, by: 'agent:t' });
+    await runWorkflow(even, { ...base, resume: true });
+    const result = await pending();
+    if (result.kind !== 'workflow.pending.result') throw new Error('Expected a pending result.');
+    expect(result.pending[0]?.rejections[0]?.issues).toEqual([
+      { code: 'custom', path: [], message: 'Must be even' },
+    ]);
+  });
+
   it('hides failed, cancelled and completed runs by default and shows them under all', async () => {
     const launch = { entrypoint, tsconfig: null };
     for (const id of ['live', 'failed', 'cancelled', 'completed', 'queued'])

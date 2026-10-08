@@ -1257,6 +1257,41 @@ describe('pending command exit and error codes', () => {
     ]);
   });
 
+  it('renders the structured issues of a rejection unchanged in JSON', async ({ cli }) => {
+    const stateDir = await stateDirectory();
+    const issues = [
+      { code: 'custom', path: ['n', 0], message: 'Must be even' },
+      { code: 'answer_author', path: [], message: 'Ask the human first.' },
+    ];
+    const rejected: PendingRow = {
+      ...question,
+      rejections: [
+        {
+          at: '2026-01-01T00:00:00.000Z',
+          error: 'Answer does not match the question schema: n.0: Must be even',
+          issues,
+          file: 'a.rejected.json',
+        },
+        { at: '2026-01-01T00:00:01.000Z', error: 'Plain refusal.', file: 'b.rejected.json' },
+      ],
+    };
+    vi.spyOn(WorkflowExecutor.prototype, 'execute').mockResolvedValue({
+      kind: 'workflow.pending.result',
+      ok: true,
+      pending: [rejected],
+      hidden: 0,
+    });
+    const json = await cli.run(WorkflowPending, ['--state-dir', stateDir, '--json']);
+    const document = JSON.parse(json.stdout) as {
+      pending: { rejections: { issues?: unknown }[] }[];
+    };
+    expect(document.pending[0]?.rejections[0]?.issues).toEqual(issues);
+    expect(document.pending[0]?.rejections[1]).not.toHaveProperty('issues');
+    // The text form keeps the prose line only.
+    const text = await cli.run(WorkflowPending, ['--state-dir', stateDir]);
+    expect(text.stdout).toContain('Last rejection: Plain refusal.');
+  });
+
   it('marks queued and ended-run rows, prints their next command and the hidden hint', async ({
     cli,
   }) => {
