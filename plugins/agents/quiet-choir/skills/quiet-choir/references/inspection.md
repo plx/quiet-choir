@@ -272,6 +272,11 @@ or inspect status for the outcome. When you launch the run yourself, prefer the 
 from the record have limits:
 
 - Live-only `agent.*` events are not persisted.
+- `step.failed` lines carry that attempt's recorded `errorKind` (null when none) and `retryable`,
+  and `run.failed` lines that name a root effect carry the pair from `rootCause`, so you can branch
+  on `retryable` without re-reading the record. It means a transient kind, not a guaranteed retry.
+  An older execution's `run.failed` takes the root step's attempt kind from that execution and omits
+  the pair when the record has none.
 - The record keeps only the latest 500 run events, so `phase`, `log` and `wait.tolerated` lines can
   be evicted before a slow follower reads them. Step and question lines are not subject to that cap.
 - `ms` is the recorded duration, and fields the record cannot supply are omitted.

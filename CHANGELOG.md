@@ -2,6 +2,15 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Failure kind on event lines (addition; no record format, `schemaRevision` or step identity
+  change): `WorkflowEvent` gains an optional `errorKind`, the failed attempt's recorded kind on
+  `step.failed` and the root cause's kind on `run.failed` that names a root effect. `--events` and
+  `workflow events` write `errorKind` and `retryable` after `attempt` on `step.failed` lines (JSON
+  `null` and `false` when the attempt recorded no kind) and on such `run.failed` lines, with
+  `retryable` meaning a transient kind as in failure documents, not a guaranteed retry. A body
+  failure, `step.settled` and other lines are unchanged, and the debug log and `--notify-command`
+  payloads are unchanged (#280, ADR 0037).
+
 - `skills:check` pre-execution syntax (addition; no runtime, record format, `schemaRevision` or step
   identity change): rejects Claude Code's !`cmd` pre-execution syntax, and a fence whose info string
   starts with `!`, anywhere in a plugin command or `SKILL.md` (prose, inline code, fences and

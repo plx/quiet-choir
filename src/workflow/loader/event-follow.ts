@@ -4,6 +4,8 @@ import { windowSuspensionMessage } from '../runtime/rate-limit.js';
 import { stepEventError } from '../runtime/step-event-error.js';
 import type { AttemptRecord, RunRecord, StepRecord } from '../runtime/record.js';
 import { eventMessage, formatEventFields, type EventLineFields } from './event-line.js';
+import { attemptErrorKind, rootCauseErrorKind, stepErrorKind } from './failure-kind.js';
+import type { ErrorKind } from '../runtime/model.js';
 
 /**
  * Where a follower starts: `end` treats the first record it reads as already printed, `all`
@@ -91,6 +93,25 @@ function runMessage(record: RunRecord, event: RunEvent): string | undefined {
   }
 }
 
+/**
+ * The recorded kind a `run.failed` event's line carries, or undefined (the pair is omitted) when
+ * the event names no root effect or the record cannot supply it. The latest execution reads the
+ * run's root cause, as the live event did. An earlier execution's root cause may have been
+ * overwritten or cleared by a later resume, so it takes the kind of the root step's last failed
+ * attempt recorded in that execution, which is the classification the live line carried.
+ */
+function runFailedKind(record: RunRecord, event: RunEvent): ErrorKind | null | undefined {
+  const stepId = event.stepId;
+  if (event.type !== 'run.failed' || stepId === null) return undefined;
+  const latest = record.executions?.at(-1)?.n;
+  if (event.execution === latest && record.rootCause?.stepId === stepId)
+    return rootCauseErrorKind(record);
+  const attempt = record.steps[stepId]?.attemptHistory
+    ?.filter((entry) => entry.status === 'failed' && entry.execution === event.execution)
+    .at(-1);
+  return attempt === undefined ? undefined : attemptErrorKind(attempt);
+}
+
 function runEventCandidates(record: RunRecord): Candidate[] {
   const occurrences = new Map<string, number>();
   const executions = new Map((record.executions ?? []).map((entry) => [entry.n, entry]));
@@ -123,6 +144,7 @@ function runEventCandidates(record: RunRecord): Candidate[] {
         run: record.id,
         ev: event.type,
         step: event.stepId,
+        errorKind: runFailedKind(record, event),
         ms,
         phase: event.phase,
         msg: runMessage(record, event),
@@ -165,6 +187,8 @@ function stepCandidates(record: RunRecord, id: string, step: StepRecord): Candid
           t: attempt.finishedAt,
           ev: settled ? 'step.settled' : 'step.failed',
           attempt: attempt.attempt,
+          // The kind this attempt recorded, which can differ from the step's last one.
+          errorKind: settled ? undefined : attemptErrorKind(attempt),
           ms: attempt.durationMs ?? undefined,
           msg: stepEventError(attempt.error),
         },
@@ -193,6 +217,7 @@ function stepCandidates(record: RunRecord, id: string, step: StepRecord): Candid
           t: finishedAt,
           ev,
           attempt: step.attempts,
+          errorKind: ev === 'step.failed' ? stepErrorKind(step) : undefined,
           ms: step.durationMs ?? undefined,
           msg: ev === 'step.completed' ? undefined : stepEventError(step.error),
         },
@@ -225,7 +250,11 @@ function stepCandidates(record: RunRecord, id: string, step: StepRecord): Candid
  * workflow. Sources: every `record.events` entry (run lifecycle, phase, log, and `wait.tolerated`
  * for each tolerated poll error); every settled step
  * attempt (`step.completed`, `step.failed`, and `step.settled` for the final attempt of a settled
- * failure, the last two with the attempt's recorded error as `msg`); and every question that notified (`wait.opened`). Fork-reused steps and cancelled or
+ * failure, the last two with the attempt's recorded error as `msg`, and `step.failed` with that
+ * attempt's recorded `errorKind`, null when it has none); a `run.failed` entry that names a root
+ * effect carries the root cause's kind in the latest execution, or the kind of that step's last
+ * failed attempt in an earlier execution, and no kind when the record has neither; and every
+ * question that notified (`wait.opened`). Fork-reused steps and cancelled or
  * interrupted attempts write nothing, and fields the record cannot supply are omitted. Lines are
  * deduplicated by identity, not position, so eviction past the 500-event cap neither repeats nor
  * hides newer lines. Each call returns the lines not yet accounted for in `cursor` (null on the

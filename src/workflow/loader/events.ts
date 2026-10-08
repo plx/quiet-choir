@@ -113,6 +113,7 @@ export function formatEventLine(event: WorkflowEvent, memory: EventLineMemory): 
     ev: type,
     step: event.stepId,
     attempt: event.attempt,
+    errorKind: event.errorKind,
     harness: derived.harness,
     ms: derived.ms,
     costUsd: event.usage?.costUsd,

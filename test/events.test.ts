@@ -114,7 +114,7 @@ describe('formatEventLine', () => {
         memory,
       ),
     ).toBe(
-      `{"t":"${at(40)}","run":"r1","ev":"step.failed","step":"a","attempt":2,"harness":"codex","ms":40,"costUsd":0.5,"phase":"review","msg":"boom"}`,
+      `{"t":"${at(40)}","run":"r1","ev":"step.failed","step":"a","attempt":2,"errorKind":null,"retryable":false,"harness":"codex","ms":40,"costUsd":0.5,"phase":"review","msg":"boom"}`,
     );
   });
 
@@ -122,6 +122,52 @@ describe('formatEventLine', () => {
     expect(line(event({ type: 'step.settled', attempt: 3 }))?.attempt).toBe(3);
     expect(line(event({ type: 'step.completed', attempt: 3 }))).not.toHaveProperty('attempt');
     expect(line(event({ type: 'wait.opened', attempt: 3 }))).not.toHaveProperty('attempt');
+  });
+
+  it('writes errorKind and retryable after attempt on step.failed, null when none was recorded', () => {
+    expect(
+      formatEventLine(
+        event({ type: 'step.failed', attempt: 2, errorKind: 'rate-limit', error: 'slow down' }),
+        new EventLineMemory(),
+      ),
+    ).toBe(
+      `{"t":"${at(0)}","run":"r1","ev":"step.failed","step":"step","attempt":2,"errorKind":"rate-limit","retryable":true,"msg":"slow down"}`,
+    );
+    expect(line(event({ type: 'step.failed', errorKind: 'schema' }))).toMatchObject({
+      errorKind: 'schema',
+      retryable: false,
+    });
+    const none = formatEventLine(event({ type: 'step.failed' }), new EventLineMemory()) ?? '';
+    expect(none).toContain('"errorKind":null,"retryable":false');
+    expect(line(event({ type: 'step.failed', errorKind: null }))).toMatchObject({
+      errorKind: null,
+      retryable: false,
+    });
+  });
+
+  it('writes the pair on run.failed only when it names a root effect and a kind', () => {
+    expect(line(event({ type: 'run.failed', errorKind: 'timeout' }))).toMatchObject({
+      errorKind: 'timeout',
+      retryable: true,
+    });
+    expect(line(event({ type: 'run.failed', errorKind: null }))).toMatchObject({
+      errorKind: null,
+      retryable: false,
+    });
+    const body = line(event({ type: 'run.failed', stepId: null }));
+    expect(body).not.toHaveProperty('errorKind');
+    expect(body).not.toHaveProperty('retryable');
+    const bare = line(event({ type: 'run.failed' }));
+    expect(bare).not.toHaveProperty('errorKind');
+    expect(bare).not.toHaveProperty('retryable');
+  });
+
+  it('keeps the pair off every other event even when given a kind', () => {
+    for (const type of ['step.settled', 'step.completed', 'log', 'run.cancelled'] as const) {
+      const parsed = line(event({ type, errorKind: 'rate-limit' }));
+      expect(parsed).not.toHaveProperty('errorKind');
+      expect(parsed).not.toHaveProperty('retryable');
+    }
   });
 
   it('writes the step error as msg on step.failed and step.settled only', () => {
@@ -143,6 +189,22 @@ describe('formatEventLine', () => {
     );
     expect(Buffer.byteLength(text ?? '')).toBeLessThanOrEqual(EVENT_LINE_MAX_BYTES);
     expect(JSON.parse(text ?? '')).toHaveProperty('msg');
+  });
+
+  it('keeps errorKind and retryable when an oversized step.failed line is cut to the byte cap', () => {
+    const text =
+      formatEventLine(
+        event({
+          type: 'step.failed',
+          stepId: 'a/'.repeat(300),
+          phase: 'p'.repeat(300),
+          error: 'e'.repeat(500),
+          errorKind: 'idle-timeout',
+        }),
+        new EventLineMemory(),
+      ) ?? '';
+    expect(Buffer.byteLength(text)).toBeLessThanOrEqual(EVENT_LINE_MAX_BYTES);
+    expect(JSON.parse(text)).toMatchObject({ errorKind: 'idle-timeout', retryable: true });
   });
 
   it('takes costUsd from usage and omits a null or missing cost', () => {
@@ -369,6 +431,7 @@ describe('shared formatter', () => {
     output: null,
     status: 'failed',
     error: 'Step a failed',
+    rootCause: { stepId: 'a', error: 'boom', errorKind: 'rate-limit', effect: null },
     createdAt: at(0),
     updatedAt: at(90),
     executions: [
@@ -433,6 +496,7 @@ describe('shared formatter', () => {
             durationMs: 30,
             status: 'failed',
             error: 'boom',
+            errorKind: 'rate-limit',
             execution: 1,
           } as AttemptRecord,
         ],
@@ -484,6 +548,7 @@ describe('shared formatter', () => {
       phase: 'review',
       attempt: 1,
       error: 'boom',
+      errorKind: 'rate-limit',
     }),
     event({ type: 'step.completed', stepId: 'b', at: at(50), phase: 'review', usage }),
     event({
@@ -492,6 +557,7 @@ describe('shared formatter', () => {
       at: at(90),
       phase: 'review',
       message: 'Step a failed',
+      errorKind: 'rate-limit',
     }),
   ];
 
@@ -511,7 +577,18 @@ describe('shared formatter', () => {
     // The durations line up here by construction; in general `ms` is process-observed live and
     // the recorded attempt or execution duration in the record (documented under the field).
     expect(fromRecord).toEqual(fromLive);
-    expect(JSON.parse(fromLive[2] ?? '')).toMatchObject({ ev: 'step.failed', msg: 'boom' });
+    expect(JSON.parse(fromLive[2] ?? '')).toMatchObject({
+      ev: 'step.failed',
+      msg: 'boom',
+      errorKind: 'rate-limit',
+      retryable: true,
+    });
+    expect(JSON.parse(fromLive[4] ?? '')).toMatchObject({
+      ev: 'run.failed',
+      step: 'a',
+      errorKind: 'rate-limit',
+      retryable: true,
+    });
     for (const text of [...fromLive, ...fromRecord]) {
       expect(Buffer.byteLength(text)).toBeLessThanOrEqual(EVENT_LINE_MAX_BYTES);
       const parsed = JSON.parse(text) as Record<string, unknown>;
@@ -521,6 +598,8 @@ describe('shared formatter', () => {
         'ev',
         'step',
         'attempt',
+        'errorKind',
+        'retryable',
         'harness',
         'ms',
         'costUsd',
@@ -579,6 +658,38 @@ describe('shared formatter', () => {
     expect(
       JSON.parse(formatEventFields({ t: at(0), run: 'r1', ev: 'step.settled', attempt: 2 })),
     ).toMatchObject({ attempt: 2 });
+  });
+
+  it('formats the failure pair from a recorded kind in one place', () => {
+    const base = { t: at(0), run: 'r1', step: 'a', attempt: 1 } as const;
+    expect(
+      formatEventFields({ ...base, ev: 'step.failed', errorKind: 'rate-limit', msg: 'x' }),
+    ).toBe(
+      `{"t":"${at(0)}","run":"r1","ev":"step.failed","step":"a","attempt":1,"errorKind":"rate-limit","retryable":true,"msg":"x"}`,
+    );
+    expect(
+      JSON.parse(formatEventFields({ ...base, ev: 'step.failed', errorKind: 'schema' })),
+    ).toMatchObject({
+      errorKind: 'schema',
+      retryable: false,
+    });
+    expect(formatEventFields({ ...base, ev: 'step.failed' })).toContain(
+      '"errorKind":null,"retryable":false',
+    );
+    expect(
+      JSON.parse(formatEventFields({ ...base, ev: 'run.failed', errorKind: 'timeout' })),
+    ).toMatchObject({
+      errorKind: 'timeout',
+      retryable: true,
+    });
+    for (const fields of [
+      { ...base, ev: 'run.failed' as const },
+      { ...base, ev: 'run.failed' as const, step: null, errorKind: 'timeout' as const },
+      { ...base, ev: 'step.settled' as const, errorKind: 'timeout' as const },
+      { ...base, ev: 'step.completed' as const, errorKind: 'timeout' as const },
+      { ...base, ev: 'log' as const, errorKind: 'timeout' as const },
+    ])
+      expect(JSON.parse(formatEventFields(fields))).not.toHaveProperty('errorKind');
   });
 });
 

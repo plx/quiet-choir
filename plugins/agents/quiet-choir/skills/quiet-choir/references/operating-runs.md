@@ -130,8 +130,11 @@ resume, tick or `answer --resume`) and follow the file with
 not exist yet. Each line is at most 512 bytes and names its run. The written types are
 `run.started`, `run.completed`, `run.failed`, `run.cancelled`, `run.suspended`, `step.completed`,
 `step.failed`, `step.settled`, `wait.opened`, `wait.tolerated`, `phase` and `log`; `step.failed` and
-`step.settled` carry the step's bounded error text as `msg`. The file is created owner-only and an
-existing file keeps its mode, so use a new path or one under an owner-only `$QC_RUNS`.
+`step.settled` carry the step's bounded error text as `msg`. `step.failed`, and `run.failed` when it
+names a root effect, also carry `errorKind` (null when the attempt recorded none) and `retryable`,
+so a consumer can branch on `retryable` without re-reading the record; it means a transient kind,
+not that the runtime will retry. The file is created owner-only and an existing file keeps its mode,
+so use a new path or one under an owner-only `$QC_RUNS`.
 
 The stream is a best-effort observation: lines are written without fsync, and a write failure warns
 once without changing the outcome. Branch on inspect or watch status, not on the stream. The flag is

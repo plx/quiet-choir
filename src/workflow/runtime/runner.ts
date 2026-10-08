@@ -126,7 +126,7 @@ import {
 import { missingRunError, unreadableRunError } from './read-required-run.js';
 import type { ProcessSupervisor } from '../../processes/supervisor.js';
 import { OrphanProcessesError } from './process-registry.js';
-import type { HarnessInvocation, HarnessMetadata, InstructionSource } from './model.js';
+import type { ErrorKind, HarnessInvocation, HarnessMetadata, InstructionSource } from './model.js';
 import {
   resolveAgentLimiter,
   type AgentLimiter,
@@ -286,6 +286,12 @@ export type WorkflowEvent = {
    * stack stay in the run record and `inspect`.
    */
   readonly error?: string;
+  /**
+   * The failure kind the runtime recorded, for the event line's `errorKind` and `retryable`. On
+   * `step.failed` it is the failed attempt's kind, or null when none was recorded. On `run.failed`
+   * that names a root effect it is the root cause's kind. Absent on every other event.
+   */
+  readonly errorKind?: ErrorKind | null;
   /** Terminal or later recorded steps not yet visited before a live effect. */
   readonly skippedStepIds?: readonly string[];
   /** Failed step whose recovery could change a previously observed branch. */
@@ -2274,7 +2280,11 @@ export async function runWorkflow<
               }
               if (await trySave()) {
                 if (classification.scoped) emit('step.cancelled', id, step);
-                else emit('step.failed', id, step, errorDetail(step));
+                else
+                  emit('step.failed', id, step, {
+                    ...errorDetail(step),
+                    errorKind: attemptRecord.errorKind ?? null,
+                  });
               }
               if (!classification.retry || signal.reason instanceof CheckpointError) throw error;
               try {
@@ -4015,7 +4025,16 @@ export async function runWorkflow<
       );
       if (await trySave()) {
         savedFailure = structuredClone(record);
-        notify({ ...failed, message: record.error, attempt: 0, runId: record.id });
+        notify({
+          ...failed,
+          message: record.error,
+          attempt: 0,
+          runId: record.id,
+          // The root effect's recorded kind; a body failure names no effect and carries none.
+          ...(failed.type === 'run.failed' && record.rootCause.stepId !== null
+            ? { errorKind: record.rootCause.errorKind ?? null }
+            : {}),
+        });
       }
       throw error;
     } finally {

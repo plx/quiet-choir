@@ -97,6 +97,8 @@ tail -n +1 -F /abs/review-42.events.jsonl | grep --line-buffered '"ev":"step.fai
   "ev": "step.failed",
   "step": "review/2",
   "attempt": 1,
+  "errorKind": "schema",
+  "retryable": false,
   "harness": "claude",
   "ms": 5120,
   "phase": "verify",
@@ -104,38 +106,51 @@ tail -n +1 -F /abs/review-42.events.jsonl | grep --line-buffered '"ev":"step.fai
 }
 ```
 
-| Field     | Meaning                                                                                                                                                                                                                                                                                                                                                             |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `t`       | ISO event time                                                                                                                                                                                                                                                                                                                                                      |
-| `run`     | Run ID                                                                                                                                                                                                                                                                                                                                                              |
-| `ev`      | Event type                                                                                                                                                                                                                                                                                                                                                          |
-| `step`    | Full step ID; on `run.failed`, the root effect when known; on `wait.tolerated`, the wait ID                                                                                                                                                                                                                                                                         |
-| `attempt` | Persisted attempt count, on `step.failed` and `step.settled` only                                                                                                                                                                                                                                                                                                   |
-| `harness` | The event's harness, or the one last seen on an agent event for this step in this process                                                                                                                                                                                                                                                                           |
-| `ms`      | Step events: time since the step's latest start in this process. Terminal run events: time since this execution's `run.started`. Omitted when no start was seen in this process                                                                                                                                                                                     |
-| `costUsd` | Reported cost of a completed agent step, when known                                                                                                                                                                                                                                                                                                                 |
-| `phase`   | Phase at the call site                                                                                                                                                                                                                                                                                                                                              |
-| `msg`     | The run error, phase title or lifecycle message; on `step.failed` and `step.settled`, the step's error text (single line, no stack); for `log`, the message plus the compact JSON of its data; for `wait.opened`, the compact JSON of the question; for `wait.tolerated`, `tolerated N/LIMIT: message`, with ` [code]` after LIMIT when the error had a string code |
+| Field       | Meaning                                                                                                                                                                                                                                                                                                                                                             |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `t`         | ISO event time                                                                                                                                                                                                                                                                                                                                                      |
+| `run`       | Run ID                                                                                                                                                                                                                                                                                                                                                              |
+| `ev`        | Event type                                                                                                                                                                                                                                                                                                                                                          |
+| `step`      | Full step ID; on `run.failed`, the root effect when known; on `wait.tolerated`, the wait ID                                                                                                                                                                                                                                                                         |
+| `attempt`   | Persisted attempt count, on `step.failed` and `step.settled` only                                                                                                                                                                                                                                                                                                   |
+| `errorKind` | The recorded failure kind, on `step.failed` and on `run.failed` that names a root effect (`step`); null on `step.failed` when the attempt recorded none. Absent on every other line                                                                                                                                                                                 |
+| `retryable` | Whether `errorKind` is a transient kind (`rate-limit`, `overloaded`, `timeout`, `idle-timeout`), as in failure documents; present exactly when `errorKind` is. It does not promise that the runtime retries the step                                                                                                                                                |
+| `harness`   | The event's harness, or the one last seen on an agent event for this step in this process                                                                                                                                                                                                                                                                           |
+| `ms`        | Step events: time since the step's latest start in this process. Terminal run events: time since this execution's `run.started`. Omitted when no start was seen in this process                                                                                                                                                                                     |
+| `costUsd`   | Reported cost of a completed agent step, when known                                                                                                                                                                                                                                                                                                                 |
+| `phase`     | Phase at the call site                                                                                                                                                                                                                                                                                                                                              |
+| `msg`       | The run error, phase title or lifecycle message; on `step.failed` and `step.settled`, the step's error text (single line, no stack); for `log`, the message plus the compact JSON of its data; for `wait.opened`, the compact JSON of the question; for `wait.tolerated`, `tolerated N/LIMIT: message`, with ` [code]` after LIMIT when the error had a string code |
 
-Fields are written in this order, and absent or null fields are omitted. The written types are
-`run.started`, `run.completed`, `run.failed`, `run.cancelled`, `run.suspended`, `step.completed`,
-`step.failed`, `step.settled`, `wait.opened`, `wait.tolerated`, `phase` and `log`; agent admission
-and progress, child, `step.started` and `step.cancelled` events are not written. `msg` is cut at a
-code point with a trailing `…` to about 200 bytes, so a typical line is near 300 bytes, and no line
-exceeds **512 bytes** (UTF-8, without the newline): a longer line shrinks `msg` further, then
-shortens `step` and `phase` in the middle, then `run`. A `step.failed` or `step.settled` line
-carries the step's error text as `msg` (the message of the failure, never its stack). The runner
-first bounds it to one line, with newlines and whitespace runs collapsed to single spaces, anything
-from the first stack-frame line (an indented `at fn (file:1:2)` or `at file:1:2` line; a message
-line that merely starts with `at ` is kept) on dropped, and at most 500 characters (code points,
-ending in `…` when cut); the usual 200-byte `msg` budget then applies. An empty message writes no
-`msg`. The full text and the stack stay in the run record and `inspect`. The text is whatever the
-step threw, so a workflow that puts a sensitive value in an exception message now sees it in the
-events file (created owner-only) as well as in the record. Another error a line carries is a poll
-error that the poll's `onError` tolerated: each one writes a `wait.tolerated` line naming the wait,
-the consecutive count and the `tolerate` limit, such as `tolerated 2/3: HTTP 502: Bad Gateway`
-([tolerated poll errors](waits.md#checks-and-outcomes)). The error past the limit is not tolerated
-and writes no such line; it fails the wait as before.
+Fields are written in this order, and absent or null fields are omitted, with one exception:
+`errorKind` is written as `null` (with `retryable: false`) on a `step.failed` line whose attempt
+recorded no kind. The written types are `run.started`, `run.completed`, `run.failed`,
+`run.cancelled`, `run.suspended`, `step.completed`, `step.failed`, `step.settled`, `wait.opened`,
+`wait.tolerated`, `phase` and `log`; agent admission and progress, child, `step.started` and
+`step.cancelled` events are not written. `msg` is cut at a code point with a trailing `…` to about
+200 bytes, so a typical line is near 300 bytes, and no line exceeds **512 bytes** (UTF-8, without
+the newline): a longer line shrinks `msg` further, then shortens `step` and `phase` in the middle,
+then `run`. A `step.failed` or `step.settled` line carries the step's error text as `msg` (the
+message of the failure, never its stack). The runner first bounds it to one line, with newlines and
+whitespace runs collapsed to single spaces, anything from the first stack-frame line (an indented
+`at fn (file:1:2)` or `at file:1:2` line; a message line that merely starts with `at ` is kept) on
+dropped, and at most 500 characters (code points, ending in `…` when cut); the usual 200-byte `msg`
+budget then applies. An empty message writes no `msg`. The full text and the stack stay in the run
+record and `inspect`. The text is whatever the step threw, so a workflow that puts a sensitive value
+in an exception message now sees it in the events file (created owner-only) as well as in the
+record. Another error a line carries is a poll error that the poll's `onError` tolerated: each one
+writes a `wait.tolerated` line naming the wait, the consecutive count and the `tolerate` limit, such
+as `tolerated 2/3: HTTP 502: Bad Gateway` ([tolerated poll errors](waits.md#checks-and-outcomes)).
+The error past the limit is not tolerated and writes no such line; it fails the wait as before.
+
+`errorKind` and `retryable` let a consumer decide whether a failure is transient without reading the
+run record. Both come from the kind the runtime classified once and stored on the attempt (and on
+`rootCause`), so the line never classifies again; `retryable` is the same transient-set membership
+that failure documents and `inspect` report. A `step.failed` line carries the kind of that attempt,
+so two attempts of one step can differ, and an intermediate `step.failed` under a retry policy
+carries the same flag as a final one for the same kind. A `run.failed` line carries the pair only
+when it names a root effect, with the kind from `rootCause`; a failure of the workflow body names no
+effect and carries neither field. `step.settled` lines do not carry the pair: a settled failure is
+the workflow's chosen outcome.
 
 Replay echoes are dropped: a resume does not write `step.replayed`, `step.reused` or a replayed
 phase or log entry, because the earlier execution already wrote them to the same file. Each
@@ -156,16 +171,20 @@ started without `--events`. It reads the run record with the code-free reader `i
 imports the workflow, and derives each line from what the record keeps:
 
 - **Run events.** Every entry of the record's event list (run lifecycle, `phase` and `log`) becomes
-  one line. `run.failed` carries its root step and error message.
+  one line. `run.failed` carries its root step and error message, and, for a root step, the pair:
+  the latest execution reads `rootCause`; an earlier execution, whose `rootCause` a later resume may
+  have replaced, takes the kind of the root step's last failed attempt recorded in that execution,
+  and writes no pair when the record has no such attempt.
 - **Tolerated poll errors.** Each tolerated poll error is a `wait.tolerated` entry in the same event
   list, saved with the wait's `lastError`, so it becomes one line in order before the wait settles.
   It shares the 500-entry cap below with phase and log entries.
 - **Step attempts.** Every completed attempt becomes `step.completed`, every failed one
   `step.failed`, and the final attempt of a settled failure `step.settled`, as the runner emits
   them, the failed ones with that attempt's recorded error as `msg`, bounded as above, so two
-  attempts show their own messages. Cancelled and interrupted attempts write nothing, and
-  fork-reused steps are skipped. Questions and waits, which have no attempt history, settle from the
-  step itself.
+  attempts show their own messages, and `step.failed` with that attempt's recorded `errorKind` (null
+  when it has none, as for a failed step without attempt history). Cancelled and interrupted
+  attempts write nothing, and fork-reused steps are skipped. Questions and waits, which have no
+  attempt history, settle from the step itself.
 - **Questions.** A question whose notification was recorded becomes `wait.opened` at that time, with
   the question as `msg`.
 
@@ -254,12 +273,15 @@ stack. Reading a completed run through the resume fast path adds no execution. H
 entries are not rewritten as guessed crashes. `events` records run lifecycle, phase, and log
 entries; step transitions remain live notifications backed by step/attempt state. All
 `WorkflowEvent`s carry `at`, `execution`, and `runId`. Run/phase/log notifications use attempt 0 and
-a null `stepId`, except `run.failed` can name the root effect. `step.failed` and `step.settled` also
-carry `error`, the step's error text bounded to one line of at most 500 characters
-(`STEP_EVENT_ERROR_MAX_CHARS`, ending in `…` when cut) with no stack, and absent when the message is
-empty; `message` keeps its other meanings. Debug lines include timestamp, run ID, and event type.
-Notification data is copied; observer mutation or failure cannot invalidate committed work, and
-observer promises are not awaited.
+a null `stepId`, except `run.failed` can name the root effect. `step.failed` also carries
+`errorKind` (the failed attempt's recorded kind, or null), and `run.failed` carries `errorKind`
+(`rootCause.errorKind`) when it names a root effect; no other event has the field, and the event
+line derives `retryable` from it. `step.failed` and `step.settled` also carry `error`, the step's
+error text bounded to one line of at most 500 characters (`STEP_EVENT_ERROR_MAX_CHARS`, ending in
+`…` when cut) with no stack, and absent when the message is empty; `message` keeps its other
+meanings. Debug lines include timestamp, run ID, and event type. Notification data is copied;
+observer mutation or failure cannot invalidate committed work, and observer promises are not
+awaited.
 
 `rootCause` is `{ stepId, error, errorKind, effect }`: `errorKind` is the classified kind of the
 root effect's failure, null for a body failure, and absent in records from before the field.

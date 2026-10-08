@@ -8,6 +8,13 @@
 - Amended by #267: `step.failed` and `step.settled` lines carry the recorded attempt error (or the
   step error for a history-less step) as `msg`, bounded as in ADR 0037, so live and record lines
   stay identical.
+- Amended by #280: the follower writes `errorKind` and `retryable` from stored kinds only. A
+  `step.failed` line takes its own attempt's recorded kind (the step's kind for a history-less step,
+  which is null); a `run.failed` line takes `rootCause`'s kind in the latest execution, and for an
+  earlier execution, whose `rootCause` a later resume may have replaced, the kind of the root step's
+  last failed attempt recorded in that execution, writing no pair when there is none. The event line
+  modules may import values from `failure-kind.js`, which itself imports only the pure transient-set
+  lookup, so the follower stays code-free.
 
 ## Context
 

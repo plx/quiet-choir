@@ -115,7 +115,8 @@ node "$QC_CHECKOUT/bin/run.js" workflow start "$QC_WORKFLOW" \
 ```
 
 `--events FILE` appends one JSON line of at most 512 bytes per step, phase, log, wait and run event,
-such as `{"t":"…","run":"review-42","ev":"step.failed","step":"review/2","attempt":1,"ms":5120}`.
+such as
+`{"t":"…","run":"review-42","ev":"step.failed","step":"review/2","attempt":1,"errorKind":"schema","retryable":false,"ms":5120}`.
 The file is created owner-only, and an existing file keeps its mode, so use a new path or one under
 an owner-only `$QC_RUNS`. Then start Monitor on that file with a `timeout_ms` (re-arm it the same
 way if it expires before the run ends). The filter passes step failures, settled failures, opened

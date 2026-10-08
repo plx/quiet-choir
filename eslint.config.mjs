@@ -320,6 +320,7 @@ export default defineConfig(
     // `--events` and `workflow events` share one pure line shape. The pure rate-limit module
     // supplies the window gate's suspension message, which the runtime's notification also uses, and
     // the pure step-event-error module bounds the step error text the runner also puts on events.
+    // failure-kind.ts supplies the recorded error kinds and the retryable flag.
     files: ['src/workflow/loader/event-line.ts', 'src/workflow/loader/event-follow.ts'],
     rules: {
       '@typescript-eslint/no-restricted-imports': [
@@ -330,15 +331,42 @@ export default defineConfig(
               group: ['node:*', ...builtinModules],
               allowTypeImports: true,
               message:
-                'Event line modules must stay free of I/O: import values only from ./event-line.js and the pure ../runtime/rate-limit.js and ../runtime/step-event-error.js; everything else must be import type.',
+                'Event line modules must stay free of I/O: import values only from ./event-line.js, ./failure-kind.js and the pure ../runtime/rate-limit.js and ../runtime/step-event-error.js; everything else must be import type.',
             },
             {
               // A regex, because a gitignore group cannot re-include a file below ../runtime/.
               regex:
-                '^(?:\\./(?!event-line\\.js$)|\\.\\./(?!runtime/(?:rate-limit|step-event-error)\\.js$))',
+                '^(?:\\./(?!(?:event-line|failure-kind)\\.js$)|\\.\\./(?!runtime/(?:rate-limit|step-event-error)\\.js$))',
               allowTypeImports: true,
               message:
-                'Event line modules must stay free of I/O: import values only from ./event-line.js and the pure ../runtime/rate-limit.js and ../runtime/step-event-error.js; everything else must be import type.',
+                'Event line modules must stay free of I/O: import values only from ./event-line.js, ./failure-kind.js and the pure ../runtime/rate-limit.js and ../runtime/step-event-error.js; everything else must be import type.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // The failure kind helpers read stored kinds and compute `retryable`; the event line modules
+    // import them, so they stay free of I/O. Only the pure transient-set lookup is a value import.
+    files: ['src/workflow/loader/failure-kind.ts'],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['node:*', ...builtinModules],
+              allowTypeImports: true,
+              message:
+                'The failure kind helpers must stay free of I/O: import values only from ../runtime/step-error.js; everything else must be import type.',
+            },
+            {
+              // A regex, because a gitignore group cannot re-include a file below ../runtime/.
+              regex: '^(?:\\./|\\.\\./(?!runtime/step-error\\.js$))',
+              allowTypeImports: true,
+              message:
+                'The failure kind helpers must stay free of I/O: import values only from ../runtime/step-error.js; everything else must be import type.',
             },
           ],
         },

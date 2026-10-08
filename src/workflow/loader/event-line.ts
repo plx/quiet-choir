@@ -1,4 +1,5 @@
-import type { JsonValue } from '../runtime/model.js';
+import type { ErrorKind, JsonValue } from '../runtime/model.js';
+import { failureKind } from './failure-kind.js';
 
 /** Hard cap on the UTF-8 byte length of one event line, without its newline. @internal */
 export const EVENT_LINE_MAX_BYTES = 512;
@@ -34,7 +35,8 @@ export function isEventLineType(type: string): type is EventLineType {
 
 /**
  * One line of the `--events` stream and of `workflow events`, in this key order. Absent fields are
- * omitted, never null.
+ * omitted, never null, with one exception: `errorKind` is null on a `step.failed` line whose
+ * attempt recorded no kind.
  * @internal
  */
 export interface EventLine {
@@ -48,6 +50,17 @@ export interface EventLine {
   readonly step?: string;
   /** Persisted attempt count, on `step.failed` and `step.settled` only. */
   readonly attempt?: number;
+  /**
+   * The recorded failure kind, on `step.failed` and on `run.failed` that names a root effect.
+   * Null on `step.failed` when no kind was recorded; absent on every other line.
+   */
+  readonly errorKind?: ErrorKind | null;
+  /**
+   * Whether `errorKind` is in the transient set (rate-limit, overloaded, timeout, idle-timeout),
+   * as in failure documents. It does not promise the runtime will retry. Present exactly when
+   * `errorKind` is.
+   */
+  readonly retryable?: boolean;
   /** The event's harness, or the one last seen on an `agent.*` event for this step. */
   readonly harness?: string;
   /**
@@ -79,6 +92,11 @@ export interface EventLineFields {
   readonly step?: string | null | undefined;
   /** Kept only on `step.failed` and `step.settled`. */
   readonly attempt?: number | undefined;
+  /**
+   * Kept only on `step.failed` (where undefined means no recorded kind, written as null) and on
+   * `run.failed` with a `step` (where undefined means the source has no kind, so the pair is omitted).
+   */
+  readonly errorKind?: ErrorKind | null | undefined;
   readonly harness?: string | undefined;
   readonly ms?: number | undefined;
   readonly costUsd?: number | null | undefined;
@@ -193,12 +211,22 @@ export function eventMessage(event: {
 
 /**
  * Build one compact JSON line (without its newline) from raw fields: the ordered object
- * `{t, run, ev, step, attempt, harness, ms, costUsd, phase, msg}` with absent values omitted,
- * `msg` cut to {@link EVENT_MESSAGE_BUDGET_BYTES}, and the whole line fitted to
+ * `{t, run, ev, step, attempt, errorKind, retryable, harness, ms, costUsd, phase, msg}` with absent
+ * values omitted, `msg` cut to {@link EVENT_MESSAGE_BUDGET_BYTES}, and the whole line fitted to
  * {@link EVENT_LINE_MAX_BYTES} UTF-8 bytes. This is the only formatter of event lines. @internal
  */
 export function formatEventFields(fields: EventLineFields): string {
   const { step, attempt, harness, ms, costUsd, msg } = fields;
+  const kind =
+    fields.ev === 'step.failed'
+      ? failureKind(fields.errorKind ?? null)
+      : fields.ev === 'run.failed' &&
+          step !== null &&
+          step !== undefined &&
+          step !== '' &&
+          fields.errorKind !== undefined
+        ? failureKind(fields.errorKind)
+        : undefined;
   const phase = typeof fields.phase === 'string' && fields.phase ? fields.phase : undefined;
   const line: Record<string, unknown> = {
     t: fields.t,
@@ -208,6 +236,8 @@ export function formatEventFields(fields: EventLineFields): string {
     ...((fields.ev === 'step.failed' || fields.ev === 'step.settled') && attempt !== undefined
       ? { attempt }
       : {}),
+    // The one nullable field: a step.failed attempt without a recorded kind writes null.
+    ...(kind === undefined ? {} : { errorKind: kind.errorKind, retryable: kind.retryable }),
     ...(harness === undefined ? {} : { harness }),
     ...(ms === undefined || !Number.isFinite(ms) ? {} : { ms }),
     ...(typeof costUsd === 'number' && Number.isFinite(costUsd) ? { costUsd } : {}),
