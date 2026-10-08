@@ -16,6 +16,7 @@ import {
   RunInterruptedError,
   runWorkflow,
   ReplaySkippedError,
+  SettledMapChangedError,
   StepIdentityChangedError,
   WorkflowRunError,
   z,
@@ -31,6 +32,7 @@ import {
   findStepIdentityChange,
   ReplayDivergenceError,
 } from '../src/workflow/runtime/run-errors.js';
+import { FanOutError } from '../src/workflow/runtime/fan-out.js';
 import type * as images from '../src/workflow/runtime/images.js';
 import { hasTerminalOutcomes, lockRun } from '../src/workflow/runtime/store.js';
 
@@ -949,6 +951,47 @@ async function expectUnchanged(
   const release = await lockRun(stateDir, 'source');
   await release();
 }
+
+it('finds a non-mapper settled-map change nested in causes and fan-out members, and ignores a mapper-only one (#303)', () => {
+  const record = { id: 'r', rootCause: null, steps: {} } as unknown as RunRecord;
+  const changed = new SettledMapChangedError('items changed', {
+    mapId: 'reviews',
+    components: ['items', 'keys'],
+    legacy: false,
+  });
+  const legacy = new SettledMapChangedError('legacy', {
+    mapId: 'reviews',
+    components: [],
+    legacy: true,
+  });
+  const mapperOnly = new SettledMapChangedError('mapper changed', {
+    mapId: 'reviews',
+    components: ['mapper'],
+    legacy: false,
+  });
+  expect(findAcceptedReplayDivergence(changed)).toBe(changed);
+  expect(findAcceptedReplayDivergence(legacy)).toBe(legacy);
+  expect(findAcceptedReplayDivergence(new WorkflowRunError(record, changed))).toBe(changed);
+  expect(
+    findAcceptedReplayDivergence(
+      new FanOutError('drain', [{ index: 0, stepId: null, error: changed }], []),
+    ),
+  ).toBe(changed);
+  expect(findAcceptedReplayDivergence(new WorkflowRunError(record, mapperOnly))).toBeUndefined();
+  expect(
+    findAcceptedReplayDivergence(
+      new FanOutError('drain', [{ index: 0, stepId: null, error: mapperOnly }], []),
+    ),
+  ).toBeUndefined();
+  // The first finding in search order wins, as for the other two divergences.
+  const identity = new StepIdentityChangedError('step', {
+    stepId: 'local',
+    components: ['callback'],
+    status: 'completed',
+  });
+  expect(findAcceptedReplayDivergence(new AggregateError([changed, identity]))).toBe(changed);
+  expect(findAcceptedReplayDivergence(new AggregateError([mapperOnly, identity]))).toBe(identity);
+});
 
 it('refuses an embedded accepted resume over an edited completed callback without changing a completed run', async () => {
   let ran = 0;

@@ -81,6 +81,11 @@ function samples(api: Api): Record<string, Error> {
       skipped: ['step'],
       healed: ['healer'],
     }),
+    SettledMapChangedError: new api.SettledMapChangedError('map changed', {
+      mapId: 'reviews',
+      components: ['items'],
+      legacy: false,
+    }),
     WorkflowInputError: new api.WorkflowInputError(null, new Error('invalid')),
     AnswerError: new api.AnswerError('invalid', 'bad answer', [
       { code: 'invalid_type', path: ['approved'], message: 'Invalid input' },

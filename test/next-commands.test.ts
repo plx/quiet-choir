@@ -12,6 +12,7 @@ import {
 import { divergenceRefusal, forkCommand } from '../src/workflow/loader/code-change-preflight.js';
 import {
   ReplaySkippedError,
+  SettledMapChangedError,
   StepIdentityChangedError,
 } from '../src/workflow/runtime/run-errors.js';
 import type { JsonValue } from '../src/workflow/runtime/model.js';
@@ -394,6 +395,42 @@ describe('failureNextCommands', () => {
     });
     expect(failure({ code: 'run.incompatible', details: refusal.details })).toEqual([expected]);
   });
+
+  it.for([
+    { legacy: false, components: ['items', 'keys'], head: 'items, keys changed after an item' },
+    {
+      legacy: true,
+      components: [],
+      head: 'its journal predates per-component fingerprints, so the changed component is unknown changed after an item',
+    },
+  ])(
+    'carries a settled-map refusal fork command invalidating the map ID (legacy: $legacy)',
+    ({ legacy, components, head }) => {
+      const change = new SettledMapChangedError('changed', {
+        mapId: 'round/reviews',
+        components,
+        legacy,
+      });
+      const refusal = divergenceRefusal(change, { runId: 'r1', stateDir, entrypoint }, launcher);
+      const expected = forkCommand(change, { runId: 'r1', stateDir, entrypoint }, launcher);
+      expect(expected.slice(0, 3)).toEqual(prefix);
+      expect(
+        expected.slice(expected.indexOf('--invalidate'), expected.indexOf('--invalidate') + 2),
+      ).toEqual(['--invalidate', 'round/reviews']);
+      expect(refusal.code).toBe('run.incompatible');
+      expect(refusal.message).toContain(`Settled map round/reviews: ${head} completed.`);
+      expect(refusal.message).toContain('--accept-code-change accepts only a mapper change');
+      expect(refusal.message).toContain('nothing was changed');
+      expect(refusal.message).toContain(formatArgv(expected));
+      expect(refusal.details).toEqual({
+        divergent: [
+          { stepId: 'round/reviews', components, map: true, ...(legacy ? { legacy: true } : {}) },
+        ],
+        next: [expected],
+      });
+      expect(failure({ code: 'run.incompatible', details: refusal.details })).toEqual([expected]);
+    },
+  );
 
   describe('run.locked', () => {
     const unlock = ['quiet-choir', 'workflow', 'unlock', 'r1', '--state-dir', stateDir];
