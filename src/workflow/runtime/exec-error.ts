@@ -2,6 +2,9 @@ import { brandError, isBranded } from './error-brand.js';
 import type { ErrorKind, JsonValue } from './model.js';
 import type { ExecDiagnostics, ExecResult } from './exec-model.js';
 
+/** Characters of each output stream that an `ExecError` and its recorded diagnostics keep. @internal */
+export const EXEC_TAIL_LIMIT = 1024;
+
 /** Structured command failure; runtime attempt history retains its bounded diagnostics. */
 export class ExecError extends Error {
   static {
@@ -36,8 +39,8 @@ export class ExecError extends Error {
     this.diagnostics = {
       code: result?.code ?? null,
       signal: result?.signal ?? null,
-      stdoutTail: result?.stdout.slice(-1024) ?? '',
-      stderrTail: result?.stderr.slice(-1024) ?? '',
+      stdoutTail: result?.stdout.slice(-EXEC_TAIL_LIMIT) ?? '',
+      stderrTail: result?.stderr.slice(-EXEC_TAIL_LIMIT) ?? '',
       truncated: result?.truncated ?? false,
       durationMs: result?.durationMs ?? 0,
     };

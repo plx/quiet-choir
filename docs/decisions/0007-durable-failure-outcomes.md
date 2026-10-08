@@ -177,8 +177,13 @@ it and passing `'throw'` keep the identities and fingerprints of existing calls,
 from a settled call is refused as an `onError` identity change. `onError` is neither execution
 policy nor part of the recorded `ExecSummary`.
 
-`workflow fixtures` does not yet export a settled-failed command as a fixture rule (#306), so a
-`"commands": "fixture"` replay of such a run fails at that step.
+`workflow fixtures` exports a settled-failed command, and one the workflow absorbed, as an ordinary
+exec rule with its exit `code` and recorded output tails (#306) when a command result reproduces the
+failure: an exit code outside `okExitCodes` or an `exec.json` schema failure. The replay runs that
+result through the same checks, so the settled `ExecStepError` comes back with the same fields.
+Spawn failures, timeouts, signal kills and output-limit failures get no rule until exec rules can
+describe errors (#307); export still sets `"commands": "fixture"`, so a replay of such a run fails
+at that step.
 
 ## Amendment: merges and child workflows (#170)
 

@@ -2,6 +2,20 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `workflow fixtures` exports command failures the run settled with `onError: 'return'` or absorbed
+  (a step left `failed` in a completed run) as ordinary `exec` rules with their exit `code`, the
+  recorded stderr tail and the stdout tail or the failure's `parsed` value as `json` (behavior
+  change for exported files, #306). That covers an exit code outside `okExitCodes` and an
+  `exec.json` schema failure: the replay rebuilds the same `ExecStepError` or thrown `ExecError`
+  message, kind, code, signal, tails and `parsed`, and export, replay and export again give the same
+  file. An `exec.json` failure (exit code or schema) without `parsed` whose stdout tail fills all
+  1024 characters also gets no rule, since the truncated tail could replay as valid output or an
+  invented `parsed`, and neither does an `exec.json` exit failure recorded as `truncated` or a
+  `parsed` whose compact form is over 16 KiB. A spawn failure, timeout, signal kill or output-limit
+  failure gets no rule until #307, but the export now sets `"commands": "fixture"` whenever the run
+  has any completed or failed command, so a run whose only command failed that way no longer replays
+  by running the real command or synthesizing a success: the replay fails at that step with
+  `No exec fixture matches step`.
 - Fixture export now writes `kind` on the agent `error` rules it produces for settled failures and
   for failures the workflow absorbed (behavior change for exported files), so a replay takes the
   same kind-based branches and `retry.on` decisions as the original run. A failure whose recorded
@@ -999,9 +1013,8 @@
   defaulted error type parameter. A command timeout settles with kind `timeout`; cancellation, a
   missing process adapter and checkpoint failures still reject. `onError` enters identity only as
   `'return'`, so existing calls keep their fingerprints. The command-verdict and guard-mutation
-  recipes now use `onError: 'return'` instead of `okExitCodes: 'any'`. `workflow fixtures` does not
-  export settled-failed commands yet (#306), so a `"commands": "fixture"` replay of such a run fails
-  at that step.
+  recipes now use `onError: 'return'` instead of `okExitCodes: 'any'`. `workflow fixtures` exports
+  settled-failed commands since #306.
 - `--dry-run` synthesizes worktree-isolated agent calls and merges of their unchanged changes
   instead of failing (#148; amends ADR 0016). A fresh isolated Claude or Codex call is planned in an
   absolute placeholder directory that is never created and returns

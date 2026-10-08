@@ -164,10 +164,13 @@ synthesized: plain stdout is empty and JSON follows the schema, so the exercised
 from reality. `--harness fixture` answers agents from `calls` and commands from `exec` rules without
 spawning; unmatched commands run for real there, and worktree Git always does. A file with
 `"commands": "fixture"` fails an unmatched command at its step in both modes. `workflow fixtures`
-exports completed command results as exec rules keyed by argv and environment/stdin digests. It does
-not export a settled-failed command yet ([#306](https://github.com/plx/quiet-choir/issues/306)), so
-a `"commands": "fixture"` replay of that run fails at that step. File effects, local callbacks, and
-top-level workflow code still run for real unless selected by `--stub-steps`.
+exports completed command results as exec rules keyed by argv and environment/stdin digests, and
+settled or absorbed command failures as rules with their exit `code` and recorded output tails when
+a command result reproduces them (an exit code outside `okExitCodes` or an `exec.json` schema
+failure). A spawn failure, timeout, signal or output-limit failure gets no rule yet
+([#307](https://github.com/plx/quiet-choir/issues/307)); the export still sets
+`"commands": "fixture"`, so a replay of that run fails at that step. File effects, local callbacks,
+and top-level workflow code still run for real unless selected by `--stub-steps`.
 
 Commands a callback or observer runs through `context.exec` are rehearsed the same way: synthesized
 or answered by an `exec` rule, and listed in `commands` with `parentStepId` set to the step or wait
