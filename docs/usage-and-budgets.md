@@ -100,7 +100,8 @@ admissions, lets all admitted agent attempts finish, then rejects with `RunBudge
 stop latches for that execution: catches, settled effects and settled maps cannot turn it into
 successful completion. The cost and attempt caps fail the run rather than suspending it; the window
 gate suspends it until the window resets when the reset is known. Resume with a higher cap replays
-completed effects and continues; it does not reset cumulative spend or attempts.
+completed effects and continues; it does not reset cumulative spend or attempts. A failed run's
+saved `recoveryHint` names the flag of the cap that stopped it.
 
 This is an after-completion gate, not a hard billing ceiling. In-flight calls can overshoot, unknown
 cost is not priced, and Codex reports no cost here. Pair the cost gate with the attempt cap and

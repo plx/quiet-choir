@@ -2,6 +2,13 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Run-budget recovery hint (fix; no record format, `schemaRevision` or step identity change): a run
+  stopped by `--max-run-cost-usd`, `--max-run-agent-attempts` or a window stop that cannot wait
+  (`--max-window-utilization`) now saves a `recoveryHint` that names the cap's flag and says to
+  resume with a higher value or the flag off, instead of the authoring or re-finalize text. The hint
+  wins over the effect, cancelled and authoring causes even when all recorded work is terminal, and
+  never suggests `--accept-code-change` (#283).
+
 - Failure kind on list rows (addition; no record format, `schemaRevision` or step identity change):
   `workflow list --json` rows gain `errorKind` and `retryable` after `recordedStatus`: the root
   cause's kind for a failed run (the stored kind, else the legacy fallback to the root step's last

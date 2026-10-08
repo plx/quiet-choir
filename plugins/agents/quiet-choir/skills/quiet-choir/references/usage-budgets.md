@@ -55,7 +55,8 @@ A reached gate refuses new attempts without adding a step/attempt record, cancel
 drains admitted work and throws `RunBudgetExceededError`. The run is failed (or, for the window gate
 with a known reset, suspended) even if the body catches it; `onError: 'return'` and settled maps
 cannot consume this operator stop. Inspect `budgetStop` and reported/unknown usage, then choose a
-higher cap to continue the same run. Completed calls replay.
+higher cap to continue the same run. Completed calls replay. The saved `recoveryHint` names the flag
+of the cap that stopped the run.
 
 With a run cap enabled, a limiter reservation includes durable attempt setup and native invocation;
 release precedes result validation/outcome saves. This prevents queued calls crossing a newly
