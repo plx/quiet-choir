@@ -335,29 +335,38 @@ still finishes) or between project roots with `workflow.interrupted` (exit 130),
 `error.details.removed` naming the runs and `error.details.roots` the project roots already removed;
 run prune again to continue. See [storage](storage.md#removing-runs).
 
-`workflow cancel ID [--force] [--timeout 30s] --json` ends a live local run as `cancelled` without
+`workflow cancel ID [--force] [--timeout 30s] --json` ends an unfinished run as `cancelled` without
 importing workflow code
-([ADR 0039](decisions/0039-cancel-a-live-run-through-a-token-bound-request.md)). It signals only a
-lock owner on this host that is alive and still has the OS start time it recorded: it writes a
-cancel request bound to that owner's lock token, re-verifies the owner, sends one SIGINT to its PID
-(never a group), and waits for the run to end. Success (exit 0) returns
-`{kind:"workflow.cancel.result", ok:true, runId, stateDir, status, signalsSent, owner}`: `status` is
-`cancelled`, or `completed`/`failed` when the run ended first; `owner` is the signalled
-`{pid, host, osStartTime}`. A run that already ended is a no-op with `signalsSent: 0` and
-`owner: null`. Refusals exit 3 and send nothing: `run.not_found`; `run.locked` for an unreadable,
-foreign-host, released, dead or unobservable owner, or one without a recorded or with a mismatched
-`osStartTime` (`error.details` has `lockPath`, `pid`, `host`, `state`, `osStartTime` and `reason`,
-plus `next` with the `workflow unlock` command for a released, dead or mismatched owner, the cases
-whose message names it); and `run.unowned` for an unfinished run that no lock holds
-(`details.reason: "unlocked"`). After the signal, an owner that exits without saving a terminal
-status is `run.unowned` with `details.reason: "owner-exited"`, `signalsSent` and `forced`, and the
-next tick may resume the run. The wait is bounded by `--timeout` per signal: past it,
-`watch.timeout` (exit 79) with `details: {timeoutMs, signalsSent, forced, pid}` and the last saved
-`status`; the request stays for the owner to honour late. With `--force`, cancel first sends a
-second SIGINT if the same verified owner still holds the run at the deadline; the owner then
-force-kills its groups and exits 130, usually leaving `running` for tick's stale recovery. The
-cancelled owner itself exits 130 with `workflow.interrupted` and a saved `cancelled` status, which
-tick observes and never resumes.
+([ADR 0039](decisions/0039-cancel-a-live-run-through-a-token-bound-request.md),
+[ADR 0057](decisions/0057-end-an-unowned-run-as-cancelled.md)). A run that no lock holds
+(`suspended`, or `running` after a crashed owner's lock was cleared) is saved `cancelled` under the
+run lock, with no signal: cancel takes the lock without recovering a dead owner's, re-reads the
+record, and saves the cancelled status, a `run.cancelled` event and a new execution entry, leaving
+steps and worktrees as they are. A lock that an owner or tick takes meanwhile is observed again, up
+to three times, then reported as `run.locked`. Otherwise cancel signals only a lock owner on this
+host that is alive and still has the OS start time it recorded: it writes a cancel request bound to
+that owner's lock token, re-verifies the owner, sends one SIGINT to its PID (never a group), and
+waits for the run to end. Success (exit 0) returns
+`{kind:"workflow.cancel.result", ok:true, runId, stateDir, status, signalsSent, owner, previousStatus}`:
+`status` is `cancelled`, or `completed`/`failed` when the run ended first; `owner` is the signalled
+`{pid, host, osStartTime}`; `previousStatus` is the unfinished status (`running` or `suspended`)
+that cancel itself ended under the lock, and null when an owner ended the run or it had already
+ended. A run that already ended is a no-op with `signalsSent: 0`, `owner: null` and
+`previousStatus: null`. Refusals exit 3 and send nothing: `run.not_found`; `run.incompatible` for an
+unowned format-1 checkpoint, which cannot be saved without its workflow (resume it once or remove
+it); and `run.locked` for an unreadable, foreign-host, released, dead or unobservable owner, or one
+without a recorded or with a mismatched `osStartTime` (`error.details` has `lockPath`, `pid`,
+`host`, `state`, `osStartTime` and `reason`, plus `next` with the `workflow unlock` command for a
+released, dead or mismatched owner, the cases whose message names it). After `workflow unlock`
+clears a dead owner's lock, a second cancel ends the run. After the signal, an owner that exits
+without saving a terminal status is `run.unowned` with `details.reason: "owner-exited"`,
+`signalsSent` and `forced`, and the next tick may resume the run; `run.unowned` has no other reason.
+The wait is bounded by `--timeout` per signal: past it, `watch.timeout` (exit 79) with
+`details: {timeoutMs, signalsSent, forced, pid}` and the last saved `status`; the request stays for
+the owner to honour late. With `--force`, cancel first sends a second SIGINT if the same verified
+owner still holds the run at the deadline; the owner then force-kills its groups and exits 130,
+usually leaving `running` for tick's stale recovery. The cancelled owner itself exits 130 with
+`workflow.interrupted` and a saved `cancelled` status, which tick observes and never resumes.
 
 `execute --dry-run --json` returns a `workflow.rehearsal` document with `ok:true`, calls (each with
 `worktree`, `{synthesized: true, base, baseSource}` for a synthesized isolated call or null),
@@ -398,7 +407,7 @@ The error codes map to numeric exits in one CLI table:
 | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1    | `workflow.failed`                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | A failed checkpoint was saved. Fix the workflow or execution policy and resume.                                                                                                                                                                     |
 | 2    | `usage.flag`, `usage.file_not_found`, `usage.entrypoint`, `usage.run_id`, `usage.input_json`, `usage.input_file`, `usage.input_schema`, `usage.resume_requires_run_id`, `answer.invalid` (the answer was not written)                                                                                                                                                                                                                                                                         | Correct arguments/input. No execution checkpoint was written.                                                                                                                                                                                       |
-| 3    | `run.exists` (also `workflow rm` after another run reused the ID), `run.not_found`, `run.locked`, `run.incompatible`, `run.input_changed`, `run.unreadable`, `run.orphans`, `run.unowned` (`workflow cancel` found no live owner), `run.active` (`workflow rm` without `--force` found a running, suspended or waiting run), `answer.conflict` (the question is not waiting or already has a delivery), `worktree.locked` (`workflow unlock --worktree-admin` refused a held repository lock) | Correct run/storage selection, wait for the owner, or explicitly resolve compatibility/ownership. No workflow body ran.                                                                                                                             |
+| 3    | `run.exists` (also `workflow rm` after another run reused the ID), `run.not_found`, `run.locked`, `run.incompatible`, `run.input_changed`, `run.unreadable`, `run.orphans`, `run.unowned` (`workflow cancel`'s owner then exited), `run.active` (`workflow rm` without `--force` found a running, suspended or waiting run), `answer.conflict` (the question is not waiting or already has a delivery), `worktree.locked` (`workflow unlock --worktree-admin` refused a held repository lock) | Correct run/storage selection, wait for the owner, or explicitly resolve compatibility/ownership. No workflow body ran.                                                                                                                             |
 | 4    | `load.typecheck`, `load.import`, `load.definition`                                                                                                                                                                                                                                                                                                                                                                                                                                            | Fix trusted source or its definition. No execution checkpoint was written.                                                                                                                                                                          |
 | 66   | `watch.record_not_created`                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | `inspect --watch --wait-created` saw no record within the bound. Check the run ID and `--state-dir`, or whether the launch failed.                                                                                                                  |
 | 70   | `start.exited`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | The `workflow start` runner exited without a record or a readable result document; read `launch.log`.                                                                                                                                               |

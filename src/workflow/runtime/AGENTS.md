@@ -86,7 +86,10 @@ completion. An interrupt whose run-signal reason is a `RunInterruptedError` save
 `nextWakeAt` now and `interruptedBy` after the ordinary drain, keeps `staleRecovery`, and still
 rejects; every other abort keeps `cancelled`, and a new execution clears `interruptedBy` (ADR 0029).
 The runtime never reads cancel requests: the loader turns a `RunInterruptedError` into an unmarked
-abort only for a `workflow cancel` request bound to its current lock token (ADR 0039). See
+abort only for a `workflow cancel` request bound to its current lock token (ADR 0039).
+`run-cancellation.ts` is the single place the cancelled-record transition without a running body is
+encoded (the accepted-replay preflight abort and `workflow cancel` of a run no lock holds); cancel
+saves it under the run lock and never recovers a dead owner's lock (ADR 0057). See
 [ADR 0015](../../../docs/decisions/0015-observe-runs-without-changing-effect-identity.md).
 
 Questions pin their full identity even while waiting. Registration, non-question effects, and

@@ -176,10 +176,13 @@ on-disk size. `workflow unlock RUN [--force-remote] [--json]` clears an abandone
 importing source; it refuses while an owner, recoverer or recorded child is alive or unverifiable
 (see [process ownership](docs/process-lifecycle.md)). `workflow unlock --worktree-admin PATH` clears
 a repository's abandoned worktree administration lock the same way.
-`workflow cancel RUN [--force] [--timeout 30s]` ends a live local run as `cancelled`, which tick
-never resumes: it signals only a live owner on this host whose recorded OS start time still matches,
-and refuses with exit 3 otherwise (a plain signal saves a resumable suspension instead; see
-[ADR 0039](docs/decisions/0039-cancel-a-live-run-through-a-token-bound-request.md)).
+`workflow cancel RUN [--force] [--timeout 30s]` ends an unfinished run as `cancelled`, which tick
+never resumes. A run that no process owns (parked `suspended`, or `running` with no lock) is saved
+`cancelled` under its lock; a live run is signalled only through a live owner on this host whose
+recorded OS start time still matches, and any other owner is refused with exit 3 (a plain signal
+saves a resumable suspension instead; see
+[ADR 0039](docs/decisions/0039-cancel-a-live-run-through-a-token-bound-request.md) and
+[ADR 0057](docs/decisions/0057-end-an-unowned-run-as-cancelled.md)).
 `workflow start FILE [execute flags] [--json]` runs `workflow execute` as a detached background
 runner and returns the run ID once the run's record exists, so an immediate `workflow inspect` reads
 it; a failure before the record exists (such as a type error) is reported with the runner's error
@@ -688,7 +691,7 @@ layered project/user settings are deferred.
 | 0    | Success. Inspect accepts any readable status; check `.status`. After a first signal, only a saved execute/resume completion or a delivered `workflow answer` exits 0.                                                                                                                      |
 | 1    | `workflow.failed`: execution failed and the failure checkpoint was saved. Fix and resume. A saved `failed` run reports this even when a signal arrived.                                                                                                                                    |
 | 2    | `answer.invalid` for invalid answers, or `usage.*`: invalid flags, misplaced flags, omitted/nonexistent/unsupported FILE, invalid run ID, invalid input JSON/file/schema, or resume without an ID. No execution checkpoint is written.                                                     |
-| 3    | `answer.conflict` for duplicate/closed questions, or `run.*`: existing/missing/locked/unreadable run, incompatible resume, changed input, surviving/unverified child processes (`run.orphans`), or a `workflow cancel` that found no live owner (`run.unowned`). No workflow body runs.    |
+| 3    | `answer.conflict` for duplicate/closed questions, or `run.*`: existing/missing/locked/unreadable run, incompatible resume, changed input, surviving/unverified child processes (`run.orphans`), or a `workflow cancel` whose owner exited first (`run.unowned`). No workflow body runs.    |
 | 4    | `load.*`: typecheck, import, or workflow-definition failure. No execution checkpoint is written.                                                                                                                                                                                           |
 | 74   | `workflow.storage`: saving, process registration, or releasing ownership failed. Inspect the reported saved state; it can still be `running`, `completed`, or absent.                                                                                                                      |
 | 75   | Saved suspension: `workflow.run.suspended` with pending waits and answer/resume commands. A saved suspension stands even when a signal arrived.                                                                                                                                            |

@@ -2,7 +2,8 @@
 
 - Status: accepted
 - Issue: #288 (the cancel half of #142); amends the Consequences of
-  [ADR 0029](0029-persist-interruptions-as-resumable-suspensions.md)
+  [ADR 0029](0029-persist-interruptions-as-resumable-suspensions.md); the unowned refusal is
+  superseded by [ADR 0057](0057-end-an-unowned-run-as-cancelled.md)
 
 ## Context
 
@@ -22,11 +23,14 @@ execution it names honours, delivered by a signal that only wakes that owner.
 - **Guard.** Cancel reads the run record first. A run that already ended (`completed`, `failed` or
   `cancelled`) is a no-op success with `signalsSent: 0` and `owner: null`, so cancel is idempotent.
   An unfinished run that no lock holds is refused with the new `run.unowned` (exit 3): no live
-  process owns it, so there is nothing to stop. A lock whose `owner.json` is unreadable, on a
-  foreign host, released, dead or unobservable, without a recorded `osStartTime`, or whose recorded
-  `osStartTime` differs from the live process's birth identity is refused with `run.locked` (exit
-  3); `error.details` carries `{lockPath, pid, host, state, osStartTime, reason}`, and the message
-  points a dead owner at `workflow unlock`. No refusal writes anything or sends a signal.
+  process owns it, so there is nothing to stop. (Superseded by
+  [ADR 0057](0057-end-an-unowned-run-as-cancelled.md): cancel now saves such a run `cancelled` under
+  its lock, and `run.unowned` means only that the owner exited.) A lock whose `owner.json` is
+  unreadable, on a foreign host, released, dead or unobservable, without a recorded `osStartTime`,
+  or whose recorded `osStartTime` differs from the live process's birth identity is refused with
+  `run.locked` (exit 3); `error.details` carries
+  `{lockPath, pid, host, state, osStartTime, reason}`, and the message points a dead owner at
+  `workflow unlock`. No refusal writes anything or sends a signal.
 - **Token-bound request.** For a verified owner, cancel atomically writes `cancel.json` in the run
   directory (`<runId>.cancel.json` beside a flat legacy checkpoint, like the inbox) with
   `{version: 1, requestId, token, pid, host, osStartTime, requestedAt}`, where `token` is the
@@ -103,7 +107,8 @@ superseded by this command.
 - Cancelling a run that tick is executing signals the tick process: the run ends `cancelled` and
   that tick pass stops (exit 130), as with any signal. The next tick continues with other runs and
   observes the cancelled one without resuming it.
-- Ending an idle `suspended` run that no process owns is out of scope (`run.unowned`); remote-host
-  cancel is too.
+- Ending an idle `suspended` run that no process owns was out of scope here (`run.unowned`);
+  [ADR 0057](0057-end-an-unowned-run-as-cancelled.md) now ends it as `cancelled` under the run lock.
+  Remote-host cancel stays out of scope.
 
 See the [CLI contract](../cli-contract.md) and [process lifecycle](../process-lifecycle.md).
