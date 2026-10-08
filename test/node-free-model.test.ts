@@ -33,12 +33,16 @@ const forbiddenModules = new Map([
 ]);
 const nodeBuiltins = new Set(builtinModules);
 
-/** The compiler options of a workflow type check under a tsconfig without `types`. */
+/**
+ * The compiler options of a workflow type check under a tsconfig without `types`: no Node globals.
+ * The `lib` is ES2023 plus DOM, the narrowest that works: the model names `AbortSignal`, which only
+ * the DOM lib (or @types/node) declares, so an ES2023-only check fails on it.
+ */
 const nodeFreeOptions: ts.CompilerOptions = {
   module: ts.ModuleKind.NodeNext,
   moduleResolution: ts.ModuleResolutionKind.NodeNext,
   target: ts.ScriptTarget.ES2023,
-  lib: ['lib.es2023.d.ts'],
+  lib: ['lib.es2023.d.ts', 'lib.dom.d.ts'],
   strict: true,
   skipLibCheck: true,
   types: [],
@@ -167,7 +171,13 @@ describe('Node-free authoring model', () => {
     await writeFile(
       join(root, 'tsconfig.json'),
       JSON.stringify({
-        compilerOptions: { module: 'NodeNext', target: 'ES2023', strict: true, skipLibCheck: true },
+        compilerOptions: {
+          module: 'NodeNext',
+          target: 'ES2023',
+          lib: ['ES2023', 'DOM'],
+          strict: true,
+          skipLibCheck: true,
+        },
       }),
     );
     await symlink(join(projectRoot, 'node_modules'), join(root, 'node_modules'));
