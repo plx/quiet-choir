@@ -1,5 +1,5 @@
-// A failure document, rootCause and the inspect summaries carry the classified error kind and
-// whether it is transient (#275). Zero cost: the configured claude is the repository's fake replay
+// A failure document, rootCause, the inspect summaries and the list rows carry the classified error
+// kind and whether it is transient (#275, #281). Zero cost: the configured claude is the repository's fake replay
 // binary, and PATH resolves a default `claude` or `codex` to a bomb that fails the smoke if
 // anything launches it, so nothing reaches a network.
 import assert from 'node:assert/strict';
@@ -160,6 +160,33 @@ export default defineWorkflow({ name: 'error-kind-body', version: '1', input: z.
   assert.equal(record('bug').rootCause.errorKind, null);
   assert.match(text(['inspect', 'bug']), /^Root cause \(workflow\): body bug/mu);
 
+  // List rows carry the failed root cause's kind and retryable; a body failure has neither.
+  const listed = run(['list']);
+  assert.equal(listed.status, 0, listed.stderr);
+  const rowKinds = Object.fromEntries(
+    listed.value.runs.map((row) => [row.id, [row.errorKind, row.retryable]]),
+  );
+  assert.deepEqual(rowKinds, {
+    auth: ['authentication', false],
+    busy: ['overloaded', true],
+    bug: [null, false],
+  });
+  // list --full keeps whole summaries, whose rootCause.errorKind matches the row.
+  const full = run(['list', '--full']);
+  assert.equal(full.status, 0, full.stderr);
+  assert.deepEqual(
+    Object.fromEntries(full.value.runs.map((entry) => [entry.id, entry.rootCause.errorKind])),
+    { auth: 'authentication', busy: 'overloaded', bug: null },
+  );
+  const table = text(['list']);
+  assert.match(table, /\bfailed \[authentication\]/u);
+  assert.match(table, /\bfailed \[overloaded\]/u);
+  assert.match(table, /^bug {2}\S+ {2}failed {2}/mu);
+  // Watch JSONL needs no new field: the --summary form already carries the normalized kind.
+  const watched = run(['inspect', 'busy', '--watch', '--summary', '--final']);
+  assert.equal(watched.status, 1, watched.stderr);
+  assert.equal(watched.value.rootCause.errorKind, 'overloaded');
+
   // A record from before the field existed still loads, inspects and resumes; the summaries fall
   // back to the root step's last attempt and the stored record keeps no kind.
   const legacy = record('auth');
@@ -170,6 +197,8 @@ export default defineWorkflow({ name: 'error-kind-body', version: '1', input: z.
   assert.equal(old.status, 0, old.stderr);
   assert.equal(old.value.rootCause.errorKind, 'authentication');
   assert.equal(old.value.steps.find((step) => step.id === 'call').errorKind, 'authentication');
+  const oldRow = run(['list']).value.runs.find((row) => row.id === 'auth');
+  assert.deepEqual([oldRow.errorKind, oldRow.retryable], ['authentication', false]);
   const resumed = run(['resume', 'auth', '--harness-config', harnessConfig], 'claude-auth');
   assert.equal(resumed.status, 1, resumed.stderr);
   assert.equal(resumed.value.error.code, 'workflow.failed');

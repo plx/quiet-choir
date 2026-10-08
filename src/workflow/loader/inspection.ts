@@ -33,7 +33,12 @@ import type { CodeChange } from '../runtime/replay-model.js';
 import type { CommandLauncher } from '../runtime/commands.js';
 import type { WorktreeAdminLockView } from '../runtime/worktree-admin-lock.js';
 import { runNextCommands, type NextCommand } from './next-commands.js';
-import { rootCauseSummary, stepErrorKind, type RootCauseSummary } from './failure-kind.js';
+import {
+  failureKind,
+  rootCauseSummary,
+  stepErrorKind,
+  type RootCauseSummary,
+} from './failure-kind.js';
 
 /** Inspection states are derived; stale never overwrites the checkpoint status. @internal */
 export type InspectionStatus = RunRecord['status'] | 'stale';
@@ -213,6 +218,15 @@ export interface RunListRow {
   readonly workflow: RunSummary['workflow'];
   readonly status: InspectionStatus;
   readonly recordedStatus: RunRecord['status'];
+  /**
+   * The root cause's failure kind for a failed run (through the stored kind, else the legacy
+   * fallback to the root step's last attempt). Null for body failures, for older records without a
+   * recoverable kind and for every non-failed status, including a cancelled or interrupted run
+   * that keeps a `rootCause` (its kind stays on `rootCause.errorKind` of the full summary).
+   */
+  readonly errorKind: ErrorKind | null;
+  /** Whether {@link RunListRow.errorKind} is in the transient set; false when it is null. */
+  readonly retryable: boolean;
   readonly counts: RunSummary['counts'];
   readonly updatedAt: string;
   readonly ownership: RunOwnership;
@@ -233,6 +247,19 @@ export interface RunListRow {
   >;
 }
 
+/**
+ * The failure kind a list row (and the text table) shows: the root cause's kind for a failed run,
+ * null and not retryable for every other recorded status. @internal
+ */
+export function runFailureKind(summary: Pick<RunSummary, 'recordedStatus' | 'rootCause'>): {
+  readonly errorKind: ErrorKind | null;
+  readonly retryable: boolean;
+} {
+  return failureKind(
+    summary.recordedStatus === 'failed' ? (summary.rootCause?.errorKind ?? null) : null,
+  );
+}
+
 /** Project a full summary onto its compact list row. @internal */
 export function toRunListRow(summary: RunSummary): RunListRow {
   const { usage } = summary;
@@ -241,6 +268,7 @@ export function toRunListRow(summary: RunSummary): RunListRow {
     workflow: summary.workflow,
     status: summary.status,
     recordedStatus: summary.recordedStatus,
+    ...runFailureKind(summary),
     counts: summary.counts,
     updatedAt: summary.updatedAt,
     ownership: summary.ownership,

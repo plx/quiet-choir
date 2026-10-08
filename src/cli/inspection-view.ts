@@ -3,6 +3,7 @@ import type {
   LeftoverLaunchSummary,
   RunSummary,
 } from '../workflow/loader/inspection.js';
+import { runFailureKind } from '../workflow/loader/inspection.js';
 import type { ExecSummary } from '../workflow/runtime/exec-model.js';
 import {
   formatArgv,
@@ -127,6 +128,12 @@ const listedStatuses: readonly string[] = [
   'waiting',
 ];
 const maxCompletedAgentLines = 20;
+
+/** The status cell: a failed run with a known root cause kind gains a trailing `[<kind>]`. */
+function statusCell(run: RunSummary): string {
+  const { errorKind } = runFailureKind(run);
+  return errorKind === null ? run.status : `${run.status} [${errorKind}]`;
+}
 
 function owner(run: RunSummary): string {
   const value = run.ownership.owner;
@@ -412,7 +419,7 @@ export function formatRunList(
     `ID  WORKFLOW  STATUS  STEPS  USAGE  SIZE  UPDATED  OWNER${showProject ? '  PROJECT  STATE' : ''}`,
     ...runs.map(
       (run) =>
-        `${run.id}  ${run.workflow.name}@${run.workflow.version}  ${run.status}  ${String(run.counts.completed)}/${String(run.counts.total)} completed, ${String(run.counts.running)} running, ${String(run.counts.failed)} failed, ${String(run.counts.cancelled)} cancelled, ${String(run.counts['settled-failed'])} settled-failed, ${String(run.counts.superseded)} superseded, ${String(run.counts.waiting)} waiting, ${String(run.counts.withdrawn)} withdrawn  ${cost(run)}  ${typeof run.bytes === 'number' ? formatBytes(run.bytes) : 'unknown'}  ${run.updatedAt}  ${owner(run)}${showProject ? `  ${run.cwd}  ${run.stateDir ?? 'unknown'}` : ''}`,
+        `${run.id}  ${run.workflow.name}@${run.workflow.version}  ${statusCell(run)}  ${String(run.counts.completed)}/${String(run.counts.total)} completed, ${String(run.counts.running)} running, ${String(run.counts.failed)} failed, ${String(run.counts.cancelled)} cancelled, ${String(run.counts['settled-failed'])} settled-failed, ${String(run.counts.superseded)} superseded, ${String(run.counts.waiting)} waiting, ${String(run.counts.withdrawn)} withdrawn  ${cost(run)}  ${typeof run.bytes === 'number' ? formatBytes(run.bytes) : 'unknown'}  ${run.updatedAt}  ${owner(run)}${showProject ? `  ${run.cwd}  ${run.stateDir ?? 'unknown'}` : ''}`,
     ),
     ...leftovers,
   ].join('\n');
