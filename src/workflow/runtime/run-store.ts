@@ -13,6 +13,7 @@ import { prepareStorageMigration, finishStorageMigration } from './storage-migra
 import { writeCheckpoint } from './checkpoint.js';
 import { refuseRecordSchemaDrift } from './record.js';
 import type { CommandLauncher } from './commands.js';
+import type { RunLockOptions } from './lock.js';
 import {
   lockRun,
   readRun,
@@ -115,11 +116,14 @@ export interface ReleasableOwnedRun extends OwnedRunStore {
   releaseOwner(): Promise<void>;
 }
 
-/** `FileRunStore.open` with the primary-only release that `workflow rm` needs. @internal */
+/**
+ * `FileRunStore.open` with the primary-only release that `workflow rm` needs. `reclaimStale: false`
+ * refuses a dead or released owner's lock instead of recovering it (see `RunLockOptions`). @internal
+ */
 export async function openFileOwnedRun(
   stateDir: string,
   runId: string,
-  options: RunStoreOpenOptions = {},
+  options: RunStoreOpenOptions & Pick<RunLockOptions, 'reclaimStale'> = {},
 ): Promise<ReleasableOwnedRun> {
   const root = resolve(stateDir);
   const lock = await lockRun(root, runId, options);
