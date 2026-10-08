@@ -361,18 +361,20 @@ recorded or with a mismatched `osStartTime` (`error.details` has `lockPath`, `pi
 mismatched owner, the cases whose message names it). After `workflow unlock` clears a dead owner's
 lock, a second cancel ends the run. After the signal, an owner that exits without saving a terminal
 status is `run.unowned` with `details.reason: "owner-exited"`, `signalsSent`, `forced` and
-`requestKept`; `run.unowned` has no other reason. `requestKept: true` means the owner was
-force-killed and left its lock with the targeted token: cancel keeps its request, and the next tick
-that retires exactly that lock saves the run `cancelled` instead of resuming it
-([ADR 0058](decisions/0058-honour-a-forced-cancel-in-stale-recovery.md)). `requestKept: false` means
-the lock is gone or re-owned (an embedder that suspended and released it): the request is removed
-and the next tick may resume the run. The wait is bounded by `--timeout` per signal: past it,
-`watch.timeout` (exit 79) with `details: {timeoutMs, signalsSent, forced, pid}` and the last saved
-`status`; the request stays for the owner to honour late. With `--force`, cancel first sends a
-second SIGINT if the same verified owner still holds the run at the deadline; the owner then
-force-kills its groups and exits 130, usually leaving `running` behind its dead lock, and cancel
-reports `run.unowned` with `requestKept: true`. The cancelled owner itself exits 130 with
-`workflow.interrupted` and a saved `cancelled` status, which tick observes and never resumes.
+`requestKept: true`; `run.unowned` has no other reason. Cancel keeps its request, bound to the
+exited owner's token, and the tick that retires exactly that owner's lock saves the run `cancelled`
+instead of resuming it ([ADR 0058](decisions/0058-honour-a-forced-cancel-in-stale-recovery.md)).
+When the owner was force-killed and its lock still carries the targeted token, the message says the
+next tick ends the run. When the lock is gone or re-owned (a tick reclaiming it, or an embedder that
+suspended and released it), the message says a tick that retires that owner's lock ends the run and
+that otherwise the next tick may resume it; after a clean release no acquisition retires that lock,
+so the request is inert. The wait is bounded by `--timeout` per signal: past it, `watch.timeout`
+(exit 79) with `details: {timeoutMs, signalsSent, forced, pid}` and the last saved `status`; the
+request stays for the owner to honour late. With `--force`, cancel first sends a second SIGINT if
+the same verified owner still holds the run at the deadline; the owner then force-kills its groups
+and exits 130, usually leaving `running` behind its dead lock, and cancel reports `run.unowned` with
+`requestKept: true`. The cancelled owner itself exits 130 with `workflow.interrupted` and a saved
+`cancelled` status, which tick observes and never resumes.
 
 `execute --dry-run --json` returns a `workflow.rehearsal` document with `ok:true`, calls (each with
 `worktree`, `{synthesized: true, base, baseSource}` for a synthesized isolated call or null),

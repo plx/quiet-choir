@@ -68,9 +68,9 @@ execution it names honours, delivered by a signal that only wakes that owner.
   removes its own request (only while `requestId` still matches) once the end is confirmed; after a
   timeout it leaves the request, so an owner whose event loop was blocked still honours it late.
   (Amended by [ADR 0058](0058-honour-a-forced-cancel-in-stale-recovery.md): when the owner exited
-  without a terminal status but its lock still carries the targeted token, as a force-kill leaves
-  it, cancel also keeps the request and reports `details.requestKept: true`, and the next tick saves
-  the run `cancelled`.)
+  without a terminal status, as a force-kill leaves it, cancel also keeps the request and reports
+  `details.requestKept: true`, and the tick that retires that owner's lock saves the run
+  `cancelled`.)
 - **Force escalates.** `--force` does not send two signals at once, which would almost always kill
   the owner before it saves `cancelled`. If the timeout passes and the same verified owner still
   holds the lock, cancel sends a second SIGINT, which force-kills the owner's process groups and

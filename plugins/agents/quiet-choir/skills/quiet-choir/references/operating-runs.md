@@ -307,14 +307,14 @@ an unowned run, and null otherwise. It refuses without signalling or writing: `r
 for a foreign, dead, released or unverifiable owner (for a dead or released owner, run the
 `workflow unlock` command it prints, then cancel again), and `run.incompatible` (exit 3) for an
 unowned unfinished checkpoint in format 1 to 5. An owner that exits without saving `cancelled` is
-`run.unowned` (exit 3) with `details.reason: "owner-exited"` and `requestKept`. After a forced kill
-(`--force`, or a cancel whose SIGINT was the owner's second signal) its dead lock keeps the targeted
-token, so `requestKept: true`: the next tick saves the run `cancelled` instead of resuming it and
-reports it skipped `cancelled`. Otherwise (an embedder that suspended and released its lock)
-`requestKept: false`, and tick may resume the run. An explicit resume or `workflow unlock` of that
-dead lock makes the kept request inert. After `--timeout` (default 30s) it exits 79 with the last
-saved `status`; `--force` then sends one more SIGINT to the same verified owner, which force-kills
-its groups. Cancelling a run that tick is executing stops that tick pass.
+`run.unowned` (exit 3) with `details.reason: "owner-exited"` and `requestKept: true`: the request
+stays bound to the exited owner. After a forced kill (`--force`, or a cancel whose SIGINT was the
+owner's second signal) the tick that retires its dead lock saves the run `cancelled` instead of
+resuming it and reports it skipped `cancelled`. An explicit resume or `workflow unlock` of that dead
+lock, or an embedder that suspended and released its lock, makes the kept request inert, and tick
+may resume the run. After `--timeout` (default 30s) it exits 79 with the last saved `status`;
+`--force` then sends one more SIGINT to the same verified owner, which force-kills its groups.
+Cancelling a run that tick is executing stops that tick pass.
 
 For code/schema edits use [acceptance or fork recovery](durability.md#choose-a-recovery-path);
 `--resume --accept-code-change` retains per-step compatibility checks and refuses, without changing

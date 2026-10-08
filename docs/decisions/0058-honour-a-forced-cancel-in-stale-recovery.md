@@ -30,13 +30,17 @@ The request outlives the owner it names, and tick's stale recovery honours it.
   store. The public `OwnedRunStore` and `RunStore` types are unchanged. A request matches only when
   its `token` equals that reclaimed token. Every acquisition draws a fresh token, so a request from
   an earlier acquisition never cancels a later execution.
-- **Cancel keeps the request.** When the owner is gone without a terminal status, cancel looks at
-  the lock once more. If the lock still carries the targeted owner's token (a dead or released lock
-  left by a force-kill), cancel keeps its request and reports `run.unowned` with
-  `details.requestKept: true`. The message says the next workflow tick ends the run as cancelled
-  instead of recovering it. When the lock is gone or re-owned (for example an embedder owner that
-  suspended and released its lock), cancel removes the request as before and reports
-  `requestKept: false` with the existing "may resume" note. Cancel still never reclaims a dead
+- **Cancel keeps the request.** When the owner is gone without a terminal status, cancel keeps its
+  request and reports `run.unowned` with `details.requestKept: true`, whatever it then finds at the
+  lock. A tick may already have retired the force-killed owner's lock and be about to check the
+  request under its own lock, so removing it would let that tick resume the run. Token binding makes
+  a kept request inert for every other acquisition. Cancel looks at the lock once more only to
+  choose the message. If the lock still carries the targeted owner's token (a dead or released lock
+  left by a force-kill), the message says the next workflow tick ends the run as cancelled instead
+  of recovering it. When the lock is gone or re-owned, cancel cannot tell a tick that is reclaiming
+  the dead lock from an embedder owner that suspended and released cleanly, or another writer that
+  took the lock. The message then says that a tick that retires that owner's lock ends the run as
+  cancelled, and that otherwise the next tick may resume it. Cancel still never reclaims a dead
   owner's lock ([ADR 0057](0057-end-an-unowned-run-as-cancelled.md)).
 - **Where tick checks.** For an unfinished run (stale `running`, or a due `suspended` run behind a
   dead lock, which an owner that saved its interruption just before the kill leaves), tick reads a
@@ -108,8 +112,9 @@ The request outlives the owner it names, and tick's stale recovery honours it.
 - The tick JSON contract gains the `cancelled` skip reason and the cancel failure gains
   `details.requestKept`, deliberate changes at version 0.0.0. There is no record format or schema
   revision change.
-- A request left inert (after an explicit resume or `unlock`) stays on disk until a later cancel
-  replaces it; it never matches. Showing pending requests in `inspect` and cleaning up inert ones
-  remain out of scope, as do embedder owners that consult requests and remote-host cancel.
+- A request left inert (after an explicit resume or `unlock`, or by an owner that released its lock
+  cleanly, so no acquisition retires it) stays on disk until a later cancel replaces it; it never
+  matches. Showing pending requests in `inspect` and cleaning up inert ones remain out of scope, as
+  do embedder owners that consult requests and remote-host cancel.
 
 See the [CLI contract](../cli-contract.md) and [process lifecycle](../process-lifecycle.md).

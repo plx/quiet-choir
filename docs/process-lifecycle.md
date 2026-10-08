@@ -79,14 +79,16 @@ suspends. Cancelling a run that `workflow tick` is executing signals the tick pr
 `cancelled` and that tick pass stops, as with any signal. An embedder owner does not read the
 request and suspends, which cancel reports as `run.unowned`. `--force` sends a second SIGINT only
 after the timeout, to the same re-verified owner; like a second signal (including a cancel that
-reaches an owner already draining an earlier signal), it force-kills the owner before it saves. When
-the dead owner's lock still carries the targeted token, cancel keeps its request and reports
-`run.unowned` with `requestKept: true`. The next tick that retires exactly that lock saves the run
-`cancelled` instead of resuming it, and reports it skipped as `cancelled`
+reaches an owner already draining an earlier signal), it force-kills the owner before it saves. An
+owner that exits without saving leaves cancel's request in place, bound to its token, and cancel
+reports `run.unowned` with `requestKept: true`, even when a tick has already reclaimed the dead
+lock. The tick that retires exactly that owner's lock saves the run `cancelled` instead of resuming
+it, and reports it skipped as `cancelled`
 ([ADR 0058](decisions/0058-honour-a-forced-cancel-in-stale-recovery.md)). An explicit resume or
-`workflow unlock` of that lock retires the token first, which leaves the request inert. Plain
-signals and tick deadlines write no request and still leave a resumable stale run. The identity
-check right before each signal narrows, but cannot close, the window for PID reuse described below.
+`workflow unlock` of that lock retires the token first, and an embedder that released its lock
+cleanly leaves nothing to retire; either leaves the request inert. Plain signals and tick deadlines
+write no request and still leave a resumable stale run. The identity check right before each signal
+narrows, but cannot close, the window for PID reuse described below.
 
 `configuration doctor` uses the same signal handling and three-second cleanup grace, with an
 in-memory supervisor for probes. It has no resumable workflow or durable child registry. Embedded
