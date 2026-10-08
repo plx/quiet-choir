@@ -287,6 +287,32 @@ Stack paths are scrubbed to `/fixture/...` and the file was formatted with Prett
 digest in `test/record-schema-revision.test.ts` was computed on the same unmodified main from this
 file.
 
+`revision-ten-checkpoint.json` was generated the same way at origin/main `7d02b96`, before
+owner-side inbox rejections (#289) added the nested optional `issues` list to `question.rejections`
+in revision 11. Its run ID is `revision-ten`, and it ran this definition, then delivered the answer
+`3` with `writeAnswer` (`by: 'agent:fixture'`; the writer's JSON Schema check cannot see the
+refinement) and resumed once so the owner quarantined the delivery:
+
+```ts
+defineWorkflow({
+  name: 'schema-revision',
+  version: '1',
+  input: z.null(),
+  output: z.number(),
+  run: (ctx) =>
+    ctx.ask('even', {
+      prompt: 'Even number?',
+      schema: z.number().refine((n) => n % 2 === 0, 'Must be even'),
+    }),
+});
+```
+
+It carries `schemaRevision: 10` and a suspended `ask` `even` with one plain-text rejection
+(`{ at, error, file }`, the multi-line Zod JSON message, no `issues`). The journal was empty, so
+only `run.json` is checked in. It has no stack paths, and the file was formatted with Prettier; its
+read-view digest in `test/record-schema-revision.test.ts` was computed on the same unmodified main
+from this file. No harness or inference was used.
+
 `record-keys.json` lists the top-level run-record keys of each schema revision. Adding or changing a
 persisted run-level field adds a revision there and bumps `SUPPORTED_SCHEMA_REVISION`; a revision
 that only changes a nested shape repeats the previous key list. See `docs/storage.md`.

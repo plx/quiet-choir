@@ -1,0 +1,279 @@
+{
+  "allowModelOverride": false,
+  "capabilities": {
+    "defaultProfile": "text",
+    "defaults": {
+      "access": "read",
+      "claude": { "allowedTools": [], "isolation": "restricted", "tools": [] },
+      "claudeAccess": "none",
+      "codex": { "isolation": "restricted", "sandbox": "read-only" },
+      "codexAccess": "read",
+      "environment": {
+        "claude": {
+          "set": [],
+          "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+          "unset": []
+        },
+        "codex": {
+          "set": [],
+          "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+          "unset": []
+        }
+      },
+      "expectsToolUse": false,
+      "maxBudgetUsd": 0.5,
+      "maxTurns": 10,
+      "name": "text",
+      "onPermissionDenied": "warn",
+      "timeoutMs": 300000
+    },
+    "profiles": {
+      "edit": {
+        "access": "write",
+        "claude": {
+          "allowedTools": ["Read", "Grep", "Glob", "Edit", "Write"],
+          "isolation": "restricted",
+          "tools": ["Read", "Grep", "Glob", "Edit", "Write"]
+        },
+        "claudeAccess": "write",
+        "codex": { "isolation": "restricted", "sandbox": "workspace-write" },
+        "codexAccess": "write",
+        "environment": {
+          "claude": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          },
+          "codex": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          }
+        },
+        "expectsToolUse": true,
+        "maxBudgetUsd": 5,
+        "maxTurns": 40,
+        "name": "edit",
+        "onPermissionDenied": "warn",
+        "timeoutMs": 1800000
+      },
+      "readonly": {
+        "access": "read",
+        "claude": {
+          "allowedTools": ["Read", "Grep", "Glob"],
+          "isolation": "restricted",
+          "tools": ["Read", "Grep", "Glob"]
+        },
+        "claudeAccess": "read",
+        "codex": { "isolation": "restricted", "sandbox": "read-only" },
+        "codexAccess": "read",
+        "environment": {
+          "claude": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          },
+          "codex": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          }
+        },
+        "expectsToolUse": true,
+        "maxBudgetUsd": 2,
+        "maxTurns": 25,
+        "name": "readonly",
+        "onPermissionDenied": "warn",
+        "timeoutMs": 900000
+      },
+      "text": {
+        "access": "read",
+        "claude": { "allowedTools": [], "isolation": "restricted", "tools": [] },
+        "claudeAccess": "none",
+        "codex": { "isolation": "restricted", "sandbox": "read-only" },
+        "codexAccess": "read",
+        "environment": {
+          "claude": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          },
+          "codex": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          }
+        },
+        "expectsToolUse": false,
+        "maxBudgetUsd": 0.5,
+        "maxTurns": 10,
+        "name": "text",
+        "onPermissionDenied": "warn",
+        "timeoutMs": 300000
+      }
+    },
+    "requiredGrants": [],
+    "strictProfiles": true
+  },
+  "createdAt": "2026-10-08T06:07:22.992Z",
+  "cwd": "/",
+  "engine": { "node": "v26.10.0", "quietChoir": "0.0.0", "tsx": "4.23.11", "zod": "4.5.4" },
+  "error": null,
+  "errorStack": null,
+  "eventCounts": {},
+  "events": [
+    {
+      "at": "2026-10-08T06:07:22.994Z",
+      "data": null,
+      "execution": 1,
+      "message": null,
+      "phase": null,
+      "stepId": null,
+      "total": null,
+      "type": "run.started"
+    },
+    {
+      "at": "2026-10-08T06:07:23.027Z",
+      "data": null,
+      "execution": 1,
+      "message": null,
+      "phase": null,
+      "stepId": null,
+      "total": null,
+      "type": "run.suspended"
+    },
+    {
+      "at": "2026-10-08T06:07:23.095Z",
+      "data": null,
+      "execution": 2,
+      "message": null,
+      "phase": null,
+      "stepId": null,
+      "total": null,
+      "type": "run.started"
+    },
+    {
+      "at": "2026-10-08T06:07:23.126Z",
+      "data": null,
+      "execution": 2,
+      "message": null,
+      "phase": null,
+      "stepId": null,
+      "total": null,
+      "type": "run.suspended"
+    }
+  ],
+  "executions": [
+    {
+      "endedAt": "2026-10-08T06:07:23.027Z",
+      "error": null,
+      "errorStack": null,
+      "n": 1,
+      "outcome": "suspended",
+      "pid": 24497,
+      "startedAt": "2026-10-08T06:07:22.993Z"
+    },
+    {
+      "endedAt": "2026-10-08T06:07:23.126Z",
+      "error": null,
+      "errorStack": null,
+      "n": 2,
+      "outcome": "suspended",
+      "pid": 24497,
+      "startedAt": "2026-10-08T06:07:23.095Z"
+    }
+  ],
+  "formatVersion": 7,
+  "grantedProfiles": {},
+  "grants": [],
+  "harness": { "kind": "none", "previousKinds": [] },
+  "id": "revision-ten",
+  "input": null,
+  "maps": {},
+  "maxChildDepth": 8,
+  "nextWakeAt": null,
+  "output": null,
+  "phase": null,
+  "policy": [],
+  "policyWarnings": [],
+  "profileOverrides": [],
+  "replayWarnings": [],
+  "rootCause": null,
+  "runBudget": { "maxRunAgentAttempts": null, "maxRunCostUsd": null, "maxWindowUtilization": null },
+  "schemaRevision": 10,
+  "seq": 6,
+  "sessionSalt": "94bb5b43-f600-445c-b205-7aa47449fbfd",
+  "status": "suspended",
+  "steps": {
+    "even": {
+      "attemptHistory": [],
+      "attempts": 1,
+      "durationMs": null,
+      "error": null,
+      "errorStack": null,
+      "fingerprint": "2f9013983b92ae148951a8a00d2a86c6f707fe5072ad43668dbad0e53aa3a152",
+      "finishedAt": null,
+      "identity": {
+        "audience": "251ecb599a3f3a2f1e70671a65292c15862d28613e3dfd97edb7640f14bf4986",
+        "choices": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "details": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "kind": "e43a5493c180fde1ca0c3b266b7781876016f68d2caaa937e049f3c050b87a66",
+        "prompt": "326a516e6d7a4831f3b6155ef8074383f329f68e60ecb91e41ebeb7afacce6f6",
+        "schema": "7068f465e62e0332bd1fec74011c2a15b641c49214d1941ef53026cf1d92920c",
+        "subject": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "title": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+      },
+      "kind": "ask",
+      "launchStamp": 0,
+      "output": null,
+      "phase": null,
+      "question": {
+        "askedAt": "2026-10-08T06:07:23.018Z",
+        "rejections": [
+          {
+            "at": "2026-10-08T06:07:23.120Z",
+            "error": "[\n  {\n    \"code\": \"custom\",\n    \"path\": [],\n    \"message\": \"Must be even\"\n  }\n]",
+            "file": "even--ec272779d38641ecaf12b71ccc14ecab192bbf06924ac12540dfd5c1c8dda502.answer.json.rejected.54bc4475-806d-4990-8f9a-5a5e75845afd.json"
+          }
+        ],
+        "request": {
+          "audience": "any",
+          "choices": [],
+          "details": null,
+          "prompt": "Even number?",
+          "schema": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "number" },
+          "subject": null,
+          "title": null
+        },
+        "resolution": null
+      },
+      "request": null,
+      "seq": 1,
+      "startedAt": "2026-10-08T06:07:23.018Z",
+      "status": "waiting",
+      "wait": {
+        "checks": 0,
+        "deadline": null,
+        "nextCheckAt": null,
+        "note": null,
+        "notifiedAt": 1791439643018,
+        "openedAt": 1791439643018,
+        "request": { "deadline": null, "poll": null, "timeoutMs": null }
+      },
+      "wakeAt": null
+    }
+  },
+  "updatedAt": "2026-10-08T06:07:23.126Z",
+  "workflow": {
+    "fingerprint": "7d6b4bb9b8b6ba119c14c28949345a5f50ffa101d25cc089125e8ee53a015a0e",
+    "identity": {
+      "code": "schema-revision",
+      "engine": { "formatVersion": 6, "version": "0.0.0" },
+      "files": {},
+      "inputSchema": "199490fad0bd9dd1925ebbce2ed02f949ef0396fcbabcd41baa5ffa3b1ea49b2",
+      "outputSchema": "7068f465e62e0332bd1fec74011c2a15b641c49214d1941ef53026cf1d92920c"
+    },
+    "name": "schema-revision",
+    "version": "1"
+  }
+}

@@ -276,6 +276,7 @@ it('quarantines a signal delivered after the deadline while the clock is still b
   expect(step?.question?.rejections[0]?.error).toBe(
     'Answer was delivered after the wait deadline.',
   );
+  expect(step?.question?.rejections[0]).not.toHaveProperty('issues');
   await expect(readFile(answer.path, 'utf8')).rejects.toThrow();
   const siblings = await readdir(dirname(answer.path));
   expect(siblings.some((name) => name.includes('.rejected.'))).toBe(true);

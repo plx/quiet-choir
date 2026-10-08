@@ -321,6 +321,12 @@ it('quarantines authoritative refinement failures and accepts a corrected delive
   expect(rejected.status).toBe('suspended');
   const pending = await listPending({ stateDir });
   expect(pending[0]?.rejections[0]?.error).toContain('Must be even');
+  // The owner records the writer's one-line summary and structured issues (#289).
+  expect(pending[0]?.rejections[0]?.error).toMatch(/^Answer does not match the question schema/u);
+  expect(pending[0]?.rejections[0]?.error).not.toContain('\n');
+  expect(pending[0]?.rejections[0]?.issues).toEqual([
+    { code: 'custom', path: [], message: 'Must be even' },
+  ]);
   expect(await readdir(join(stateDir, 'questions', 'inbox'))).toHaveLength(1);
   expect((await readdir(join(stateDir, 'questions', 'inbox')))[0]).toContain('.rejected.');
   await writeAnswer({ ...options(), stepId: 'refined', value: 4 });
@@ -353,7 +359,15 @@ it('quarantines stale fingerprints and spoofed human attribution from direct inb
   expect((await listPending({ stateDir }))[0]?.rejections).toHaveLength(2);
   await writeFile(path, JSON.stringify({ ...envelope, by: 'human:<NAME>' }));
   expect((await runWorkflow(definition, { ...options(), resume: true })).status).toBe('suspended');
-  expect((await listPending({ stateDir }))[0]?.rejections).toHaveLength(3);
+  const rejections = (await listPending({ stateDir }))[0]?.rejections ?? [];
+  expect(rejections).toHaveLength(3);
+  // A stale fingerprint stays plain text; an attribution refusal carries the writer's issue.
+  expect(rejections[0]).not.toHaveProperty('issues');
+  for (const rejection of rejections.slice(1))
+    expect(rejection.issues).toEqual([
+      { code: 'answer_author', path: [], message: rejection.error },
+    ]);
+  expect(rejections[1]?.error).toContain('requires attribution --by human:<name>');
   await writeAnswer({
     ...options(),
     stepId: 'approval',
@@ -363,6 +377,160 @@ it('quarantines stale fingerprints and spoofed human attribution from direct inb
   const result = await runWorkflow(definition, { ...options(), resume: true });
   expect(result.output).toEqual({ approved: false, comment: 'revise' });
   expect(first.steps['approval']?.attempts).toBe(1);
+});
+
+it('records the path of a nested refinement failure', async () => {
+  const definition = workflow((ctx) =>
+    ctx.ask('nested', {
+      prompt: 'Even n?',
+      schema: z.object({ n: z.number().refine((n) => n % 2 === 0, 'Must be even') }),
+    }),
+  );
+  await runWorkflow(definition, options());
+  await writeAnswer({ ...options(), stepId: 'nested', value: { n: 3 } });
+  expect((await runWorkflow(definition, { ...options(), resume: true })).status).toBe('suspended');
+  const rejection = (await listPending({ stateDir }))[0]?.rejections[0];
+  expect(rejection?.issues).toEqual([{ code: 'custom', path: ['n'], message: 'Must be even' }]);
+  expect(rejection?.error).toBe('Answer does not match the question schema: n: Must be even');
+});
+
+it('records plain-text refusals without issues', async () => {
+  const definition = workflow((ctx) => ctx.ask('plain', question));
+  await runWorkflow(definition, options());
+  const delivery = await writeAnswer({ ...options(), stepId: 'plain', value: 'ship' });
+  const envelope = JSON.parse(await readFile(delivery.path, 'utf8')) as Record<string, unknown>;
+  const refusals = [
+    JSON.stringify({ ...envelope, questionFingerprint: '0'.repeat(64) }),
+    JSON.stringify({ ...envelope, runCreatedAt: '1999-01-01T00:00:00.000Z' }),
+    '{ not json',
+    JSON.stringify({ value: 'ship' }),
+  ];
+  for (const text of refusals) {
+    await writeFile(delivery.path, text);
+    expect((await runWorkflow(definition, { ...options(), resume: true })).status).toBe(
+      'suspended',
+    );
+  }
+  const rejections = (await listPending({ stateDir }))[0]?.rejections ?? [];
+  expect(rejections).toHaveLength(refusals.length);
+  for (const rejection of rejections) {
+    expect(rejection.error).not.toBe('');
+    expect(rejection).not.toHaveProperty('issues');
+  }
+  expect(rejections[1]?.error).toBe('Answer was addressed to an earlier run with this ID.');
+});
+
+it('records a refinement that throws as a plain-text rejection', async () => {
+  const definition = workflow((ctx) =>
+    ctx.ask('throws', {
+      prompt: 'Odd?',
+      schema: z.number().refine(() => {
+        throw new Error('refinement exploded');
+      }),
+    }),
+  );
+  await runWorkflow(definition, options());
+  await writeAnswer({ ...options(), stepId: 'throws', value: 1 });
+  expect((await runWorkflow(definition, { ...options(), resume: true })).status).toBe('suspended');
+  const rejection = (await listPending({ stateDir }))[0]?.rejections[0];
+  expect(rejection?.error).toContain('refinement exploded');
+  expect(rejection).not.toHaveProperty('issues');
+});
+
+it('bounds a recorded rejection to 20 issues and reloads the record', async () => {
+  const keys = Array.from({ length: 25 }, (_, index) => `field${String(index)}`);
+  const definition = workflow((ctx) =>
+    ctx.ask('wide', {
+      prompt: 'Fill in?',
+      schema: z.object(Object.fromEntries(keys.map((key) => [key, z.string()]))),
+    }),
+  );
+  await runWorkflow(definition, options());
+  // The writer would refuse an empty object early, so deliver a valid one and empty the envelope.
+  const delivery = await writeAnswer({
+    ...options(),
+    stepId: 'wide',
+    value: Object.fromEntries(keys.map((key) => [key, 'x'])),
+  });
+  const envelope = JSON.parse(await readFile(delivery.path, 'utf8')) as Record<string, unknown>;
+  await writeFile(delivery.path, JSON.stringify({ ...envelope, value: {} }));
+  expect((await runWorkflow(definition, { ...options(), resume: true })).status).toBe('suspended');
+  const stored = (await readRun({ stateDir, runId: 'questions' })).steps['wide']?.question
+    ?.rejections[0];
+  expect(stored?.issues).toHaveLength(20);
+  expect(stored?.issues?.[0]).toMatchObject({ code: 'invalid_type', path: ['field0'] });
+  expect(stored?.error.split('; ')).toHaveLength(25);
+  expect((await listPending({ stateDir }))[0]?.rejections[0]?.issues).toHaveLength(20);
+});
+
+it('bounds long issue codes, paths and messages to what the record accepts', async () => {
+  const key = 'k'.repeat(300);
+  const path = Array.from({ length: 40 }, (_, index) => (index === 0 ? key : index));
+  const definition = workflow((ctx) =>
+    ctx.ask('long', {
+      prompt: 'Long?',
+      schema: z.string().check((context) => {
+        context.issues.push({
+          code: 'custom',
+          path,
+          message: 'm'.repeat(2000),
+          input: context.value,
+        });
+      }),
+    }),
+  );
+  await runWorkflow(definition, options());
+  await writeAnswer({ ...options(), stepId: 'long', value: 'x' });
+  expect((await runWorkflow(definition, { ...options(), resume: true })).status).toBe('suspended');
+  const issue = (await readRun({ stateDir, runId: 'questions' })).steps['long']?.question
+    ?.rejections[0]?.issues?.[0];
+  expect(issue?.path).toHaveLength(32);
+  expect(issue?.path[0]).toBe('k'.repeat(256));
+  expect(issue?.path[31]).toBe(31);
+  expect(issue?.message).toHaveLength(1024);
+});
+
+it('stringifies numeric issue path segments that JSON cannot hold', async () => {
+  const definition = workflow((ctx) =>
+    ctx.ask('lossy', {
+      prompt: 'Lossy?',
+      schema: z.string().check((context) => {
+        context.issues.push({
+          code: 'custom',
+          path: [Number.NaN, Number.POSITIVE_INFINITY, -0, 3],
+          message: 'bad',
+          input: context.value,
+        });
+      }),
+    }),
+  );
+  await runWorkflow(definition, options());
+  await writeAnswer({ ...options(), stepId: 'lossy', value: 'x' });
+  expect((await runWorkflow(definition, { ...options(), resume: true })).status).toBe('suspended');
+  const step = (await readRun({ stateDir, runId: 'questions' })).steps['lossy'];
+  expect(step?.status).toBe('waiting');
+  expect(step?.question?.rejections[0]?.issues?.[0]?.path).toEqual(['NaN', 'Infinity', '-0', 3]);
+});
+
+it('records issues on the pending row of a wait with a signal source', async () => {
+  const definition = workflow((ctx) =>
+    ctx.wait('gate', {
+      signal: { prompt: 'Approve?', schema: z.object({ approved: z.literal(true) }) },
+    }),
+  );
+  await runWorkflow(definition, options());
+  const delivery = await writeAnswer({
+    ...options(),
+    stepId: 'gate',
+    value: { approved: true },
+  });
+  const envelope = JSON.parse(await readFile(delivery.path, 'utf8')) as Record<string, unknown>;
+  await writeFile(delivery.path, JSON.stringify({ ...envelope, value: { approved: false } }));
+  expect((await runWorkflow(definition, { ...options(), resume: true })).status).toBe('suspended');
+  const row = (await listPending({ stateDir }))[0];
+  expect(row?.rejections[0]?.issues).toEqual([
+    expect.objectContaining({ code: 'invalid_value', path: ['approved'] }),
+  ]);
 });
 
 it('rejects a padded human:<NAME> placeholder at write time and leaves no inbox file', async () => {

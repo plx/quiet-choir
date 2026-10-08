@@ -4,11 +4,11 @@ import { basename } from 'node:path';
 import { z } from 'zod';
 import type { RunActivity } from './activity.js';
 import { CancelledError } from './fan-out.js';
-import { answerCandidates } from './inbox.js';
+import { AnswerError, answerCandidates, schemaMismatch, syntheticInvalid } from './inbox.js';
 import { digest, jsonValue } from './json.js';
 import { stepIdentity } from './identity.js';
 import { answerEnvelopeSchema, validateAnswerAuthor } from './question-schema.js';
-import type { AskOptions } from './question-model.js';
+import type { AnswerIssue, AskOptions } from './question-model.js';
 import type { JsonValue } from './model.js';
 import type { RunRecord, StepRecord } from './store.js';
 import { clockNow, MAX_EPOCH_MS, SHORT_WAIT_MS, systemClock } from './clock.js';
@@ -158,6 +158,32 @@ interface QuestionDependencies {
     step: StepRecord,
   ) => void;
   readonly fail: (error: unknown) => void;
+}
+
+/** Bounds of a persisted rejection's issues; question-schema.ts enforces the same limits. */
+const MAX_REJECTION_ISSUES = 20;
+const MAX_ISSUE_CODE = 100;
+const MAX_ISSUE_PATH = 32;
+const MAX_ISSUE_PATH_KEY = 256;
+const MAX_ISSUE_MESSAGE = 1024;
+
+/** Stringify a numeric path segment JSON cannot hold losslessly (NaN, Infinity, -0). */
+function pathNumber(part: number | string): number | string {
+  if (typeof part === 'string' || (Number.isFinite(part) && !Object.is(part, -0))) return part;
+  return Object.is(part, -0) ? '-0' : String(part);
+}
+
+/** Truncate structured issues so a recorded rejection always re-parses. */
+function boundedIssues(issues: readonly AnswerIssue[]): AnswerIssue[] {
+  return issues.slice(0, MAX_REJECTION_ISSUES).map((issue) => ({
+    code: issue.code.slice(0, MAX_ISSUE_CODE) || 'invalid',
+    path: issue.path
+      .slice(0, MAX_ISSUE_PATH)
+      .map((part) =>
+        typeof part === 'string' ? part.slice(0, MAX_ISSUE_PATH_KEY) : pathNumber(part),
+      ),
+    message: issue.message.slice(0, MAX_ISSUE_MESSAGE),
+  }));
 }
 
 /** Owns parked promises, read-only observations, and the only inbox consumer. @internal */
@@ -479,12 +505,16 @@ export class RunQuestions {
         throw new Error('Answer question fingerprint does not match the waiting question.');
       if (envelope.runCreatedAt !== undefined && envelope.runCreatedAt !== record.createdAt)
         throw new Error('Answer was addressed to an earlier run with this ID.');
-      validateAnswerAuthor(step.question.request.audience, envelope.by);
-      const value = jsonValue(
-        waiter.sources.signal.schema.parse(envelope.value),
-        `Question ${id} answer`,
-        { canonical: false },
-      );
+      try {
+        validateAnswerAuthor(step.question.request.audience, envelope.by);
+      } catch (error) {
+        throw syntheticInvalid('answer_author', error);
+      }
+      // safeParse reports a schema mismatch as data; a refinement that throws still escapes to
+      // the catch below as a plain-text rejection.
+      const parsed = waiter.sources.signal.schema.safeParse(envelope.value);
+      if (!parsed.success) throw schemaMismatch(parsed.error.issues);
+      const value = jsonValue(parsed.data, `Question ${id} answer`, { canonical: false });
       const at = Date.parse(envelope.at);
       if (
         step.wait?.deadline !== null &&
@@ -500,9 +530,11 @@ export class RunQuestions {
     } catch (error) {
       const rejected = `${path}.rejected.${randomUUID()}.json`;
       await rename(path, rejected);
+      const issues = error instanceof AnswerError ? boundedIssues(error.issues) : [];
       step.question.rejections.push({
         at: new Date(clockNow(this.#clock)).toISOString(),
         error: (error instanceof Error ? error.message : String(error)).slice(0, 4096),
+        ...(issues.length ? { issues } : {}),
         file: basename(rejected),
       });
       step.question.rejections = step.question.rejections.slice(-20);
