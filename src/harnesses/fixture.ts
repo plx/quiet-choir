@@ -39,8 +39,8 @@ export interface FixtureCall {
 }
 
 /**
- * One first-match command rule for `ctx.exec` and `ctx.exec.json`; exactly one of `json` or
- * `stdout` must be present. Every filter that is present must hold.
+ * One first-match command rule for `ctx.exec` and `ctx.exec.json`; exactly one of `json`, `stdout`
+ * or `error` must be present. Every filter that is present must hold, whichever kind of rule it is.
  */
 export interface FixtureExecCall {
   /** Step-ID glob: * stays within a segment; ** crosses segments. */
@@ -66,6 +66,20 @@ export interface FixtureExecCall {
   readonly stderr?: string;
   /** Exit code, default 0; checked against the step's `okExitCodes` like a real exit. */
   readonly code?: number;
+  /**
+   * Simulated command failure, such as a missing binary or a timeout: the command rejects with an
+   * `ExecError` whose message is this text verbatim (no step prefix), immediately, as a real
+   * spawn failure does. The error carries no process result, so its diagnostics have a null exit
+   * code and signal, empty output tails and zero duration; a real timeout's signal and partial
+   * output are not reproduced. `stderr` and `code` do not apply to an error rule.
+   */
+  readonly error?: string;
+  /**
+   * Failure category for `error`, so `retry.on` and branches on `error.kind` can be rehearsed. The
+   * default is `process`, the kind the real runner gives every failure it cannot classify more
+   * precisely (unlike an agent rule, whose default is `unknown`). Requires `error`.
+   */
+  readonly kind?: ErrorKind;
 }
 
 /** Portable, versioned agent fixtures, exportable from completed run records. */
@@ -144,11 +158,19 @@ const execRule = z
     stdout: z.string().optional(),
     stderr: z.string().optional(),
     code: z.number().int().min(0).max(255).optional(),
+    error: z.string().min(1).optional(),
+    kind: errorKindSchema.optional(),
   })
   .strict()
   .refine(
-    (value) => ['json', 'stdout'].filter((key) => Object.hasOwn(value, key)).length === 1,
-    'Exactly one of json or stdout is required.',
+    (value) => ['json', 'stdout', 'error'].filter((key) => Object.hasOwn(value, key)).length === 1,
+    'Exactly one of json, stdout or error is required.',
+  )
+  .refine((value) => value.kind === undefined || value.error !== undefined, 'kind requires error.')
+  .refine(
+    (value) =>
+      value.error === undefined || (value.stderr === undefined && value.code === undefined),
+    'stderr and code require json or stdout; an error rule has no process result.',
   );
 
 /** Validate untrusted fixture data before importing or executing workflow code. */

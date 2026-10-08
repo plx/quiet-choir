@@ -27,8 +27,8 @@ import { stepErrorKind } from './failure-kind.js';
  * its `kind`. A command failure becomes an ordinary exec rule with its exit code and recorded output
  * tails when the result path can reproduce it (an exit code outside `okExitCodes`, or an `exec.json`
  * schema failure); spawn failures, timeouts, signal kills and output-limit failures get no rule
- * until exec error rules exist (#307), but still set `commands: 'fixture'`. No rule pins an
- * attempt. @internal
+ * (exec error rules can describe them by hand, but export does not produce them yet), but still set
+ * `commands: 'fixture'`. No rule pins an attempt. @internal
  */
 export function fixturesFromRun(run: RunRecord): HarnessFixtures {
   if (run.status !== 'completed')
@@ -89,7 +89,7 @@ export function fixturesFromRun(run: RunRecord): HarnessFixtures {
         return { step: stepId, harness: stepHarness(step), output: data.output, usage: data.usage };
       }),
     // A recorded replay must never fall through to a real command when argv or digests drift.
-    // A command failure with no rule still sets it, so its replay fails at that step (#307).
+    // A command failure with no rule still sets it, so its replay fails at that step unless a hand-written exec error rule covers it.
     ...(exec.considered
       ? { ...(exec.rules.length ? { exec: exec.rules } : {}), commands: 'fixture' }
       : {}),
@@ -194,7 +194,8 @@ interface ExecFailure {
  * path cannot reproduce the failure. Only an exit code outside `okExitCodes` (kind `process`) and an
  * `exec.json` stdout that did not parse or match its schema (kind `schema`) qualify, both with a
  * real exit code and no signal. Spawn failures, timeouts, signal kills, `output-limit` and kinds
- * from a custom process runner need exec error rules (#307).
+ * from a custom process runner are not exported: exec error rules can describe them by hand, but
+ * they carry no signal, output tails or exit code, and export does not produce them yet.
  *
  * The rule carries the code and the recorded output tails, which are all the workflow saw. When the
  * failure kept `parsed`, the rule uses `json: parsed` unless the tail is complete JSON that parses
