@@ -68,6 +68,12 @@ primitive supersedes a workaround, update its recipe and traps in the same PR.
   core workflow model.
 - Add or update an architecture decision record under `docs/decisions/` when a choice has durable,
   cross-cutting consequences.
+- The import closure of `src/workflow/runtime/model.ts` (the authoring model, including
+  `wait-model.ts`) must type-check without `@types/node`: workflow type checks import it under
+  tsconfigs with no `types`, and TypeScript 6 then loads no Node types. Do not import `store.js`,
+  `record.js`, `node:*` or any module that does, even with `import type`, and do not use Node
+  globals. `test/node-free-model.test.ts` derives the guarded modules from that closure, checks them
+  against a real Node-free type check, and names the offending import.
 - Persisted run records: adding a run-level field, or changing the accepted shape of one (including
   fields nested inside run-level objects), bumps `SUPPORTED_SCHEMA_REVISION` in
   `src/workflow/runtime/record.ts` and adds a revision to

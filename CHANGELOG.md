@@ -2,6 +2,14 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Development and test infrastructure: guard the Node-free authoring model (#290). Workflow type
+  checks import `src/workflow/runtime/model.ts` under tsconfigs without `types`, so it and every
+  module it imports, `wait-model.ts` among them, must type-check without `@types/node`; a type-only
+  import of `store.js` or `record.js` there used to fail the loader and registry tests with
+  `@types/node` diagnostics. `test/node-free-model.test.ts` now walks that closure, checks it
+  against a real Node-free type check, and names the offending import file, line and chain. No
+  runtime behavior changes; see CONTRIBUTING.md, "TypeScript and package conventions".
+
 - Structured owner-side rejections (addition; record `schemaRevision` 11, no format or step identity
   change): when the run owner quarantines an inbox delivery because the answer fails the question's
   own Zod schema or the attribution check, the rejection in `question.rejections` (and so
