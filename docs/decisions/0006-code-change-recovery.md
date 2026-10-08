@@ -183,15 +183,17 @@ cannot be recovered from the step IDs alone, because keys may contain `/`.
 Each step launched live inside named-map items now records `mapItems` (record schema revision 13):
 one `{ item, invocation }` entry per enclosing item, outermost first. `item` is the exact item
 prefix, such as `review/gone/x/`, so keys containing `/` need no boundary recovery. `invocation` is
-a digest of the invocation's ordinal and its sorted item-prefix set. The ordinal counts the earlier
-invocations of the same qualified map prefix in the current execution of the workflow body. A bare
-map prefix is not enough: two invocations of one map ID, such as loop rounds, share it, and treating
-them as siblings would let round 2 reuse past changed round-1 work. The key set alone is not enough
-either, because rounds may use the same keys. The digest covers full prefixes, so nested invocations
-under different outer items differ too. Resume restarts the body, so a deterministic body assigns
-the same ordinals in every execution. Questions and waits record it as well. Storing a run-level
-table of key sets would add a top-level field, and storing every key set on every step would grow
-quadratically.
+a digest of the invocation's qualified map prefix, its ordinal and its sorted item-prefix set. The
+ordinal counts the earlier invocations of the same map prefix in the current execution of the
+workflow body. The map prefix keeps apart two maps whose items spell the same prefixes, such as
+`review` with keys `group/a` and `group/b` and a map at `review/group/` with keys `a` and `b`. A
+bare map prefix is not enough: two invocations of one map ID, such as loop rounds, share it, and
+treating them as siblings would let round 2 reuse past changed round-1 work. The key set alone is
+not enough either, because rounds may use the same keys. The digest covers full prefixes, so nested
+invocations under different outer items differ too. Resume restarts the body, so a deterministic
+body assigns the same ordinals in every execution. Questions and waits record it as well. Storing a
+run-level table of key sets would add a top-level field, and storing every key set on every step
+would grow quadratically.
 
 `forkPrefixBlockers` now also skips a source step Y when Y's and the requested step X's recorded
 entries share an `invocation` but name different items. The rule is source-causal: in the source, X

@@ -141,10 +141,11 @@ export interface StepMapItem {
   /** The item's exact ID prefix: the map prefix, the item key and `/`, such as `review/a/`. */
   readonly item: string;
   /**
-   * The digest of the map invocation's ordinal (how many invocations of the same map prefix the
-   * workflow body started before it) and its sorted item prefixes. Steps from different items of
-   * one invocation share it; another invocation of the same map ID, such as a later loop round with
-   * the same keys, does not.
+   * The digest of the map invocation's qualified map prefix, its ordinal (how many invocations of
+   * the same map prefix the workflow body started before it) and its sorted item prefixes. Steps
+   * from different items of one invocation share it; another invocation of the same map ID, such as
+   * a later loop round with the same keys, does not, and neither does a map at another prefix whose
+   * slash keys spell the same item prefixes.
    */
   readonly invocation: string;
 }

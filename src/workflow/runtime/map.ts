@@ -179,12 +179,13 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
             return value;
           });
           const items = new Set(keys.map((key) => `${prefix}${key}/`));
-          // Names this invocation by its ordinal among this body execution's invocations of the
-          // prefix and by its key set; the body replays from the start, so both are stable across
-          // resumes. Steps record it (#302).
+          // Names this invocation by its qualified map prefix, its ordinal among this body
+          // execution's invocations of the prefix and its key set; the body replays from the start,
+          // so all three are stable across resumes. The prefix tells apart maps whose slash keys
+          // spell the same item prefixes. Steps record it (#302).
           const ordinal = mapInvocations.get(prefix) ?? 0;
           mapInvocations.set(prefix, ordinal + 1);
-          const invocation = digest([String(ordinal), ...[...items].sort()]);
+          const invocation = digest([prefix, String(ordinal), ...[...items].sort()]);
           itemPaths = [...items].map((item) => ({ map: prefix, item, items, invocation }));
           journalId = names.qualify(id);
         } catch (error) {

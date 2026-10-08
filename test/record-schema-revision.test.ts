@@ -1738,7 +1738,7 @@ describe('revision-twelve records (named-map steps before mapItems, #302)', () =
     });
     expect(result.status).toBe('completed');
     const saved = await readRun({ stateDir, runId });
-    const invocation = digest(['0', 'review/a/', 'review/b/', 'review/gone/']);
+    const invocation = digest(['review/', '0', 'review/a/', 'review/b/', 'review/gone/']);
     expect(saved.steps['review/b/check']?.mapItems).toEqual([{ item: 'review/b/', invocation }]);
     expect(saved.steps['review/b/stamp']).not.toHaveProperty('mapItems');
     expect(recordSchemaDrift(saved)).toBeUndefined();
@@ -1759,7 +1759,7 @@ describe('revision-twelve records (named-map steps before mapItems, #302)', () =
     expect(fork.steps['review/a/stamp']?.reusedFrom).toMatchObject({ runId });
     expect(fork.steps['review/b/stamp']?.reusedFrom).toBeUndefined();
     expect(fork.steps['review/b/stamp']?.mapItems).toEqual([
-      { item: 'review/b/', invocation: digest(['0', 'review/a/', 'review/b/']) },
+      { item: 'review/b/', invocation: digest(['review/', '0', 'review/a/', 'review/b/']) },
     ]);
     expect(fork.forkedFrom).toMatchObject({ cursor: 1 });
   });

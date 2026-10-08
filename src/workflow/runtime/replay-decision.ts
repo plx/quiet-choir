@@ -333,8 +333,8 @@ export interface MapItemScope {
   /** Every item prefix of the same map invocation, including this one. */
   readonly items: ReadonlySet<string>;
   /**
-   * The digest of this invocation's ordinal among the body execution's invocations of the same map
-   * prefix and its sorted item prefixes (`items`). Steps record it with `item` as
+   * The digest of this invocation's map prefix (`map`), its ordinal among the body execution's
+   * invocations of that prefix and its sorted item prefixes (`items`). Steps record it with `item` as
    * `StepRecord.mapItems`, so a later fork can tell sibling items of one invocation apart from
    * another invocation of the same map ID, such as a later loop round, even with the same keys.
    */
