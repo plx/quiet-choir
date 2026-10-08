@@ -210,7 +210,11 @@ map or `--fork-from`; a configuration or authoring failure suggests fixing the w
 `--accept-code-change` when the fix edits code, and, when all recorded effects have terminal
 outcomes, re-finalizing with no repeated work; a run-budget stop suggests resuming with a higher
 value of the cap's flag or the flag off; an effect failure or a cancellation suggests a plain
-`--resume`. A run that recorded no step or map, and any dry-run, gets no hint. The CLI appends the
+`--resume`. A run that recorded no step or map, and any dry-run, gets no hint. `recoveryCause` is
+the typed cause behind the hint (`kind` `grant` with `profile` and `access`, `divergence`,
+`map-changed` with `mapperOnly`, `configuration`, `budget` with `flag`, `authoring`, `effect` or
+`cancelled`), saved on every failed or cancelled run even without a hint; it selects a failed run's
+`next` entries and is absent after success and on records from older builds. The CLI appends the
 hint only to this invocation's `workflow.failed` or `workflow.interrupted` message, never to a
 refusal. Use `workflow check-resume FILE --run-id ID --json` to compare run gates without a writer
 lock; it imports trusted source but does not call its body. Unlike inspection alone, it can identify
