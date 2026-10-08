@@ -309,12 +309,15 @@ no-op with `signalsSent: 0`). `previousStatus` is `suspended` or `running` when 
 an unowned run, and null otherwise. It refuses without signalling or writing: `run.locked` (exit 3)
 for a foreign, dead, released or unverifiable owner (for a dead or released owner, run the
 `workflow unlock` command it prints, then cancel again), and `run.incompatible` (exit 3) for an
-unowned unfinished checkpoint in format 1 to 5. An owner that exits without saving `cancelled` (an
-embedder, or a forced kill) is `run.unowned` (exit 3) with `details.reason: "owner-exited"`; tick
-may resume that run. After `--timeout` (default 30s) it exits 79 with the last saved `status`;
-`--force` then sends one more SIGINT to the same verified owner, which force-kills its groups and
-can leave `running` for stale recovery. Cancelling a run that tick is executing stops that tick
-pass.
+unowned unfinished checkpoint in format 1 to 5. An owner that exits without saving `cancelled` is
+`run.unowned` (exit 3) with `details.reason: "owner-exited"` and `requestKept`. After a forced kill
+(`--force`, or a cancel whose SIGINT was the owner's second signal) its dead lock keeps the targeted
+token, so `requestKept: true`: the next tick saves the run `cancelled` instead of resuming it and
+reports it skipped `cancelled`. Otherwise (an embedder that suspended and released its lock)
+`requestKept: false`, and tick may resume the run. An explicit resume or `workflow unlock` of that
+dead lock makes the kept request inert. After `--timeout` (default 30s) it exits 79 with the last
+saved `status`; `--force` then sends one more SIGINT to the same verified owner, which force-kills
+its groups. Cancelling a run that tick is executing stops that tick pass.
 
 For code/schema edits use [acceptance or fork recovery](durability.md#choose-a-recovery-path);
 `--resume --accept-code-change` retains per-step compatibility checks and refuses, without changing
@@ -326,9 +329,12 @@ For parked deadlines and polls, use [workflow tick](waits.md#operate-a-parked-ru
 includes their progress. `tick --json` reports resumed outcomes, skipped reasons and an observed
 count; with `--run`, exit 75 means the run is still pending (including interrupted by the tick's
 --timeout, also before the runtime reopened a stale run: outcome `interrupted`), locked, blocked by
-orphans or skipped for the claim-margin `deadline`, and exit 1 means it failed, was cancelled, or is
-crash-looping, incompatible or unreadable. Tick also recovers stale `running` runs, up to 3
-consecutive times without a new completed step (`crash-loop`).
+orphans or skipped for the claim-margin `deadline`, and exit 1 means it failed, was cancelled
+(including a `cancelled` skip), or is crash-looping, incompatible or unreadable. Tick also recovers
+stale `running` runs, up to 3 consecutive times without a new completed step (`crash-loop`). A stale
+or due run behind the dead lock of an owner a forced `workflow cancel` killed is instead saved
+`cancelled` and skipped as `cancelled`, before the crash-loop and source checks and without using a
+`--max-runs` attempt.
 
 ## Remove a run
 

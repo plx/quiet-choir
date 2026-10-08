@@ -73,8 +73,8 @@ that reports `failed`.
   this run" is simpler to script.
 - **Reclaim a dead owner's lock in cancel.** Recovering the lock inspects and may stop recorded
   children of the dead owner. That belongs to `workflow unlock` and tick's recovery, whose refusals
-  explain surviving children; making a forced cancel stick against stale recovery is separate work
-  (#293).
+  explain surviving children. Making a forced cancel stick against stale recovery (#293) is done in
+  tick's recovery instead ([ADR 0058](0058-honour-a-forced-cancel-in-stale-recovery.md)).
 - **Rewrite the record without the lock.** ADR 0039 rejected finalizing a record outside the runner
   because it races tick and rewrites child frames and lifecycle state elsewhere. Taking the lock
   removes the race (whoever holds it decides), and sharing `cancelRecord` with the runner keeps the

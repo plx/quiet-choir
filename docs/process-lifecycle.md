@@ -53,9 +53,10 @@ recorded as `cancelled` and run again on resume. stderr prints “Send again to 
 signal-ignoring local callback can still prevent graceful completion. A second signal sends SIGKILL
 synchronously to every in-memory tracked group and exits 130 without waiting for checkpoints; under
 `--json` it first writes the whole failure document to stdout, retrying a full pipe for up to five
-seconds. The lock and an older `running` checkpoint may remain; tick recovers such a stale run.
-Embedders that abort `RunOptions.signal` with a `RunInterruptedError` get the same resumable
-suspension, while any other abort reason saves `cancelled`. See
+seconds. The lock and an older `running` checkpoint may remain; tick recovers such a stale run,
+unless a `workflow cancel` request is bound to that owner's lock (see below). Embedders that abort
+`RunOptions.signal` with a `RunInterruptedError` get the same resumable suspension, while any other
+abort reason saves `cancelled`. See
 [ADR 0029](decisions/0029-persist-interruptions-as-resumable-suspensions.md). EIO/EPIPE from a
 closed terminal do not interrupt cleanup. Embedders own their signal handlers and may supply a
 `ProcessSupervisor` to `runWorkflow`, then call `forceKill()` on a second signal.
@@ -78,9 +79,14 @@ suspends. Cancelling a run that `workflow tick` is executing signals the tick pr
 `cancelled` and that tick pass stops, as with any signal. An embedder owner does not read the
 request and suspends, which cancel reports as `run.unowned`. `--force` sends a second SIGINT only
 after the timeout, to the same re-verified owner; like a second signal (including a cancel that
-reaches an owner already draining an earlier signal), it force-kills and can leave `running` for
-tick's stale recovery. The identity check right before each signal narrows, but cannot close, the
-window for PID reuse described below.
+reaches an owner already draining an earlier signal), it force-kills the owner before it saves. When
+the dead owner's lock still carries the targeted token, cancel keeps its request and reports
+`run.unowned` with `requestKept: true`. The next tick that retires exactly that lock saves the run
+`cancelled` instead of resuming it, and reports it skipped as `cancelled`
+([ADR 0058](decisions/0058-honour-a-forced-cancel-in-stale-recovery.md)). An explicit resume or
+`workflow unlock` of that lock retires the token first, which leaves the request inert. Plain
+signals and tick deadlines write no request and still leave a resumable stale run. The identity
+check right before each signal narrows, but cannot close, the window for PID reuse described below.
 
 `configuration doctor` uses the same signal handling and three-second cleanup grace, with an
 in-memory supervisor for probes. It has no resumable workflow or durable child registry. Embedded

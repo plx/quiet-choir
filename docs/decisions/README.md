@@ -118,3 +118,5 @@ part of the documentation.
 - [0056: Detached resume reports a run only when its runner records an execution](0056-detached-resume.md)
 
 - [0057: End an unowned unfinished run as cancelled under the run lock](0057-end-an-unowned-run-as-cancelled.md)
+
+- [0058: Honour a forced cancel in tick's stale recovery](0058-honour-a-forced-cancel-in-stale-recovery.md)

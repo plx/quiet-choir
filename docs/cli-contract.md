@@ -360,14 +360,19 @@ recorded or with a mismatched `osStartTime` (`error.details` has `lockPath`, `pi
 `osStartTime` and `reason`, plus `next` with the `workflow unlock` command for a released, dead or
 mismatched owner, the cases whose message names it). After `workflow unlock` clears a dead owner's
 lock, a second cancel ends the run. After the signal, an owner that exits without saving a terminal
-status is `run.unowned` with `details.reason: "owner-exited"`, `signalsSent` and `forced`, and the
-next tick may resume the run; `run.unowned` has no other reason. The wait is bounded by `--timeout`
-per signal: past it, `watch.timeout` (exit 79) with `details: {timeoutMs, signalsSent, forced, pid}`
-and the last saved `status`; the request stays for the owner to honour late. With `--force`, cancel
-first sends a second SIGINT if the same verified owner still holds the run at the deadline; the
-owner then force-kills its groups and exits 130, usually leaving `running` for tick's stale
-recovery. The cancelled owner itself exits 130 with `workflow.interrupted` and a saved `cancelled`
-status, which tick observes and never resumes.
+status is `run.unowned` with `details.reason: "owner-exited"`, `signalsSent`, `forced` and
+`requestKept`; `run.unowned` has no other reason. `requestKept: true` means the owner was
+force-killed and left its lock with the targeted token: cancel keeps its request, and the next tick
+that retires exactly that lock saves the run `cancelled` instead of resuming it
+([ADR 0058](decisions/0058-honour-a-forced-cancel-in-stale-recovery.md)). `requestKept: false` means
+the lock is gone or re-owned (an embedder that suspended and released it): the request is removed
+and the next tick may resume the run. The wait is bounded by `--timeout` per signal: past it,
+`watch.timeout` (exit 79) with `details: {timeoutMs, signalsSent, forced, pid}` and the last saved
+`status`; the request stays for the owner to honour late. With `--force`, cancel first sends a
+second SIGINT if the same verified owner still holds the run at the deadline; the owner then
+force-kills its groups and exits 130, usually leaving `running` behind its dead lock, and cancel
+reports `run.unowned` with `requestKept: true`. The cancelled owner itself exits 130 with
+`workflow.interrupted` and a saved `cancelled` status, which tick observes and never resumes.
 
 `execute --dry-run --json` returns a `workflow.rehearsal` document with `ok:true`, calls (each with
 `worktree`, `{synthesized: true, base, baseSource}` for a synthesized isolated call or null),
@@ -837,9 +842,9 @@ unchanged in-flight run can be blocked by these stricter defaults before import 
 
 `workflow tick` returns a single aggregate JSON document: `resumed` entries with each started
 resume's outcome (completed, suspended, interrupted, failed, cancelled or incompatible), `skipped`
-entries with a reason (not due, no longer due, locked, orphans, crash-loop, deadline, incompatible
-or unreadable), and an `observed` count of already-terminal runs. A due or stale run whose record
-this build cannot fully read ([record schema revision](storage.md#record-schema-revision)) is
+entries with a reason (not due, no longer due, locked, orphans, crash-loop, deadline, incompatible,
+unreadable or cancelled), and an `observed` count of already-terminal runs. A due or stale run whose
+record this build cannot fully read ([record schema revision](storage.md#record-schema-revision)) is
 skipped `incompatible` with the `run.incompatible` message and left unchanged. Each run appears in
 at most one entry. Tick also recovers `running` runs whose owner is gone, up to 3 consecutive times
 without a new completed step; then it reports `crash-loop` with a message naming
@@ -849,30 +854,37 @@ mismatch (below) is skipped before the count and never counts. An `orphans` entr
 tick never signals a process and names `workflow resume RUN --state-dir DIR --kill-orphans`, behind
 the detected launcher like other emitted commands and with the state directory shell-quoted when it
 needs quoting. With --run, exits are 0 completed (now or earlier), 75 pending, interrupted, locked,
-orphans or deadline, and 1 failed, cancelled (a run saved as cancelled), crash-loop, incompatible or
-unreadable; batch per-run failures remain data with exit 0. An `interrupted` outcome is a resume the
-deadline stopped before the runtime reopened a stale run, which stays `running` for the next tick.
-Usage/infrastructure errors retain the command failure document. Every tick is bounded by --timeout
-(default 540s), including --watch, with --max-runs limiting executed resumes. Without --run, runs
-are visited in ascending run-ID order (by character code), so --max-runs takes the first due runs in
-that order. When the timeout fires, tick interrupts in-flight resumes into resumable suspensions:
-each is reported `suspended` with `message: "Tick timeout reached."` and is due on the next tick,
-which reuses its completed steps. `--claim-margin` (same duration syntax; default 10% of --timeout,
-`0ms` disables it, and it must be smaller than --timeout) stops new claims once less than the margin
-remains: a ready run is then left untouched and reported as skipped `deadline`, and --watch ends
-there. Inside the margin tick still reads each record (terminal runs are observed, not-due runs not
-due) but checks no locks, orphans, crash-loop count or sources, so a due or stale run is reported
-`deadline` with its `nextWakeAt` even if a full scan would have found it locked or incompatible.
-After the timeout tick reads no more records: each run not yet reported is skipped `deadline` with a
-`message` and no `nextWakeAt` (an earlier --watch pass's entry is kept), and the exit codes above
-are unchanged. `--harness-config` supplies CLI harness configuration (JSON or `@file`) for resumed
-CLI runs, and omitting it means the defaults. It must match the configuration digest the run
-recorded at its latest live execution: otherwise the run is reported as skipped `incompatible` with
-the `run.incompatible` message and left unchanged, before tick imports it, counts a stale recovery
-or uses a `--max-runs` attempt (with a fixture selection the resume itself ends `incompatible`),
-unless `--allow-harness-config-change` accepts the change for every run that tick resumes.
-`--harness` (repeatable, the same values as on `resume`) selects the harness for every run that tick
-resumes; without it, each run uses its recorded [launch policy](#launch-policy). `workflow resume`,
-`execute --resume` and `answer --resume` refuse the same mismatch with `run.incompatible` (exit 3,
+orphans or deadline, and 1 failed, cancelled (a run saved as cancelled, including a `cancelled`
+skip), crash-loop, incompatible or unreadable; batch per-run failures remain data with exit 0. A
+`cancelled` skip is a stale or due run behind the lock of an owner that `workflow cancel` targeted
+and that was force-killed before it saved: when tick retires exactly that owner's lock and the run's
+cancel request names its token, it saves the run `cancelled` without importing it and removes the
+request ([ADR 0058](decisions/0058-honour-a-forced-cancel-in-stale-recovery.md)). The message names
+the request time and the dead PID. A matching request is honoured before the crash-loop and source
+checks, uses no `--max-runs` attempt and counts no stale recovery; a request from any other lock
+acquisition is ignored. An `interrupted` outcome is a resume the deadline stopped before the runtime
+reopened a stale run, which stays `running` for the next tick. Usage/infrastructure errors retain
+the command failure document. Every tick is bounded by --timeout (default 540s), including --watch,
+with --max-runs limiting executed resumes. Without --run, runs are visited in ascending run-ID order
+(by character code), so --max-runs takes the first due runs in that order. When the timeout fires,
+tick interrupts in-flight resumes into resumable suspensions: each is reported `suspended` with
+`message: "Tick timeout reached."` and is due on the next tick, which reuses its completed steps.
+`--claim-margin` (same duration syntax; default 10% of --timeout, `0ms` disables it, and it must be
+smaller than --timeout) stops new claims once less than the margin remains: a ready run is then left
+untouched and reported as skipped `deadline`, and --watch ends there. Inside the margin tick still
+reads each record (terminal runs are observed, not-due runs not due) but checks no locks, orphans,
+crash-loop count or sources, so a due or stale run is reported `deadline` with its `nextWakeAt` even
+if a full scan would have found it locked or incompatible. After the timeout tick reads no more
+records: each run not yet reported is skipped `deadline` with a `message` and no `nextWakeAt` (an
+earlier --watch pass's entry is kept), and the exit codes above are unchanged. `--harness-config`
+supplies CLI harness configuration (JSON or `@file`) for resumed CLI runs, and omitting it means the
+defaults. It must match the configuration digest the run recorded at its latest live execution:
+otherwise the run is reported as skipped `incompatible` with the `run.incompatible` message and left
+unchanged, before tick imports it, counts a stale recovery or uses a `--max-runs` attempt (with a
+fixture selection the resume itself ends `incompatible`), unless `--allow-harness-config-change`
+accepts the change for every run that tick resumes. `--harness` (repeatable, the same values as on
+`resume`) selects the harness for every run that tick resumes; without it, each run uses its
+recorded [launch policy](#launch-policy). `workflow resume`, `execute --resume` and
+`answer --resume` refuse the same mismatch with `run.incompatible` (exit 3,
 `error.details.previousConfigDigest` and `error.details.requestedConfigDigest`) and accept the same
 flag. See [waits](waits.md) for due detection and notification hooks.

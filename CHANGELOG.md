@@ -2,6 +2,20 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- A forced `workflow cancel` sticks against stale recovery (behavior change; no record format,
+  schema revision or step identity change): when `--force`, or a cancel whose SIGINT was the owner's
+  second signal, force-kills the owner before it saves and its lock still carries the targeted
+  token, cancel keeps its request and reports `run.unowned` with the new
+  `details.requestKept: true`. The next tick that retires exactly that owner's lock saves the run
+  `cancelled` (the same record cancel or the runner saves) instead of resuming it, removes the
+  request and reports it with the new tick skip reason `cancelled` (final; `--run` exits 1). It is
+  honoured before the crash-loop and source checks, imports nothing, uses no `--max-runs` attempt
+  and counts no stale recovery. A request from any other lock acquisition never matches, and an
+  explicit resume or `workflow unlock` of the dead lock leaves it inert. A lock that is gone or
+  re-owned keeps the old behavior with `requestKept: false`. Plain signals, tick deadlines and
+  embedders still leave a resumable run. Scripts that switch on tick skip reasons must handle
+  `cancelled`. See ADR 0058 (#293).
+
 - `workflow cancel` ends an unowned run (behavior change; no record format, schema revision or step
   identity change): an unfinished run that no lock holds, such as a parked or interrupted
   `suspended` run or a `running` record whose crashed owner's lock was cleared, is now saved
