@@ -236,6 +236,7 @@ import {
   hasTerminalOutcomes,
   instructionSourceSchema,
   isTerminalStep,
+  recordTerminalFailure,
   refuseRecordSchemaDrift,
   SUPPORTED_SCHEMA_REVISION,
   type RunRecord,
@@ -1291,7 +1292,16 @@ export async function runWorkflow<
     // format is unchanged; any later launch reads at least every persisted stamp.
     let settlements = Object.values(record.steps).reduce(
       (highest, step) =>
-        Math.max(highest, step.launchStamp ?? 0, step.settleStamp ?? 0, step.failureStamp ?? 0),
+        Math.max(
+          highest,
+          step.launchStamp ?? 0,
+          step.settleStamp ?? 0,
+          step.failureStamp ?? 0,
+          ...(step.failureHistory ?? []).flatMap((entry) => [
+            entry.launchStamp,
+            entry.failureStamp,
+          ]),
+        ),
       0,
     );
     // Stamps taken when the body requests an effect, before any awaited preparation; read and
@@ -1859,8 +1869,11 @@ export async function runWorkflow<
       // marks a step whose terminal failure the body may have observed; status 'failed' alone
       // still covers legacy checkpoints and a failure saved between retries (no stamp).
       const failedBefore = prior?.failureStamp !== undefined || prior?.status === 'failed';
-      // Captured before this execution can mutate the prior record.
+      // Captured before this execution can mutate the prior record: attempt 1 restamps the launch
+      // and a terminal failure appends to the history.
       const priorFailureStamp = prior?.failureStamp;
+      const priorFailures = prior?.failureHistory?.map((entry) => ({ ...entry }));
+      const priorLaunchStamp = prior?.launchStamp;
       if (outcome.kind === 'reuse-fork' && forkedFrom) {
         const { candidate } = outcome;
         const copied: StepRecord = {
@@ -1877,6 +1890,7 @@ export async function runWorkflow<
           },
         };
         delete copied.failureStamp;
+        delete copied.failureHistory;
         settle(copied);
         attributeFrame(copied);
         Object.defineProperty(record.steps, id, {
@@ -2259,7 +2273,7 @@ export async function runWorkflow<
                 // Terminal: stamped before the save that persists the status. A failure saved
                 // between retries carries no new stamp, so a crash in backoff stays conservative.
                 const stamp = settle(step);
-                if (step.status === 'failed') step.failureStamp ??= stamp;
+                if (step.status === 'failed') recordTerminalFailure(step, stamp);
               }
               if (await trySave()) {
                 if (classification.scoped) emit('step.cancelled', id, step);
@@ -2298,6 +2312,7 @@ export async function runWorkflow<
             attemptRecord.status = 'completed';
             settle(step);
             delete step.failureStamp;
+            delete step.failureHistory;
             if (agent) {
               delete attemptRecord.response;
               delete attemptRecord.responseTruncated;
@@ -2357,7 +2372,13 @@ export async function runWorkflow<
             );
             if (failedBefore && !healed.has(id)) {
               const later = healedDependents(
-                { id, seq: step.seq ?? 0, failureStamp: priorFailureStamp },
+                {
+                  id,
+                  seq: step.seq ?? 0,
+                  failureStamp: priorFailureStamp,
+                  failures: priorFailures,
+                  launchStamp: priorLaunchStamp,
+                },
                 priorSequence,
               );
               if (later.length) {

@@ -313,6 +313,40 @@ only `run.json` is checked in. It has no stack paths, and the file was formatted
 read-view digest in `test/record-schema-revision.test.ts` was computed on the same unmodified main
 from this file. No harness or inference was used.
 
+`revision-eleven-checkpoint.json` was generated the same way at origin/main `943006c`, before
+precise healed-divergence detection (#300) added the nested step field `failureHistory` to `steps`
+in revision 12. Its run ID is `revision-eleven`, and it ran this definition twice with the launch
+policy `[{ transcripts: 'off' }]`:
+
+```ts
+defineWorkflow({
+  name: 'schema-revision',
+  version: '1',
+  input: z.null(),
+  output: z.null(),
+  async run(ctx) {
+    await Promise.all([
+      ctx.codex.text('impl', { prompt: 'impl' }),
+      ctx.codex.text('followups', { prompt: 'followups' }),
+    ]);
+    await ctx.codex.text('ship', { prompt: 'ship' });
+    return null;
+  },
+});
+```
+
+The first run used a custom harness whose `invoke` rejects with `fixture call failed`, so both calls
+failed. The second run resumed it with a custom harness whose `invoke` returns
+`{ text: 'ok', sessionId: null }` for step `followups` and, for step `impl`, waits until the
+`step.completed` event of `followups` and then rejects with `fixture call failed`. It carries
+`schemaRevision: 11`, the completed call `followups` relaunched in the second run, and the failed
+call `impl` whose `failureStamp` is still the first run's failure (stamp 1) although it failed again
+(stamp 4), with no `failureHistory`; `followups` launched at stamp 2, in the same tick as the second
+`impl` launch. Codex calls keep callback text out of every fingerprint. The journal was empty, so
+only `run.json` is checked in. Stack paths are scrubbed to `/fixture/...` and the file was formatted
+with Prettier; its read-view digest in `test/record-schema-revision.test.ts` was computed on the
+same unmodified main from this file. No inference was used.
+
 `record-keys.json` lists the top-level run-record keys of each schema revision. Adding or changing a
 persisted run-level field adds a revision there and bumps `SUPPORTED_SCHEMA_REVISION`; a revision
 that only changes a nested shape repeats the previous key list. See `docs/storage.md`.

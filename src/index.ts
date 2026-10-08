@@ -109,6 +109,7 @@ export type {
   MapComponents,
   MapItemRecord,
   StepRecord,
+  FailureEntry,
   FailedAttempt,
   AttemptRecord,
   StepRedefinition,
