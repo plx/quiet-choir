@@ -1,18 +1,70 @@
+import { delimiter } from 'node:path';
 import type { HarnessInvocation } from '../workflow/runtime/model.js';
 import type { ExecResult, ProcessRunner } from '../workflow/runtime/exec-model.js';
 import { ExecError } from '../workflow/runtime/exec-error.js';
 import { execResultSchema } from '../workflow/runtime/exec-schema.js';
 
+/**
+ * A temporary object directory that takes every object Git writes, with the repository's own object
+ * directory as a read-only alternate. Dry-run merge previews (#310) compute through it, so they write
+ * nothing into the repository. @internal
+ */
+export interface GitQuarantine {
+  /** The temporary object directory, exported as `GIT_OBJECT_DIRECTORY` and `GIT_QUARANTINE_PATH`. */
+  readonly objects: string;
+  /** The repository's object directory, exported as `GIT_ALTERNATE_OBJECT_DIRECTORIES`. */
+  readonly alternate: string;
+}
+
+/** The only commands a quarantined driver runs: none of them updates a ref, index or checkout. */
+const quarantinedCommands = new Set(['rev-parse', 'merge-tree', 'commit-tree', 'var']);
+
+/**
+ * Quote one `GIT_ALTERNATE_OBJECT_DIRECTORIES` entry as a C-style string when Git would otherwise
+ * split it at the platform path delimiter or read it as quoted. @internal
+ */
+export function alternateEntry(path: string, separator: string = delimiter): string {
+  if (!path.includes(separator) && !path.startsWith('"')) return path;
+  let quoted = '"';
+  for (const character of path) {
+    const code = character.charCodeAt(0);
+    quoted +=
+      character === '\\' || character === '"'
+        ? `\\${character}`
+        : code < 0x20 || code === 0x7f
+          ? `\\${code.toString(8).padStart(3, '0')}`
+          : character;
+  }
+  return `${quoted}"`;
+}
+
 /** Command protocol for local Git operations; the caller owns sequencing and checkpoint policy. @internal */
 export class WorktreeGit {
+  private readonly quarantine: Readonly<Record<string, string>> | undefined;
+
   /**
-   * @param readOnly - Refuse every command except `rev-parse` before it reaches the runner. Dry-run
+   * @param mode - `true` refuses every command except `rev-parse` before it reaches the runner. Dry-run
    * rehearsal resolves bases through this mode, so it can never create refs, worktrees or objects.
+   * `{ quarantine }` runs only `rev-parse`, `merge-tree`, `commit-tree` and `var`, and points every
+   * command at the quarantine's object directory, after the caller's `GIT_*` variables are removed
+   * and the per-call environment applied, so new objects land there and Git refuses ref updates.
    */
   public constructor(
     private readonly runner: ProcessRunner,
-    private readonly readOnly = false,
-  ) {}
+    private readonly mode: boolean | { readonly quarantine: GitQuarantine } = false,
+  ) {
+    this.quarantine =
+      typeof mode === 'object'
+        ? {
+            GIT_OBJECT_DIRECTORY: mode.quarantine.objects,
+            GIT_ALTERNATE_OBJECT_DIRECTORIES: alternateEntry(mode.quarantine.alternate),
+            // Git refuses every ref update while this is set (its receive-pack quarantine).
+            GIT_QUARANTINE_PATH: mode.quarantine.objects,
+            // A partial clone must not fetch missing objects during a preview.
+            GIT_NO_LAZY_FETCH: '1',
+          }
+        : undefined;
+  }
 
   public async run(
     cwd: string,
@@ -25,9 +77,13 @@ export class WorktreeGit {
       readonly timeoutMs?: number;
     } = {},
   ): Promise<ExecResult> {
-    if (this.readOnly && args[0] !== 'rev-parse')
+    if (this.mode === true && args[0] !== 'rev-parse')
       throw new Error(
         `Read-only Git refuses ${args[0] ?? 'an empty command'}; only rev-parse runs.`,
+      );
+    if (this.quarantine && !quarantinedCommands.has(args[0] ?? ''))
+      throw new Error(
+        `Quarantined Git refuses ${args[0] ?? 'an empty command'}; only rev-parse, merge-tree, commit-tree and var run.`,
       );
     // Caller environment must not redirect repository/index ownership away from -C cwd. Windows
     // names are case-insensitive, so strip every casing on all platforms.
@@ -55,7 +111,7 @@ export class WorktreeGit {
             ...args,
           ],
           cwd,
-          env: { ...env, ...options.env, LC_ALL: 'C' },
+          env: { ...env, ...options.env, LC_ALL: 'C', ...this.quarantine },
           inheritEnv: false,
           input: options.input ?? '',
           timeoutMs: options.timeoutMs ?? 120_000,
