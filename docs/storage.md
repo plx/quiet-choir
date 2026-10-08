@@ -405,9 +405,9 @@ history keeps the conservative `failureStamp` watermark until it completes. A re
 reads a revision-12 record, but its parse strips `failureHistory`, so it refuses to rewrite it.
 Revision 13 (#302) changes only a nested shape: a step in `steps` may carry `mapItems`, one
 `{item, invocation}` entry per named-map item that enclosed its live launch (the exact item prefix
-and a digest of the invocation's map prefix, its ordinal among same-prefix invocations and its
-item-prefix set), which default fork prefix reuse reads to treat source steps under a key the fork
-dropped as sibling items
+and a digest of a random value unique to the body execution that launched it, the invocation's map
+prefix, its ordinal among that execution's same-prefix invocations and its item-prefix set), which
+default fork prefix reuse reads to treat source steps under a key the fork dropped as sibling items
 ([ADR 0006](decisions/0006-code-change-recovery.md#amendment-removed-named-map-keys-302)). Step
 identity is unchanged. Revision-12 records read and resume unchanged; a fork from one keeps the
 earlier, conservative behavior for removed keys. A revision-12 build reads a revision-13 record, but

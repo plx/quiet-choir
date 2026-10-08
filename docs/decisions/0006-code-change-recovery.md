@@ -183,23 +183,24 @@ cannot be recovered from the step IDs alone, because keys may contain `/`.
 Each step launched live inside named-map items now records `mapItems` (record schema revision 13):
 one `{ item, invocation }` entry per enclosing item, outermost first. `item` is the exact item
 prefix, such as `review/gone/x/`, so keys containing `/` need no boundary recovery. `invocation` is
-a digest of the invocation's qualified map prefix, its ordinal and its sorted item-prefix set. The
-ordinal counts the earlier invocations of the same map prefix in the current execution of the
-workflow body. The map prefix keeps apart two maps whose items spell the same prefixes, such as
-`review` with keys `group/a` and `group/b` and a map at `review/group/` with keys `a` and `b`. A
-bare map prefix is not enough: two invocations of one map ID, such as loop rounds, share it, and
-treating them as siblings would let round 2 reuse past changed round-1 work. The key set alone is
-not enough either, because rounds may use the same keys. The digest covers full prefixes, so nested
-invocations under different outer items differ too. Resume restarts the body, so a deterministic
-body assigns the same ordinals in every execution, with one exception: a committed settled map item
-or settled frame is claimed without running its body, so the invocations it recorded are not
-counted, and a later invocation under the same prefix (reachable through a bound view or `within`)
-gets a smaller ordinal than it had before. When a step claimed that way recorded an item under the
-new invocation's map prefix, the digest also covers a value unique to the execution. Its items still
-share one digest, and since it matches no earlier invocation's, it only blocks more; journaling
-per-prefix counts with each item would avoid that but add durable state for a rare case. Questions
-and waits record it as well. Storing a run-level table of key sets would add a top-level field, and
-storing every key set on every step would grow quadratically.
+a digest of a random value unique to the current execution of the workflow body, the invocation's
+qualified map prefix, its ordinal and its sorted item-prefix set. The ordinal counts the earlier
+invocations of the same map prefix in that execution. The map prefix keeps apart two maps whose
+items spell the same prefixes, such as `review` with keys `group/a` and `group/b` and a map at
+`review/group/` with keys `a` and `b`. A bare map prefix is not enough: two invocations of one map
+ID, such as loop rounds, share it, and treating them as siblings would let round 2 reuse past
+changed round-1 work. The key set alone is not enough either, because rounds may use the same keys.
+The digest covers full prefixes, so nested invocations under different outer items differ too.
+Ordinals are not stable across executions, even for a deterministic body: concurrent invocations of
+one map ID can start in another order after a resume, and a committed settled map item or settled
+frame is claimed without running its body, so the invocations it recorded are not counted. An
+ordinal-only digest could then match one recorded by an earlier execution for a different
+invocation, and treat a real dependent as a sibling. The per-execution value prevents that: steps of
+one invocation that different executions launched (for example an item completed before a resume and
+one retried after it) never share a digest, which only blocks more. Journaling stable invocation
+identities would avoid that cost but add durable state. Questions and waits record it as well.
+Storing a run-level table of key sets would add a top-level field, and storing every key set on
+every step would grow quadratically.
 
 `forkPrefixBlockers` now also skips a source step Y when Y's and the requested step X's recorded
 entries share an `invocation` but name different items. The rule is source-causal: in the source, X
@@ -212,12 +213,12 @@ a fork of a fork compares digests from one run.
 Fallbacks stay conservative. A source saved before revision 13, or a step outside every map item,
 has no `mapItems`, so it behaves as before: steps under a removed key still block the surviving
 items until the source is run again by this build. Steps outside the map, such as a root step over
-the map results, still count the removed key's steps as causes. A key set that changed between
-executions of one source run yields different digests, which only blocks more. So does a code change
-between executions that shifts an invocation's ordinal, unless it gives a later invocation both the
-ordinal and the key set of an earlier one. Each recorded entry adds an item prefix and a 64-hex
-digest per nesting level to a step inside a map. The limitation on items that share closure state or
-files is unchanged, and `--invalidate` still forces them live.
+the map results, still count the removed key's steps as causes. A source step launched by a
+different execution of the source run than the requested step is never its sibling this way, so
+steps under a removed key that settled before a resume still block surviving-item steps launched
+after it, falling back to the fork's own item prefixes. Each recorded entry adds an item prefix and
+a 64-hex digest per nesting level to a step inside a map. The limitation on items that share closure
+state or files is unchanged, and `--invalidate` still forces them live.
 
 ## Amendment: refuse divergent accepted replays (#126)
 

@@ -160,17 +160,18 @@ invalidated effect makes the steps launched after it settled run live, which avo
 workspace-dependent work after an earlier effect reruns, while its same-tick `Promise.all` siblings
 stay reusable. Items of a named map are independent of their sibling items: an edit to one stage
 re-runs that stage in every item and reuses the rest. Dropping a key from a named map does not make
-later steps in the surviving items rerun, except in sources saved by builds before record schema
-revision 13; steps after the map still rerun. Shared mutable state or files between items is not
-tracked; invalidate such items explicitly. `ctx.scope`/`within` siblings are ordered by stamps
-alone. Sources saved before launch stamps fall back to launch (`seq`) order. With unchanged code, a
-concurrent multi-step chain outside a named map can still run a few steps live when the fork
-requests them in a different order than the source settled them. `--reuse matching` explicitly
-reuses every matching terminal ID; it can reuse a result whose undeclared filesystem inputs changed
-when an earlier effect reran. Choose it only when dependencies are fully represented by
-input/prompt/schema/versions. Neither mode reconstructs workspace edits or provides isolation by
-itself. Explicit [worktree effects](worktrees.md) preserve immutable changes; forked shared handles
-are recreated for the new owner. Review other workspace effects before repeating writes.
+later steps in the surviving items rerun, unless the source saved them before record schema revision
+13 or launched them in a different execution (across a resume) than the removed key's steps; steps
+after the map still rerun. Shared mutable state or files between items is not tracked; invalidate
+such items explicitly. `ctx.scope`/`within` siblings are ordered by stamps alone. Sources saved
+before launch stamps fall back to launch (`seq`) order. With unchanged code, a concurrent multi-step
+chain outside a named map can still run a few steps live when the fork requests them in a different
+order than the source settled them. `--reuse matching` explicitly reuses every matching terminal ID;
+it can reuse a result whose undeclared filesystem inputs changed when an earlier effect reran.
+Choose it only when dependencies are fully represented by input/prompt/schema/versions. Neither mode
+reconstructs workspace edits or provides isolation by itself. Explicit
+[worktree effects](worktrees.md) preserve immutable changes; forked shared handles are recreated for
+the new owner. Review other workspace effects before repeating writes.
 
 From the original launch directory, with absolute `QC_CHECKOUT` and `qc_state_dir`:
 
