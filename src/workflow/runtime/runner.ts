@@ -3999,6 +3999,7 @@ export async function runWorkflow<
         allTerminal: hasTerminalOutcomes(record),
         sourceChanged: (compatibility?.changed.length ?? 0) > 0,
         runId: record.id,
+        launchable: record.launch !== undefined,
       });
       warnUnmatched();
       const failed = observations.lifecycle(

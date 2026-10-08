@@ -14,6 +14,7 @@ const defaults: RecoveryHintInput = {
   allTerminal: false,
   sourceChanged: false,
   runId: 'run-1',
+  launchable: true,
 };
 const causes: readonly RecoveryCause[] = [
   { kind: 'grant', profile: 'fixer', access: 'write' },
@@ -193,4 +194,21 @@ describe('chooseRecoveryHint', () => {
       expect(chosen).not.toContain('--resume --strict-replay');
     },
   );
+
+  it.each([false, true])(
+    'gives an embedded run launcher-neutral strict-replay advice (source changed: %s)',
+    (sourceChanged) => {
+      const chosen = hint({ cause: { kind: 'divergence' }, sourceChanged, launchable: false });
+      expect(chosen).not.toContain('workflow resume');
+      expect(chosen).not.toContain('--resume --strict-replay');
+      expect(chosen).toContain('strictReplay: true');
+      expect(chosen).toContain('--fork-from run-1');
+      expect(chosen).toContain('stops at the first divergence before live work');
+    },
+  );
+
+  it('leaves non-divergence hints unchanged for an embedded run', () => {
+    for (const cause of causes.filter((candidate) => candidate.kind !== 'divergence'))
+      expect(hint({ cause, launchable: false })).toBe(hint({ cause }));
+  });
 });

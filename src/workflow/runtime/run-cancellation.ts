@@ -116,6 +116,7 @@ export function cancelRecord(
     allTerminal: hasTerminalOutcomes(record),
     sourceChanged: options.sourceChanged,
     runId: record.id,
+    launchable: record.launch !== undefined,
   });
   // The lifecycle record the body's catch would add: an execution entry that ends with the
   // cancellation, and its run event.

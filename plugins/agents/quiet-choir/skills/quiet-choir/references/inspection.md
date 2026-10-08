@@ -206,19 +206,20 @@ warnings. `recoveryHint` is advice chosen from the typed failure cause, never fr
 grant failure suggests `--resume --grant <profile>` (only `--grant <access>` for a call with
 call-site capability overrides); a replay divergence with unchanged source blames a value computed
 in the body (compute it with `ctx.now` or inside `ctx.step`) and suggests `--fork-from` or
-`workflow resume RUN --strict-replay`; a settled map that changed after an item committed suggests
-`--resume --accept-code-change` when only its mapper changed, and otherwise restoring the map or
-`--fork-from`; a configuration or authoring failure suggests fixing the workflow, adding
-`--accept-code-change` when the fix edits code, and, when all recorded effects have terminal
-outcomes, re-finalizing with no repeated work; a run-budget stop suggests resuming with a higher
-value of the cap's flag or the flag off; an effect failure or a cancellation suggests a plain
-`--resume`. A run that recorded no step or map, and any dry-run, gets no hint. `recoveryCause` is
-the typed cause behind the hint (`kind` `grant` with `profile`, `access` and, for call-site
-capability overrides, `classOnly`, `divergence`, `map-changed` with `mapperOnly`, `configuration`,
-`budget` with `flag`, `authoring`, `effect` or `cancelled`), saved on every failed or cancelled run
-even without a hint; it selects a failed run's `next` entries and is absent after success and on
-records from older builds. The CLI appends the hint only to this invocation's `workflow.failed` or
-`workflow.interrupted` message, never to a refusal. Use
+`workflow resume RUN --strict-replay` (a run without a stored entrypoint, such as an embedded
+`runWorkflow` without `launch`, is told to resume strictly through its embedding application); a
+settled map that changed after an item committed suggests `--resume --accept-code-change` when only
+its mapper changed, and otherwise restoring the map or `--fork-from`; a configuration or authoring
+failure suggests fixing the workflow, adding `--accept-code-change` when the fix edits code, and,
+when all recorded effects have terminal outcomes, re-finalizing with no repeated work; a run-budget
+stop suggests resuming with a higher value of the cap's flag or the flag off; an effect failure or a
+cancellation suggests a plain `--resume`. A run that recorded no step or map, and any dry-run, gets
+no hint. `recoveryCause` is the typed cause behind the hint (`kind` `grant` with `profile`, `access`
+and, for call-site capability overrides, `classOnly`, `divergence`, `map-changed` with `mapperOnly`,
+`configuration`, `budget` with `flag`, `authoring`, `effect` or `cancelled`), saved on every failed
+or cancelled run even without a hint; it selects a failed run's `next` entries and is absent after
+success and on records from older builds. The CLI appends the hint only to this invocation's
+`workflow.failed` or `workflow.interrupted` message, never to a refusal. Use
 `workflow check-resume FILE --run-id ID --json` to compare run gates without a writer lock; it
 imports trusted source but does not call its body. Unlike inspection alone, it can identify changed
 source files and schemas.

@@ -4,8 +4,9 @@
 
 - A replay-divergence `recoveryHint` now suggests `workflow resume RUN --strict-replay` instead of
   `--resume --strict-replay`, and the inspection and durability references match (behavior change in
-  saved hint prose only; no record format, schema revision, step identity or `next` entry change)
-  (#298).
+  saved hint prose only; no record format, schema revision, step identity or `next` entry change);
+  an embedded run without a stored launch is told to resume with `strictReplay: true` in its
+  embedding application instead (#298).
 
 - A resume reports the healed-step divergence for a step that failed, was cancelled or interrupted
   in a later run (or left `running` by a crashed owner), and then succeeds (behavior change; no

@@ -408,7 +408,9 @@ as before. A legacy (format 1) checkpoint gets no fork entry, as for `run.incomp
 is a placeholder for a higher cap or `off`; the flag parser refuses it unreplaced. The divergence
 entry stays the fork only: a strict resume of a diverged run usually stops again before live work,
 so it diagnoses rather than recovers and is not a `next` entry. The hint names
-`workflow resume RUN --strict-replay` without a launcher prefix, as the other hints do (#298).
+`workflow resume RUN --strict-replay` without a launcher prefix, as the other hints do (#298). A run
+without a stored entrypoint (embedded `runWorkflow` without `launch`) is told to resume strictly
+through its embedding application (`strictReplay: true`), since `workflow resume` rejects it.
 Records from before revision 10 have no cause and keep the plain resume. Stale and suspended entries
 do not change.
 
