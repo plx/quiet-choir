@@ -380,20 +380,23 @@ and exits 130, usually leaving `running` behind its dead lock, and cancel report
 `worktree`, `{synthesized: true, base, baseSource}` for a synthesized isolated call or null),
 commands (each with `stepId`, `parentStepId` (the step or wait whose callback issued it through
 `context.exec`, or null for `ctx.exec`), `outputSource` (`synthesized`, `fixture`, or `live` for an
-observer's `live: true` command), the matched exec `fixtureIndex` or null, and `error`), `merges`
-(synthesized `ctx.merge` effects with `stepId`, `synthesized`, `commit`, `inputs`, `target` and
-`baseSource`), replays, provider counts, nominal Claude ceiling, `staleExecFixtures`, warnings, and
-its in-memory run record. Failures retain the usual error document and exits, adding `rehearsal` and
-`error.stack`; the rehearsal warnings and `Rehearsal: ...` stderr summary are printed on both paths.
-Temporary state has already been removed on normal exit; dry-run never overwrites the
-requested/default state directory. `workflow fixtures ID --json` returns version-1 fixture JSON from
-a completed run: its agent outputs, settled agent failures and agent failures the workflow absorbed
-(a body `try/catch` or a settled map item) as `error` rules with their recorded `kind` when it is
-not `unknown`, and its completed command results as `exec` rules with environment and stdin digests
-only. Settled and absorbed command failures that a command result reproduces (an exit code outside
-`okExitCodes` or an `exec.json` schema failure) become `exec` rules with their exit `code` and
-recorded output tails; other command failures get no rule yet. `"commands": "fixture"` is set when
-the run has at least one completed or failed command. See [workflow rehearsal](rehearsal.md).
+observer's `live: true` command), the matched exec `fixtureIndex` or null, and `error`, which also
+carries a matched exec error rule's message), `merges` (synthesized `ctx.merge` effects with
+`stepId`, `synthesized`, `commit`, `inputs`, `target` and `baseSource`), replays, provider counts,
+nominal Claude ceiling, `staleExecFixtures`, `staleCallFixtures` (agent rules that matched no call,
+as `{ harness, index }` with per-file indices), warnings, and its in-memory run record. Failures
+retain the usual error document and exits, adding `rehearsal` and `error.stack`; the rehearsal
+warnings and `Rehearsal: ...` stderr summary are printed on both paths. Temporary state has already
+been removed on normal exit; dry-run never overwrites the requested/default state directory.
+`workflow fixtures ID --json` returns version-1 fixture JSON from a completed run: its agent
+outputs, settled agent failures and agent failures the workflow absorbed (a body `try/catch` or a
+settled map item) as `error` rules with their recorded `kind` when it is not `unknown`, and its
+completed command results as `exec` rules with environment and stdin digests only. Settled and
+absorbed command failures that a command result reproduces (an exit code outside `okExitCodes` or an
+`exec.json` schema failure) become `exec` rules with their exit `code` and recorded output tails;
+other command failures get no exported rule yet (an `exec` rule with `error` can describe one by
+hand). `"commands": "fixture"` is set when the run has at least one completed or failed command. See
+[workflow rehearsal](rehearsal.md).
 
 Failures have these fields:
 

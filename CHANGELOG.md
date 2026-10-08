@@ -2,6 +2,17 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Exec fixture rules accept `error` and an optional `kind` to simulate a command that fails without
+  a result, such as a missing binary or a timeout (#307). The command rejects immediately with an
+  `ExecError` whose message is the `error` text and whose kind defaults to `process` (the kind the
+  real runner gives unclassified failures), under both `--dry-run` and `--harness fixture`, so
+  `retry.on`, `onError: 'return'` and `try/catch` behave as with the real runner. The error has no
+  exit code, signal or output, and `workflow fixtures` does not export such rules yet. A rule with
+  `kind` but no `error`, or `error` beside `json`, `stdout`, `stderr` or `code`, is refused.
+- The rehearsal report has a new `staleCallFixtures` field listing agent `calls` rules that matched
+  no call as `{ harness, index }` (per-file index; `harness` null for the global file), with a
+  warning, like `staleExecFixtures` does for exec rules (#307). Rules for steps replayed from a
+  checkpoint are always stale.
 - `workflow fixtures` exports command failures the run settled with `onError: 'return'` or absorbed
   (a step left `failed` in a completed run) as ordinary `exec` rules with their exit `code`, the
   recorded stderr tail and the stdout tail or the failure's `parsed` value as `json` (behavior
@@ -12,10 +23,10 @@
   1024 characters also gets no rule, since the truncated tail could replay as valid output or an
   invented `parsed`, and neither does an `exec.json` exit failure recorded as `truncated` or a
   `parsed` whose compact form is over 16 KiB. A spawn failure, timeout, signal kill or output-limit
-  failure gets no rule until #307, but the export now sets `"commands": "fixture"` whenever the run
-  has any completed or failed command, so a run whose only command failed that way no longer replays
-  by running the real command or synthesizing a success: the replay fails at that step with
-  `No exec fixture matches step`.
+  failure gets no exported rule (exec error rules can describe it by hand), but the export now sets
+  `"commands": "fixture"` whenever the run has any completed or failed command, so a run whose only
+  command failed that way no longer replays by running the real command or synthesizing a success:
+  the replay fails at that step with `No exec fixture matches step`.
 - Fixture export now writes `kind` on the agent `error` rules it produces for settled failures and
   for failures the workflow absorbed (behavior change for exported files), so a replay takes the
   same kind-based branches and `retry.on` decisions as the original run. A failure whose recorded

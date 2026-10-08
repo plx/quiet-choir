@@ -181,9 +181,9 @@ policy nor part of the recorded `ExecSummary`.
 exec rule with its exit `code` and recorded output tails (#306) when a command result reproduces the
 failure: an exit code outside `okExitCodes` or an `exec.json` schema failure. The replay runs that
 result through the same checks, so the settled `ExecStepError` comes back with the same fields.
-Spawn failures, timeouts, signal kills and output-limit failures get no rule until exec rules can
-describe errors (#307); export still sets `"commands": "fixture"`, so a replay of such a run fails
-at that step.
+Spawn failures, timeouts, signal kills and output-limit failures get no exported rule: exec error
+rules (#307) can describe them by hand, but export does not produce them yet. Export still sets
+`"commands": "fixture"`, so a replay of such a run fails at that step.
 
 ## Amendment: merges and child workflows (#170)
 

@@ -101,9 +101,10 @@ the 1024 characters gets no rule either, as a tail that lost its start can be va
 as success or with an invented `parsed`; so does an `exec.json` exit failure recorded as
 `truncated`, and a `parsed` whose compact form exceeds the 16 KiB bound the runtime keeps, since the
 replay would drop it. Spawn failures, timeouts, signal kills, `output-limit` and custom runner kinds
-cannot come from a command result; they wait for exec error rules (#307). Such a failure gets no
-rule, but it still makes the export set `commands: "fixture"`, so its replay fails at that step
-instead of running the command or synthesizing a success.
+cannot come from a command result; exec error rules (#307, below) can describe them by hand, but
+export does not produce them yet. Such a failure gets no rule, but it still makes the export set
+`commands: "fixture"`, so its replay fails at that step instead of running the command or
+synthesizing a success.
 
 A fixture `error` rule may carry `kind` (an `ErrorKind`). The call then rejects with a
 `HarnessError` of that kind whose message is the unchanged `Step <id>: <error>` text, so `retry.on`,
@@ -169,3 +170,34 @@ merges of captured commits included, with placeholders and no Git command at all
 no process runner). The probe only looks for a changed or skipped completed step and reports
 nothing, so placeholder values cannot misreport a preview. `--dry-run` and embedders passing their
 own `rehearsal` hooks keep the refusals above.
+
+## Amendment: exec error rules and stale agent rules (#307)
+
+An exec rule may carry `error` instead of `json` or `stdout`, with an optional `kind` (the same
+`ErrorKind` values agent rules accept; `kind` requires `error`, and `stderr` and `code` are refused
+beside it). The command rejects immediately with an `ExecError`, from `FixtureExecRules.answer`, so
+`--harness fixture` and `--dry-run` behave identically and `retry.on`, `onError: 'return'` and
+`try/catch` see what the real runner gives. Matching filters, first-match order and occurrence
+counting are shared with result rules. Choices:
+
+- The default `kind` is `process`, not `unknown` as for agent error rules, because the real runner
+  maps every failure it cannot classify to `process` and never surfaces `unknown` from `ctx.exec`.
+- The message is the rule's text verbatim, with no `Step <id>: ` prefix, because real command
+  failure messages carry none; a later export can then round-trip messages.
+- The error has no process result: diagnostics have a null code and signal, empty tails,
+  `truncated: false` and duration 0, which is what a real spawn failure records. A real timeout also
+  carries a signal and partial output, so the rule is lossy for a workflow that inspects them.
+- Nothing waits: a simulated timeout rejects at once. `cancelled` is accepted for parity with agent
+  rules and fails the step as cancelled.
+- Export is unchanged and still writes no rule for a spawn failure or timeout. Producing error
+  rules, possibly with optional diagnostics fields, is future work.
+
+In the rehearsal `commands` list a matched error rule has output source `fixture`, its index, and
+its message in `error`.
+
+The report also lists agent rules that matched no call as `staleCallFixtures`, with a warning, as
+`staleExecFixtures` does for exec rules. Entries are `{ harness, index }` with the index in the
+rule's own file (`harness` is the name of a `--harness NAME=fixture:FILE` file, or null for the
+global file), not the combined index that `calls[].fixtureIndex` uses, because a combined index
+means nothing to the author of named files. Tracking is rehearsal-only, and rules for steps replayed
+from a checkpoint are always stale.

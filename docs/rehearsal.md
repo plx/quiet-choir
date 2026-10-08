@@ -116,14 +116,14 @@ recorded as `truncated` gets no rule either, since a short tail can still be val
 would turn into an invented `parsed`; and a `parsed` value whose compact form is over 16 KiB gets no
 rule, as the replay would drop it. Export still sets `"commands": "fixture"`, so the replay fails at
 that step. Spawn failures, timeouts, signal kills, `output-limit` failures and kinds from a custom
-process runner get no rule until exec rules can describe errors
-([#307](https://github.com/plx/quiet-choir/issues/307)). When the run has any completed,
-settled-failed or failed command, export also sets `"commands": "fixture"`, even when a failure
-produced no rule, so a replay whose argv or inputs drift, or that reaches such a failure, fails at
-that step instead of running the real command or synthesizing a success; shorten `argvPrefix` or
-drop a digest by hand when a value legitimately changes per run. A run without commands exports
-exactly as before. A message that already carries the same step's prefix is exported without it, so
-export, replay and export again give the same file. It does not modify the source checkpoint.
+process runner get no exported rule: [exec error rules](#command-fixtures) can describe them by
+hand, but export does not produce them yet. When the run has any completed, settled-failed or failed
+command, export also sets `"commands": "fixture"`, even when a failure produced no rule, so a replay
+whose argv or inputs drift, or that reaches such a failure, fails at that step instead of running
+the real command or synthesizing a success; shorten `argvPrefix` or drop a digest by hand when a
+value legitimately changes per run. A run without commands exports exactly as before. A message that
+already carries the same step's prefix is exported without it, so export, replay and export again
+give the same file. It does not modify the source checkpoint.
 
 ## Command fixtures
 
@@ -163,10 +163,45 @@ and concurrent commands count in launch order, so prefer full step IDs for a run
 command from a callback's or observer's `context.exec` matches by its parent step or wait ID. All of
 one parent's commands share its occurrence, so tell them apart with `argvPrefix`.
 
-Exactly one of `json` (serialized as stdout) and `stdout` is required; `stderr` defaults to empty
-and `code` (0-255) to 0. The result then goes through the step's usual checks: a code outside
-`okExitCodes` fails like a real exit (kind `process`), and `ctx.exec.json` parses and validates the
-stdout with its schema.
+Exactly one of `json` (serialized as stdout), `stdout` and `error` is required. A result rule
+(`json` or `stdout`) takes `stderr`, default empty, and `code` (0-255), default 0. The result then
+goes through the step's usual checks: a code outside `okExitCodes` fails like a real exit (kind
+`process`), and `ctx.exec.json` parses and validates the stdout with its schema.
+
+An error rule simulates a command that never produces a result, such as a missing binary or a
+timeout. `error` is the message and the optional `kind` is an error category (the same values agent
+rules accept, such as `timeout`); `kind` requires `error`, and `stderr` and `code` are refused
+beside it. The command rejects, immediately and without waiting, with an `ExecError` of that `kind`
+(default `process`) whose message is the `error` text verbatim:
+
+```json
+{
+  "exec": [
+    {
+      "step": "gate-*",
+      "attempt": 1,
+      "error": "Command timed out after 1000ms.",
+      "kind": "timeout"
+    },
+    { "step": "gate-*", "json": { "state": "success", "headRefOid": "abc123" } },
+    { "step": "prepare", "error": "Cannot start gh: spawn gh ENOENT" }
+  ]
+}
+```
+
+An error rule is matched like any other (`step`, `argvPrefix`, digests, `attempt`, `occurrence`,
+first match wins, and it counts toward occurrences), so `retry`, `retry.on` (`transient` covers
+`timeout`), `onError: 'return'` and `try/catch` behave as they do with the real runner: above, a
+`gate-*` step with `retry: { on: ['transient'] }` fails its first attempt with a timeout and
+succeeds on the second. Differences from an agent error rule are deliberate. The default `kind` is
+`process`, not `unknown`, because the real runner reports every failure it cannot classify as
+`process` and never produces `unknown`. The message carries no `Step <id>: ` prefix, because real
+command failure messages have none. Like a real spawn failure, the `ExecError` has no process
+result: `error.diagnostics` has a null `code` and `signal`, empty output tails, `truncated: false`
+and a duration of 0, and a settled failure's `code` and `signal` are null. A real timeout also
+records a signal and any partial output, which an error rule does not reproduce, so a workflow that
+inspects them after a timeout can branch differently in rehearsal. A `kind` of `cancelled` fails the
+step as cancelled, which is never retried or settled.
 
 A command no rule matches is synthesized under `--dry-run` and runs for real under
 `--harness fixture`. With `"commands": "fixture"` it instead fails at its step as a configuration
@@ -240,11 +275,18 @@ report contains:
   wait whose callback or observer ran it through `context.exec`, the wait of a command poll's check,
   or null for `ctx.exec`), command, cwd, whether it is structured, output source (`fixture`,
   `synthesized`, or `live` for an observer's or command poll's `live: true` command that ran for
-  real), the matched index in the file's `exec` array (or null), and `error`, the refusal of an
+  real), the matched index in the file's `exec` array (or null), and `error`: the refusal of an
   unmatched command under `commands: "fixture"` (such an entry has output source `fixture` and index
-  null).
+  null), or the message of a matched exec error rule (output source `fixture` and the rule's index);
+  null otherwise.
 - `staleExecFixtures`: indices of exec rules that matched no command, with a warning when any exist.
   A resume preview reports rules for replayed steps as stale.
+- `staleCallFixtures`: agent `calls` rules that matched no call, as `{ harness, index }` with a
+  warning when any exist. `index` is the position in that file's own `calls` array, and `harness` is
+  the name of a `--harness NAME=fixture:FILE` file, or null for the global `--harness fixture:FILE`
+  file. This differs from `calls[].fixtureIndex`, which indexes the rules of all files combined
+  (named files first, then the global one). As with exec rules, rules for steps replayed from a
+  checkpoint are always stale, so a resume preview reports them.
 - `harnessCounts` (`providerCounts` retains built-in compatibility counts),
   `nominalClaudeCeilingUsd`, `stubbedSteps`, `skippedSleeps`, and `warnings`.
 
