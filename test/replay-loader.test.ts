@@ -419,7 +419,7 @@ describe('source-aware loader recovery', { timeout: 50_000 }, () => {
       expect(next.slice(-4)).toEqual(['--run-id', '<NEW_RUN_ID>', '--state-dir', stateDir]);
       expect(refused.message).toContain(
         'legacy' in rest
-          ? 'Settled map reviews: its journal predates per-component fingerprints, so the changed component is unknown changed after an item completed.'
+          ? 'Settled map reviews changed after an item completed; its journal predates per-component fingerprints, so the changed component is unknown.'
           : `Settled map reviews: ${components.join(', ')} changed after an item completed.`,
       );
       expect(refused.message).toContain('nothing was changed');

@@ -397,11 +397,15 @@ describe('failureNextCommands', () => {
   });
 
   it.for([
-    { legacy: false, components: ['items', 'keys'], head: 'items, keys changed after an item' },
+    {
+      legacy: false,
+      components: ['items', 'keys'],
+      head: 'Settled map round/reviews: items, keys changed after an item completed.',
+    },
     {
       legacy: true,
       components: [],
-      head: 'its journal predates per-component fingerprints, so the changed component is unknown changed after an item',
+      head: 'Settled map round/reviews changed after an item completed; its journal predates per-component fingerprints, so the changed component is unknown.',
     },
   ])(
     'carries a settled-map refusal fork command invalidating the map ID (legacy: $legacy)',
@@ -418,7 +422,7 @@ describe('failureNextCommands', () => {
         expected.slice(expected.indexOf('--invalidate'), expected.indexOf('--invalidate') + 2),
       ).toEqual(['--invalidate', 'round/reviews']);
       expect(refusal.code).toBe('run.incompatible');
-      expect(refusal.message).toContain(`Settled map round/reviews: ${head} completed.`);
+      expect(refusal.message).toContain(head);
       expect(refusal.message).toContain('--accept-code-change accepts only a mapper change');
       expect(refusal.message).toContain('nothing was changed');
       expect(refusal.message).toContain(formatArgv(expected));

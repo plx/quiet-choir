@@ -69,7 +69,7 @@ export function divergenceRefusal(
       ? new RunRefusedError(
           'run.incompatible',
           target.runId,
-          `Settled map ${change.mapId}: ${change.legacy ? 'its journal predates per-component fingerprints, so the changed component is unknown' : change.components.join(', ') || 'identity'} changed after an item completed. --accept-code-change accepts only a mapper change, so this resume would record the change, clear the saved outcome and then fail; nothing was changed. Fork a new run instead: ${formatArgv(next)}`,
+          `${change.legacy ? `Settled map ${change.mapId} changed after an item completed; its journal predates per-component fingerprints, so the changed component is unknown.` : `Settled map ${change.mapId}: ${change.components.join(', ') || 'identity'} changed after an item completed.`} --accept-code-change accepts only a mapper change, so this resume would record the change, clear the saved outcome and then fail; nothing was changed. Fork a new run instead: ${formatArgv(next)}`,
           {
             divergent: [
               {
