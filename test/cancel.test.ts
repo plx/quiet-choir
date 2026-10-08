@@ -17,10 +17,16 @@ import { TickWorkflowExecutor } from '../src/workflow/loader/tick.js';
 import { formatArgv } from '../src/workflow/runtime/commands.js';
 import { lockRun } from '../src/workflow/runtime/store.js';
 import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
+import { TypecheckProgramCache } from '../src/workflow/typecheck/program-cache.js';
 import { defineWorkflow, readRun, runWorkflow, RunInterruptedError, z } from '../src/index.js';
 
 // Issue #288 / ADR 0039: workflow cancel ends a live local run as `cancelled`, signalling only a
 // live, identity-verified owner, through a request bound to that owner's lock token.
+
+// One program cache for the file, so each compile of the engine source after the first reuses its
+// parse and checks (see CONTRIBUTING.md, "Test timeouts and storage sync").
+const typecheckCache = new TypecheckProgramCache();
+
 const project = dirname(dirname(fileURLToPath(import.meta.url)));
 const logger = new ThresholdLogger('silent', () => undefined);
 const DEAD = 2_000_000_000;
@@ -52,6 +58,7 @@ function cancel(
   } = {},
 ): Promise<WorkflowCommandResult> {
   return new WorkflowExecutor({
+    typecheckCache,
     logger,
     sendSignal,
     ...(options.launcher === undefined ? {} : { commandLauncher: options.launcher }),
@@ -591,7 +598,9 @@ describe('cancelling a live execution', { timeout: 60_000 }, () => {
   it('ends the run cancelled, and the next tick observes it instead of resuming it', async () => {
     const f = await workflowFixture();
     const outer = new AbortController();
-    const owner = new WorkflowExecutor({ logger, signal: outer.signal }).execute(f.plan);
+    const owner = new WorkflowExecutor({ typecheckCache, logger, signal: outer.signal }).execute(
+      f.plan,
+    );
     await waitFor(async () => (await f.calls()) === 1, 'the slow step');
     // Stands in for the owner's executionSignals: the first SIGINT is a marked interruption.
     const sendSignal = vi.fn(() => {
@@ -616,7 +625,7 @@ describe('cancelling a live execution', { timeout: 60_000 }, () => {
     expect(saved.events?.at(-1)).toMatchObject({ type: 'run.cancelled' });
     expect(existsSync(requestPath())).toBe(false);
 
-    const ticked = await new TickWorkflowExecutor({ logger }).execute({
+    const ticked = await new TickWorkflowExecutor({ typecheckCache, logger }).execute({
       kind: 'workflow.tick',
       runId: 'run-1',
       stateDir,
@@ -631,7 +640,11 @@ describe('cancelling a live execution', { timeout: 60_000 }, () => {
   it('ignores a request bound to another execution, so a plain interruption still suspends', async () => {
     const f = await workflowFixture();
     const first = new AbortController();
-    const execution = new WorkflowExecutor({ logger, signal: first.signal }).execute(f.plan);
+    const execution = new WorkflowExecutor({
+      typecheckCache,
+      logger,
+      signal: first.signal,
+    }).execute(f.plan);
     await waitFor(async () => (await f.calls()) === 1, 'the first execution');
     const firstToken = await lockToken();
     const request = (token: string) =>
@@ -659,10 +672,12 @@ describe('cancelling a live execution', { timeout: 60_000 }, () => {
     // A request left for the first execution never cancels the next one in the same process.
     await request(firstToken);
     const second = new AbortController();
-    const resumed = new WorkflowExecutor({ logger, signal: second.signal }).execute({
-      ...f.plan,
-      resume: true,
-    });
+    const resumed = new WorkflowExecutor({ typecheckCache, logger, signal: second.signal }).execute(
+      {
+        ...f.plan,
+        resume: true,
+      },
+    );
     await waitFor(async () => (await f.calls()) === 2, 'the second execution');
     expect(await lockToken()).not.toBe(firstToken);
     second.abort(interrupt());
@@ -677,7 +692,11 @@ describe('cancelling a live execution', { timeout: 60_000 }, () => {
     const f = await workflowFixture();
     // A plain interruption leaves a suspension that is due now.
     const first = new AbortController();
-    const execution = new WorkflowExecutor({ logger, signal: first.signal }).execute(f.plan);
+    const execution = new WorkflowExecutor({
+      typecheckCache,
+      logger,
+      signal: first.signal,
+    }).execute(f.plan);
     await waitFor(async () => (await f.calls()) === 1, 'the first execution');
     first.abort(interrupt());
     await execution;
@@ -686,7 +705,11 @@ describe('cancelling a live execution', { timeout: 60_000 }, () => {
     await writeFile(f.holdImport, '');
     const imported = await f.imports();
     const tickSignal = new AbortController();
-    const ticking = new TickWorkflowExecutor({ logger, signal: tickSignal.signal }).execute({
+    const ticking = new TickWorkflowExecutor({
+      typecheckCache,
+      logger,
+      signal: tickSignal.signal,
+    }).execute({
       kind: 'workflow.tick',
       runId: 'run-1',
       stateDir,
@@ -709,14 +732,16 @@ describe('cancelling a live execution', { timeout: 60_000 }, () => {
   it("cancels an accepted resume during runWorkflow's preflight without recording the acceptance", async () => {
     const { plan, count } = await preflightFixture([2]);
     // A suspended run: workflow cancel leaves an ended one alone, even while it is being resumed.
-    expect(await new WorkflowExecutor({ logger }).execute(await plan('one', false))).toMatchObject({
+    expect(
+      await new WorkflowExecutor({ typecheckCache, logger }).execute(await plan('one', false)),
+    ).toMatchObject({
       ok: true,
       run: { status: 'suspended' },
     });
     const before = await readRun({ stateDir, runId: 'run-1' });
 
     const outer = new AbortController();
-    const owner = new WorkflowExecutor({ logger, signal: outer.signal }).execute(
+    const owner = new WorkflowExecutor({ typecheckCache, logger, signal: outer.signal }).execute(
       await plan('two', true),
     );
     await waitFor(async () => (await count()) === 2, 'the preflight body');
@@ -746,16 +771,20 @@ describe('cancelling a live execution', { timeout: 60_000 }, () => {
   it("clears an earlier interruption when a cancellation ends runWorkflow's preflight", async () => {
     // Bodies 2 (the interrupted resume) and 3 (the accepted resume's preflight) wait for an abort.
     const { plan, count } = await preflightFixture([2, 3]);
-    expect(await new WorkflowExecutor({ logger }).execute(await plan('one', false))).toMatchObject({
+    expect(
+      await new WorkflowExecutor({ typecheckCache, logger }).execute(await plan('one', false)),
+    ).toMatchObject({
       ok: true,
       run: { status: 'suspended' },
     });
 
     // A marked interruption saves the run suspended with interruptedBy.
     const interrupted = new AbortController();
-    const first = new WorkflowExecutor({ logger, signal: interrupted.signal }).execute(
-      await plan('one', true),
-    );
+    const first = new WorkflowExecutor({
+      typecheckCache,
+      logger,
+      signal: interrupted.signal,
+    }).execute(await plan('one', true));
     await waitFor(async () => (await count()) === 2, 'the interrupted body');
     interrupted.abort(interrupt());
     expect(failed(await first).code).toBe('workflow.interrupted');
@@ -765,9 +794,11 @@ describe('cancelling a live execution', { timeout: 60_000 }, () => {
 
     // The source changes; an unmarked abort during the accepted resume's preflight cancels it.
     const cancelled = new AbortController();
-    const second = new WorkflowExecutor({ logger, signal: cancelled.signal }).execute(
-      await plan('two', true),
-    );
+    const second = new WorkflowExecutor({
+      typecheckCache,
+      logger,
+      signal: cancelled.signal,
+    }).execute(await plan('two', true));
     await waitFor(async () => (await count()) === 3, 'the preflight body');
     cancelled.abort(new Error('Stopped by the operator.'));
     await second;

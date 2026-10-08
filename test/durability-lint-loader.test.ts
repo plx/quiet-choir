@@ -8,6 +8,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ThresholdLogger } from '../src/application/execution.js';
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
+import { TypecheckProgramCache } from '../src/workflow/typecheck/program-cache.js';
+
+// One program cache for the file, so each compile of the engine source after the first reuses its
+// parse and checks (see CONTRIBUTING.md, "Test timeouts and storage sync").
+const typecheckCache = new TypecheckProgramCache();
 
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const fixtures = join(projectRoot, 'test', 'fixtures', 'durability-lint');
@@ -30,6 +35,7 @@ function typecheck(file: string) {
 
 function executor(log: (level: string, message: string) => void = () => undefined) {
   return new WorkflowExecutor({
+    typecheckCache,
     logger: { log },
     signal: new AbortController().signal,
     harness: { invoke: vi.fn() },
@@ -155,6 +161,7 @@ export default defineWorkflow({
     );
     const lines: string[] = [];
     const engine = new WorkflowExecutor({
+      typecheckCache,
       logger: new ThresholdLogger('warn', (line) => lines.push(line)),
     });
     const plan = { kind: 'workflow.list-defs' as const, directories: [root] };

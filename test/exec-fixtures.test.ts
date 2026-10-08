@@ -25,6 +25,11 @@ import { readHarnessSelection } from '../src/workflow/loader/harness-selection.j
 import { RehearsalHarness } from '../src/workflow/loader/rehearsal.js';
 import { digest } from '../src/workflow/runtime/json.js';
 import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
+import { TypecheckProgramCache } from '../src/workflow/typecheck/program-cache.js';
+
+// One program cache for the file, so each compile of the engine source after the first reuses its
+// parse and checks (see CONTRIBUTING.md, "Test timeouts and storage sync").
+const typecheckCache = new TypecheckProgramCache();
 
 const repository = dirname(dirname(fileURLToPath(import.meta.url)));
 let root: string;
@@ -323,6 +328,7 @@ describe('fixture export of exec results', () => {
     });
     expect(source.output).toBe('A:3:3:warn');
     const exported = await new WorkflowExecutor({
+      typecheckCache,
       logger: new ThresholdLogger('silent', () => undefined),
     }).execute({ kind: 'workflow.fixtures', runId: 'source', stateDir });
     if (exported.kind !== 'workflow.fixtures.result') throw new Error(JSON.stringify(exported));
@@ -469,19 +475,20 @@ export default defineWorkflow({
     await writeFile(join(root, 'f.json'), JSON.stringify(fixtureFile));
     const analysis = analyzeTypecheckEntrypoint(file, root);
     if (!analysis.ok) throw new Error('invalid workflow fixture');
-    return new WorkflowExecutor({ logger: new ThresholdLogger('silent', () => undefined) }).execute(
-      {
-        kind: 'workflow.execute',
-        typecheck: analysis.plan,
-        runId,
-        stateDir,
-        cwd: root,
-        input: null,
-        resume: false,
-        harness: await readHarnessSelection('fixture:f.json', undefined, root),
-        ...extra,
-      },
-    );
+    return new WorkflowExecutor({
+      typecheckCache,
+      logger: new ThresholdLogger('silent', () => undefined),
+    }).execute({
+      kind: 'workflow.execute',
+      typecheck: analysis.plan,
+      runId,
+      stateDir,
+      cwd: root,
+      input: null,
+      resume: false,
+      harness: await readHarnessSelection('fixture:f.json', undefined, root),
+      ...extra,
+    });
   }
 
   it('rehearses to merged through a fix round and a gate round with exec rules and no stub script (AC1)', async () => {
