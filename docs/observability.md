@@ -72,11 +72,20 @@ carry the compact `summary` instead of the whole `run`.
 `workflow list` reads checkpoint filenames, sorts newest `updatedAt` first, and supports `running`,
 `failed`, `completed`, `cancelled`, and `stale` filters. Unreadable checkpoints are skipped with a
 stderr warning. JSON returns `{ kind: 'workflow.list.result', ok: true, stateDir, runs, warnings }`;
-`runs` contains compact rows (`id`, `workflow`, `status`, `recordedStatus`, `counts`, `updatedAt`,
-`ownership`, `nextWakeAt`, `cwd`, `stateDir`, `warnings` and `usage` with `attempts`, `costUsd`,
-`inputTokens`, `outputTokens`, `unknownTokenAttempts` and `unknownCostAttempts`); `--json --full`
-returns whole summary objects. A missing state directory gives an empty list. Neither list nor watch
-imports source.
+`runs` contains compact rows (`id`, `workflow`, `status`, `recordedStatus`, `errorKind`,
+`retryable`, `counts`, `updatedAt`, `ownership`, `nextWakeAt`, `cwd`, `stateDir`, `warnings` and
+`usage` with `attempts`, `costUsd`, `inputTokens`, `outputTokens`, `unknownTokenAttempts` and
+`unknownCostAttempts`); `--json --full` returns whole summary objects. `errorKind` is the root
+cause's failure kind of a failed run and `retryable` is whether that kind is transient, so a script
+can pick the failed runs worth resuming without the transient set. Both are `null` and `false` for a
+body failure, an older record without a recoverable kind and every status other than `failed`, even
+when a cancelled or interrupted run keeps a `rootCause`. In a `--full` summary the same value is
+`rootCause.errorKind`. The text table appends `[<kind>]` to a failed run's status, such as
+`failed [rate-limit]`, and adds no column. Watch adds no field (#281): `--watch --json --summary`
+lines already carry `rootCause.errorKind` and `steps[].errorKind`, the full-record form carries the
+stored `rootCause.errorKind`, and live triage with `retryable` belongs to the event stream
+(`--events`, `workflow events --follow`). A missing state directory gives an empty list. Neither
+list nor watch imports source.
 
 ## Event stream
 

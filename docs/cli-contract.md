@@ -14,18 +14,23 @@ dashboard, including the completed run's `output` (null otherwise), an `agents` 
 attempt reported Claude subscription rate-limit windows, a per-harness `rateLimits` map, and, when
 the latest execution was refused by a run cap, its saved `budgetStop`. `workflow list --json`
 returns `{kind, ok, stateDir, runs, warnings}` with compact rows: `id`, `workflow`, `status`,
-`recordedStatus`, `counts`, `updatedAt`, `ownership`, `nextWakeAt`, `cwd`, `stateDir`, `warnings`,
-`bytes` and a six-field `usage`; `--full` restores whole run summaries, which carry `bytes` too.
-`bytes` is the apparent size of the run's regular files in its runs container: everything under
-`<runId>/` (record, journal, `attempts/` transcripts, artifacts, `launch/`, inbox) plus the legacy
-`<runId>.json`, `<runId>.json.v<N>`, `<runId>.cancel.json` and `<runId>.inbox/`, without following
-symbolic links. Worktree caches are not counted. It is null, with a list warning, when the size
-cannot be measured; inspect and watch do not compute it. The text view shows it in a `SIZE` column
-(B, KiB, MiB or GiB). `validate --json` and `list-defs --json` print a compact document that states
-each capability fact once, at every depth of `children`: no `harnesses[].options` JSON Schema; no
-`capabilities.defaults` (read `capabilities.profiles[defaultProfile]`); the default profile's
-environment summaries once as `capabilities.environment`, with a profile's own `environment` listing
-only the harnesses (`claude`, `codex`) that differ from it (read
+`recordedStatus`, `errorKind`, `retryable`, `counts`, `updatedAt`, `ownership`, `nextWakeAt`, `cwd`,
+`stateDir`, `warnings`, `bytes` and a six-field `usage`; `--full` restores whole run summaries,
+which carry `bytes` too. `errorKind` is the root cause's failure kind of a run whose
+`recordedStatus` is `failed` (the stored kind, else the root step's last attempt for older records)
+and `retryable` is whether that kind is transient. Both are `null` and `false` for a body failure, a
+record without a recoverable kind and every other status, including a cancelled or interrupted run
+that keeps a `rootCause`. For a failed run `errorKind` equals `rootCause.errorKind` in the `--full`
+summary. `bytes` is the apparent size of the run's regular files in its runs container: everything
+under `<runId>/` (record, journal, `attempts/` transcripts, artifacts, `launch/`, inbox) plus the
+legacy `<runId>.json`, `<runId>.json.v<N>`, `<runId>.cancel.json` and `<runId>.inbox/`, without
+following symbolic links. Worktree caches are not counted. It is null, with a list warning, when the
+size cannot be measured; inspect and watch do not compute it. The text view shows it in a `SIZE`
+column (B, KiB, MiB or GiB). `validate --json` and `list-defs --json` print a compact document that
+states each capability fact once, at every depth of `children`: no `harnesses[].options` JSON
+Schema; no `capabilities.defaults` (read `capabilities.profiles[defaultProfile]`); the default
+profile's environment summaries once as `capabilities.environment`, with a profile's own
+`environment` listing only the harnesses (`claude`, `codex`) that differ from it (read
 `profile.environment?.[h] ?? capabilities.environment[h]`); `workflow.profiles` as the declared
 profile names, whose facts live in `capabilities.profiles`; and no root `workflow.entrypoint`, which
 equals the top-level `entrypoint` (children keep theirs). `--harness-schemas` prints the complete
