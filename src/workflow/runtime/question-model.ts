@@ -68,12 +68,33 @@ export interface QuestionResolution {
   readonly at: string;
 }
 
+/**
+ * One reason an answer was refused as invalid. Zod issues are normalized to this shape so the
+ * contract does not depend on Zod internals; a refusal that has no schema path uses a synthetic
+ * `code` (`answer_not_json`, `question_schema_invalid`, `answer_author`, `answer_too_large`) and a
+ * path of `[]`.
+ */
+export interface AnswerIssue {
+  /** Zod issue code, or one of the synthetic codes named above. */
+  readonly code: string;
+  /** Location in the answer value, as object keys and array indexes; empty for the root. */
+  readonly path: readonly (string | number)[];
+  /** One-line explanation. */
+  readonly message: string;
+}
+
 /** An inbox delivery rejected by the authoritative workflow schema. */
 export interface QuestionRejection {
   /** Ingestion timestamp. */
   readonly at: string;
   /** Validation explanation, bounded to 4096 characters. */
   readonly error: string;
+  /**
+   * Structured reasons in the shape of the writer's `answer.invalid` issues, present only for an
+   * authoritative schema mismatch or an attribution refusal and bounded to 20 issues. Absent for
+   * every other refusal and in records from older builds.
+   */
+  readonly issues?: readonly AnswerIssue[];
   /** Quarantined filename in the inbox. */
   readonly file: string;
 }

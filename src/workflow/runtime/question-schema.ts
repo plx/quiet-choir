@@ -43,7 +43,24 @@ export const questionRecordSchema = z.object({
     .object({ via: z.literal('inbox'), by: z.string().min(1).max(200), at: z.iso.datetime() })
     .nullable(),
   rejections: z
-    .array(z.object({ at: z.iso.datetime(), error: z.string().max(4096), file: z.string() }))
+    .array(
+      z.object({
+        at: z.iso.datetime(),
+        error: z.string().max(4096),
+        // Owner-side structured reasons (#289); absent for plain-text refusals and older records.
+        issues: z
+          .array(
+            z.object({
+              code: z.string().min(1).max(100),
+              path: z.array(z.union([z.string().max(256), z.number()])).max(32),
+              message: z.string().max(1024),
+            }),
+          )
+          .max(20)
+          .optional(),
+        file: z.string(),
+      }),
+    )
     .max(20),
 });
 

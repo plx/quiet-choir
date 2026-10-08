@@ -18,23 +18,11 @@ import { errorCode } from './checkpoint.js';
 import { holdsRun, unreadableRunError } from './read-required-run.js';
 import { answerEnvelopeSchema, validateAnswerAuthor } from './question-schema.js';
 import type { JsonValue } from './model.js';
+import type { AnswerIssue } from './question-model.js';
 import type { PendingDelivery, PendingListing, PendingOperation } from './wait-model.js';
 import { answerArgv, type CommandLauncher } from './commands.js';
 
-/**
- * One reason an answer was refused as invalid. Zod issues are normalized to this shape so the
- * contract does not depend on Zod internals; a refusal that has no schema path uses a synthetic
- * `code` (`answer_not_json`, `question_schema_invalid`, `answer_author`, `answer_too_large`) and a
- * path of `[]`.
- */
-export interface AnswerIssue {
-  /** Zod issue code, or one of the synthetic codes named above. */
-  readonly code: string;
-  /** Location in the answer value, as object keys and array indexes; empty for the root. */
-  readonly path: readonly (string | number)[];
-  /** One-line explanation. */
-  readonly message: string;
-}
+export type { AnswerIssue } from './question-model.js';
 
 /** A rejected delivery: invalid input is exit 2, a closed/already answered question is exit 3. */
 export class AnswerError extends Error {
@@ -68,10 +56,37 @@ function oneLine(text: string): string {
   return text.replace(/\s+/gu, ' ').trim();
 }
 
-/** An invalid-answer refusal with one synthetic issue at the root. */
-function syntheticInvalid(code: string, error: unknown): AnswerError {
+/** An invalid-answer refusal with one synthetic issue at the root. @internal */
+export function syntheticInvalid(code: string, error: unknown): AnswerError {
   const message = oneLine(error instanceof Error ? error.message : String(error));
   return new AnswerError('invalid', message, [{ code, path: [], message }]);
+}
+
+/**
+ * The refusal for an answer that fails its question schema: issues normalized to
+ * {@link AnswerIssue} (symbol path segments stringified, messages on one line) and a one-line
+ * summary. Takes the issues structurally, so a workflow's own Zod instance works too.
+ * @internal
+ */
+export function schemaMismatch(
+  zodIssues: readonly {
+    readonly code: string;
+    readonly path: readonly PropertyKey[];
+    readonly message: string;
+  }[],
+): AnswerError {
+  const issues = zodIssues.map((issue) => ({
+    code: issue.code,
+    path: issue.path.map((part) => (typeof part === 'symbol' ? String(part) : part)),
+    message: oneLine(issue.message),
+  }));
+  return new AnswerError(
+    'invalid',
+    `Answer does not match the question schema: ${issues
+      .map((issue) => `${issue.path.length ? issue.path.join('.') : '(root)'}: ${issue.message}`)
+      .join('; ')}`,
+    issues,
+  );
 }
 
 /** A lock-free delivery to a question already present in a checkpoint. */
@@ -171,18 +186,7 @@ export async function writeAnswer(options: WriteAnswerOptions): Promise<AnswerDe
   }
   const parsed = validator.safeParse(value);
   if (!parsed.success) {
-    const issues = parsed.error.issues.map((issue) => ({
-      code: issue.code,
-      path: issue.path.map((part) => (typeof part === 'symbol' ? String(part) : part)),
-      message: oneLine(issue.message),
-    }));
-    throw new AnswerError(
-      'invalid',
-      `Answer does not match the question schema: ${issues
-        .map((issue) => `${issue.path.length ? issue.path.join('.') : '(root)'}: ${issue.message}`)
-        .join('; ')}`,
-      issues,
-    );
+    throw schemaMismatch(parsed.error.issues);
   }
   const at = new Date().toISOString();
   // runCreatedAt binds the delivery to this run: a later run that reuses the ID rejects it.

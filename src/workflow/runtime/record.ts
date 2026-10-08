@@ -1199,9 +1199,11 @@ export function withProjectInstructions(
  * settled map's `frame` in `maps`. Revision 9 (#247) changed only a nested shape: the profile
  * field `redacted.harnesses` in `capabilities`, which holds digests of registered harness
  * `sensitiveOptions`. Revision 10 (#284) added the top-level `recoveryCause`, the typed cause
- * behind a failed run's recovery hint and `next` commands. @internal
+ * behind a failed run's recovery hint and `next` commands. Revision 11 (#289) changed only a
+ * nested shape: the optional structured `issues` of a rejection in `question.rejections`.
+ * @internal
  */
-export const SUPPORTED_SCHEMA_REVISION = 10;
+export const SUPPORTED_SCHEMA_REVISION = 11;
 
 /**
  * Whether a run recorded any work: at least one step or settled map. A failed run without any gets

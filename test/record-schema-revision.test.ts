@@ -12,9 +12,11 @@ import {
   defineWorkflow,
   FileRunStore,
   FixtureHarness,
+  listPending,
   readRun,
   RunRefusedError,
   runWorkflow,
+  writeAnswer,
   z,
   type Harness,
   type OwnedRunStore,
@@ -59,6 +61,8 @@ const revisionDigests: Readonly<Record<string, string>> = {
   '9': '14ecaff04c78634fdbaaca9796e99503df2c253e4c7db6208169ca21b74a9b1a',
   // Revision 10 (#284) added the top-level recoveryCause.
   '10': '01979d40f27afb4d663d424a519d1b89a7d840c34dfdb7f4d206d99bc60a27a5',
+  // Revision 11 (#289) changed only a nested shape (question.rejections issues), so it repeats 10.
+  '11': '01979d40f27afb4d663d424a519d1b89a7d840c34dfdb7f4d206d99bc60a27a5',
 };
 // digest(readRun(...)) of the installed pre-revision fixture, computed on unmodified main 91a6d2f.
 const preRevisionReadDigest = '714b6cb068de5c933b7ba04a26d1f931f589f7c9910f76f0e5c8cc493eb13016';
@@ -80,6 +84,8 @@ const revisionSevenReadDigest = 'af4c0ae3367ad8f941f37a22168fa0ad06a33094d1c33ab
 const revisionEightReadDigest = 'c00a217c100cb94e3d20a7bdac94c3afd7c38c11940c5dbbe5bf08877bf6895e';
 // digest(readRun(...)) of the installed revision-nine fixture, computed on unmodified main 8acf024.
 const revisionNineReadDigest = 'f7d0bbb8c91058abeb5c59fad047407a6120faa6ff8616f9acd26cf8cfafc230';
+// digest(readRun(...)) of the installed revision-ten fixture, computed on unmodified main 7d02b96.
+const revisionTenReadDigest = 'ef509d5e971ee33147455addee4c139aae9ca0d60b7bc20294d6dacfad4a9171';
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex');
 
@@ -1487,7 +1493,7 @@ describe('revision-nine records (a grant failure before recoveryCause, #284)', (
     expect(saved.recoveryCause).toBeUndefined();
     expect(recordSchemaDrift(saved)).toBeUndefined();
     expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
-    expect(SUPPORTED_SCHEMA_REVISION).toBe(10);
+    expect(SUPPORTED_SCHEMA_REVISION).toBe(11);
   });
 
   it('round-trip every recovery cause through the record parser', async () => {
@@ -1512,5 +1518,66 @@ describe('revision-nine records (a grant failure before recoveryCause, #284)', (
       expect(record.recoveryCause).toEqual(cause);
       expect(recordSchemaDrift(record)).toBeUndefined();
     }
+  });
+});
+
+describe('revision-ten records (a plain rejection before issues, #289)', () => {
+  const runId = 'revision-ten';
+  async function install(): Promise<void> {
+    const fixture = await readFile(
+      new URL('./fixtures/schema-revision/revision-ten-checkpoint.json', import.meta.url),
+      'utf8',
+    );
+    await mkdir(join(stateDir, runId));
+    await writeFile(paths(runId).snapshot, fixture);
+    await writeFile(paths(runId).journal, '');
+  }
+  const even = defineWorkflow({
+    name: 'schema-revision',
+    version: '1',
+    input: z.null(),
+    output: z.number(),
+    run: (ctx) =>
+      ctx.ask('even', {
+        prompt: 'Even number?',
+        schema: z.number().refine((n) => n % 2 === 0, 'Must be even'),
+      }),
+  });
+  const resume = () => ({ ...options, stateDir, runId, input: null, resume: true }) as const;
+
+  it('read exactly as on main, with a rejection that has no issues, listed without them', async () => {
+    await install();
+    const record = await readRun({ stateDir, runId });
+    expect(record.schemaRevision).toBe(10);
+    expect(recordSchemaDrift(record)).toBeUndefined();
+    expect(digest(record)).toBe(revisionTenReadDigest);
+    const rejections = record.steps['even']?.question?.rejections ?? [];
+    expect(rejections).toHaveLength(1);
+    expect(rejections[0]?.error).toContain('Must be even');
+    expect(rejections[0]).not.toHaveProperty('issues');
+    const pending = await listPending({ stateDir });
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.rejections[0]).not.toHaveProperty('issues');
+  });
+
+  it('keep the plain entry beside a structured one, then complete and save the current revision', async () => {
+    await install();
+    await writeAnswer({ stateDir, runId, stepId: 'even', value: 3, by: 'agent:fixture' });
+    expect((await runWorkflow(even, resume())).status).toBe('suspended');
+    const rejections = (await readRun({ stateDir, runId })).steps['even']?.question?.rejections;
+    expect(rejections).toHaveLength(2);
+    expect(rejections?.[0]).not.toHaveProperty('issues');
+    expect(rejections?.[1]?.issues).toEqual([
+      { code: 'custom', path: [], message: 'Must be even' },
+    ]);
+    expect((await listPending({ stateDir }))[0]?.rejections[1]?.issues).toHaveLength(1);
+    await writeAnswer({ stateDir, runId, stepId: 'even', value: 4, by: 'agent:fixture' });
+    const result = await runWorkflow(even, resume());
+    expect(result.status).toBe('completed');
+    expect(result.output).toBe(4);
+    const saved = await readRun({ stateDir, runId });
+    expect(recordSchemaDrift(saved)).toBeUndefined();
+    expect(saved.steps['even']?.question?.rejections).toHaveLength(2);
+    expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
   });
 });
