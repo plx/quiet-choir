@@ -54,6 +54,11 @@ import { ThresholdLogger } from '../src/application/execution.js';
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import { TickWorkflowExecutor } from '../src/workflow/loader/tick.js';
 import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
+import { TypecheckProgramCache } from '../src/workflow/typecheck/program-cache.js';
+
+// One program cache for the file, so each compile of the engine source after the first reuses its
+// parse and checks (see CONTRIBUTING.md, "Test timeouts and storage sync").
+const typecheckCache = new TypecheckProgramCache();
 
 const repository = dirname(dirname(fileURLToPath(import.meta.url)));
 /** Recorded `gh` stdout from read-only probes of this repository, trimmed and scrubbed. */
@@ -1996,7 +2001,12 @@ describe('workflow files', { timeout: 80_000 }, () => {
         await new Promise((resolve) => setImmediate(resolve));
       },
     };
-    const result = await new WorkflowExecutor({ logger, processRunner: runner, clock }).execute({
+    const result = await new WorkflowExecutor({
+      typecheckCache,
+      logger,
+      processRunner: runner,
+      clock,
+    }).execute({
       kind: 'workflow.execute',
       typecheck: analysis.plan,
       runId: 'gate',
@@ -2041,7 +2051,7 @@ export default defineWorkflow({
       const analysis = analyzeTypecheckEntrypoint(file, cwd);
       if (!analysis.ok) throw new Error(analysis.error.message);
       const stateDir = join(cwd, 'state');
-      const first = await new WorkflowExecutor({ logger }).execute({
+      const first = await new WorkflowExecutor({ typecheckCache, logger }).execute({
         kind: 'workflow.execute',
         typecheck: analysis.plan,
         runId: 'run',
@@ -2066,6 +2076,7 @@ export default defineWorkflow({
       });
       const tick = (aheadMs: number) =>
         new TickWorkflowExecutor({
+          typecheckCache,
           logger,
           clock: { now: () => Date.now() + aheadMs, sleep: realSleep },
         }).execute({ kind: 'workflow.tick', runId: 'run', stateDir });

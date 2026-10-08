@@ -15,6 +15,7 @@ import { WorkflowExecutor, type WorkflowExecutorPlan } from '../src/workflow/loa
 import { readHarnessSelection } from '../src/workflow/loader/harness-selection.js';
 import type { WorkflowCommandResult } from '../src/workflow/loader/model.js';
 import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
+import { TypecheckProgramCache } from '../src/workflow/typecheck/program-cache.js';
 import {
   FileRunStore,
   FixtureHarness,
@@ -31,6 +32,10 @@ import {
   workflowLaunchOptionsSchema,
   workflowLaunchSchema,
 } from '../src/workflow/runtime/question-schema.js';
+
+// One program cache for the file, so each compile of the engine source after the first reuses its
+// parse and checks (see CONTRIBUTING.md, "Test timeouts and storage sync").
+const typecheckCache = new TypecheckProgramCache();
 
 const project = dirname(dirname(fileURLToPath(import.meta.url)));
 const fakeClaude = join(project, 'test/bin/fake-claude.mjs');
@@ -126,7 +131,12 @@ export default defineWorkflow({ name: 'launch-policy', version: '1', input: z.nu
   };
   const { clock, state } = virtualClock();
   const executor = (signal?: AbortSignal) =>
-    new WorkflowExecutor({ logger, clock, ...(signal === undefined ? {} : { signal }) });
+    new WorkflowExecutor({
+      typecheckCache,
+      logger,
+      clock,
+      ...(signal === undefined ? {} : { signal }),
+    });
   const ids = { runId: 'run', stateDir };
   /** The CLI's selection for a flag set: `--harness` values (none means cli) and config. */
   const select = (harness?: string | string[], config?: string) =>
@@ -354,6 +364,7 @@ describe('sticky launch policy', { timeout: 60_000 }, () => {
     const f = await setup('ask');
     expect(ok(await f.execute()).status).toBe('suspended');
     const answered = await new WorkflowExecutor({
+      typecheckCache,
       logger: { log: () => undefined },
     }).execute({
       kind: 'workflow.answer',

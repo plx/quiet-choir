@@ -22,6 +22,7 @@ import { ThresholdLogger } from '../src/application/execution.js';
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import type { RehearsalCommand } from '../src/workflow/loader/rehearsal.js';
 import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
+import { TypecheckProgramCache } from '../src/workflow/typecheck/program-cache.js';
 
 /** The repository checkout. */
 export const repository = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -29,6 +30,10 @@ export const repository = dirname(dirname(fileURLToPath(import.meta.url)));
 export const REPO = 'octo-org/quiet-choir';
 /** The fake's viewer. */
 export const VIEWER = 'octo-bot';
+
+// One program cache per test file (each file loads its own copy of this module), so each
+// rehearsal compile of the engine source after the first reuses its parse and checks.
+const typecheckCache = new TypecheckProgramCache();
 
 /** One logged gh call. */
 export interface FakeCall {
@@ -149,6 +154,7 @@ export function useGithubFake(prefix: string): GithubFake {
     if (!analysis.ok) throw new Error('invalid workflow fixture');
     const spawned: unknown[] = [];
     const result = await new WorkflowExecutor({
+      typecheckCache,
       logger: new ThresholdLogger('silent', () => undefined),
       processRunner: {
         run: (request) => {

@@ -31,6 +31,7 @@ import { OrphanProcessesError } from '../src/workflow/runtime/process-registry.j
 import { workflowFailure } from '../src/workflow/loader/failure.js';
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
+import { TypecheckProgramCache } from '../src/workflow/typecheck/program-cache.js';
 import { readWorkflowInput } from '../src/cli/input.js';
 import { jsonErrorPosition } from '../src/cli/json-position.js';
 import { workflowArgvFailure } from '../src/cli/launch.js';
@@ -45,6 +46,11 @@ vi.mock('../src/workflow/runtime/store.js', async (importOriginal) => {
   const actual = await importOriginal<typeof store>();
   return { ...actual, writeRun: vi.fn(actual.writeRun), lockRun: vi.fn(actual.lockRun) };
 });
+
+// One program cache for the file, so each compile of the engine source after the first reuses its
+// parse and checks (see CONTRIBUTING.md, "Test timeouts and storage sync").
+const typecheckCache = new TypecheckProgramCache();
+
 const actualStore = await vi.importActual<typeof store>('../src/workflow/runtime/store.js');
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -403,15 +409,17 @@ export default defineWorkflow({
     vi.mocked(lockRun).mockRejectedValueOnce(
       Object.assign(new Error('injected EACCES'), { code: 'EACCES' }),
     );
-    const result = await new WorkflowExecutor({ logger: { log: vi.fn() } }).execute({
-      kind: 'workflow.execute',
-      typecheck: analysis.plan,
-      runId: 'lock-storage',
-      stateDir: join(stateDir, 'state'),
-      cwd: root,
-      resume: false,
-      input: null,
-    });
+    const result = await new WorkflowExecutor({ typecheckCache, logger: { log: vi.fn() } }).execute(
+      {
+        kind: 'workflow.execute',
+        typecheck: analysis.plan,
+        runId: 'lock-storage',
+        stateDir: join(stateDir, 'state'),
+        cwd: root,
+        resume: false,
+        input: null,
+      },
+    );
     if (result.ok) throw new Error('expected a failure');
     expect(result.code).toBe('workflow.storage');
     expect(workflowExitCodes[result.code]).toBe(74);
@@ -451,6 +459,7 @@ export default defineWorkflow({
     if (!analysis.ok) throw new Error(analysis.error.message);
     const controller = new AbortController();
     const result = await new WorkflowExecutor({
+      typecheckCache,
       signal: controller.signal,
       logger: {
         log(_level, message) {
@@ -517,6 +526,7 @@ export default defineWorkflow({
     };
     try {
       const result = await new WorkflowExecutor({
+        typecheckCache,
         signal: controller.signal,
         logger: { log: vi.fn() },
       }).execute({
@@ -578,6 +588,7 @@ export default defineWorkflow({
   };
   try {
     const result = await new WorkflowExecutor({
+      typecheckCache,
       signal: controller.signal,
       logger: { log: vi.fn() },
     }).execute({
@@ -634,7 +645,11 @@ export default defineWorkflow({
     if (!analysis.ok) throw new Error(analysis.error.message);
     const runs = join(stateDir, 'state');
     const launcher = ['/x/node', '/y/run.js'];
-    const executor = new WorkflowExecutor({ logger: { log: vi.fn() }, commandLauncher: launcher });
+    const executor = new WorkflowExecutor({
+      typecheckCache,
+      logger: { log: vi.fn() },
+      commandLauncher: launcher,
+    });
     const resume = (...flags: string[]) => [
       ...launcher,
       'workflow',

@@ -72,7 +72,10 @@ const readSpy = vi.mocked(requiredRun.readRequiredRun);
 const project = dirname(dirname(fileURLToPath(import.meta.url)));
 const roots: string[] = [];
 const logger = new ThresholdLogger('silent', () => undefined);
-const tick = new TickWorkflowExecutor({ logger });
+// One program cache for the file: every fixture imports the engine source, so each run start or
+// tick resume after the first reuses its parse and checks instead of compiling it again.
+const typecheckCache = new TypecheckProgramCache();
+const tick = new TickWorkflowExecutor({ logger, typecheckCache });
 const pastClock: WorkflowClock = {
   now: () => Date.now() - 120_000,
   sleep: (_ms, signal) =>
@@ -207,6 +210,7 @@ export default defineWorkflow({ name: 'tick',
   };
   const first = await new WorkflowExecutor({
     logger,
+    typecheckCache,
     ...(kind === 'future' || kind === 'signal' ? {} : { clock: pastClock }),
   }).execute(plan);
   expect(first).toMatchObject({
@@ -550,7 +554,7 @@ export default defineWorkflow({ name: 'debounce', version: '1', input: z.null(),
     const analysis = analyzeTypecheckEntrypoint(file, root);
     if (!analysis.ok) throw new Error(analysis.error.message);
     const stateDir = join(root, 'state');
-    const first = await new WorkflowExecutor({ logger }).execute({
+    const first = await new WorkflowExecutor({ logger, typecheckCache }).execute({
       kind: 'workflow.execute',
       typecheck: analysis.plan,
       runId: 'run',
@@ -566,7 +570,7 @@ export default defineWorkflow({ name: 'debounce', version: '1', input: z.null(),
     };
     expect(
       oneEntryPerRun(
-        await new TickWorkflowExecutor({ logger, clock: futureClock }).execute({
+        await new TickWorkflowExecutor({ logger, typecheckCache, clock: futureClock }).execute({
           kind: 'workflow.tick',
           runId: 'run',
           stateDir,
@@ -615,7 +619,7 @@ export default defineWorkflow({ name: 'debounce', version: '1', input: z.null(),
     const analysis = analyzeTypecheckEntrypoint(file, root);
     if (!analysis.ok) throw new Error(analysis.error.message);
     const stateDir = join(root, 'state');
-    const first = await new WorkflowExecutor({ logger }).execute({
+    const first = await new WorkflowExecutor({ logger, typecheckCache }).execute({
       kind: 'workflow.execute',
       typecheck: analysis.plan,
       runId: 'run',
@@ -636,7 +640,7 @@ export default defineWorkflow({ name: 'debounce', version: '1', input: z.null(),
     };
     expect(
       oneEntryPerRun(
-        await new TickWorkflowExecutor({ logger, clock: futureClock }).execute({
+        await new TickWorkflowExecutor({ logger, typecheckCache, clock: futureClock }).execute({
           kind: 'workflow.tick',
           runId: 'run',
           stateDir,
@@ -650,7 +654,7 @@ export default defineWorkflow({ name: 'debounce', version: '1', input: z.null(),
 
   it('limits batch resumes and keeps per-run failure separate from command failure', async () => {
     const f = await fixture('failure');
-    const executor = new WorkflowExecutor({ logger, clock: pastClock });
+    const executor = new WorkflowExecutor({ logger, typecheckCache, clock: pastClock });
     expect(await executor.execute({ ...f.plan, runId: 'second' })).toMatchObject({ ok: true });
     // Created last but first in ascending run-ID order, so the file system's listing order and
     // creation order both disagree with the order tick must follow.
@@ -695,7 +699,7 @@ export default defineWorkflow({ name: 'debounce', version: '1', input: z.null(),
         .map((line) => (JSON.parse(line) as { type: string }).type);
     expect(await types()).toEqual(['wait.opened', 'run.suspended']);
     expect(
-      await new WorkflowExecutor({ logger }).execute({ ...f.plan, resume: true }),
+      await new WorkflowExecutor({ logger, typecheckCache }).execute({ ...f.plan, resume: true }),
     ).toMatchObject({ ok: true, run: { status: 'suspended' } });
     expect(await types()).toEqual(['wait.opened', 'run.suspended', 'run.suspended']);
     await writeAnswer({ stateDir: f.stateDir, runId: 'run', stepId: 'ready', value: true });
@@ -926,7 +930,7 @@ export default defineWorkflow({ name: 'debounce', version: '1', input: z.null(),
       sleep: (ms, signal) => pastClock.sleep(ms, signal),
     };
     expect(
-      await new TickWorkflowExecutor({ logger, clock: futureClock }).execute(
+      await new TickWorkflowExecutor({ logger, typecheckCache, clock: futureClock }).execute(
         futureByRealClock.tickPlan,
       ),
     ).toMatchObject({
@@ -942,7 +946,7 @@ export default defineWorkflow({ name: 'debounce', version: '1', input: z.null(),
       sleep: (ms, signal) => pastClock.sleep(ms, signal),
     };
     expect(
-      await new TickWorkflowExecutor({ logger, clock: farPastClock }).execute(
+      await new TickWorkflowExecutor({ logger, typecheckCache, clock: farPastClock }).execute(
         dueByRealClock.tickPlan,
       ),
     ).toMatchObject({
@@ -1112,6 +1116,7 @@ export default defineWorkflow({ name: 'debounce', version: '1', input: z.null(),
     await writeFile(join(lock, 'processes', 'x.json'), '{not json');
     const launched = new TickWorkflowExecutor({
       logger,
+      typecheckCache,
       commandLauncher: ['node', '/opt/qc/bin/run.js'],
     });
     const result = oneEntryPerRun(await launched.execute(f.tickPlan));
@@ -1280,6 +1285,7 @@ export default defineWorkflow({ name: 'debounce', version: '1', input: z.null(),
     }));
     const launched = new TickWorkflowExecutor({
       logger,
+      typecheckCache,
       commandLauncher: ['node', '/opt/qc/bin/run.js'],
     });
     const result = oneEntryPerRun(await launched.execute(f.tickPlan));
@@ -1300,7 +1306,7 @@ export default defineWorkflow({ name: 'debounce', version: '1', input: z.null(),
     const relativeStateDir = relative(process.cwd(), f.stateDir);
     expect(relativeStateDir).not.toBe(f.stateDir);
     const result = oneEntryPerRun(
-      await new TickWorkflowExecutor({ logger }).execute({
+      await new TickWorkflowExecutor({ logger, typecheckCache }).execute({
         ...f.tickPlan,
         stateDir: relativeStateDir,
       }),
@@ -1384,7 +1390,9 @@ export default defineWorkflow({ name: 'debounce', version: '1', input: z.null(),
     };
     expect(
       oneEntryPerRun(
-        await new TickWorkflowExecutor({ logger, harness: injected }).execute(f.tickPlan),
+        await new TickWorkflowExecutor({ logger, typecheckCache, harness: injected }).execute(
+          f.tickPlan,
+        ),
       ),
     ).toMatchObject({
       resumed: [{ runId: 'run', outcome: 'completed' }],
@@ -1414,12 +1422,7 @@ function jumpAfterDeadline(offsetMs: number): () => void {
  */
 async function manyDueRuns(count: number) {
   const f = await fixture('due', false, { runId: 'due-00' });
-  // The shared program cache turns every start after the first into an incremental type check.
-  const executor = new WorkflowExecutor({
-    logger,
-    clock: pastClock,
-    typecheckCache: new TypecheckProgramCache(),
-  });
+  const executor = new WorkflowExecutor({ logger, typecheckCache, clock: pastClock });
   const ids = Array.from({ length: count }, (_, i) => `due-${String(i).padStart(2, '0')}`);
   for (const runId of ids.slice(1))
     expect(await executor.execute({ ...f.plan, runId })).toMatchObject({
@@ -1689,7 +1692,10 @@ describe('tick deadline interruption and claim margin', { timeout: 40_000 }, () 
     expect(
       oneEntryPerRun(await tick.execute({ kind: 'workflow.tick', stateDir, runId: 'done' })),
     ).toMatchObject({ resumed: [{ runId: 'done', outcome: 'completed' }], exitCode: 0 });
-    const later = await new WorkflowExecutor({ logger }).execute({ ...f.plan, runId: 'later' });
+    const later = await new WorkflowExecutor({ logger, typecheckCache }).execute({
+      ...f.plan,
+      runId: 'later',
+    });
     expect(later).toMatchObject({ ok: true, run: { status: 'suspended' } });
     const before = Object.fromEntries(
       await Promise.all(ids.map(async (id) => [id, await runBytes(stateDir, id)] as const)),
@@ -1771,7 +1777,10 @@ describe('tick deadline interruption and claim margin', { timeout: 40_000 }, () 
     const f = await fixture('future', false, { runId: 'a-later' });
     const { stateDir } = f;
     expect(
-      await new WorkflowExecutor({ logger }).execute({ ...f.plan, runId: 'b-later' }),
+      await new WorkflowExecutor({ logger, typecheckCache }).execute({
+        ...f.plan,
+        runId: 'b-later',
+      }),
     ).toMatchObject({ ok: true, run: { status: 'suspended' } });
     // Capture the deadline timer and fire it from the third read: the first read of the second
     // watch pass, so b-later is never read again.

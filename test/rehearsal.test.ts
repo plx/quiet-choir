@@ -35,11 +35,16 @@ import {
 import { ThresholdLogger } from '../src/application/execution.js';
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
+import { TypecheckProgramCache } from '../src/workflow/typecheck/program-cache.js';
 import { RehearsalHarness, rehearsalState } from '../src/workflow/loader/rehearsal.js';
 import { fixturesFromRun } from '../src/workflow/loader/fixtures.js';
 import { readHarnessSelection } from '../src/workflow/loader/harness-selection.js';
 import { materializeInvocation } from '../src/harnesses/invocation.js';
 import { testInvocation } from './harness-invocation.js';
+
+// One program cache for the file, so each compile of the engine source after the first reuses its
+// parse and checks (see CONTRIBUTING.md, "Test timeouts and storage sync").
+const typecheckCache = new TypecheckProgramCache();
 
 const roots: string[] = [];
 async function setup() {
@@ -1216,6 +1221,7 @@ export default defineWorkflow({
       },
     };
     const result = await new WorkflowExecutor({
+      typecheckCache,
       logger: new ThresholdLogger('silent', () => undefined),
       processRunner: spy,
     }).execute({
@@ -1347,6 +1353,7 @@ export default defineWorkflow({
     };
     try {
       const result = await new WorkflowExecutor({
+        typecheckCache,
         logger: new ThresholdLogger('silent', () => undefined),
         processRunner: spy,
       }).execute({

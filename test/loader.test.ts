@@ -10,6 +10,11 @@ import { ThresholdLogger } from '../src/application/execution.js';
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import type { ExecuteWorkflowPlan } from '../src/workflow/loader/model.js';
 import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
+import { TypecheckProgramCache } from '../src/workflow/typecheck/program-cache.js';
+
+// One program cache for the file, so each compile of the engine source after the first reuses its
+// parse and checks (see CONTRIBUTING.md, "Test timeouts and storage sync").
+const typecheckCache = new TypecheckProgramCache();
 
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const roots: string[] = [];
@@ -33,7 +38,10 @@ function plan(file: string) {
 }
 
 function executor(): WorkflowExecutor {
-  return new WorkflowExecutor({ logger: new ThresholdLogger('silent', () => undefined) });
+  return new WorkflowExecutor({
+    typecheckCache,
+    logger: new ThresholdLogger('silent', () => undefined),
+  });
 }
 
 afterEach(async () => {
@@ -188,6 +196,7 @@ export const invalid: number = 'wrong';`);
     };
     const log = vi.fn();
     const runner = new WorkflowExecutor({
+      typecheckCache,
       logger: { log },
       signal: new AbortController().signal,
       harness: { invoke: vi.fn() },
@@ -251,7 +260,7 @@ export default defineWorkflow({
   },
 });`);
     const log = vi.fn();
-    const runner = new WorkflowExecutor({ logger: { log } });
+    const runner = new WorkflowExecutor({ typecheckCache, logger: { log } });
     const executed = await runner.execute({
       ...plan(file),
       kind: 'workflow.execute',
