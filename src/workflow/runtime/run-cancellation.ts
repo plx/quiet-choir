@@ -1,5 +1,5 @@
 import type { CommandLauncher } from './commands.js';
-import { recordedEngine } from './engine.js';
+import { oldFormatMessage, recordedEngine } from './engine.js';
 import { RunObservations } from './observability.js';
 import type { RunEvent } from './observability-model.js';
 import { missingRunError } from './read-required-run.js';
@@ -84,7 +84,8 @@ export interface CancelledRecord {
  * status, error and root cause from `reason`; replaces the recovery cause and hint; settles every
  * running or suspended child frame as cancelled; and ends a new execution entry with a
  * `run.cancelled` event, as the body's catch would. Steps and worktrees are left as they are. A
- * format-1 record must not be passed: it cannot be saved without the definition-driven migration.
+ * record may be passed only in format 6 or 7: format 1 cannot be saved without the
+ * definition-driven migration, and formats 2 to 5 are read-only history.
  * @internal
  */
 export function cancelRecord(
@@ -159,8 +160,9 @@ export interface CancelUnownedRunResult {
  * End an unfinished run that no process owns as `cancelled` (ADR 0057). Takes the run lock without
  * recovering a dead or released owner's lock (that refuses with `run.locked` and the unlock
  * command), re-reads the record under it, and saves {@link cancelRecord}'s transition durably. A
- * run that already ended is reported as it is and not written. A format-1 record is refused with
- * `run.incompatible`, unchanged. Runs no workflow code, launches nothing and leaves steps and
+ * run that already ended is reported as it is and not written, in any format. An unfinished record
+ * in any format but 6 or 7 is refused with `run.incompatible`, unchanged: format 1 cannot be saved
+ * without the definition, and formats 2 to 5 are read-only. Runs no workflow code, launches nothing and leaves steps and
  * worktrees as they are. @internal
  */
 export async function cancelUnownedRun(
@@ -190,6 +192,11 @@ export async function cancelUnownedRun(
         `Run ${runId} is ${record.status} in checkpoint format 1, which workflow cancel cannot save without the workflow definition. Resume it once with this build, or remove it with workflow rm.`,
         { formatVersion: 1, status: record.status },
       );
+    else if (record.formatVersion !== 6 && record.formatVersion !== 7)
+      throw new RunRefusedError('run.incompatible', runId, oldFormatMessage(record.formatVersion), {
+        formatVersion: record.formatVersion,
+        status: record.status,
+      });
     else {
       const previousStatus = record.status;
       const reason = new Error(

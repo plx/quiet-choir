@@ -353,20 +353,21 @@ waits for the run to end. Success (exit 0) returns
 that cancel itself ended under the lock, and null when an owner ended the run or it had already
 ended. A run that already ended is a no-op with `signalsSent: 0`, `owner: null` and
 `previousStatus: null`. Refusals exit 3 and send nothing: `run.not_found`; `run.incompatible` for an
-unowned format-1 checkpoint, which cannot be saved without its workflow (resume it once or remove
-it); and `run.locked` for an unreadable, foreign-host, released, dead or unobservable owner, or one
-without a recorded or with a mismatched `osStartTime` (`error.details` has `lockPath`, `pid`,
-`host`, `state`, `osStartTime` and `reason`, plus `next` with the `workflow unlock` command for a
-released, dead or mismatched owner, the cases whose message names it). After `workflow unlock`
-clears a dead owner's lock, a second cancel ends the run. After the signal, an owner that exits
-without saving a terminal status is `run.unowned` with `details.reason: "owner-exited"`,
-`signalsSent` and `forced`, and the next tick may resume the run; `run.unowned` has no other reason.
-The wait is bounded by `--timeout` per signal: past it, `watch.timeout` (exit 79) with
-`details: {timeoutMs, signalsSent, forced, pid}` and the last saved `status`; the request stays for
-the owner to honour late. With `--force`, cancel first sends a second SIGINT if the same verified
-owner still holds the run at the deadline; the owner then force-kills its groups and exits 130,
-usually leaving `running` for tick's stale recovery. The cancelled owner itself exits 130 with
-`workflow.interrupted` and a saved `cancelled` status, which tick observes and never resumes.
+unowned unfinished format-1 checkpoint, which cannot be saved without its workflow (resume it once
+or remove it), or format 2 to 5 checkpoint, which is read-only (inspect it, or remove it); and
+`run.locked` for an unreadable, foreign-host, released, dead or unobservable owner, or one without a
+recorded or with a mismatched `osStartTime` (`error.details` has `lockPath`, `pid`, `host`, `state`,
+`osStartTime` and `reason`, plus `next` with the `workflow unlock` command for a released, dead or
+mismatched owner, the cases whose message names it). After `workflow unlock` clears a dead owner's
+lock, a second cancel ends the run. After the signal, an owner that exits without saving a terminal
+status is `run.unowned` with `details.reason: "owner-exited"`, `signalsSent` and `forced`, and the
+next tick may resume the run; `run.unowned` has no other reason. The wait is bounded by `--timeout`
+per signal: past it, `watch.timeout` (exit 79) with `details: {timeoutMs, signalsSent, forced, pid}`
+and the last saved `status`; the request stays for the owner to honour late. With `--force`, cancel
+first sends a second SIGINT if the same verified owner still holds the run at the deadline; the
+owner then force-kills its groups and exits 130, usually leaving `running` for tick's stale
+recovery. The cancelled owner itself exits 130 with `workflow.interrupted` and a saved `cancelled`
+status, which tick observes and never resumes.
 
 `execute --dry-run --json` returns a `workflow.rehearsal` document with `ok:true`, calls (each with
 `worktree`, `{synthesized: true, base, baseSource}` for a synthesized isolated call or null),

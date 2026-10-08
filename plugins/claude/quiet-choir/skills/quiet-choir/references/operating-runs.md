@@ -309,11 +309,12 @@ no-op with `signalsSent: 0`). `previousStatus` is `suspended` or `running` when 
 an unowned run, and null otherwise. It refuses without signalling or writing: `run.locked` (exit 3)
 for a foreign, dead, released or unverifiable owner (for a dead or released owner, run the
 `workflow unlock` command it prints, then cancel again), and `run.incompatible` (exit 3) for an
-unowned format-1 checkpoint. An owner that exits without saving `cancelled` (an embedder, or a
-forced kill) is `run.unowned` (exit 3) with `details.reason: "owner-exited"`; tick may resume that
-run. After `--timeout` (default 30s) it exits 79 with the last saved `status`; `--force` then sends
-one more SIGINT to the same verified owner, which force-kills its groups and can leave `running` for
-stale recovery. Cancelling a run that tick is executing stops that tick pass.
+unowned unfinished checkpoint in format 1 to 5. An owner that exits without saving `cancelled` (an
+embedder, or a forced kill) is `run.unowned` (exit 3) with `details.reason: "owner-exited"`; tick
+may resume that run. After `--timeout` (default 30s) it exits 79 with the last saved `status`;
+`--force` then sends one more SIGINT to the same verified owner, which force-kills its groups and
+can leave `running` for stale recovery. Cancelling a run that tick is executing stops that tick
+pass.
 
 For code/schema edits use [acceptance or fork recovery](durability.md#choose-a-recovery-path);
 `--resume --accept-code-change` retains per-step compatibility checks and refuses, without changing

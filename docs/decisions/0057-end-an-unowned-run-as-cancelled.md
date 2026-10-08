@@ -55,7 +55,10 @@ run lock. There is no new flag: the command's intent is to stop the run.
 - **Format 1.** A format-1 record cannot be saved without the definition-driven migration, the same
   rule the runner applies, and cancel imports no workflow code. It is refused with
   `run.incompatible` (exit 3), unchanged; resume it once with this build, or remove it with
-  `workflow rm`. Formats 6 and 7 are saved (a flat format-6 record migrates on that save).
+  `workflow rm`. Formats 6 and 7 are saved (a flat format-6 record migrates on that save). Formats 2
+  to 5 are read-only history that no build resumes, so an unfinished record in one is also refused
+  with `run.incompatible` (exit 3), unchanged, with the same message the runner gives; cancel never
+  rewrites it into format 7. A run that already ended is reported in any format.
 - **What stays.** Steps, worktrees and the run's other state are left as they are, as on the
   runner's definition-free preflight path. A suspended run already cleaned its worktrees when it
   parked. No notification command or event stream is delivered, because no execution is running.

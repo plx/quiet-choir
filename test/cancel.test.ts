@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -398,6 +398,35 @@ describe('workflow cancel refusals', () => {
     expect(existsSync(join(stateDir, 'run-1', 'lock'))).toBe(false);
     expect(existsSync(`${legacy}.lock`)).toBe(false);
   });
+
+  it.each([5, 4])(
+    'refuses an unowned running format-%i checkpoint with run.incompatible and leaves it unchanged',
+    async (formatVersion) => {
+      // Formats 2 to 5 are read-only history (and only format 6 or newer can be suspended): build
+      // a running one from a completed run's valid record.
+      const workflow = blockingWorkflow();
+      workflow.state.block = false;
+      expect(await (await workflow.start(false)).pending).toMatchObject({ status: 'completed' });
+      const { seq, engine, ...current } = await readRun({ stateDir, runId: 'run-1' });
+      expect([seq, engine]).not.toContain(undefined);
+      await rm(join(stateDir, 'run-1'), { recursive: true });
+      const legacy = join(stateDir, 'run-1.json');
+      await writeFile(legacy, JSON.stringify({ ...current, formatVersion, status: 'running' }));
+      const before = await readFile(legacy, 'utf8');
+      const failure = failed(await cancel(vi.fn()));
+      expect(failure.code).toBe('run.incompatible');
+      expect(workflowExitCodes[failure.code]).toBe(3);
+      expect(failure.message).toContain(`format version ${String(formatVersion)}`);
+      expect(failure.details).toMatchObject({ formatVersion, status: 'running' });
+      expect(await readFile(legacy, 'utf8')).toBe(before);
+      // Taking the lock creates an empty run directory; nothing else, no `.vN` backup, remains.
+      expect((await readdir(stateDir)).filter((name) => name !== '.gitignore')).toEqual([
+        'run-1',
+        'run-1.json',
+      ]);
+      expect(await readdir(join(stateDir, 'run-1'))).toEqual([]);
+    },
+  );
 
   it('refuses a missing run with run.not_found', async () => {
     expect(failed(await cancel(vi.fn())).code).toBe('run.not_found');
