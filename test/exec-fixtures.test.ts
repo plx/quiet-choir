@@ -677,8 +677,10 @@ describe('fixture export of settled and absorbed exec failures', () => {
     });
     expect(source.output).toBe('process');
     expect(source.steps['probe']?.status).toBe('settled-failed');
-    expect(source.steps['probe']?.execError).toMatchObject({ truncated: true });
-    expect(source.steps['probe']?.settledError?.stdoutTail).toBe('{"n":1}');
+    expect(source.steps['probe']?.execError).toMatchObject({
+      truncated: true,
+      stdoutTail: '{"n":1}',
+    });
     const fixtures = fixturesFromRun(source);
     expect(fixtures).toEqual({ version: 1, unmatched: 'error', calls: [], commands: 'fixture' });
     await expectReplayFailsAt(workflow, fixtures, 'probe');
