@@ -2,6 +2,18 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- A dry-run resume or fork now previews `ctx.merge` over captured commits and replayed
+  `ctx.worktree` handles instead of refusing it (behavior change, #310). The preview runs the real
+  integration code, so `merged`, `conflicts` and the `onConflict: 'fail'` error match a real merge,
+  but writes its objects to a temporary object directory (`quiet-choir-rehearsal-objects-*`, with
+  the repository's objects as a read-only alternate and ref updates refused) that is removed when
+  the rehearsal ends. The preview commit is dated at the rehearsal attempt's start and exists only
+  during the rehearsal; nothing is pinned, published or locked, and target checks such as a branch
+  checked out elsewhere are not rehearsed yet. A foreign handle fails with the real configuration
+  error, an unavailable input commit with the real `Merge input commit is unavailable` error, and a
+  preview without a resolvable repository with a configuration error. The rehearsal report's
+  `merges` entries and the `onWorktree` merge event gain `merged` and `conflicts`, and the
+  `rehearsal-git` refusal no longer lists merges.
 - Exec fixture rules accept `error` and an optional `kind` to simulate a command that fails without
   a result, such as a missing binary or a timeout (#307). The command rejects immediately with an
   `ExecError` whose message is the `error` text and whose kind defaults to `process` (the kind the

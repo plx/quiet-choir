@@ -149,9 +149,12 @@ handle and integration locks span durable outcome saves, not only callbacks. A v
 abort still gets captured. Forks may reuse immutable changes, never another run’s handle ownership.
 Git merge computations leave checkouts alone; only an explicit clean checkout target may update its
 tree. Cleanup touches only ledger-owned caches/refs, and failed cleanup cannot repeat valid work.
-Rehearsal never mutates Git: `worktree-rehearsal.ts` synthesizes fresh isolation and unchanged
-merges through a read-only `rev-parse` driver, and `RunWorktrees` refuses every command under it.
-Only the accepted-replay probe synthesizes every worktree effect, with no process runner at all. See
+Rehearsal never mutates the repository: `worktree-rehearsal.ts` synthesizes fresh isolation and
+unchanged merges through a read-only `rev-parse` driver, and previews merges of captured commits
+with the real `computeIntegration` through a quarantined driver (a temporary object directory, the
+repository's objects as an alternate, no ref updates) that the runner removes after the run drains;
+`RunWorktrees` refuses every command under rehearsal. Only the accepted-replay probe synthesizes
+every worktree effect, with no process runner at all. See
 [ADR 0022](../../../docs/decisions/0022-runtime-owned-worktree-isolation.md).
 
 Resolve restricted/inherit mode before agent identity and preserve it through checkout preparation.

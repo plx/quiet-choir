@@ -196,19 +196,34 @@ unchanged changes returns the no-op integration a real run would compute,
 `{ commit, merged: [], conflicts: [] }`, with `commit` the existing target branch or `HEAD`. Step
 IDs and fingerprints are those of the real run.
 
-The base is resolved once per revision with `git rev-parse` through the real process runner. The
-runtime refuses every other Git command under rehearsal before it reaches the runner, so a dry-run
-never creates refs, worktrees, objects or cache directories. An unresolvable base, a repository with
-no committed `HEAD`, or an isolated `cwd` outside the repository fails with the configuration error
-a real run reports. Outside a Git working tree, or when Git cannot run, a placeholder of forty zeros
-stands in for the base, with a warning that the real run fails. A dry-run resume of an interrupted
-real attempt reuses its recorded base.
+A dry-run resume or fork reaches `ctx.merge` with real inputs when it replays or reuses a completed
+isolated step that captured a commit, or replays a `ctx.worktree` handle (resolved from the copied
+run's ledger, with the real ownership check). Such a merge is previewed with the real integration
+code, so `merged`, `conflicts` and an `onConflict: 'fail'` error match what a real merge would
+report. The first preview creates a temporary object directory (`quiet-choir-rehearsal-objects-*`
+under the system temporary directory) with the repository's objects as a read-only alternate; from
+then on every rehearsal Git command writes objects only there, runs only `rev-parse`, `merge-tree`,
+`commit-tree` and `var`, and cannot update a ref. Later steps of the same rehearsal can use the
+preview commit, for example as an isolation base. The directory is removed when the rehearsal ends
+(a killed process can leave it behind), so the preview `commit` no longer exists afterwards; it is
+dated at the rehearsal attempt's start, so it also differs from a later real run's commit. A preview
+records no merge preparation and pins, publishes or locks nothing; target checks such as a branch
+checked out elsewhere are not rehearsed. Without a resolvable repository, a preview fails with a
+configuration error.
 
-`ctx.worktree`, `ctx.exec` or `ctx.step` on a worktree handle, an agent call isolated on a handle,
-and a merge of a captured (non-null) commit still fail before Git or agent invocation with a
-configuration error. Rehearse those with a fixture harness in a temporary repository. A branch that
-depends on a captured change, such as `if (edit.worktree?.commit)`, takes the unchanged path in
-rehearsal.
+The base is resolved once per revision with `git rev-parse` through the real process runner. The
+runtime refuses every other Git command under rehearsal before it reaches the runner, apart from a
+merge preview's quarantined commands, so a dry-run never creates refs, worktrees, cache directories
+or repository objects. An unresolvable base, a repository with no committed `HEAD`, or an isolated
+`cwd` outside the repository fails with the configuration error a real run reports. Outside a Git
+working tree, or when Git cannot run, a placeholder of forty zeros stands in for the base, with a
+warning that the real run fails. A dry-run resume of an interrupted real attempt reuses its recorded
+base.
+
+`ctx.worktree`, `ctx.exec` or `ctx.step` on a worktree handle, and an agent call isolated on a
+handle still fail before Git or agent invocation with a configuration error. Rehearse those with a
+fixture harness in a temporary repository. A branch that depends on a captured change, such as
+`if (edit.worktree?.commit)`, takes the unchanged path in rehearsal.
 
 ## Synthesis and report
 
@@ -232,8 +247,10 @@ report contains:
   plan, resolved limits, and planning/fixture error when present. `worktree` is
   `{ synthesized: true, base, baseSource }` for a synthesized isolated call (`baseSource` is
   `resolved`, `recorded` or `placeholder`) and null otherwise.
-- `merges`: synthesized `ctx.merge` effects with step ID, `synthesized: true`, `commit`, the number
-  of `inputs`, the `target` kind (`ref`, `checkout` or `branch`) and `baseSource`.
+- `merges`: synthesized `ctx.merge` effects with step ID, `synthesized: true`, `commit` (a previewed
+  commit exists only during the rehearsal), the number of `inputs`, the `target` kind (`ref`,
+  `checkout` or `branch`), `baseSource`, and the `merged` commits and `conflicts`
+  (`{ commit, files }`) a real merge would report.
 - `plan`: binary, argv, stdin, cwd, process limits, and private-file placeholders. File contents are
   omitted from the report. The same pure `CliHarness.plan()` validates real invocations, including
   Codex strict-schema checks, before materializing private files.
