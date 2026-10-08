@@ -46,12 +46,13 @@ function terminal(status: RunRecord['status']): status is TerminalStatus {
 }
 
 /**
- * How an unfinished run continues after its owner exited without saving a terminal status, when
- * its lock is gone or re-owned and the cancel request was removed.
+ * How an unfinished run continues after its owner exited without saving a terminal status, when its
+ * lock is gone or re-owned and no tick retires that owner's lock.
  */
 function resumeNote(status: RunRecord['status']): string {
-  if (status === 'suspended') return ', and the next workflow tick may resume it';
-  if (status === 'running') return ', and stale recovery by the next workflow tick may resume it';
+  if (status === 'suspended') return '; otherwise the next workflow tick may resume it';
+  if (status === 'running')
+    return '; otherwise stale recovery by the next workflow tick may resume it';
   return '';
 }
 
@@ -150,10 +151,9 @@ function lockedRefusal(
  * unless the lock owner is a live process on this host with its recorded birth identity; leaves a
  * request bound to that owner's lock token, so only that execution honours it; re-verifies the
  * owner immediately before each SIGINT; and waits for the run to end. An owner that exits without
- * saving (force-killed) but leaves its lock with that token keeps the request, which the next tick
- * honours when it retires that lock (ADR 0058). Refusals throw
- * `RunRefusedError`; the bounded wait returns a `watch.timeout` failure carrying the last saved
- * record. @internal
+ * saving (force-killed) keeps the request bound to its token, which a tick honours when it retires
+ * exactly that owner's lock (ADR 0058). Refusals throw `RunRefusedError`; the bounded wait returns a
+ * `watch.timeout` failure carrying the last saved record. @internal
  */
 export async function cancelRun(
   plan: CancelWorkflowPlan,
@@ -309,27 +309,26 @@ export async function cancelRun(
         },
       );
     }
-    if (outcome === 'gone' && !terminal(run.status)) {
-      // A force-killed owner (a --force escalation, or this SIGINT counted as its second signal)
-      // leaves its lock behind with the targeted token: keep the request bound to it, so the tick
-      // that retires exactly that lock saves the run cancelled instead of resuming it (ADR 0058).
-      const left = await observeOwner(lockPath);
-      if (left.kind === 'owner' && left.owner.token === owner.token)
-        throw new RunRefusedError(
-          'run.unowned',
-          runId,
-          `Run ${runId}'s owner PID ${String(owner.pid)} exited without saving cancelled; the run is ${run.status}. The cancel request stays bound to the exited owner's lock, so the next workflow tick ends the run as cancelled instead of recovering it.`,
-          { reason: 'owner-exited', pid: owner.pid, signalsSent, forced, requestKept: true },
-        );
-    }
-    await removeCancelRequest(requestPath, requestId);
-    if (outcome === 'terminal' && terminal(run.status))
+    if (outcome === 'terminal' && terminal(run.status)) {
+      await removeCancelRequest(requestPath, requestId);
       return result(run.status, signalsSent, signalsSent === 0 ? null : target);
+    }
+    // The owner exited without saving a terminal status. Keep the request bound to its token on
+    // every path (ADR 0058): a tick may already have retired that owner's lock and be about to
+    // check the request under its own lock, and a request no later acquisition retires is inert.
+    const left = await observeOwner(lockPath);
+    const exited = `Run ${runId}'s owner PID ${String(owner.pid)} exited without saving cancelled; the run is ${run.status}.`;
     throw new RunRefusedError(
       'run.unowned',
       runId,
-      `Run ${runId}'s owner PID ${String(owner.pid)} exited without saving cancelled; the run is ${run.status}${resumeNote(run.status)}.`,
-      { reason: 'owner-exited', pid: owner.pid, signalsSent, forced, requestKept: false },
+      left.kind === 'owner' && left.owner.token === owner.token
+        ? // A force-killed owner (a --force escalation, or this SIGINT counted as its second
+          // signal) leaves its lock behind with the targeted token.
+          `${exited} The cancel request stays bound to the exited owner's lock, so the next workflow tick ends the run as cancelled instead of recovering it.`
+        : // Retired, released or re-owned: a tick reclaiming the dead lock looks the same as an
+          // embedder that released it cleanly, or another writer that took it.
+          `${exited} The cancel request stays bound to the exited owner, whose lock is gone or re-owned: a workflow tick that retires that owner's lock ends the run as cancelled${resumeNote(run.status)}.`,
+      { reason: 'owner-exited', pid: owner.pid, signalsSent, forced, requestKept: true },
     );
   }
 }
