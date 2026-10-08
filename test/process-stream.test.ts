@@ -233,8 +233,12 @@ it('clears the idle deadline once the leader exits, so a silent leftover is reap
   const config = await request(`
 const {spawn}=require('node:child_process');
 process.stdin.resume();process.stdin.on('end',()=>{
- spawn(process.execPath,['-e',"process.on('SIGTERM',()=>{});setTimeout(()=>{},5000)"],{stdio:'inherit'});
- let n=0;const timer=setInterval(()=>{process.stdout.write('tick\\n');if(++n===5){clearInterval(timer);process.exit(0);}},20);
+ const leftover=spawn(process.execPath,['-e',"process.on('SIGTERM',()=>{});require('node:fs').writeSync(3,'r');setTimeout(()=>{},5000)"],{stdio:['ignore','inherit','inherit','pipe']});
+ // Tick only once the leftover has installed its handler: on a loaded machine its startup can
+ // outlast the ticks, and SIGTERM would then kill it before it could ignore the signal.
+ leftover.stdio[3].once('data',()=>{
+  let n=0;const timer=setInterval(()=>{process.stdout.write('tick\\n');if(++n===5){clearInterval(timer);process.exit(0);}},20);
+ });
 });`);
   // The leftover ignores SIGTERM and stays silent until SIGKILL, longer than the idle window.
   const result = await runProcess({
