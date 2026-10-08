@@ -142,6 +142,7 @@ export type {
 
 export { CancelledError, FanOutError } from './workflow/runtime/fan-out.js';
 export type { FanOutFailure, MapStepError, RootCause } from './workflow/runtime/fan-out.js';
+export type { RecoveryCause } from './workflow/runtime/recovery-hint.js';
 
 export { stepId } from './workflow/runtime/identity.js';
 

@@ -22,6 +22,7 @@ import {
   type RunStore,
   type WorkflowClock,
 } from '../src/index.js';
+import { runNextCommands } from '../src/workflow/loader/next-commands.js';
 import { rehearsalState } from '../src/workflow/loader/rehearsal.js';
 import { JournalWriter } from '../src/workflow/runtime/journal.js';
 import { cleanWorktrees } from '../src/workflow/runtime/worktree-clean.js';
@@ -56,6 +57,8 @@ const revisionDigests: Readonly<Record<string, string>> = {
   '8': '14ecaff04c78634fdbaaca9796e99503df2c253e4c7db6208169ca21b74a9b1a',
   // Revision 9 (#247) changed only the nested capabilities shape (redacted.harnesses), so it repeats 8.
   '9': '14ecaff04c78634fdbaaca9796e99503df2c253e4c7db6208169ca21b74a9b1a',
+  // Revision 10 (#284) added the top-level recoveryCause.
+  '10': '01979d40f27afb4d663d424a519d1b89a7d840c34dfdb7f4d206d99bc60a27a5',
 };
 // digest(readRun(...)) of the installed pre-revision fixture, computed on unmodified main 91a6d2f.
 const preRevisionReadDigest = '714b6cb068de5c933b7ba04a26d1f931f589f7c9910f76f0e5c8cc493eb13016';
@@ -75,6 +78,8 @@ const revisionSixReadDigest = 'aa4a92b3d3d284be8403ccbd2b3ad86cd048414202074063d
 const revisionSevenReadDigest = 'af4c0ae3367ad8f941f37a22168fa0ad06a33094d1c33abf816a13cb24d0d256';
 // digest(readRun(...)) of the installed revision-eight fixture, computed on unmodified main b707169.
 const revisionEightReadDigest = 'c00a217c100cb94e3d20a7bdac94c3afd7c38c11940c5dbbe5bf08877bf6895e';
+// digest(readRun(...)) of the installed revision-nine fixture, computed on unmodified main 8acf024.
+const revisionNineReadDigest = 'f7d0bbb8c91058abeb5c59fad047407a6120faa6ff8616f9acd26cf8cfafc230';
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex');
 
@@ -1412,6 +1417,100 @@ describe('revision-eight records (plaintext registered harness options, #247)', 
     expect((JSON.parse(raw) as Record<string, unknown>)['schemaRevision']).toBe(
       SUPPORTED_SCHEMA_REVISION,
     );
-    expect(SUPPORTED_SCHEMA_REVISION).toBe(9);
+  });
+});
+
+describe('revision-nine records (a grant failure before recoveryCause, #284)', () => {
+  const runId = 'revision-nine';
+  async function install(): Promise<void> {
+    const fixture = await readFile(
+      new URL('./fixtures/schema-revision/revision-nine-checkpoint.json', import.meta.url),
+      'utf8',
+    );
+    await mkdir(join(stateDir, runId));
+    await writeFile(paths(runId).snapshot, fixture);
+    await writeFile(paths(runId).journal, '');
+  }
+  const granted = defineWorkflow({
+    name: 'schema-revision',
+    version: '1',
+    input: z.null(),
+    output: z.null(),
+    async run(ctx) {
+      await ctx.now('prepare');
+      await ctx.claude.text('edit', { prompt: 'x', profile: 'edit' });
+      return null;
+    },
+  });
+
+  it('read exactly as on main, with a grant hint, no recoveryCause and a plain resume entry', async () => {
+    await install();
+    const record = await readRun({ stateDir, runId });
+    expect(record.schemaRevision).toBe(9);
+    expect(recordSchemaDrift(record)).toBeUndefined();
+    expect(digest(record)).toBe(revisionNineReadDigest);
+    expect(record.status).toBe('failed');
+    expect(record.recoveryHint).toContain('--resume --grant edit');
+    expect(record).not.toHaveProperty('recoveryCause');
+    // Without the saved cause, the failed run keeps the entry it had before #284.
+    const launch = { entrypoint: '/fixture/w.workflow.ts', tsconfig: null };
+    expect(runNextCommands({ ...record, launch }, 'failed', stateDir)).toEqual([
+      {
+        why: 'Resume the failed run; completed steps are reused and failed ones run again.',
+        argv: ['quiet-choir', 'workflow', 'resume', runId, '--state-dir', stateDir],
+      },
+    ]);
+  });
+
+  it('resume with the grant, clear the hint and save the current revision', async () => {
+    await install();
+    const original = await readRun({ stateDir, runId });
+    const invoked: string[] = [];
+    const result = await runWorkflow(granted, {
+      ...options,
+      stateDir,
+      runId,
+      resume: true,
+      grants: ['edit'],
+      harness: {
+        invoke: (request) => {
+          invoked.push(request.stepId);
+          return Promise.resolve({ text: 'ok', sessionId: null });
+        },
+      },
+    });
+    expect(result.status).toBe('completed');
+    expect(invoked).toEqual(['edit']);
+    const saved = await readRun({ stateDir, runId });
+    expect(saved.steps['prepare']).toEqual(original.steps['prepare']);
+    expect(saved.recoveryHint).toBeUndefined();
+    expect(saved.recoveryCause).toBeUndefined();
+    expect(recordSchemaDrift(saved)).toBeUndefined();
+    expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
+    expect(SUPPORTED_SCHEMA_REVISION).toBe(10);
+  });
+
+  it('round-trip every recovery cause through the record parser', async () => {
+    const causes = [
+      { kind: 'grant', profile: 'edit', access: 'write' },
+      { kind: 'grant', profile: 'text', access: 'write', classOnly: true },
+      { kind: 'divergence' },
+      { kind: 'map-changed', mapperOnly: true },
+      { kind: 'configuration' },
+      { kind: 'budget', flag: '--max-run-cost-usd' },
+      { kind: 'authoring' },
+      { kind: 'effect' },
+      { kind: 'cancelled' },
+    ] as const;
+    await install();
+    for (const cause of causes) {
+      await editSnapshot(runId, (raw) => {
+        raw['schemaRevision'] = 10;
+        raw['recoveryCause'] = cause;
+      });
+      const record = await readRun({ stateDir, runId });
+      expect(record.recoveryCause).toEqual(cause);
+      expect(recordSchemaDrift(record)).toBeUndefined();
+    }
   });
 });

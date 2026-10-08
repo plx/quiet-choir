@@ -660,33 +660,52 @@ Every failure document has a top-level `next` array, and `inspect --json --summa
 placeholders. Text inspect and human failure messages print each entry as
 `Next: <shell-quoted argv>  (why)`.
 
-| Source                                          | Entries                                                                                                                   |
-| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `workflow.failed` with a saved failed run       | `resume RUN --state-dir DIR`                                                                                              |
-| `workflow.interrupted` with a saved suspension  | as for a suspended summary                                                                                                |
-| `start.timeout` with a saved suspension         | as for a suspended summary                                                                                                |
-| `run.orphans`                                   | `resume RUN --state-dir DIR --kill-orphans`                                                                               |
-| `run.locked`, holder local, gone or damaged     | `unlock RUN --state-dir DIR` from `error.details.next`                                                                    |
-| `run.locked`, holder on a foreign host          | `unlock RUN --state-dir DIR --force-remote` from `error.details.next`, and no other entry                                 |
-| `run.locked` from `cancel` or `rm`, live owner  | none: the message does not name `workflow unlock`                                                                         |
-| `worktree.locked`                               | `unlock --worktree-admin DIR`, with `--force-remote` for a foreign holder, from `error.details.next`                      |
-| `run.incompatible`, code or schema change only  | `resume … --accept-code-change` (unless the run completed), then a fork                                                   |
-| `run.incompatible`, other run-level changes     | a fork from the stored entrypoint; none when the workflow name changed or for a legacy checkpoint                         |
-| `run.incompatible`, divergent or skipped path   | the fork command from `error.details.next`                                                                                |
-| `run.incompatible`, different requested FILE    | `resume` with the stored entrypoint, then a fork from the requested FILE                                                  |
-| `run.incompatible`, `entrypoint_missing`        | `execute <ENTRYPOINT> --fork-from RUN --run-id <NEW_RUN_ID> --state-dir DIR`                                              |
-| `run.incompatible`, `record_schema`             | none: upgrade quiet-choir                                                                                                 |
-| `run.not_found` with `details.candidates`       | `inspect RUN --state-dir CANDIDATE` for at most 5 candidates, RUN being `details.runId`                                   |
-| Failed or stale summary                         | `resume RUN --state-dir DIR`                                                                                              |
-| Suspended summary                               | `answer RUN STEP --state-dir DIR --json <ANSWER_JSON> [--by human:<NAME>]` for at most 5 waiting questions, then `resume` |
-| Dry-run failures, embedded runs, any other case | `[]`                                                                                                                      |
+| Source                                                | Entries                                                                                                                   |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `workflow.failed`, saved failed run, nothing recorded | none, as there is no recovery hint: the run recorded no step or map                                                       |
+| `workflow.failed`, saved failed run, grant cause      | `execute --resume --run-id RUN --state-dir DIR --grant PROFILE`, or `ACCESS` for call-site overrides                      |
+| `workflow.failed`, saved failed run, divergence       | a fork from the stored entrypoint; none for a legacy checkpoint                                                           |
+| `workflow.failed`, saved failed run, map changed      | `resume … --accept-code-change`, then a fork, when only the mapper changed; otherwise only a fork                         |
+| `workflow.failed`, saved failed run, budget stop      | `resume RUN --state-dir DIR <FLAG> <LIMIT>`, FLAG being the stopping cap's flag                                           |
+| `workflow.failed`, saved failed run, other cause      | `resume RUN --state-dir DIR`, also for a record without `recoveryCause` (before revision 10)                              |
+| `workflow.interrupted` with a saved suspension        | as for a suspended summary                                                                                                |
+| `start.timeout` with a saved suspension               | as for a suspended summary                                                                                                |
+| `run.orphans`                                         | `resume RUN --state-dir DIR --kill-orphans`                                                                               |
+| `run.locked`, holder local, gone or damaged           | `unlock RUN --state-dir DIR` from `error.details.next`                                                                    |
+| `run.locked`, holder on a foreign host                | `unlock RUN --state-dir DIR --force-remote` from `error.details.next`, and no other entry                                 |
+| `run.locked` from `cancel` or `rm`, live owner        | none: the message does not name `workflow unlock`                                                                         |
+| `worktree.locked`                                     | `unlock --worktree-admin DIR`, with `--force-remote` for a foreign holder, from `error.details.next`                      |
+| `run.incompatible`, code or schema change only        | `resume … --accept-code-change` (unless the run completed), then a fork                                                   |
+| `run.incompatible`, other run-level changes           | a fork from the stored entrypoint; none when the workflow name changed or for a legacy checkpoint                         |
+| `run.incompatible`, divergent or skipped path         | the fork command from `error.details.next`                                                                                |
+| `run.incompatible`, different requested FILE          | `resume` with the stored entrypoint, then a fork from the requested FILE                                                  |
+| `run.incompatible`, `entrypoint_missing`              | `execute <ENTRYPOINT> --fork-from RUN --run-id <NEW_RUN_ID> --state-dir DIR`                                              |
+| `run.incompatible`, `record_schema`                   | none: upgrade quiet-choir                                                                                                 |
+| `run.not_found` with `details.candidates`             | `inspect RUN --state-dir CANDIDATE` for at most 5 candidates, RUN being `details.runId`                                   |
+| Failed summary                                        | as for `workflow.failed` with a saved failed run                                                                          |
+| Stale summary                                         | `resume RUN --state-dir DIR`                                                                                              |
+| Suspended summary                                     | `answer RUN STEP --state-dir DIR --json <ANSWER_JSON> [--by human:<NAME>]` for at most 5 waiting questions, then `resume` |
+| Dry-run failures, embedded runs, any other case       | `[]`                                                                                                                      |
 
 A fork is `execute ENTRYPOINT --fork-from RUN --run-id <NEW_RUN_ID> --state-dir DIR`; it records the
 directory it is launched from as the new run's cwd. Placeholders are `<ANSWER_JSON>` (serialized
 answer data), `<NAME>` in `--by human:<NAME>` (the name of the human who answered, asked first; a
-human question's entry carries the flag, others do not), `<NEW_RUN_ID>` and `<ENTRYPOINT>` (the
-workflow file's new path). `answer` refuses the unreplaced `human:<NAME>`. A run without stored
-launch paths (an embedded run) gets no entries, since it cannot be resumed by ID.
+human question's entry carries the flag, others do not), `<NEW_RUN_ID>`, `<ENTRYPOINT>` (the
+workflow file's new path) and `<LIMIT>` (a higher value for the stopping cap's flag, or `off`).
+`answer` refuses the unreplaced `human:<NAME>`, and the budget flags refuse an unreplaced `<LIMIT>`.
+A run without stored launch paths (an embedded run) gets no entries, since it cannot be resumed by
+ID.
+
+A failed run's entries follow its saved `recoveryCause`, the same typed cause that chooses its
+`recoveryHint` ([ADR 0006](decisions/0006-code-change-recovery.md#cause-aware-next-entries-284)): a
+plain resume would repeat a grant, divergence, settled-map or run-budget failure, so those causes
+get the grant, fork or cap the hint names. The grant and cap entries repeat the recorded launch
+policy, as resume entries do; `--grant` is saved with the run, so later resumes need not repeat it.
+The grant entry uses `execute --resume` because `workflow resume` takes no `--grant`. A call with
+call-site capability overrides (under `strictProfiles: false`) ignores named-profile grants, so its
+grant cause carries `classOnly` and its entry grants the access class (`write` or `exec`) instead of
+the profile. A `workflow.interrupted` or `start.timeout` document whose saved run failed gets the
+same entries.
 
 `run.locked` refusals from `resume`, `execute`, `start`, `tick`, `clean`, `rm`, `cancel` and
 `unlock` build the unlock entry once, in the runtime, and render both the prose and

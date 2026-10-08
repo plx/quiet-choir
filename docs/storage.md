@@ -386,7 +386,13 @@ options a declaration lists in `sensitiveOptions`, which no longer appear under 
 read and resume unchanged, and the next execution rewrites `capabilities` without the plaintext
 values. A revision-8 build cannot parse a record that holds `redacted.harnesses` (its strict
 `redacted` shape rejects the key), so every read of that record is the `run.incompatible` upgrade
-refusal described below; it refuses to rewrite any other revision-9 record.
+refusal described below; it refuses to rewrite any other revision-9 record. Revision 10 (#284) adds
+the top-level `recoveryCause`: the typed cause behind a failed or cancelled run's `recoveryHint`,
+which also selects the run's `next` commands
+([ADR 0006](decisions/0006-code-change-recovery.md#cause-aware-next-entries-284)). Revision-9
+records read and resume unchanged; without the field, a failed run gets the plain resume entry it
+had before. A revision-9 build reads a revision-10 record without the field, reports it hidden, and
+refuses to rewrite it; every failed or cancelled run this build saves carries the field.
 
 **Refusals.** A build must not rewrite a record it cannot fully read: its parse strips unknown
 top-level fields, and the next compaction would write the record back without them. When a record

@@ -513,7 +513,9 @@ ${tail}
     if (down.ok) throw new Error(JSON.stringify(down));
     expect(down.message).toContain(plain);
     expect(down.message).not.toContain('accept-code-change');
-    expect((await readRun({ stateDir, runId: 'effect' })).recoveryHint).toContain(plain);
+    const effect = await readRun({ stateDir, runId: 'effect' });
+    expect(effect.recoveryHint).toContain(plain);
+    expect(effect.recoveryCause).toEqual({ kind: 'effect' });
     await writeFile(file, source('() => { throw new Error("down"); }', '2'));
     const refused = await execute('effect', { resume: true });
     if (refused.ok) throw new Error(JSON.stringify(refused));

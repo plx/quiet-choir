@@ -15,6 +15,7 @@ import {
   StepIdentityChangedError,
 } from '../src/workflow/runtime/run-errors.js';
 import type { JsonValue } from '../src/workflow/runtime/model.js';
+import type { RecoveryCause } from '../src/workflow/runtime/recovery-hint.js';
 import type { RunRecord } from '../src/workflow/runtime/store.js';
 
 const launcher = ['/x/node', '/y/bin/run.js'];
@@ -26,13 +27,14 @@ function question(audience: 'human' | 'agent' | 'any') {
   return { request: { audience }, rejections: [] };
 }
 
+/** A run with one recorded step, so a failed run has work to reuse. */
 function run(overrides: Record<string, unknown> = {}): RunRecord {
   return {
     id: 'r1',
     status: 'failed',
     formatVersion: 7,
     launch: { entrypoint, tsconfig: null },
-    steps: {},
+    steps: { prepare: { status: 'completed', kind: 'step' } },
     ...overrides,
   } as unknown as RunRecord;
 }
@@ -55,6 +57,18 @@ const fork = (from: string) => [
   '<NEW_RUN_ID>',
   '--state-dir',
   stateDir,
+];
+const grantResume = (profile: string, ...flags: string[]) => [
+  ...prefix,
+  'execute',
+  '--resume',
+  '--run-id',
+  'r1',
+  '--state-dir',
+  stateDir,
+  '--grant',
+  profile,
+  ...flags,
 ];
 const answer = (stepId: string, human = false) => [
   ...prefix,
@@ -537,6 +551,150 @@ describe('launch policy on next entries', () => {
         details: compatibility(['code'], true),
       }),
     ).toEqual([resume('--accept-code-change'), fork(entrypoint)]);
+  });
+});
+
+describe('cause-aware failed-run entries (#284)', () => {
+  const grant: RecoveryCause = { kind: 'grant', profile: 'edit', access: 'write' };
+  // Call-site capability overrides ignore profile grants, so the entry grants the access class.
+  const classGrant: RecoveryCause = {
+    kind: 'grant',
+    profile: 'text',
+    access: 'write',
+    classOnly: true,
+  };
+  const causes: readonly [string, RecoveryCause | undefined, readonly (readonly string[])[]][] = [
+    ['grant', grant, [grantResume('edit')]],
+    ['grant (call-site capability overrides)', classGrant, [grantResume('write')]],
+    ['divergence', { kind: 'divergence' }, [fork(entrypoint)]],
+    [
+      'map-changed (mapper only)',
+      { kind: 'map-changed', mapperOnly: true },
+      [resume('--accept-code-change'), fork(entrypoint)],
+    ],
+    ['map-changed', { kind: 'map-changed', mapperOnly: false }, [fork(entrypoint)]],
+    ['configuration', { kind: 'configuration' }, [resume()]],
+    [
+      'budget',
+      { kind: 'budget', flag: '--max-run-cost-usd' },
+      [resume('--max-run-cost-usd', '<LIMIT>')],
+    ],
+    ['authoring', { kind: 'authoring' }, [resume()]],
+    ['effect', { kind: 'effect' }, [resume()]],
+    ['cancelled', { kind: 'cancelled' }, [resume()]],
+    ['absent (a record from an older build)', undefined, [resume()]],
+  ];
+  const failed = (cause: RecoveryCause | undefined, overrides: Record<string, unknown> = {}) =>
+    run({ ...(cause === undefined ? {} : { recoveryCause: cause }), ...overrides });
+  const argvs = (entries: readonly { readonly argv: readonly string[] }[]) =>
+    entries.map(({ argv }) => argv);
+
+  it.each(causes)('a failed run whose cause is %s', (_label, cause, expected) => {
+    const saved = failed(cause);
+    expect(argvs(runNextCommands(saved, 'failed', stateDir, launcher))).toEqual(expected);
+    for (const code of ['workflow.failed', 'workflow.interrupted', 'start.timeout'] as const)
+      expect(failure({ code, run: saved }), code).toEqual(expected);
+  });
+
+  it.each(causes)(
+    'a failed run whose cause is %s and that recorded nothing gets no entry',
+    (_label, cause) => {
+      const empty = failed(cause, { steps: {} });
+      expect(runNextCommands(empty, 'failed', stateDir, launcher)).toEqual([]);
+      expect(failure({ run: empty })).toEqual([]);
+      expect(failure({ code: 'start.timeout', run: empty })).toEqual([]);
+    },
+  );
+
+  it.each(causes)('a rehearsal whose cause is %s gets no entry', (_label, cause) => {
+    expect(failure({ run: failed(cause), rehearsal: true })).toEqual([]);
+  });
+
+  it('counts a settled map without steps as recorded work', () => {
+    expect(failure({ run: failed(undefined, { steps: {}, maps: { files: {} } }) })).toEqual([
+      resume(),
+    ]);
+  });
+
+  it('offers no fork for a legacy run', () => {
+    const legacy = { formatVersion: 1 };
+    expect(failure({ run: failed({ kind: 'divergence' }, legacy) })).toEqual([]);
+    expect(failure({ run: failed({ kind: 'map-changed', mapperOnly: false }, legacy) })).toEqual(
+      [],
+    );
+    expect(failure({ run: failed({ kind: 'map-changed', mapperOnly: true }, legacy) })).toEqual([
+      resume('--accept-code-change'),
+    ]);
+    expect(failure({ run: failed({ kind: 'divergence' }, { formatVersion: 6 }) })).toEqual([
+      fork(entrypoint),
+    ]);
+  });
+
+  it('repeats the launch policy on the grant and budget resumes, not on the fork', () => {
+    const launch = {
+      entrypoint,
+      tsconfig: null,
+      policy: {
+        harness: { kind: 'fixture', fixtures: [{ path: '/p/f.json', sha256: 'a'.repeat(64) }] },
+        waitMode: 'block',
+      },
+    };
+    const flags = ['--harness', 'fixture:/p/f.json', '--wait-mode', 'block'];
+    expect(failure({ run: failed(grant, { launch }) })).toEqual([grantResume('edit', ...flags)]);
+    expect(
+      failure({ run: failed({ kind: 'budget', flag: '--max-run-agent-attempts' }, { launch }) }),
+    ).toEqual([resume('--max-run-agent-attempts', '<LIMIT>', ...flags)]);
+    expect(failure({ run: failed({ kind: 'map-changed', mapperOnly: true }, { launch }) })).toEqual(
+      [resume('--accept-code-change', ...flags), fork(entrypoint)],
+    );
+  });
+
+  it('explains each cause and leaves <LIMIT> bare for the shell', () => {
+    const why = (cause: RecoveryCause | undefined) =>
+      runNextCommands(failed(cause), 'failed', stateDir).map((entry) => entry.why);
+    expect(why(grant)).toEqual([
+      'Profile edit needs write access; grant it and resume. The grant is saved for later resumes, and completed steps are reused.',
+    ]);
+    expect(why(classGrant)).toEqual([
+      'Profile text needs write access for call-site capability overrides, which profile grants do not cover; grant the access class and resume. The grant is saved for later resumes, and completed steps are reused.',
+    ]);
+    expect(why({ kind: 'budget', flag: '--max-run-cost-usd' })).toEqual([
+      'A run budget stopped the run and stays in force on resume; substitute <LIMIT> with a higher --max-run-cost-usd value or off. Completed steps are reused.',
+    ]);
+    expect(why({ kind: 'divergence' })[0]).toContain('fork a new run');
+    expect(why({ kind: 'map-changed', mapperOnly: false })[0]).toContain('restore the map');
+    // The plain resume of the other causes is byte for byte the entry before #284.
+    expect(why({ kind: 'effect' })).toEqual([
+      'Resume the failed run; completed steps are reused and failed ones run again.',
+    ]);
+    const [budget] = runNextCommands(
+      failed({ kind: 'budget', flag: '--max-run-cost-usd' }),
+      'failed',
+      stateDir,
+    );
+    expect(formatArgv(budget?.argv ?? [])).toBe(
+      `quiet-choir workflow resume r1 --state-dir ${stateDir} --max-run-cost-usd <LIMIT>`,
+    );
+  });
+
+  it('leaves stale and suspended entries alone', () => {
+    for (const [, cause] of causes) {
+      expect(argvs(runNextCommands(failed(cause), 'stale', stateDir, launcher))).toEqual([
+        resume(),
+      ]);
+      expect(
+        argvs(
+          runNextCommands(failed(cause, { status: 'suspended' }), 'suspended', stateDir, launcher),
+        ),
+      ).toEqual([resume()]);
+      expect(failure({ code: 'run.orphans', run: failed(cause) })).toEqual([
+        resume('--kill-orphans'),
+      ]);
+    }
+  });
+
+  it('offers nothing for an embedded run whatever the cause', () => {
+    expect(runNextCommands(failed(grant, { launch: undefined }), 'failed', stateDir)).toEqual([]);
   });
 });
 

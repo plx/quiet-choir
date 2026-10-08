@@ -10,7 +10,8 @@
  * - A rehearsal (dry-run) never gets resume advice.
  * - A run with no recorded step or map gets no hint: there is nothing to reuse.
  * - Only a configuration or authoring failure, or a settled map whose only change is its mapper,
- *   suggests `--accept-code-change`. A grant failure names `--grant`, a replay divergence names
+ *   suggests `--accept-code-change`. A grant failure names `--grant` (with the access class alone
+ *   when call-site capability overrides make a profile grant ineffective), a replay divergence names
  *   `--strict-replay` and `--fork-from`, and any other settled map change names `--fork-from`.
  * - A divergence with unchanged source blames a value computed in the body outside a durable effect.
  * - A configuration or authoring failure after all recorded work is terminal keeps the re-finalize
@@ -23,21 +24,70 @@
  */
 
 /**
- * Why a run failed, as far as recovery advice is concerned. `grant` is a missing access grant,
- * `divergence` a replay that left the recorded path, `map-changed` a settled map that changed after
- * an item completed (`mapperOnly` when only its mapper did), `configuration` any other ConfigurationError,
- * `budget` a run-budget stop (`flag` is the CLI flag of the cap that stopped the run), `authoring` a body, output or call-site failure, `effect` a durable effect's recorded failure, and
- * `cancelled` a cancelled run. @internal
+ * Why a run failed, as far as recovery advice is concerned. The runner classifies each failed or
+ * cancelled invocation into one cause and saves it as `RunRecord.recoveryCause`; the saved
+ * `recoveryHint` and the run's `next` commands both follow it.
+ *
+ * - `grant`: a missing access grant; `profile` is the profile that needs it and `access` the
+ *   access level it requires. `classOnly` when the call has call-site capability overrides, which
+ *   a grant of the profile does not cover, so only `--grant <access>` or `--grant all` admits it.
+ * - `divergence`: a replay that left the recorded path.
+ * - `map-changed`: a settled map that changed after an item completed; `mapperOnly` when only its
+ *   mapper did, so `--accept-code-change` can keep the completed items.
+ * - `configuration`: any other configuration error.
+ * - `budget`: a run-budget stop; `flag` is the CLI flag of the cap that stopped the run.
+ * - `authoring`: a workflow body, output or call-site failure.
+ * - `effect`: a durable effect's recorded failure.
+ * - `cancelled`: a cancelled run.
+ *
+ * A later build may add kinds, and only together with a record schema revision.
  */
 export type RecoveryCause =
-  | { readonly kind: 'grant'; readonly profile: string; readonly access: string }
-  | { readonly kind: 'divergence' }
-  | { readonly kind: 'map-changed'; readonly mapperOnly: boolean }
-  | { readonly kind: 'configuration' }
-  | { readonly kind: 'budget'; readonly flag: string }
-  | { readonly kind: 'authoring' }
-  | { readonly kind: 'effect' }
-  | { readonly kind: 'cancelled' };
+  | {
+      /** A missing access grant. */
+      readonly kind: 'grant';
+      /** The profile that needs the grant, as `--grant` names it. */
+      readonly profile: string;
+      /** The access level the profile requires, such as `write`. */
+      readonly access: string;
+      /**
+       * Present when the call has call-site capability overrides: a grant of the profile does not
+       * admit it, only an access-class grant does.
+       */
+      readonly classOnly?: true;
+    }
+  | {
+      /** A replay that left the recorded path. */
+      readonly kind: 'divergence';
+    }
+  | {
+      /** A settled map that changed after an item completed. */
+      readonly kind: 'map-changed';
+      /** Whether only the map's mapper changed, so `--accept-code-change` can keep its items. */
+      readonly mapperOnly: boolean;
+    }
+  | {
+      /** Any other configuration error. */
+      readonly kind: 'configuration';
+    }
+  | {
+      /** A run-budget stop. */
+      readonly kind: 'budget';
+      /** The CLI flag of the cap that stopped the run, such as `--max-run-cost-usd`. */
+      readonly flag: string;
+    }
+  | {
+      /** A workflow body, output or call-site failure. */
+      readonly kind: 'authoring';
+    }
+  | {
+      /** A durable effect's recorded failure. */
+      readonly kind: 'effect';
+    }
+  | {
+      /** A cancelled run. */
+      readonly kind: 'cancelled';
+    };
 
 /** Facts about one failed invocation, all gathered by the runner. @internal */
 export interface RecoveryHintInput {
@@ -61,7 +111,9 @@ export function chooseRecoveryHint(input: RecoveryHintInput): string | undefined
   if (input.rehearsal || !input.recordedWork) return undefined;
   switch (cause.kind) {
     case 'grant':
-      return `Grant the access, then resume: --resume --grant ${cause.profile} (or --grant ${cause.access}, or --grant all); completed steps are reused.`;
+      return cause.classOnly
+        ? `Grant the access class, then resume: --resume --grant ${cause.access} (or --grant all); a call with call-site capability overrides ignores profile grants. Completed steps are reused.`
+        : `Grant the access, then resume: --resume --grant ${cause.profile} (or --grant ${cause.access}, or --grant all); completed steps are reused.`;
     case 'divergence':
       return input.sourceChanged
         ? `Replay left the recorded path after the accepted source change. Restore the replay path, or fork a new run with --fork-from ${input.runId}; --resume --strict-replay stops at the first divergence before live work.`

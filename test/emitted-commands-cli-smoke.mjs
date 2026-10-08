@@ -222,6 +222,101 @@ try {
     usageDocument.error.message,
   );
 
+  // A grant failure's next entry carries --grant and the recorded fixture selection (#284); run as
+  // emitted, it completes the run, reusing the recorded step.
+  const grantFixture = join(project, 'grant.fixture.json');
+  writeFileSync(
+    grantFixture,
+    JSON.stringify({ version: 1, calls: [{ step: 'edit', text: 'edited' }] }),
+  );
+  const grantFile = join(project, 'grant.workflow.mts');
+  writeFileSync(
+    grantFile,
+    `import { defineWorkflow, z } from ${JSON.stringify(api)};
+import { appendFileSync } from 'node:fs';
+export default defineWorkflow({name:'grant',version:'1',input:z.object({}),output:z.string(),async run(ctx){
+  await ctx.step('prepare',{input:null,schema:z.null(),run:()=>{appendFileSync(${JSON.stringify(join(root, 'prepared'))},'prepare\\n');return null;}});
+  return (await ctx.claude.text('edit',{prompt:'x',profile:'edit'})).output;
+}});`,
+  );
+  const denied = documentOf(
+    launch(project, [
+      'execute',
+      grantFile,
+      '--run-id',
+      'grant',
+      '--state-dir',
+      stateDir,
+      '--harness',
+      `fixture:${grantFixture}`,
+      '--json',
+    ]),
+    1,
+  );
+  assert.equal(denied.error.code, 'workflow.failed');
+  assert.deepEqual(denied.next.length, 1);
+  assert.deepEqual(denied.next[0].argv.slice(2), [
+    'workflow',
+    'execute',
+    '--resume',
+    '--run-id',
+    'grant',
+    '--state-dir',
+    stateDir,
+    '--grant',
+    'edit',
+    '--harness',
+    `fixture:${grantFixture}`,
+  ]);
+  const granted = documentOf(emitted([...denied.next[0].argv, '--json']), 0);
+  assert.equal(granted.status, 'completed');
+  assert.equal(granted.output, 'edited');
+  assert.equal(readFileSync(join(root, 'prepared'), 'utf8'), 'prepare\n');
+
+  // Call-site capability overrides ignore profile grants, so that grant failure's entry names the
+  // access class instead of the profile, and it completes the run as emitted.
+  const rawFile = join(project, 'raw-grant.workflow.mts');
+  writeFileSync(
+    rawFile,
+    `import { defineWorkflow, z } from ${JSON.stringify(api)};
+export default defineWorkflow({name:'raw-grant',version:'1',strictProfiles:false,input:z.object({}),output:z.string(),async run(ctx){
+  await ctx.step('prepare',{input:null,schema:z.null(),run:()=>null});
+  return (await ctx.claude.text('edit',{prompt:'x',tools:['Edit']})).output;
+}});`,
+  );
+  const rawDenied = documentOf(
+    launch(project, [
+      'execute',
+      rawFile,
+      '--run-id',
+      'raw-grant',
+      '--state-dir',
+      stateDir,
+      '--harness',
+      `fixture:${grantFixture}`,
+      '--json',
+    ]),
+    1,
+  );
+  assert.equal(rawDenied.error.code, 'workflow.failed');
+  assert.equal(rawDenied.next.length, 1);
+  assert.deepEqual(rawDenied.next[0].argv.slice(2), [
+    'workflow',
+    'execute',
+    '--resume',
+    '--run-id',
+    'raw-grant',
+    '--state-dir',
+    stateDir,
+    '--grant',
+    'write',
+    '--harness',
+    `fixture:${grantFixture}`,
+  ]);
+  const rawGranted = documentOf(emitted([...rawDenied.next[0].argv, '--json']), 0);
+  assert.equal(rawGranted.status, 'completed');
+  assert.equal(rawGranted.output, 'edited');
+
   // A moved stored entrypoint is run.incompatible (exit 3), with a runnable fork entry.
   const moved = join(project, 'moved.workflow.mts');
   renameSync(file, moved);

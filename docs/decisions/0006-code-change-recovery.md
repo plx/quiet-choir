@@ -14,7 +14,8 @@ Amended by #215: `runWorkflow` itself runs the #126 preflight, so embedded accep
 without changing the run too. Amended by #216: the preflight also refuses an accepted body that
 would skip a completed step, settled map or child frame (`ReplaySkippedError`). Amended by #217: the
 preflight synthesizes every Git worktree effect and consumes delivered but unconsumed answers, so it
-no longer stops early at either.
+no longer stops early at either. Amended by #284: a failed run saves its typed recovery cause, and
+its `next` entries follow that cause as its recovery hint does.
 
 ## Context
 
@@ -370,3 +371,44 @@ a known reset that still failed (a concurrent failure) names `--max-window-utili
 waiting for the reset would also work. A window stop with a known reset that suspends cleanly still
 deletes `recoveryHint` (ADR 0053). No record format, `schemaRevision`, step identity or public API
 changes.
+
+## Amendment: cause-aware next entries (#284)
+
+The typed cause chose only the prose hint (#276, #283). The `next` entries of a failure document and
+of `inspect --summary` or `list --full` still offered a plain `resume` for every failed run, which
+repeats a grant, divergence, settled-map or run-budget failure, and which was offered even when the
+run recorded nothing and so had no hint. `inspect` and `list` only have the saved record, so the
+cause must be persisted: the runner now saves `RunRecord.recoveryCause`, a top-level field next to
+`recoveryHint` (record schema revision 10), and sets and clears it at exactly the points where it
+sets and clears the hint, through one helper pair. It does not live in `RootCause`, which has its
+own set and clear points. The cause is saved on every failed or cancelled record, even when the hint
+is withheld (nothing recorded, a dry-run), so the record stays truthful and the entry builder
+applies those rules itself. `RecoveryCause` becomes a public type, since `RunRecord` is public; a
+new kind is a public-type change and needs a schema revision.
+
+The loader's pure `runNextCommands` chooses a failed run's entries from that cause:
+
+| Saved cause                                                    | Entries                                                         |
+| -------------------------------------------------------------- | --------------------------------------------------------------- |
+| any, when the run recorded no step or map                      | none, matching the absent hint                                  |
+| `grant`                                                        | `execute --resume --run-id RUN --state-dir DIR --grant PROFILE` |
+| `grant` with `classOnly`                                       | `execute --resume --run-id RUN --state-dir DIR --grant ACCESS`  |
+| `divergence`                                                   | a fork from the stored entrypoint                               |
+| `map-changed`, mapper only                                     | `resume … --accept-code-change`, then a fork                    |
+| `map-changed`, otherwise                                       | a fork                                                          |
+| `budget`                                                       | `resume RUN --state-dir DIR FLAG <LIMIT>`                       |
+| `configuration`, `authoring`, `effect`, `cancelled`, or absent | `resume RUN --state-dir DIR`, unchanged                         |
+
+The grant entry uses `execute --resume` because `workflow resume` has no `--grant` flag; it resumes
+the stored entrypoint like `resume`, and the grant is saved for later resumes. A call with call-site
+capability overrides ignores named-profile grants, so its cause carries `classOnly: true` and both
+the hint and the entry name only the access class. Resume entries repeat the recorded launch policy
+as before. A legacy (format 1) checkpoint gets no fork entry, as for `run.incompatible`. `<LIMIT>`
+is a placeholder for a higher cap or `off`; the flag parser refuses it unreplaced. The divergence
+entry is only the fork: suggesting `resume --strict-replay` belongs with the hint wording (#298).
+Records from before revision 10 have no cause and keep the plain resume. Stale and suspended entries
+do not change.
+
+Limits: a grant failure on the first effect records nothing, so it gets no hint and no entry,
+although `execute --resume --grant` would work; hint and entry stay consistent, and a later change
+can revisit both together. Cancelled runs still get no entries (their status is not `failed`).

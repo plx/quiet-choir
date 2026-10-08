@@ -17,6 +17,7 @@ const defaults: RecoveryHintInput = {
 };
 const causes: readonly RecoveryCause[] = [
   { kind: 'grant', profile: 'fixer', access: 'write' },
+  { kind: 'grant', profile: 'fixer', access: 'exec', classOnly: true },
   { kind: 'divergence' },
   { kind: 'map-changed', mapperOnly: true },
   { kind: 'map-changed', mapperOnly: false },
@@ -100,6 +101,16 @@ describe('chooseRecoveryHint', () => {
       );
     },
   );
+
+  it('names only the access class when call-site capability overrides ignore profile grants', () => {
+    const chosen = hint({
+      cause: { kind: 'grant', profile: 'fixer', access: 'exec', classOnly: true },
+    });
+    expect(chosen).toBe(
+      'Grant the access class, then resume: --resume --grant exec (or --grant all); a call with call-site capability overrides ignores profile grants. Completed steps are reused.',
+    );
+    expect(chosen).not.toContain('--grant fixer');
+  });
 
   // A budget stop names its cap's flag whatever else is true of the run.
   const budgetRows = [

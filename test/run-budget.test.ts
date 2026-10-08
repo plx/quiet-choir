@@ -112,6 +112,8 @@ it.each(['cost', 'attempts'] as const)(
     expect(saved.recoveryHint).toContain('--resume');
     expect(saved.recoveryHint).not.toContain('re-finalize');
     expect(saved.recoveryHint).not.toContain('accept-code-change');
+    // The saved cause selects the failed run's next entry: resume with a higher cap (#284).
+    expect(saved.recoveryCause).toEqual({ kind: 'budget', flag });
     const resumed = await runWorkflow(definition, {
       runId: 'cap',
       stateDir,
@@ -121,6 +123,8 @@ it.each(['cost', 'attempts'] as const)(
       ...(metric === 'cost' ? { maxRunCostUsd: 1 } : { maxRunAgentAttempts: 4 }),
     });
     expect(resumed.status).toBe('completed');
+    expect(resumed.recoveryHint).toBeUndefined();
+    expect(resumed.recoveryCause).toBeUndefined();
     expect(calls).toBe(4);
     expect(summarizeUsage(resumed).attempts).toBe(4);
   },

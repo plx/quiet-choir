@@ -83,8 +83,8 @@ export function launchPolicyFlags(launch: WorkflowLaunch | undefined): string[] 
 
 /**
  * One runnable follow-up: why it applies and the exact argument vector to run, built behind the
- * launcher of the invocation that produced it. `<ANSWER_JSON>`, `<NEW_RUN_ID>` and `<ENTRYPOINT>`
- * are placeholders to substitute first. @internal
+ * launcher of the invocation that produced it. `<ANSWER_JSON>`, `<NEW_RUN_ID>`, `<ENTRYPOINT>` and
+ * `<LIMIT>` are placeholders to substitute first. @internal
  */
 export interface NextCommand {
   readonly why: string;

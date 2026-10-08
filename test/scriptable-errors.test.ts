@@ -611,7 +611,7 @@ export default defineWorkflow({
 // measured: 1.1 s alone, 3.7 s in the full local coverage run (three real compiler passes; the
 // one-pass lock test above takes 6.0 s on the Node 22.13 CI leg, so this allows about 18 s there)
 it(
-  'puts runnable next entries on failed, orphaned, dry-run and moved-entrypoint failures',
+  'puts runnable next entries on failed, empty, orphaned, dry-run and moved-entrypoint failures',
   { timeout: 40_000 },
   async () => {
     const root = join(stateDir, 'workflow-next');
@@ -624,8 +624,10 @@ it(
       `import { z } from 'zod';
 import { defineWorkflow } from ${JSON.stringify(join(projectRoot, 'src/workflow/runtime/model.js'))};
 export default defineWorkflow({
-  name: 'next-entries', version: '1', input: z.null(), output: z.string(),
-  run: (ctx) => ctx.step('flaky', { input: null, schema: z.string(), run: () => { throw new Error('flaky failed'); } }),
+  name: 'next-entries', version: '1', input: z.boolean().nullable(), output: z.string(),
+  run: (ctx, early) => early
+    ? Promise.reject(new Error('body failed'))
+    : ctx.step('flaky', { input: null, schema: z.string(), run: () => { throw new Error('flaky failed'); } }),
 });`,
     );
     const analysis = analyzeTypecheckEntrypoint(file, projectRoot);
@@ -655,6 +657,24 @@ export default defineWorkflow({
     expect(failed.code).toBe('workflow.failed');
     expect(failed.next?.map((entry) => entry.argv)).toEqual([resume()]);
     expect(workflowErrorDocument(failed)).toMatchObject({ next: [{ argv: resume() }] });
+
+    // A body that fails before recording any step gets no hint and no next entry (#284).
+    const empty = await executor.execute({
+      kind: 'workflow.execute',
+      typecheck: analysis.plan,
+      runId: 'empty-run',
+      stateDir: runs,
+      cwd: root,
+      resume: false,
+      input: true,
+    });
+    if (empty.ok) throw new Error('expected a failure');
+    expect(empty.code).toBe('workflow.failed');
+    expect(empty.run?.steps).toEqual({});
+    expect(empty.run?.recoveryHint).toBeUndefined();
+    expect(empty.run?.recoveryCause).toEqual({ kind: 'authoring' });
+    expect(empty.next).toBeUndefined();
+    expect(workflowErrorDocument(empty)).toMatchObject({ next: [] });
 
     const rehearsal = await executor.execute({
       kind: 'workflow.execute',

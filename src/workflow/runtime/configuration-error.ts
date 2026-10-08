@@ -48,9 +48,16 @@ export class GrantRequiredError extends ConfigurationError {
     public readonly profile: string,
     /** Access level the call requires, such as `write` or `exec`. */
     public readonly access: string,
+    /**
+     * Whether the call has call-site capability overrides, so a grant of its profile does not
+     * admit it and only an access-class grant (`access` or `all`) does.
+     */
+    public readonly classOnly = false,
   ) {
     super(
-      `Profile ${profile} requires ${access} access. Retry with --grant ${profile}, --grant ${access}, or --grant all.`,
+      classOnly
+        ? `Profile ${profile} requires ${access} access for call-site capability overrides, which profile grants do not cover. Retry with --grant ${access} or --grant all.`
+        : `Profile ${profile} requires ${access} access. Retry with --grant ${profile}, --grant ${access}, or --grant all.`,
     );
     this.name = 'GrantRequiredError';
   }

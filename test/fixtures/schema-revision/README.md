@@ -261,6 +261,32 @@ failure after it; `fixture-token` appears nowhere else in the record. The journa
 Prettier; its read-view digest in `test/record-schema-revision.test.ts` was computed on the same
 unmodified main from this file.
 
+`revision-nine-checkpoint.json` was generated the same way at origin/main `8acf024`, before
+cause-aware next entries (#284) added the top-level `recoveryCause` in revision 10. Its run ID is
+`revision-nine`, and it ran this definition with the launch policy `[{ transcripts: 'off' }]` and a
+harness whose `invoke` throws if called:
+
+```ts
+defineWorkflow({
+  name: 'schema-revision',
+  version: '1',
+  input: z.null(),
+  output: z.null(),
+  async run(ctx) {
+    await ctx.now('prepare');
+    await ctx.claude.text('edit', { prompt: 'x', profile: 'edit' });
+    return null;
+  },
+});
+```
+
+It carries `schemaRevision: 9`, one completed local effect `prepare`, a grant failure on `edit` (the
+built-in `edit` profile requires a write grant, so no harness was invoked) and the grant
+`recoveryHint`, but no `recoveryCause`. The journal was empty, so only `run.json` is checked in.
+Stack paths are scrubbed to `/fixture/...` and the file was formatted with Prettier; its read-view
+digest in `test/record-schema-revision.test.ts` was computed on the same unmodified main from this
+file.
+
 `record-keys.json` lists the top-level run-record keys of each schema revision. Adding or changing a
 persisted run-level field adds a revision there and bumps `SUPPORTED_SCHEMA_REVISION`; a revision
 that only changes a nested shape repeats the previous key list. See `docs/storage.md`.

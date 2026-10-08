@@ -192,7 +192,7 @@ import { bindContext } from './context.js';
 import { execFailureFields, stepError, errorKind } from './step-error.js';
 import { stepEventError } from './step-event-error.js';
 import { ConfigurationError, GrantRequiredError } from './configuration-error.js';
-import { chooseRecoveryHint, type RecoveryCause } from './recovery-hint.js';
+import { chooseRecoveryHint, type RecoveryCause, type RecoveryHintInput } from './recovery-hint.js';
 import { harnessConfigRefusal } from './harness-config-decision.js';
 import { classifyAttemptFailure } from './attempt-failure.js';
 import {
@@ -226,6 +226,7 @@ import type {
   WorkflowDefinition,
 } from './model.js';
 import {
+  hasRecordedWork,
   hasTerminalOutcomes,
   instructionSourceSchema,
   isTerminalStep,
@@ -1022,7 +1023,7 @@ export async function runWorkflow<
           // A cancellation leaves no stale marker from an earlier interruption.
           delete existing.interruptedBy;
           recordHonoredAbort(existing, reason, clockNow(clock));
-          delete existing.recoveryHint;
+          clearRecovery(existing);
           if (existing.status === 'cancelled') {
             const finishedAt = new Date().toISOString();
             for (const frame of Object.values(existing.children ?? {}))
@@ -1031,17 +1032,14 @@ export async function runWorkflow<
                 frame.finishedAt = finishedAt;
                 frame.error ??= existing.error;
               }
-            const recoveryHint = chooseRecoveryHint({
-              cause: recoveryCause([reason], existing),
+            saveRecovery(existing, {
+              cause: classifyRecoveryCause([reason], existing),
               rehearsal: false,
-              recordedWork:
-                Object.keys(existing.steps).length > 0 ||
-                Object.keys(existing.maps ?? {}).length > 0,
+              recordedWork: hasRecordedWork(existing),
               allTerminal: hasTerminalOutcomes(existing),
               sourceChanged: (compatibility?.changed.length ?? 0) > 0,
               runId: existing.id,
             });
-            if (recoveryHint !== undefined) existing.recoveryHint = recoveryHint;
           }
           // The lifecycle record the body's catch would add: an execution entry that ends with the
           // abort and its run event. Neither stays in memory, nor reaches onEvent, unless saved.
@@ -1290,7 +1288,7 @@ export async function runWorkflow<
     const replayWarnings = (record.replayWarnings = record.forkedFrom?.warning
       ? [record.forkedFrom.warning]
       : []);
-    delete record.recoveryHint;
+    clearRecovery(record);
     const previousTerminal = Object.entries(record.steps)
       .filter(([, step]) => isTerminalStep(step) && step.legacyIdentity === undefined)
       .map(([id, step]) => ({ id, seq: step.seq ?? 0 }));
@@ -3977,7 +3975,7 @@ export async function runWorkflow<
         children.finish('suspended');
         record.error = null;
         record.rootCause = null;
-        delete record.recoveryHint;
+        clearRecovery(record);
         record.output = null;
         // After questions.close(), whose last wake update covers only the waits: a wait still
         // parked keeps its own earlier deadline or check, so its timeout is not delayed.
@@ -4007,19 +4005,17 @@ export async function runWorkflow<
       record.status = interrupted || error instanceof CancelledError ? 'cancelled' : 'failed';
       children.finish(record.status, message(error));
       record.error = message(error);
-      // ADR 0006: the hint follows the typed cause, never the message text. The latched budget
-      // stop counts even when a sibling failure rejected first and the refusal came while draining.
-      const recoveryHint = chooseRecoveryHint({
-        cause: recoveryCause([origins.find(error).error, error, budget.error], record),
+      // ADR 0006: the hint and the saved cause that selects `next` follow the typed cause, never
+      // the message text. The latched budget stop counts even when a sibling failure rejected
+      // first and the refusal came while draining.
+      saveRecovery(record, {
+        cause: classifyRecoveryCause([origins.find(error).error, error, budget.error], record),
         rehearsal: options.rehearsal !== undefined,
-        recordedWork:
-          Object.keys(record.steps).length > 0 || Object.keys(record.maps ?? {}).length > 0,
+        recordedWork: hasRecordedWork(record),
         allTerminal: hasTerminalOutcomes(record),
         sourceChanged: (compatibility?.changed.length ?? 0) > 0,
         runId: record.id,
       });
-      if (recoveryHint === undefined) delete record.recoveryHint;
-      else record.recoveryHint = recoveryHint;
       warnUnmatched();
       const failed = observations.lifecycle(
         record.status === 'cancelled' ? 'run.cancelled' : 'run.failed',
@@ -4083,6 +4079,24 @@ export async function runWorkflow<
 }
 
 /**
+ * Save a failed or cancelled run's typed recovery cause, which selects its `next` commands, and the
+ * hint it chooses; the hint is removed when the chooser gives none (nothing recorded, a dry-run).
+ * The cause is saved either way, so the record stays truthful. Paired with {@link clearRecovery}.
+ */
+function saveRecovery(record: RunRecord, input: RecoveryHintInput): void {
+  record.recoveryCause = input.cause;
+  const hint = chooseRecoveryHint(input);
+  if (hint === undefined) delete record.recoveryHint;
+  else record.recoveryHint = hint;
+}
+
+/** Remove the recovery hint and cause, at the start of an execution or on a clean suspension. */
+function clearRecovery(record: RunRecord): void {
+  delete record.recoveryHint;
+  delete record.recoveryCause;
+}
+
+/**
  * Classify a failure for recovery advice from error classes and the saved record, never from
  * message text. It searches the given errors' cause chains and aggregate members, and the first
  * matching rule wins: grant, divergence, settled map change, other configuration, run-budget stop,
@@ -4091,7 +4105,7 @@ export async function runWorkflow<
  * path also passes the current execution's latched budget stop, so it counts even when it is not in
  * the thrown error's chain (a sibling failure rejected first and the cap refused a draining call).
  */
-function recoveryCause(errors: readonly unknown[], record: RunRecord): RecoveryCause {
+function classifyRecoveryCause(errors: readonly unknown[], record: RunRecord): RecoveryCause {
   const seen = new Set<unknown>();
   const found: Error[] = [];
   const visit = (error: unknown): void => {
@@ -4104,7 +4118,13 @@ function recoveryCause(errors: readonly unknown[], record: RunRecord): RecoveryC
   };
   for (const error of errors) visit(error);
   const grant = found.find((error) => error instanceof GrantRequiredError);
-  if (grant) return { kind: 'grant', profile: grant.profile, access: grant.access };
+  if (grant)
+    return {
+      kind: 'grant',
+      profile: grant.profile,
+      access: grant.access,
+      ...(grant.classOnly ? { classOnly: true as const } : {}),
+    };
   if (
     found.some(
       (error) =>
