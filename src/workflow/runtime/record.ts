@@ -265,8 +265,8 @@ export interface StepRecord {
    * The terminal failures since this step last completed, oldest first: each pairs the launch that
    * failed with the failure's `settleStamp`. It explains which failure a later launch of another
    * step could observe, so a healed step flags a sibling relaunched alongside a later failing
-   * launch only when it launched after that launch's failure. Holds at most
-   * {@link MAX_FAILURE_HISTORY} entries (the oldest is dropped first), is kept through
+   * launch only when it launched after that launch's failure. Holds at most 8 entries (the
+   * oldest is dropped first), is kept through
    * cancellations and interruptions, and is removed with `failureStamp` when the step completes.
    * Absent in checkpoints saved before schema revision 12; when it is absent or its first entry is
    * not `failureStamp` (truncated), the healed check uses the `failureStamp` watermark.
