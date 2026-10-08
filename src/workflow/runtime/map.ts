@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { jsonValue, digest } from './json.js';
 import { validateStepId, displayId, duplicateStepId } from './identity.js';
 import {
@@ -59,11 +58,8 @@ interface MapDependencies {
    * started; it numbers repeated invocations of one map ID, such as loop rounds, for fork reuse.
    */
   readonly mapInvocations: Map<string, number>;
-  /**
-   * Item prefixes of named-map invocations whose steps were claimed from a committed settled map
-   * item or settled frame without running its body, so `mapInvocations` never counted them.
-   */
-  readonly uncountedMapItems: ReadonlySet<string>;
+  /** A random value unique to this execution of the workflow body, for the invocation digest. */
+  readonly executionNonce: string;
   readonly save: () => Promise<void>;
   /** Whether this resume explicitly accepts code changes; a committed map then accepts a mapper-only change. */
   readonly acceptCodeChange: boolean;
@@ -93,7 +89,7 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
     used,
     visitedMaps,
     mapInvocations,
-    uncountedMapItems,
+    executionNonce,
     save,
     acceptCodeChange,
     nextSeq,
@@ -186,21 +182,21 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
             return value;
           });
           const items = new Set(keys.map((key) => `${prefix}${key}/`));
-          // Names this invocation by its qualified map prefix, its ordinal among this body
-          // execution's invocations of the prefix and its key set; the body replays from the start,
-          // so all three are stable across resumes. The prefix tells apart maps whose slash keys
-          // spell the same item prefixes. Steps record it (#302). A skipped settled item or frame
-          // did not count the invocations it recorded under this prefix, possibly through a bound
-          // view, so the ordinal may repeat an earlier one: a value unique to this execution then
-          // keeps the digest from matching any earlier invocation's, which only blocks more.
+          // Names this invocation by this body execution's nonce, its qualified map prefix, its
+          // ordinal among the execution's invocations of the prefix and its key set; steps record it
+          // (#302). The ordinal tells loop rounds apart within one execution, and the prefix tells
+          // apart maps whose slash keys spell the same item prefixes. Ordinals are not stable across
+          // executions (concurrent invocations can start in another order, and a skipped settled item
+          // or frame does not count the invocations it recorded), so the nonce keeps a digest from
+          // matching one recorded by another execution. Steps from different executions of the source
+          // are then never siblings, which only blocks more.
           const ordinal = mapInvocations.get(prefix) ?? 0;
           mapInvocations.set(prefix, ordinal + 1);
-          const uncounted = [...uncountedMapItems].some((item) => item.startsWith(prefix));
           const invocation = digest([
+            executionNonce,
             prefix,
             String(ordinal),
             ...[...items].sort(),
-            ...(uncounted ? [randomUUID()] : []),
           ]);
           itemPaths = [...items].map((item) => ({ map: prefix, item, items, invocation }));
           journalId = names.qualify(id);

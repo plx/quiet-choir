@@ -1391,11 +1391,9 @@ export async function runWorkflow<
     const visitedMaps = new Set<string>();
     // Per body execution, like visitedMaps: numbers repeated invocations of one map prefix.
     const mapInvocations = new Map<string, number>();
-    // Per body execution: item prefixes of the named-map invocations that steps claimed from a
-    // committed settled map item or settled frame recorded. Their bodies did not run, so
-    // mapInvocations never counted those invocations, and a later one under the same prefix gets
-    // an unreliable ordinal.
-    const uncountedMapItems = new Set<string>();
+    // Per body execution: makes map invocation digests unique to this execution, because ordinals
+    // are not stable across executions (#302).
+    const executionNonce = randomUUID();
     const maps = (record.maps ??= {});
     // `effect` is the call-site effect kind (the harness for an agent call), or null for a scope,
     // phase, map or child operation; a failure before the step has a record reports it.
@@ -3203,10 +3201,6 @@ export async function runWorkflow<
      * its call site: mark matching policy rules and emit step.replayed.
      */
     function replayedStep(id: string, step: StepRecord): void {
-      // The items enclosing the claim were counted when their own invocations started.
-      const enclosing = new Set(names.items.map(({ item }) => item));
-      for (const { item } of step.mapItems ?? [])
-        if (!enclosing.has(item)) uncountedMapItems.add(item);
       if (step.kind !== 'sleep')
         policy.forEach((rule, index) => {
           if (
@@ -3232,7 +3226,7 @@ export async function runWorkflow<
       used,
       visitedMaps,
       mapInvocations,
-      uncountedMapItems,
+      executionNonce,
       save,
       acceptCodeChange: Boolean(options.acceptCodeChange),
       nextSeq: () => nextSeq++,

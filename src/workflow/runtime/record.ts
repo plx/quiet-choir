@@ -141,13 +141,13 @@ export interface StepMapItem {
   /** The item's exact ID prefix: the map prefix, the item key and `/`, such as `review/a/`. */
   readonly item: string;
   /**
-   * The digest of the map invocation's qualified map prefix, its ordinal (how many invocations of
-   * the same map prefix the workflow body started before it) and its sorted item prefixes. Steps
-   * from different items of one invocation share it; another invocation of the same map ID, such as
-   * a later loop round with the same keys, does not, and neither does a map at another prefix whose
-   * slash keys spell the same item prefixes. It is stable across resumes, except under the prefix of
-   * a nested invocation recorded by a skipped committed settled item or frame, where it is made
-   * unique to the execution so it only blocks more.
+   * The digest of a random value unique to the execution of the workflow body that launched the
+   * step, the map invocation's qualified map prefix, its ordinal (how many invocations of the same
+   * map prefix that execution started before it) and its sorted item prefixes. Steps from different
+   * items of one invocation that launched in the same execution share it; another invocation of the
+   * same map ID, such as a later loop round with the same keys, does not, and neither does a map at
+   * another prefix whose slash keys spell the same item prefixes. It is per body execution, not
+   * stable across resumes: steps launched in different executions never share it.
    */
   readonly invocation: string;
 }
@@ -291,8 +291,8 @@ export interface StepRecord {
   /**
    * The named-map items that enclosed this step when the workflow body last launched it live,
    * outermost first. Default (prefix) fork reuse reads it from the fork source: a source step in a
-   * different item of the same map invocation as the requested step is not a possible cause, even
-   * when the fork dropped that item's key. A reused fork copy carries the fork's own scopes
+   * different item of the same map invocation, launched in the same body execution, as the
+   * requested step is not a possible cause, even when the fork dropped that item's key. A reused fork copy carries the fork's own scopes
    * instead. Absent for a step launched outside every map item and in checkpoints saved before
    * schema revision 13, where fork reuse falls back to the fork's own item prefixes. Not part of
    * step identity.

@@ -41,8 +41,9 @@
  *   target, and no live target step settled before its target launch. Steps in sibling items of a
  *   named map are independent by declaration and never block each other: siblings in the target's
  *   own invocation by its item prefixes, and source siblings under keys the target dropped by the
- *   item scopes the source recorded on each step (`mapItems`). A source saved without those scopes
- *   recognizes only the target's items. The same per-pair stamp-or-`seq` fallback applies to
+ *   item scopes the source recorded on each step (`mapItems`), whose invocation digest is per body
+ *   execution, so only steps one execution of the source launched match. A source saved without
+ *   those scopes recognizes only the target's items. The same per-pair stamp-or-`seq` fallback applies to
  *   source steps saved without stamps.
  * - A settled map journal with a different fingerprint is reset only while nothing in it is
  *   committed. A committed map accepts only a mapper-only change, only under an explicit
@@ -333,10 +334,12 @@ export interface MapItemScope {
   /** Every item prefix of the same map invocation, including this one. */
   readonly items: ReadonlySet<string>;
   /**
-   * The digest of this invocation's map prefix (`map`), its ordinal among the body execution's
-   * invocations of that prefix and its sorted item prefixes (`items`). Steps record it with `item` as
-   * `StepRecord.mapItems`, so a later fork can tell sibling items of one invocation apart from
-   * another invocation of the same map ID, such as a later loop round, even with the same keys.
+   * The digest of a random value unique to this body execution, this invocation's map prefix
+   * (`map`), its ordinal among the execution's invocations of that prefix and its sorted item
+   * prefixes (`items`). Steps record it with `item` as `StepRecord.mapItems`, so a later fork can tell
+   * sibling items of one invocation apart from another invocation of the same map ID, such as a
+   * later loop round, even with the same keys. Ordinals are not stable across executions, so the
+   * digest is per execution: an invocation's steps launched by different executions never share it.
    */
   readonly invocation: string;
 }
@@ -376,8 +379,10 @@ function siblingItem(other: string, mapItems: readonly MapItemScope[]): boolean 
 
 /**
  * Whether two source steps were launched in different items of one named-map invocation, by the
- * item scopes each recorded at launch. A step without recorded scopes (outside every map item, or
- * saved before schema revision 13) is never a sibling this way.
+ * item scopes each recorded at launch. The recorded invocation digest is per body execution, so
+ * steps launched by different executions of the source (such as before and after a resume) are
+ * never siblings this way. A step without recorded scopes (outside every map item, or saved before
+ * schema revision 13) is never a sibling this way either.
  */
 function sourceSiblingItem(
   requested: readonly StepMapItem[] | undefined,
@@ -409,7 +414,8 @@ function sourceSiblingItem(
  * items receive only their item value (ADR 0009), so they are independent by declaration. A source
  * step is also skipped when its recorded `mapItems` and the requested step's share an invocation
  * but name different items: in the source, the requested step could not depend on it, whether or
- * not the target kept that item's key. This covers steps under keys the target dropped (which the
+ * not the target kept that item's key. The invocation digest is per body execution, so this applies
+ * only to steps the same execution of the source launched. This covers steps under keys the target dropped (which the
  * target's own item prefixes cannot recognize) and keys containing `/`, because each step records
  * its exact item prefix. A source step or requested step saved without `mapItems` falls back to
  * the target's item prefixes alone.
