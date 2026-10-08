@@ -245,6 +245,69 @@ it('keeps the authoring hint for an unrelated error when a budget cap is set but
   expect(saved.recoveryHint).not.toContain('--max-run-agent-attempts');
 });
 
+it.each(['cost', 'attempts'] as const)(
+  'gives the budget hint when the %s cap refuses a queued call while a sibling failure drains',
+  async (metric) => {
+    const stateDir = await directory();
+    const queued = deferred();
+    const failed = deferred();
+    const prompts: string[] = [];
+    const definition = defineWorkflow({
+      ...base,
+      async run(ctx) {
+        await Promise.all([
+          ctx.claude.text('first', { prompt: 'first' }),
+          ctx.claude.text('second', { prompt: 'second' }),
+          ctx.step('boom', {
+            input: null,
+            schema: z.null(),
+            async run() {
+              // Fail only once `second` waits behind `first` for the sole permit.
+              await queued.promise;
+              throw new Error('sibling failure');
+            },
+          }),
+        ]);
+        return null;
+      },
+    });
+    const running = runWorkflow(definition, {
+      stateDir,
+      runId: 'drain',
+      input: null,
+      agentLimit: 1,
+      ...(metric === 'cost' ? { maxRunCostUsd: 0.1 } : { maxRunAgentAttempts: 1 }),
+      harness: {
+        async invoke(request) {
+          prompts.push(request.options.prompt);
+          // Hold the permit until the sibling failure rejected the body, so `second` is refused
+          // while the run drains and its refusal never reaches the thrown error.
+          await failed.promise;
+          return { text: 'ok', sessionId: null, usage: { costUsd: 0.1 } };
+        },
+      },
+      onEvent(event) {
+        if (event.type === 'agent.queued' && event.stepId === 'second') queued.resolve();
+        if (event.type === 'step.failed' && event.stepId === 'boom') failed.resolve();
+      },
+    });
+    await expect(running).rejects.toThrow('sibling failure');
+    const saved = await readRun({ stateDir, runId: 'drain' });
+    expect(prompts).toEqual(['first']);
+    expect(saved.status).toBe('failed');
+    expect(saved.steps['second']).toBeUndefined();
+    expect(saved.budgetStop?.metric).toBe(
+      metric === 'cost' ? 'maxRunCostUsd' : 'maxRunAgentAttempts',
+    );
+    // The thrown error names only the sibling failure, yet the latched stop chooses the hint.
+    const flag = metric === 'cost' ? '--max-run-cost-usd' : '--max-run-agent-attempts';
+    expect(saved.recoveryHint).toContain(flag);
+    expect(saved.recoveryHint).toContain('--resume');
+    expect(saved.recoveryHint).not.toContain('Fix the workflow');
+    expect(saved.recoveryHint).not.toContain('failed step runs again');
+  },
+);
+
 function untilAborted(signal: AbortSignal): Promise<never> {
   return new Promise((_resolve, reject) => {
     signal.addEventListener('abort', () => {

@@ -361,9 +361,12 @@ map or configuration problem needs fixing anyway and a higher cap alone would no
 is still too low afterwards, the next resume stops with its own budget hint. It precedes the rest
 because a refused retry leaves its step failed (which was a plain effect resume), a caught refusal
 or all-terminal run was authoring, and a cancelled record whose failure chain holds a latched budget
-stop would hit the same cap on a plain resume. Limits: a failure chain holding a budget stop and an
-unrelated failure gets the budget hint, since the resume re-runs the failed effect anyway; and a
-window stop with a known reset that still failed (a concurrent failure) names
-`--max-window-utilization` although waiting for the reset would also work. A window stop with a
-known reset that suspends cleanly still deletes `recoveryHint` (ADR 0053). No record format,
-`schemaRevision`, step identity or public API changes.
+stop would hit the same cap on a plain resume. Besides the thrown error's chain, the runner passes
+the execution's latched budget stop, so a refusal that never reached the thrown error (a sibling
+failure rejected the body first and the cap refused a call while the run drained) still counts.
+Limits: a failure holding or accompanied by a budget stop gets the budget hint, since the resume
+re-runs the failed effect anyway but cannot make progress under the same cap; and a window stop with
+a known reset that still failed (a concurrent failure) names `--max-window-utilization` although
+waiting for the reset would also work. A window stop with a known reset that suspends cleanly still
+deletes `recoveryHint` (ADR 0053). No record format, `schemaRevision`, step identity or public API
+changes.
