@@ -37,7 +37,7 @@ export default class WorkflowTick extends WorkflowCommand {
     'state-dir': Flags.directory({ description: 'Runs container; defaults to project state' }),
     run: Flags.string({
       description:
-        'Only this run; exit 0 completed, 75 pending/interrupted/locked/orphans/deadline, or 1 failed/cancelled/incompatible/unreadable/crash-loop',
+        'Only this run; exit 0 completed, 75 pending/interrupted/locked/orphans/deadline, or 1 failed/cancelled/incompatible/unreadable/crash-loop (cancelled includes a forced cancel this tick saved)',
     }),
     watch: Flags.boolean({ description: 'Wait for deadlines or inbox deliveries until timeout' }),
     timeout: Flags.string({

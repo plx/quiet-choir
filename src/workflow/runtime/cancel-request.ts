@@ -8,7 +8,9 @@ import { atomicStorageWrite } from './storage-io.js';
 /**
  * A `workflow cancel` request, bound to the lock token of the one execution it targets. Every lock
  * acquisition draws a fresh token, so a request left over from an earlier execution never matches a
- * later one, in the same process or another (ADR 0039).
+ * later one, in the same process or another (ADR 0039). A request still bound to the token of an
+ * owner that was force-killed before it saved is honoured by tick's stale recovery, which ends the
+ * run as cancelled when it retires exactly that owner's lock (ADR 0058).
  */
 const cancelRequestSchema = z.object({
   version: z.literal(1),
@@ -37,6 +39,38 @@ export async function writeCancelRequest(
   const path = runCancelRequestPath(stateDir, runId);
   await atomicStorageWrite(path, `${JSON.stringify(cancelRequestSchema.parse(request))}\n`);
   return path;
+}
+
+/** The request stored at `path`, or undefined when it is missing or unreadable. @internal */
+export async function readCancelRequest(path: string): Promise<CancelRequest | undefined> {
+  try {
+    return cancelRequestSchema.parse(JSON.parse(await readFile(path, 'utf8')));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The run's cancel request with its path when it is bound to the token in the run's current
+ * `owner.json`, whoever that owner is and whether or not it is alive. A lock-free hint only: tick
+ * decides under ownership, against the token of the lock it retired itself (ADR 0058). Any read or
+ * parse failure means no request. @internal
+ */
+export async function readBoundCancelRequest(
+  stateDir: string,
+  runId: string,
+): Promise<{ readonly request: CancelRequest; readonly path: string } | undefined> {
+  const path = runCancelRequestPath(stateDir, runId);
+  const request = await readCancelRequest(path);
+  if (request === undefined) return undefined;
+  try {
+    const owner = ownerTokenSchema.parse(
+      JSON.parse(await readFile(join(runLockPath(stateDir, runId), 'owner.json'), 'utf8')),
+    );
+    return owner.token === request.token ? { request, path } : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

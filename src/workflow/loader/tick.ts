@@ -3,7 +3,19 @@ import { stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { ExecutionPlan, ExecutionResult, Executor } from '../../application/execution.js';
 import { answerCandidates, questionCodeChanged } from '../runtime/inbox.js';
-import { FileRunStore, type OwnedRunStore, type RunStore } from '../runtime/run-store.js';
+import {
+  FileRunStore,
+  reclaimedOwnerToken,
+  type OwnedRunStore,
+  type RunStore,
+} from '../runtime/run-store.js';
+import {
+  readBoundCancelRequest,
+  readCancelRequest,
+  removeCancelRequest,
+} from '../runtime/cancel-request.js';
+import { runCancelRequestPath } from '../runtime/paths.js';
+import { saveCancelledUnderLock } from '../runtime/run-cancellation.js';
 import {
   inspectRunOwnership,
   recordSchemaDrift,
@@ -98,7 +110,9 @@ export interface TickResumedEntry {
  * the maximum number of consecutive times without completing a new step. `deadline`: the run was
  * due or stale when read but less than the claim margin of this tick's timeout remained (a run first
  * seen inside the margin also gets no lock, orphan, crash-loop or source check), or the timeout
- * passed before the run was read. @internal
+ * passed before the run was read. `cancelled`: tick retired the lock of an owner that a `workflow
+ * cancel` had targeted and that exited (force-killed) before saving, and saved the run as cancelled
+ * instead of resuming it (ADR 0058); it is final, like any run saved cancelled. @internal
  */
 export type TickSkipReason =
   | 'not due'
@@ -108,16 +122,18 @@ export type TickSkipReason =
   | 'crash-loop'
   | 'deadline'
   | 'incompatible'
-  | 'unreadable';
+  | 'unreadable'
+  | 'cancelled';
 
 /** One run this tick inspected but did not resume. @internal */
 export interface TickSkippedEntry {
   readonly runId: string;
   readonly reason: TickSkipReason;
   /**
-   * Present for orphans, crash-loop, incompatible and unreadable runs, and for a deadline skip of a
-   * run tick never read. An orphans message says tick never signals a process and names the
-   * `workflow resume` command with `--kill-orphans`.
+   * Present for orphans, crash-loop, incompatible, unreadable and cancelled runs, and for a deadline
+   * skip of a run tick never read. An orphans message says tick never signals a process and names
+   * the `workflow resume` command with `--kill-orphans`; a cancelled message names the cancel
+   * request's time and the exited owner's PID.
    */
   readonly message?: string;
   /** Present for runs that are not due or no longer due, and for deadline skips of runs read. */
@@ -139,7 +155,8 @@ export interface TickWorkflowsResult extends ExecutionResult {
   readonly observed: number;
   /**
    * Batch operation returns 0. With --run: 0 when the run completed, in this tick or before; 1 when
-   * it failed, was saved as cancelled, or is incompatible, unreadable or crash-looping; 75 when it is
+   * it failed, was saved as cancelled (by its owner, earlier, or by this tick honouring a forced
+   * cancel), or is incompatible, unreadable or crash-looping; 75 when it is
    * still pending (not due, no longer due, suspended again or interrupted by the deadline, including
    * a resume interrupted before the runtime reopened the run, locked, blocked by orphan processes,
    * or skipped inside the claim margin).
@@ -233,14 +250,16 @@ export function resumeOutcome(
 
 /**
  * The --run exit code implied by one classification of the run. Crash-loop is final, like an
- * incompatible run; orphans stay pending because live children may still exit.
+ * incompatible run or one this tick saved cancelled; orphans stay pending because live children may
+ * still exit.
  */
 function exitFor(entry: TickEntry): 0 | 75 | 1 {
   if (entry.type === 'observed') return entry.status === 'completed' ? 0 : 1;
   if (entry.type === 'skipped')
     return entry.entry.reason === 'incompatible' ||
       entry.entry.reason === 'unreadable' ||
-      entry.entry.reason === 'crash-loop'
+      entry.entry.reason === 'crash-loop' ||
+      entry.entry.reason === 'cancelled'
       ? 1
       : 75;
   const { outcome } = entry.entry;
@@ -328,6 +347,30 @@ function harnessConfigPreflight(
     requestedConfigDigest: harnessConfigDigest(harness),
     allowHarnessConfigChange: plan.allowHarnessConfigChange ?? false,
   })?.message;
+}
+
+/**
+ * Honour a forced `workflow cancel` under the lock tick just took (ADR 0058): when this writer
+ * retired a dead or released owner's lock whose token the run's stored cancel request names, save
+ * the unfinished `run` as cancelled, remove that request and return the skip message. Undefined
+ * leaves the run to ordinary stale recovery. A request from any other acquisition never matches,
+ * since every acquisition draws a fresh token.
+ */
+async function honourForcedCancel(
+  stateDir: string,
+  owned: OwnedRunStore,
+  run: RunRecord,
+): Promise<string | undefined> {
+  if (run.status !== 'running' && run.status !== 'suspended') return undefined;
+  const reclaimed = reclaimedOwnerToken(owned);
+  if (reclaimed === undefined) return undefined;
+  const path = runCancelRequestPath(stateDir, run.id);
+  const request = await readCancelRequest(path);
+  if (request?.token !== reclaimed) return undefined;
+  const message = `Run ${run.id} cancelled by workflow cancel (requested ${request.requestedAt}); its owner PID ${String(request.pid)} exited before saving, so stale recovery ended it instead of resuming it.`;
+  await saveCancelledUnderLock(owned, run, new Error(message));
+  await removeCancelRequest(path, request.requestId);
+  return message;
 }
 
 /** Transfer the already-held writer to the runtime, releasing it exactly once on every path. */
@@ -552,9 +595,15 @@ export class TickWorkflowExecutor implements Executor<
               });
               continue;
             }
+            // A forced cancel's request bound to the dead owner's lock is honoured even for a
+            // crash-looping or source-changed run, since cancelling runs no workflow code (ADR 0058).
+            // This lock-free match is only a hint; the decision is made under ownership, and a hint
+            // that no longer holds there falls through to the post-open checks below.
+            const cancelHint = (await readBoundCancelRequest(plan.stateDir, id)) !== undefined;
             // Leave a crash-looping run, and any dead lock it holds, untouched.
-            if (run.status === 'running' && staleDecision(run).kind === 'crash-loop') continue;
-            if (!run.launch || (await questionCodeChanged(run)) !== false) {
+            if (!cancelHint && run.status === 'running' && staleDecision(run).kind === 'crash-loop')
+              continue;
+            if (!cancelHint && (!run.launch || (await questionCodeChanged(run)) !== false)) {
               skip(id, 'incompatible', {
                 message: run.launch
                   ? 'Stored workflow source hashes are missing or changed.'
@@ -581,6 +630,13 @@ export class TickWorkflowExecutor implements Executor<
             const latest = await owned.read();
             if (!latest) throw new Error(`Run ${id} disappeared after acquiring ownership.`);
             run = latest;
+            // A forced cancel bound to the owner whose lock this tick just retired: save the run
+            // cancelled instead of resuming it. Uses no --max-runs attempt and counts no recovery.
+            const cancelled = await honourForcedCancel(plan.stateDir, owned, latest);
+            if (cancelled !== undefined) {
+              skip(id, 'cancelled', { message: cancelled });
+              continue;
+            }
             // A concurrent tick may have finished or resumed the run before this one got the lock.
             if (await classify(run, 'no longer due')) continue;
             if (!run.launch || (await questionCodeChanged(run)) !== false) {

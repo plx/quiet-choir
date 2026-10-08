@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -854,6 +854,7 @@ describe('workflow cancel waits', () => {
       pid: process.pid,
       signalsSent: 1,
       forced: false,
+      requestKept: false,
     });
     expect(failure.message).toMatch(
       /exited without saving cancelled; the run is suspended, and the next workflow tick may resume it\.$/u,
@@ -861,6 +862,65 @@ describe('workflow cancel waits', () => {
     expect(failure.run?.status).toBe('suspended');
     expect(sendSignal).toHaveBeenCalledOnce();
     expect(existsSync(requestPath())).toBe(false);
+  });
+
+  // Issue #293 / ADR 0058: the SIGINT was the owner's second signal, so it exited 130 at once and
+  // left both locks behind with its token and the run still running.
+  it('keeps the request when the owner is force-killed, and the next tick saves the run cancelled', async () => {
+    await suspendedRun();
+    await crashedWhileRunning();
+    await lockRun(stateDir, 'run-1');
+    const locks = [join(stateDir, 'run-1', 'lock'), join(stateDir, 'run-1.json.lock')];
+    const sendSignal = vi.fn(() => {
+      for (const lock of locks) {
+        const path = join(lock, 'owner.json');
+        const owner = JSON.parse(readFileSync(path, 'utf8')) as object;
+        writeFileSync(path, JSON.stringify({ ...owner, pid: DEAD }));
+      }
+    });
+    const failure = failed(await cancel(sendSignal));
+    expect(failure.code).toBe('run.unowned');
+    expect(workflowExitCodes[failure.code]).toBe(3);
+    expect(failure.details).toEqual({
+      reason: 'owner-exited',
+      pid: process.pid,
+      signalsSent: 1,
+      forced: false,
+      requestKept: true,
+    });
+    expect(failure.message).toMatch(
+      /exited without saving cancelled; the run is running\. The cancel request stays bound to the exited owner's lock, so the next workflow tick ends the run as cancelled instead of recovering it\.$/u,
+    );
+    expect(failure.run?.status).toBe('running');
+    expect(existsSync(requestPath())).toBe(true);
+    const { requestedAt } = JSON.parse(await readFile(requestPath(), 'utf8')) as {
+      readonly requestedAt: string;
+    };
+
+    const ticked = await new TickWorkflowExecutor({ typecheckCache, logger }).execute({
+      kind: 'workflow.tick',
+      runId: 'run-1',
+      stateDir,
+    });
+    expect(ticked).toEqual({
+      kind: 'workflow.tick.result',
+      ok: true,
+      resumed: [],
+      skipped: [
+        {
+          runId: 'run-1',
+          reason: 'cancelled',
+          message: `Run run-1 cancelled by workflow cancel (requested ${requestedAt}); its owner PID ${String(process.pid)} exited before saving, so stale recovery ended it instead of resuming it.`,
+        },
+      ],
+      observed: 0,
+      exitCode: 1,
+    });
+    const saved = await readRun({ stateDir, runId: 'run-1' });
+    expect(saved.status).toBe('cancelled');
+    expect(saved.recoveryCause).toEqual({ kind: 'cancelled' });
+    expect(existsSync(requestPath())).toBe(false);
+    for (const lock of locks) expect(existsSync(lock)).toBe(false);
   });
 });
 
