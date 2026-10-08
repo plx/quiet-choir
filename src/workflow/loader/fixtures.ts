@@ -85,6 +85,12 @@ export function fixturesFromRun(run: RunRecord): HarnessFixtures {
  * and a kindless rule replays as `unknown`, so it is left out and kindless exports stay unchanged.
  * `cancelled` is left out too: a replayed `cancelled` HarnessError is fatal, so it would turn an
  * absorbed failure into one that is never retried or settled.
+ *
+ * A replayed rule always rejects with a `HarnessError` of the exported kind. Failures the runtime
+ * classified from other error classes, such as local output validation (`schema`, which originally
+ * threw `ZodError` or `SyntaxError`) or plain process or idle-timeout errors, therefore keep their
+ * kind but not their error class. Reconstructing the class would need a `FixtureCall` /
+ * `FixtureHarness` change, which is left to #147 and #309.
  */
 function exportedKind(kind: ErrorKind | null | undefined): { readonly kind?: ErrorKind } {
   return kind === undefined || kind === null || kind === 'unknown' || kind === 'cancelled'
