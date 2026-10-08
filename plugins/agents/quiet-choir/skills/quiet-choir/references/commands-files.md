@@ -4,10 +4,11 @@ Use `ctx.exec(id, argv, options)` for deterministic commands, including tests, G
 installed `gh` CLI. The CLI supplies `NodeProcessRunner`; embedded callers supply
 `RunOptions.processRunner`. The core never imports a process-spawning adapter. A fixture can
 implement `ProcessRunner.run` with in-memory results. `RunOptions.execRunner`, when set, serves
-`ctx.exec` effects (including `guardFile`'s helpers) instead, while worktree Git keeps
-`processRunner`. Custom adapters must enforce limits and register children before sending stdin.
-They are responsible for the correctness of their saved outputs; use separate run IDs/state for
-mocked and real executions. Commands do not consume an agent concurrency slot.
+every command instead: `ctx.exec` effects (including `guardFile`'s helpers), a callback's or
+observer's `context.exec`, and each command-poll check. Worktree Git always keeps `processRunner`.
+Custom adapters must enforce limits and register children before sending stdin. They are responsible
+for the correctness of their saved outputs; use separate run IDs/state for mocked and real
+executions. Commands do not consume an agent concurrency slot.
 
 An argv tuple runs directly. `{ shell: '...' }` explicitly selects `sh -c` (`cmd.exe` on Windows),
 and inspect prints `[SHELL]`. Both forms run with the operator's privileges. Agent tool grants do

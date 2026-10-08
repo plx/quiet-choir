@@ -425,16 +425,19 @@ export interface RunOptions extends WorkflowCodeOptions {
    */
   readonly worktrees?: WorktreePolicy;
   /**
-   * Process integration for durable exec and worktree Git operations; the core never spawns. Under
-   * `rehearsal` it serves only the read-only `git rev-parse` that resolves a synthesized base;
-   * every other Git command is refused before it reaches the runner.
+   * Process integration for worktree Git (provisioning, snapshots, merges), always, and for
+   * commands when `execRunner` is unset; the core never spawns. Under `rehearsal` it serves only
+   * the read-only `git rev-parse` that resolves a synthesized base, plus an observer's or command
+   * poll's `live: true` command; every other Git command is refused before it reaches the runner.
    */
   readonly processRunner?: ProcessRunner;
   /**
-   * Process integration for `ctx.exec` and `ctx.exec.json` effects only, including `guardFile`'s
-   * helper commands; defaults to `processRunner`. Worktree Git operations always use
-   * `processRunner`. The CLI sets it to answer commands from fixture exec rules, and under
-   * `--dry-run` to the rehearsal's synthesizing runner.
+   * Process integration for every command: durable `ctx.exec` and `ctx.exec.json` (including
+   * `guardFile`'s helper commands), a `ctx.step` callback's or poll observer's `context.exec`, and
+   * each check of a command poll. Defaults to `processRunner`. Worktree Git never uses it. Under
+   * `rehearsal`, a `live: true` observer or command-poll command uses `processRunner` instead. The
+   * CLI sets it to answer commands from fixture exec rules, and under `--dry-run` to the
+   * rehearsal's synthesizing runner.
    */
   readonly execRunner?: ProcessRunner;
   /** Wall clock and cancellable timer used by now, waits, and legacy sleeps. */
@@ -2445,9 +2448,10 @@ export async function runWorkflow<
     }
 
     /**
-     * Bind a callback's or observer's non-durable `context.exec` to this run's runners. A live
-     * observer call goes to processRunner only under a rehearsal, where the CLI supplies the real
-     * runner; otherwise it uses execRunner like every other command, so fixture rules still apply.
+     * Bind a callback's or observer's non-durable `context.exec` to this run's runners. Like every
+     * command it uses `execRunner ?? processRunner`, so fixture rules still apply; the one exception
+     * is a `live: true` call under a rehearsal, which goes to `processRunner`, where the CLI
+     * supplies the real runner.
      */
     function stepExec(
       binding: Omit<StepExecDependencies, 'invocation' | 'runner' | 'onSchema'>,

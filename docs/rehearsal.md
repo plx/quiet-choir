@@ -212,7 +212,9 @@ because its purpose is to forbid synthesis.
 Under `--harness fixture` without `--dry-run`, matched commands are answered without spawning
 through `RunOptions.execRunner`; worktree Git operations always use the real process runner, so
 isolated worktrees are still provisioned. `--dry-run` routes the same way: its synthesizing runner
-is the `execRunner`, and the real runner serves only the read-only Git described below.
+is the `execRunner`, and the real runner serves only the read-only Git described below. A callback's
+`context.exec` and each command-poll check follow the same `execRunner` route. Under
+`commands: "fixture"` worktree Git is unaffected, because it never goes through exec rules.
 `guardFile`'s baseline and restore helpers are ordinary exec effects too, so under
 `commands: "fixture"` they need rules (for example a `**/baseline` step glob). Commands are not
 per-harness: a named `--harness name=fixture:FILE` file with `exec` or `commands` is refused; put

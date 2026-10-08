@@ -39,7 +39,10 @@ import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
 import { TypecheckProgramCache } from '../src/workflow/typecheck/program-cache.js';
 import { RehearsalHarness, rehearsalState } from '../src/workflow/loader/rehearsal.js';
 import { fixturesFromRun } from '../src/workflow/loader/fixtures.js';
-import { readHarnessSelection } from '../src/workflow/loader/harness-selection.js';
+import {
+  readHarnessSelection,
+  type HarnessSelection,
+} from '../src/workflow/loader/harness-selection.js';
 import { materializeInvocation } from '../src/harnesses/invocation.js';
 import { testInvocation } from './harness-invocation.js';
 
@@ -1422,7 +1425,15 @@ it('selects a shipped fake CLI envelope by prompt pattern and logs its original 
 // One case type-checks a workflow module that imports the engine source. measured: 1.4 s alone; the
 // sibling exec-fixtures executor suite budgets 40 s for the same loader compile on CI's slowest leg.
 describe('dry-run worktree synthesis through the executor', { timeout: 40_000 }, () => {
-  it('sends ctx.exec to the synthesizing runner and only read-only Git to the injected runner', async () => {
+  /**
+   * A temporary repository with a one-command, one-worktree-call workflow, executed as a dry run
+   * under the given harness selection. A spy ProcessRunner records every argv that reaches the
+   * executor's injected (real) runner and delegates to it.
+   */
+  async function dryRun(
+    selection: (root: string) => Promise<HarnessSelection> | HarnessSelection,
+    fixtureFile?: object,
+  ) {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'choir-rehearsal-worktrees-')));
     roots.push(root);
     const git = (...args: string[]) =>
@@ -1452,6 +1463,7 @@ export default defineWorkflow({
 });
 `,
     );
+    if (fixtureFile) await writeFile(join(root, 'f.json'), JSON.stringify(fixtureFile));
     git('add', '--all');
     git('commit', '-qm', 'baseline');
     const head = git('rev-parse', 'HEAD');
@@ -1477,11 +1489,19 @@ export default defineWorkflow({
       cwd: root,
       input: null,
       resume: false,
-      harness: { kind: 'cli', config: {} },
+      harness: await selection(root),
       dryRun: true,
     });
     if (result.kind !== 'workflow.run.result' || !result.rehearsal)
       throw new Error(JSON.stringify(result));
+    return { result, rehearsal: result.rehearsal, commands, head, git, root };
+  }
+
+  it('sends ctx.exec to the synthesizing runner and only read-only Git to the injected runner', async () => {
+    const { result, rehearsal, commands, head, git, root } = await dryRun(() => ({
+      kind: 'cli',
+      config: {},
+    }));
     expect(result.run.output).toBe(head);
     // The command never reached the injected runner; Git did, and only for rev-parse.
     expect(commands.length).toBeGreaterThan(0);
@@ -1489,18 +1509,18 @@ export default defineWorkflow({
       expect(argv[0]).toBe('git');
       expect(argv[argv.indexOf('-C') + 2]).toBe('rev-parse');
     }
-    expect(result.rehearsal.commands).toEqual([
+    expect(rehearsal.commands).toEqual([
       expect.objectContaining({ stepId: 'probe', outputSource: 'synthesized' }),
     ]);
-    expect(result.rehearsal.calls).toEqual([
+    expect(rehearsal.calls).toEqual([
       expect.objectContaining({
         stepId: 'edit',
         plan: expect.objectContaining({ argv: expect.any(Array) as unknown }) as unknown,
         worktree: { synthesized: true, base: head, baseSource: 'resolved' },
       }),
     ]);
-    expect(result.rehearsal.calls[0]?.cwd).not.toBe(root);
-    expect(result.rehearsal.merges).toEqual([
+    expect(rehearsal.calls[0]?.cwd).not.toBe(root);
+    expect(rehearsal.merges).toEqual([
       {
         stepId: 'integrate',
         synthesized: true,
@@ -1510,9 +1530,53 @@ export default defineWorkflow({
         baseSource: 'resolved',
       },
     ]);
-    expect(result.rehearsal.warnings).toContainEqual(
+    expect(rehearsal.warnings).toContainEqual(
       expect.stringContaining('Worktree effects are synthesized'),
     );
+    expect(git('for-each-ref', '--format=%(refname)')).toBe(
+      'refs/heads/' + git('branch', '--show-current'),
+    );
+    expect(
+      git('worktree', 'list', '--porcelain')
+        .split('\n')
+        .filter((line) => line.startsWith('worktree ')),
+    ).toHaveLength(1);
+  });
+
+  it('serves worktree Git from the real runner under commands: fixture, which no exec rule covers', async () => {
+    // The exec rules cover only 'probe'. A Git call routed through the fixture-backed runner would
+    // fail with 'No exec fixture matches step', so completing proves Git uses the real runner.
+    const { result, rehearsal, commands, head, git } = await dryRun(
+      (root) => readHarnessSelection('fixture:f.json', undefined, root),
+      {
+        version: 1,
+        calls: [],
+        exec: [{ step: 'probe', stdout: 'ok\n' }],
+        commands: 'fixture',
+      },
+    );
+    expect(result.run.output).toBe(head);
+    expect(rehearsal.merges).toEqual([
+      expect.objectContaining({
+        stepId: 'integrate',
+        baseSource: 'resolved',
+        commit: head,
+      }),
+    ]);
+    expect(rehearsal.calls[0]?.worktree).toEqual({
+      synthesized: true,
+      base: head,
+      baseSource: 'resolved',
+    });
+    expect(commands.length).toBeGreaterThan(0);
+    for (const argv of commands) {
+      expect(argv[0]).toBe('git');
+      expect(argv[argv.indexOf('-C') + 2]).toBe('rev-parse');
+    }
+    expect(rehearsal.commands).toEqual([
+      expect.objectContaining({ stepId: 'probe', outputSource: 'fixture', fixtureIndex: 0 }),
+    ]);
+    expect(rehearsal.staleExecFixtures).toEqual([]);
     expect(git('for-each-ref', '--format=%(refname)')).toBe(
       'refs/heads/' + git('branch', '--show-current'),
     );
