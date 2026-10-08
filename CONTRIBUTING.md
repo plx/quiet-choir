@@ -290,6 +290,13 @@ hooks, explicit opt-ins, and file-tool boundaries against local fake APIs. It al
 and dummy keys, and performs no upstream inference. See
 [harness isolation](docs/harness-isolation.md).
 
+`npm run test:contract:doctor` runs the installed Codex through `configuration doctor`'s exact-argv
+probe against the local fake Responses API, with a temporary `HOME`, `CODEX_HOME` and a fake key. It
+fails unless every request carries the probe's nonexistent sentinel model and effort `bogus`, and
+checks the doctor's verdicts when the server rejects the effort first and when it rejects the model
+first. Run it before widening the tested Codex range; a version outside the range and process
+warnings are reported, not asserted.
+
 The separate opt-in schema contract matrix uses the pinned Zod-generated fixtures in
 `test/fixtures/codex-schema-matrix.json`. Run `npm run build` first, then:
 

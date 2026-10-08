@@ -2,6 +2,14 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `configuration doctor`'s Codex exact-argv probe sends a fresh nonexistent model
+  (`quiet-choir-nonexistent-<uuid>`) beside the invalid effort, instead of the inherited model or
+  `gpt-5`, so it cannot reach inference whichever the server rejects first (behavior change). The
+  argv check passes on a 400 listing the efforts or a 400/404 naming the sentinel. After a model
+  rejection the Codex enums check reports `warn` (effort drift unverified; verdict
+  `usable-with-warnings`, exit 0), and `--strict` fails it. `npm run test:contract:doctor` checks
+  the probe's requests against a loopback fake API. See ADR 0040 (#295).
+
 - A forced `workflow cancel` sticks against stale recovery (behavior change; no record format,
   schema revision or step identity change): when `--force`, or a cancel whose SIGINT was the owner's
   second signal, force-kills the owner before it saves, cancel keeps its request, bound to that
