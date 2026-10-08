@@ -53,6 +53,11 @@ interface MapDependencies {
   readonly maps: Record<string, MapRecord>;
   readonly used: Set<string>;
   readonly visitedMaps: Set<string>;
+  /**
+   * How many invocations of each qualified map prefix this execution of the workflow body has
+   * started; it numbers repeated invocations of one map ID, such as loop rounds, for fork reuse.
+   */
+  readonly mapInvocations: Map<string, number>;
   readonly save: () => Promise<void>;
   /** Whether this resume explicitly accepts code changes; a committed map then accepts a mapper-only change. */
   readonly acceptCodeChange: boolean;
@@ -81,6 +86,7 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
     maps,
     used,
     visitedMaps,
+    mapInvocations,
     save,
     acceptCodeChange,
     nextSeq,
@@ -173,8 +179,12 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
             return value;
           });
           const items = new Set(keys.map((key) => `${prefix}${key}/`));
-          // Names this invocation by its key set, stable across resumes; steps record it (#302).
-          const invocation = digest([...items].sort());
+          // Names this invocation by its ordinal among this body execution's invocations of the
+          // prefix and by its key set; the body replays from the start, so both are stable across
+          // resumes. Steps record it (#302).
+          const ordinal = mapInvocations.get(prefix) ?? 0;
+          mapInvocations.set(prefix, ordinal + 1);
+          const invocation = digest([String(ordinal), ...[...items].sort()]);
           itemPaths = [...items].map((item) => ({ map: prefix, item, items, invocation }));
           journalId = names.qualify(id);
         } catch (error) {

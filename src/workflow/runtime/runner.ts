@@ -1389,6 +1389,8 @@ export async function runWorkflow<
     const names = new NameScopes();
     const origins = new FailureOrigins();
     const visitedMaps = new Set<string>();
+    // Per body execution, like visitedMaps: numbers repeated invocations of one map prefix.
+    const mapInvocations = new Map<string, number>();
     const maps = (record.maps ??= {});
     // `effect` is the call-site effect kind (the harness for an agent call), or null for a scope,
     // phase, map or child operation; a failure before the step has a record reports it.
@@ -3220,6 +3222,7 @@ export async function runWorkflow<
       maps,
       used,
       visitedMaps,
+      mapInvocations,
       save,
       acceptCodeChange: Boolean(options.acceptCodeChange),
       nextSeq: () => nextSeq++,

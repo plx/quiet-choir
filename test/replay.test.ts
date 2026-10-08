@@ -442,8 +442,8 @@ it('reuses surviving named-map items after a fork drops a key, and runs the root
   const definition = keyedReview(state);
   await runWorkflow(definition, { ...options(), harness });
   const source = await readRun(options());
-  // Each step records its exact item prefix and its invocation's key-set digest.
-  const invocation = digest(['review/a/', 'review/b/', 'review/gone/x/']);
+  // Each step records its exact item prefix and its invocation's ordinal and key-set digest.
+  const invocation = digest(['0', 'review/a/', 'review/b/', 'review/gone/x/']);
   expect(source.steps['review/b/s1']?.mapItems).toEqual([{ item: 'review/b/', invocation }]);
   expect(source.steps['review/gone/x/s1']?.mapItems).toEqual([
     { item: 'review/gone/x/', invocation },
@@ -465,7 +465,7 @@ it('reuses surviving named-map items after a fork drops a key, and runs the root
   expect(fork.steps['summary']?.status).toBe('completed');
   // Reused copies carry this run's own invocation, not the source's.
   expect(fork.steps['review/b/s1']?.mapItems).toEqual([
-    { item: 'review/b/', invocation: digest(['review/a/', 'review/b/']) },
+    { item: 'review/b/', invocation: digest(['0', 'review/a/', 'review/b/']) },
   ]);
   // A fork of the fork that also drops 'a' still reuses 'b'.
   state.keys = ['b'];
@@ -502,6 +502,38 @@ it('does not treat another invocation of the same map ID as a sibling of a dropp
   expect(reusedIds(fork)).toEqual(['review/r1-a/s']);
 });
 
+it('does not treat a later invocation of the same map ID with the same keys as a sibling', async () => {
+  const { harness, live } = delayedFixture();
+  const state = { keys: ['a', 'gone', 'b'] };
+  const definition = workflow(async (ctx) => {
+    for (const round of [1, 2])
+      await ctx.map('review', state.keys, { concurrency: 1, key: (key) => key }, (key) =>
+        ctx.claude.text(`r${String(round)}`, { prompt: `${key} round ${String(round)}` }),
+      );
+    return 'done';
+  });
+  await runWorkflow(definition, { ...options(), harness });
+  const source = await readRun(options());
+  // Same keys in both rounds, but each round is its own invocation.
+  const items = ['review/a/', 'review/b/', 'review/gone/'];
+  expect(source.steps['review/a/r1']?.mapItems).toEqual([
+    { item: 'review/a/', invocation: digest(['0', ...items]) },
+  ]);
+  expect(source.steps['review/a/r2']?.mapItems).toEqual([
+    { item: 'review/a/', invocation: digest(['1', ...items]) },
+  ]);
+  live.length = 0;
+  state.keys = ['a', 'b'];
+  const fork = await runWorkflow(definition, {
+    ...options('fork'),
+    harness,
+    forkFrom: { runId: 'source' },
+  });
+  // Round 2 launched after the dropped round-1 item settled, so it may depend on it.
+  expect(live).toEqual(['review/a/r2', 'review/b/r2']);
+  expect(reusedIds(fork)).toEqual(['review/a/r1', 'review/b/r1']);
+});
+
 it('records the enclosing named-map item on a wait launched inside it', async () => {
   const ready = (id: string) =>
     ({
@@ -525,7 +557,7 @@ it('records the enclosing named-map item on a wait launched inside it', async ()
   expect(record.steps['gate/a/ready']).toMatchObject({
     kind: 'wait',
     status: 'completed',
-    mapItems: [{ item: 'gate/a/', invocation: digest(['gate/a/']) }],
+    mapItems: [{ item: 'gate/a/', invocation: digest(['0', 'gate/a/']) }],
   });
   expect(record.steps['outside']).not.toHaveProperty('mapItems');
 });
