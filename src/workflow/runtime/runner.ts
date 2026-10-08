@@ -192,7 +192,13 @@ import { bindContext } from './context.js';
 import { execFailureFields, stepError, errorKind } from './step-error.js';
 import { stepEventError } from './step-event-error.js';
 import { ConfigurationError, GrantRequiredError } from './configuration-error.js';
-import { chooseRecoveryHint, type RecoveryCause, type RecoveryHintInput } from './recovery-hint.js';
+import type { RecoveryCause } from './recovery-hint.js';
+import {
+  cancelRecord,
+  clearRecovery,
+  recordHonoredAbort,
+  saveRecovery,
+} from './run-cancellation.js';
 import { harnessConfigRefusal } from './harness-config-decision.js';
 import { classifyAttemptFailure } from './attempt-failure.js';
 import {
@@ -573,25 +579,6 @@ export interface RunOptions extends WorkflowCodeOptions {
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-/**
- * Record an honored run-signal abort on `record`. A marked {@link RunInterruptedError} is a
- * resumable suspension that is due at `now` and keeps `staleRecovery` (ADR 0029); any other reason,
- * such as a `workflow cancel` request bound to this execution's lock (ADR 0039), cancels the run.
- */
-function recordHonoredAbort(record: RunRecord, reason: unknown, now: number): void {
-  if (reason instanceof RunInterruptedError) {
-    record.status = 'suspended';
-    record.error = null;
-    record.rootCause = null;
-    record.interruptedBy = { reason: message(reason), at: new Date().toISOString() };
-    record.nextWakeAt = now;
-    return;
-  }
-  record.status = 'cancelled';
-  record.error = message(reason);
-  record.rootCause = { stepId: null, error: message(reason), errorKind: null, effect: null };
 }
 
 async function waitUntil(
@@ -1016,47 +1003,41 @@ export async function runWorkflow<
         // migration that adopts the changed workflow, so it stays untouched.
         const reason: unknown = options.signal.reason;
         if (existing.formatVersion !== 1) {
-          existing.formatVersion = 7;
-          existing.seq ??= 0;
-          existing.engine = engine;
-          existing.schemaRevision = SUPPORTED_SCHEMA_REVISION;
-          // A cancellation leaves no stale marker from an earlier interruption.
-          delete existing.interruptedBy;
-          recordHonoredAbort(existing, reason, clockNow(clock));
-          clearRecovery(existing);
-          if (existing.status === 'cancelled') {
-            const finishedAt = new Date().toISOString();
-            for (const frame of Object.values(existing.children ?? {}))
-              if (frame.status === 'running' || frame.status === 'suspended') {
-                frame.status = 'cancelled';
-                frame.finishedAt = finishedAt;
-                frame.error ??= existing.error;
-              }
-            saveRecovery(existing, {
-              cause: classifyRecoveryCause([reason], existing),
-              rehearsal: false,
-              recordedWork: hasRecordedWork(existing),
-              allTerminal: hasTerminalOutcomes(existing),
+          let ended: RunEvent;
+          let restore: () => void;
+          if (reason instanceof RunInterruptedError) {
+            existing.formatVersion = 7;
+            existing.seq ??= 0;
+            existing.engine = engine;
+            existing.schemaRevision = SUPPORTED_SCHEMA_REVISION;
+            recordHonoredAbort(existing, reason, clockNow(clock));
+            clearRecovery(existing);
+            // The lifecycle record the body's catch would add: an execution entry that ends with
+            // the interruption and its run event.
+            const prior = {
+              executions: existing.executions?.slice(),
+              events: existing.events?.slice(),
+              eventCounts: existing.eventCounts,
+              phase: existing.phase,
+              errorStack: existing.errorStack,
+            };
+            ended = new RunObservations(
+              existing,
+              () => Promise.resolve(),
+              () => undefined,
+            ).lifecycle('run.suspended', null);
+            existing.updatedAt = new Date().toISOString();
+            restore = () => Object.assign(existing, prior);
+          } else {
+            // The same transition `workflow cancel` saves for a run no process owns (ADR 0057).
+            // Neither the execution entry nor its event stays in memory, or reaches onEvent,
+            // unless saved.
+            ({ event: ended, restore } = cancelRecord(existing, reason, {
+              cause: (cancelled) => classifyRecoveryCause([reason], cancelled),
               sourceChanged: (compatibility?.changed.length ?? 0) > 0,
-              runId: existing.id,
-            });
+            }));
           }
-          // The lifecycle record the body's catch would add: an execution entry that ends with the
-          // abort and its run event. Neither stays in memory, nor reaches onEvent, unless saved.
           const suspended = existing.status === 'suspended';
-          const prior = {
-            executions: existing.executions?.slice(),
-            events: existing.events?.slice(),
-            eventCounts: existing.eventCounts,
-            phase: existing.phase,
-            errorStack: existing.errorStack,
-          };
-          const ended = new RunObservations(
-            existing,
-            () => Promise.resolve(),
-            () => undefined,
-          ).lifecycle(suspended ? 'run.suspended' : 'run.cancelled', suspended ? null : reason);
-          existing.updatedAt = new Date().toISOString();
           const context = `Could not save run ${existing.id}`;
           try {
             await storage.append(existing, { context });
@@ -1078,7 +1059,7 @@ export async function runWorkflow<
               /* Observers cannot invalidate persisted work. */
             }
           } catch (error) {
-            Object.assign(existing, prior);
+            restore();
             checkpointProblems.push(
               error instanceof CheckpointError
                 ? error
@@ -4076,24 +4057,6 @@ export async function runWorkflow<
     throw cause;
   }
   return outcome.run;
-}
-
-/**
- * Save a failed or cancelled run's typed recovery cause, which selects its `next` commands, and the
- * hint it chooses; the hint is removed when the chooser gives none (nothing recorded, a dry-run).
- * The cause is saved either way, so the record stays truthful. Paired with {@link clearRecovery}.
- */
-function saveRecovery(record: RunRecord, input: RecoveryHintInput): void {
-  record.recoveryCause = input.cause;
-  const hint = chooseRecoveryHint(input);
-  if (hint === undefined) delete record.recoveryHint;
-  else record.recoveryHint = hint;
-}
-
-/** Remove the recovery hint and cause, at the start of an execution or on a clean suspension. */
-function clearRecovery(record: RunRecord): void {
-  delete record.recoveryHint;
-  delete record.recoveryCause;
 }
 
 /**
