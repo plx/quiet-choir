@@ -99,15 +99,15 @@ jobs:
   test:
     name: Tests / Node.js ${{ matrix.node-version }}
     runs-on: ubuntu-latest
-    # measured: the Node 24 leg runs under V8 coverage, which slows the subprocess-heavy suites
-    # (replay-loader, tick) about 2.4x. Vitest took 208 s on Node 22.13 and 595 s on Node 24 for
-    # the same tests (495 s on main, an 8m28s job), so 10 minutes left no room for new tests.
+    # measured: on 74bf584 (before the per-suite program caches in #286) the 22.13 job took 7m25s
+    # (Vitest 429 s) and the 26 job 5m48s (331 s); both are above 5 minutes, so 10 minutes would
+    # leave less than 2x headroom.
     timeout-minutes: 15
 
     strategy:
       fail-fast: false
       matrix:
-        node-version: ['22.13.0', '24', '26']
+        node-version: ['22.13.0', '26']
 
     steps:
       - name: Check out repository
@@ -125,15 +125,101 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Test with coverage gates
-        if: matrix.node-version == '24'
-        run: npm run test:coverage
-
       - name: Test
-        if: matrix.node-version != '24'
         run: npm test
 
       - name: Check that tests left no real quiet-choir state
         run: |
           d="${XDG_STATE_HOME:-$HOME/.local/state}/quiet-choir"
           if [ -e "$d" ]; then find "$d" -maxdepth 3; exit 1; fi
+
+  # Node 24 runs the suite under V8 coverage, split across shards that each save a Vitest blob
+  # report; coverage-gate merges them and is the only place the coverage thresholds apply. Vitest
+  # assigns files to shards by path hash, and tick.test.ts (the slowest file) shares its shard with
+  # worktrees and replay-loader, so 2 shards would leave one near 6 minutes.
+  coverage:
+    name: Tests / Node.js 24 coverage (${{ matrix.shard }}/3)
+    runs-on: ubuntu-latest
+    # measured: unsharded, this leg took 13m57s on 74bf584 (Vitest 819 s, tick.test.ts 527 s).
+    # Locally the shared program caches cut the coverage run from 268 s to 134 s and tick.test.ts
+    # from 226 s to 98 s, which projects to about 4 minutes for the slowest shard; keep 15 until CI
+    # shows each shard at 5 minutes or less.
+    timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # A shard covers only part of src/, so its thresholds are off; coverage-gate checks the merge.
+      # The default reporter keeps per-file durations in the log; vitest-reports/ is not hidden,
+      # because upload-artifact skips hidden files.
+      - name: Test shard with coverage
+        run: >-
+          npx vitest run --coverage --shard=${{ matrix.shard }}/3 --coverage.thresholds.lines=0
+          --coverage.thresholds.functions=0 --coverage.thresholds.branches=0
+          --coverage.thresholds.statements=0 --reporter=default --reporter=blob
+          --outputFile.blob=vitest-reports/blob-${{ matrix.shard }}.json
+
+      - name: Check that tests left no real quiet-choir state
+        run: |
+          d="${XDG_STATE_HOME:-$HOME/.local/state}/quiet-choir"
+          if [ -e "$d" ]; then find "$d" -maxdepth 3; exit 1; fi
+
+      - name: Upload blob report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vitest-blob-${{ matrix.shard }}
+          path: vitest-reports/
+          if-no-files-found: error
+          retention-days: 1
+
+  coverage-gate:
+    name: Coverage thresholds / Node.js 24
+    needs: coverage
+    runs-on: ubuntu-latest
+    # measured: merging the three local blob reports took about 2 s; the job is setup plus that.
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download blob reports
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: vitest-blob-*
+          path: vitest-reports
+          merge-multiple: true
+
+      # Merges the shards' results and coverage, then applies the thresholds in vitest.config.ts.
+      - name: Check coverage thresholds on the merged report
+        run: npx vitest run --merge-reports=vitest-reports --coverage

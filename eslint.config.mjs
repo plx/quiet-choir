@@ -14,6 +14,7 @@ export default defineConfig(
       '.quiet-choir/**',
       '.context/**',
       'coverage/**',
+      'vitest-reports/**',
       'dist/**',
       'docs/api/**',
       'comparisons/batches/**',
