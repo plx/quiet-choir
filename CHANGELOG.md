@@ -8,8 +8,9 @@
   change for exported files, #306). That covers an exit code outside `okExitCodes` and an
   `exec.json` schema failure: the replay rebuilds the same `ExecStepError` or thrown `ExecError`
   message, kind, code, signal, tails and `parsed`, and export, replay and export again give the same
-  file. An `exec.json` schema failure without `parsed` whose stdout tail fills all 1024 characters
-  also gets no rule, since the truncated tail could replay as valid output. A spawn failure,
+  file. An `exec.json` failure (exit code or schema) without `parsed` whose stdout tail fills all
+  1024 characters also gets no rule, since the truncated tail could replay as valid output or an
+  invented `parsed`, and neither does a `parsed` whose compact form is over 16 KiB. A spawn failure,
   timeout, signal kill or output-limit failure gets no rule until #307, but the export now sets
   `"commands": "fixture"` whenever the run has any completed or failed command, so a run whose only
   command failed that way no longer replays by running the real command or synthesizing a success:
