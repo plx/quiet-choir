@@ -9,6 +9,7 @@ import type { WorkflowDeclaration } from './child-model.js';
 import {
   RunBudget,
   RunBudgetExceededError,
+  runBudgetFlag,
   runBudgetSchema,
   type RunBudgetPolicy,
 } from './run-budget.js';
@@ -4006,9 +4007,10 @@ export async function runWorkflow<
       record.status = interrupted || error instanceof CancelledError ? 'cancelled' : 'failed';
       children.finish(record.status, message(error));
       record.error = message(error);
-      // ADR 0006: the hint follows the typed cause, never the message text.
+      // ADR 0006: the hint follows the typed cause, never the message text. The latched budget
+      // stop counts even when a sibling failure rejected first and the refusal came while draining.
       const recoveryHint = chooseRecoveryHint({
-        cause: recoveryCause([origins.find(error).error, error], record),
+        cause: recoveryCause([origins.find(error).error, error, budget.error], record),
         rehearsal: options.rehearsal !== undefined,
         recordedWork:
           Object.keys(record.steps).length > 0 || Object.keys(record.maps ?? {}).length > 0,
@@ -4083,8 +4085,11 @@ export async function runWorkflow<
 /**
  * Classify a failure for recovery advice from error classes and the saved record, never from
  * message text. It searches the given errors' cause chains and aggregate members, and the first
- * matching rule wins: grant, divergence, settled map change, other configuration, cancelled run,
- * recorded effect failure, then authoring.
+ * matching rule wins: grant, divergence, settled map change, other configuration, run-budget stop,
+ * cancelled run, recorded effect failure, then authoring. A run-budget stop outranks the last
+ * three because a plain resume or a fix to the workflow would hit the same cap again. The failure
+ * path also passes the current execution's latched budget stop, so it counts even when it is not in
+ * the thrown error's chain (a sibling failure rejected first and the cap refused a draining call).
  */
 function recoveryCause(errors: readonly unknown[], record: RunRecord): RecoveryCause {
   const seen = new Set<unknown>();
@@ -4112,6 +4117,8 @@ function recoveryCause(errors: readonly unknown[], record: RunRecord): RecoveryC
   const mapChange = found.map(settledMapChange).find((change) => change !== undefined);
   if (mapChange) return { kind: 'map-changed', mapperOnly: mapChange.mapperOnly };
   if (found.some((error) => error instanceof ConfigurationError)) return { kind: 'configuration' };
+  const budget = found.find((error) => error instanceof RunBudgetExceededError);
+  if (budget) return { kind: 'budget', flag: runBudgetFlag(budget.stop.metric) };
   if (record.status === 'cancelled') return { kind: 'cancelled' };
   const stepId = record.rootCause?.stepId;
   if (stepId != null && record.steps[stepId]?.status === 'failed') return { kind: 'effect' };

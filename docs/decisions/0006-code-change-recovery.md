@@ -342,3 +342,31 @@ placeholder handle or a conflict-free merge result can steer the copy onto a bra
 would not take, which can miss a divergence or, when that branch skips completed work, refuse an
 edit the real run would accept. That needs completed work ordered after an unfinished Git effect
 whose result decides the branch; the fork in `details.next` is the escape.
+
+## Amendment: run-budget recovery cause (#283)
+
+A run stopped by a run budget (`RunBudgetExceededError`) was classified as authoring, so its saved
+`recoveryHint` said to fix the workflow or, when all recorded work was terminal, to re-finalize.
+Neither helps: resuming without raising the cap refuses the same attempt again. `RecoveryCause`
+gains `{ kind: 'budget'; flag }`, found with the class's branded `instanceof` (so it works across
+module instances) and never from message text. `flag` is the CLI flag of the cap that stopped the
+run, `--max-run-cost-usd`, `--max-run-agent-attempts` or `--max-window-utilization`, resolved by the
+runner from the shared table in `run-budget.ts` because `recovery-hint.ts` imports no runtime
+values. The hint says to resume with a higher value of that flag or the flag off, and mentions
+neither `--accept-code-change` nor re-finalizing, whatever `allTerminal` and `sourceChanged` say.
+
+Rule order is now grant, divergence, settled map change, other configuration, budget, cancelled,
+effect, then authoring. Budget follows the configuration-class rules because a grant, divergence,
+map or configuration problem needs fixing anyway and a higher cap alone would not help; if the cap
+is still too low afterwards, the next resume stops with its own budget hint. It precedes the rest
+because a refused retry leaves its step failed (which was a plain effect resume), a caught refusal
+or all-terminal run was authoring, and a cancelled record whose failure chain holds a latched budget
+stop would hit the same cap on a plain resume. Besides the thrown error's chain, the runner passes
+the execution's latched budget stop, so a refusal that never reached the thrown error (a sibling
+failure rejected the body first and the cap refused a call while the run drained) still counts.
+Limits: a failure holding or accompanied by a budget stop gets the budget hint, since the resume
+re-runs the failed effect anyway but cannot make progress under the same cap; and a window stop with
+a known reset that still failed (a concurrent failure) names `--max-window-utilization` although
+waiting for the reset would also work. A window stop with a known reset that suspends cleanly still
+deletes `recoveryHint` (ADR 0053). No record format, `schemaRevision`, step identity or public API
+changes.

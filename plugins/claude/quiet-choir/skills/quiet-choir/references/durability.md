@@ -224,9 +224,9 @@ refusal. Any other preflight outcome lets the real resume proceed; the copy is t
 writer lock, and the workflow body (not its unfinished callbacks) runs once more. If only the body
 tail/output validation failed, a tail-only fix can finish with zero repeated effects. `recoveryHint`
 and CLI errors identify this case, subject to step checks. The hint follows the typed failure cause:
-a grant, replay-divergence, settled-map change or effect failure gets its own advice instead, and a
-run with nothing recorded or a dry-run gets none. The accepted source becomes the basis for later
-strict resumes.
+a grant, replay-divergence, settled-map change, run-budget stop or effect failure gets its own
+advice instead, and a run with nothing recorded or a dry-run gets none. The accepted source becomes
+the basis for later strict resumes.
 
 Local callback identity uses the loaded function's `toString()` plus optional `version`. Under the
 CLI's tsx loader, comment/formatting-only callback edits preserve that source string; logic changes

@@ -15,6 +15,8 @@
  * - A divergence with unchanged source blames a value computed in the body outside a durable effect.
  * - A configuration or authoring failure after all recorded work is terminal keeps the re-finalize
  *   text, including "All recorded work has terminal outcomes" and "re-finalize".
+ * - A run-budget stop names its cap's flag and a resume, whatever else is true of the run; it never
+ *   suggests `--accept-code-change` or the re-finalize text.
  * - An effect failure or a cancellation gets a plain resume.
  *
  * ESLint keeps this module free of runtime imports.
@@ -24,7 +26,7 @@
  * Why a run failed, as far as recovery advice is concerned. `grant` is a missing access grant,
  * `divergence` a replay that left the recorded path, `map-changed` a settled map that changed after
  * an item completed (`mapperOnly` when only its mapper did), `configuration` any other ConfigurationError,
- * `authoring` a body, output or call-site failure, `effect` a durable effect's recorded failure, and
+ * `budget` a run-budget stop (`flag` is the CLI flag of the cap that stopped the run), `authoring` a body, output or call-site failure, `effect` a durable effect's recorded failure, and
  * `cancelled` a cancelled run. @internal
  */
 export type RecoveryCause =
@@ -32,6 +34,7 @@ export type RecoveryCause =
   | { readonly kind: 'divergence' }
   | { readonly kind: 'map-changed'; readonly mapperOnly: boolean }
   | { readonly kind: 'configuration' }
+  | { readonly kind: 'budget'; readonly flag: string }
   | { readonly kind: 'authoring' }
   | { readonly kind: 'effect' }
   | { readonly kind: 'cancelled' };
@@ -67,6 +70,8 @@ export function chooseRecoveryHint(input: RecoveryHintInput): string | undefined
       return cause.mapperOnly
         ? `Resume with --resume --accept-code-change to keep completed map items and run unfinished ones with the edited mapper, or fork a new run with --fork-from ${input.runId}.`
         : `A settled map's items, keys, version or cwd changed after an item completed, or its journal predates per-component fingerprints; accepting code changes cannot reuse it. Restore the map and resume, or fork a new run with --fork-from ${input.runId}.`;
+    case 'budget':
+      return `A run budget refused a new agent attempt. Resume with --resume and a higher ${cause.flag} value, or ${cause.flag} off; completed steps are reused and replay without new spend.`;
     case 'configuration':
     case 'authoring':
       return input.allTerminal
