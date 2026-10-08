@@ -185,16 +185,16 @@ version check and the Codex enums check (below) can warn. See
 Exact-argv probes use a nonexistent Claude model (404, zero cost), or for Codex both a fresh
 nonexistent model (`quiet-choir-nonexistent-<uuid>`) and an invalid effort. Codex passes when the
 server rejects either one first: a 400 with the supported effort list, or a 400 or 404 naming the
-exact sentinel model with not-found wording (`model_not_found` or `does not exist`). After a model
-rejection the effort list is unavailable, so the Codex enums check reports `WARN` (enum drift
-unverified; nothing was spent) and `--strict` fails it. The probes exercise all applicable typed
-flags through the production argument builder, with representative permission/effort choices.
-Codex's probe layers an empty native profile over temporary private copies of user config/auth
-files, sends the sentinel through the adapter's `--model` option (the doctor fails closed if the
-argv does not carry it), and removes those copies afterward. It does not modify user profile files.
-The inherited-defaults check reads selected native or legacy profile defaults separately.
-Project/managed layers can still change actual defaults; this inspection is not an effective-config
-resolver.
+exact sentinel model with not-found wording (the API error code `model_not_found`, or
+`does not exist` in the message). After a model rejection the effort list is unavailable, so the
+Codex enums check reports `WARN` (enum drift unverified; nothing was spent) and `--strict` fails it.
+The probes exercise all applicable typed flags through the production argument builder, with
+representative permission/effort choices. Codex's probe layers an empty native profile over
+temporary private copies of user config/auth files, sends the sentinel through the adapter's
+`--model` option (the doctor fails closed if the argv does not carry it), and removes those copies
+afterward. It does not modify user profile files. The inherited-defaults check reads selected native
+or legacy profile defaults separately. Project/managed layers can still change actual defaults; this
+inspection is not an effective-config resolver.
 
 The exact-argv probe runs whenever the binary answered `--version`, whatever the version grade, and
 is reported independently of it. Authentication, transport, unknown flags, any stderr warning,

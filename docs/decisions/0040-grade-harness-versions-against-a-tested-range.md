@@ -66,11 +66,12 @@ probe sends a fresh nonexistent model, `quiet-choir-nonexistent-<uuid>`, through
 argv carries it. A request for a model that does not exist cannot run inference whichever of the two
 the server checks first, even on a CLI that stopped rejecting the bad effort. The argv check accepts
 either rejection: the 400 that lists the supported efforts, or a 400 or 404 that names the exact
-sentinel with not-found wording (`model_not_found` or `does not exist`; codex-cli 0.160.0 prints a
-404 as `unexpected status 404 Not Found: ...`). After a model rejection there is no effort list, so
-the Codex enums check reports `warn` (enum drift unverified, nothing spent) and `--strict` fails it.
-`zeroInference` is still judged after the call from the observed output. The remaining exposure is a
-CLI that silently substitutes a known model for the unknown one; `npm run test:contract:doctor` runs
-the installed Codex against a loopback fake API and fails unless every request carries the sentinel
-model and the bogus effort, so run it before widening the Codex range. This is accepted in exchange
-for a doctor that is not red on every patch release.
+sentinel with not-found wording (the API error code `model_not_found`, or `does not exist` in the
+message; codex-cli 0.160.0 prints a 404 as `unexpected status 404 Not Found: ...`). After a model
+rejection there is no effort list, so the Codex enums check reports `warn` (enum drift unverified,
+nothing spent) and `--strict` fails it. `zeroInference` is still judged after the call from the
+observed output. The remaining exposure is a CLI that silently substitutes a known model for the
+unknown one; `npm run test:contract:doctor` runs the installed Codex against a loopback fake API and
+fails unless every request carries the sentinel model and the bogus effort, so run it before
+widening the Codex range. This is accepted in exchange for a doctor that is not red on every patch
+release.

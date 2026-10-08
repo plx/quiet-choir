@@ -407,6 +407,7 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
             harness === 'claude' ? parseClaude(exact.stdout, true) : parseCodex(exact.stdout);
           rejection = parsed.kind === 'failure' ? parsed.failure.reason : '';
           const status = parsed.kind === 'failure' ? parsed.failure.apiStatus : null;
+          const apiCode = parsed.kind === 'failure' ? (parsed.failure.apiCode ?? null) : null;
           // The server's validation order is unknown: accept whichever sentinel it rejects first.
           if (harness === 'codex' && parsed.kind === 'failure')
             codexRejection =
@@ -420,7 +421,8 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
                       /^unexpected status (?:400|404) /u.test(rejection)) &&
                     rejection.includes(codexSentinel) &&
                     // Echoing the sentinel is not enough: an unrelated 400 can name the model too.
-                    (rejection.includes('model_not_found') || rejection.includes('does not exist'))
+                    // Accept the structured not-found code or the prose Codex prints without one.
+                    (apiCode === 'model_not_found' || rejection.includes('does not exist'))
                   ? 'model'
                   : null;
           const zero =

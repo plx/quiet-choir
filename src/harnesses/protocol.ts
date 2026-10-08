@@ -8,8 +8,17 @@ export type ProtocolOutcome =
       readonly kind: 'success';
       readonly response: HarnessResponse & { readonly usage: AgentUsage };
     }
-  | { readonly kind: 'failure'; readonly failure: ProtocolFailure }
+  | { readonly kind: 'failure'; readonly failure: ProtocolFailure & InternalFailureFields }
   | { readonly kind: 'unparseable'; readonly reason: string };
+
+/**
+ * Failure detail kept for in-package consumers such as the doctor probe. It is deliberately absent
+ * from the public `ProtocolFailure` contract.
+ */
+interface InternalFailureFields {
+  /** The innermost API error `code`, such as `model_not_found`, when the harness reported one. */
+  readonly apiCode?: string | null;
+}
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -65,11 +74,13 @@ interface ApiError {
   readonly status: number | null;
   /** The innermost API error `type`, such as `invalid_request_error`. */
   readonly type: string | null;
+  /** The innermost API error `code`, such as `model_not_found`. */
+  readonly code: string | null;
 }
 
 // Codex embeds API error JSON inside error.message. Unwrap only bounded nesting.
 function apiError(value: unknown, depth = 0): ApiError {
-  if (depth >= 4) return { reason: message(value), status: null, type: null };
+  if (depth >= 4) return { reason: message(value), status: null, type: null, code: null };
   if (typeof value === 'string') {
     try {
       const parsed: unknown = JSON.parse(value);
@@ -86,9 +97,10 @@ function apiError(value: unknown, depth = 0): ApiError {
       reason: nested.reason,
       status: number(data['status']) ?? nested.status,
       type: nested.type ?? string(data['type']),
+      code: nested.code ?? string(data['code']),
     };
   }
-  return { reason: message(value), status: null, type: null };
+  return { reason: message(value), status: null, type: null, code: null };
 }
 
 // Fixed codex-cli phrasings (recorded on 0.157.1). Match prefixes only, never arbitrary substrings,
@@ -303,6 +315,7 @@ export class CodexProtocol {
             subtype: this.#failed === undefined ? 'error' : 'turn.failed',
             terminalReason: null,
             apiStatus: error?.status ?? null,
+            apiCode: error?.code ?? null,
             sessionId: this.#sessionId,
             usage: this.#tokens,
             ...(kind === undefined ? {} : { kind }),

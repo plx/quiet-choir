@@ -77,8 +77,8 @@ if(provider==='codex'&&model){
   // codex-cli 0.160.0 against the local fake API (test/doctor-contract.mjs), which prints a 404 as
   // prose without a parsed status; model-envelope is a synthetic JSON envelope carrying status 404.
   const q=String.fromCharCode(96), sent=a[a.indexOf('--model')+1], named=model==='model-other'?'quiet-choir-nonexistent-other':sent;
-  const text=model==='model-echo'?'Invalid image for model '+q+named+q:'The model '+q+named+q+' does not exist or you do not have access to it.';
-  const error=model==='model-envelope'?JSON.stringify({type:'error',error:{type:'invalid_request_error',code:'model_not_found',message:text,param:null},status:404}):'unexpected status 404 Not Found: '+text+', url: http://127.0.0.1:12345/v1/responses';
+  const text=model==='model-echo'||model==='model-echo-code'?'Invalid image for model '+q+named+q:model==='model-code'?'Unknown model: '+named:'The model '+q+named+q+' does not exist or you do not have access to it.';
+  const error=model==='model-envelope'||model==='model-code'||model==='model-echo-code'?JSON.stringify({type:'error',error:{type:'invalid_request_error',code:model==='model-echo-code'?'invalid_image':'model_not_found',message:text,param:null},status:404}):'unexpected status 404 Not Found: '+text+', url: http://127.0.0.1:12345/v1/responses';
   out=[{type:'thread.started',thread_id:'00000000-0000-4000-8000-000000000000'},{type:'item.completed',item:{id:'item_0',type:'error',message:'Model metadata for '+q+sent+q+' not found. Defaulting to fallback metadata; this can degrade performance and cause issues.'}},{type:'turn.started'},{type:'error',message:error},{type:'turn.failed',error:{message:error}}].map((line)=>JSON.stringify(line)).join('\\n')+'\\n';
 }
 if(provider==='codex'&&(has('tokens')||has('output'))) out=out.replace('{"type":"turn.failed",','{"type":"turn.failed","usage":{"input_tokens":'+(has('tokens')?1:0)+',"cached_input_tokens":0,"output_tokens":'+(has('output')?1:0)+'},');
@@ -254,7 +254,7 @@ it('passes the Codex invalid-effort rejection and compares the reported effort v
   expect(enums(report)).toMatchObject({ status: 'pass', ok: true });
   expect(report).toMatchObject({ ok: true, zeroInference: true, verdict: 'ok' });
 });
-it.each(['model-first', 'model-envelope'])(
+it.each(['model-first', 'model-envelope', 'model-code'])(
   'accepts a %s rejection of the sentinel model and warns that effort values are unverified',
   async (mode) => {
     const report = await probeHarnessContracts(await probeOptions('codex', mode));
@@ -296,6 +296,11 @@ it('fails a Codex 400 that merely echoes the sentinel model without not-found wo
   expect(argv(report)).toMatchObject({ status: 'fail', ok: false });
   expect(enums(report)?.status).toBe('fail');
   expect(report.warnings).toEqual([]);
+  expect(report).toMatchObject({ ok: false, zeroInference: false, verdict: 'blocked' });
+});
+it('fails a Codex envelope that echoes the sentinel model under a different error code', async () => {
+  const report = await probeHarnessContracts(await probeOptions('codex', 'model-echo-code'));
+  expect(argv(report)).toMatchObject({ status: 'fail', ok: false });
   expect(report).toMatchObject({ ok: false, zeroInference: false, verdict: 'blocked' });
 });
 it.each([
