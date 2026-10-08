@@ -418,7 +418,9 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
                       status === 404 ||
                       // Codex prints non-400 HTTP rejections as prose with no parsed status.
                       /^unexpected status (?:400|404) /u.test(rejection)) &&
-                    rejection.includes(codexSentinel)
+                    rejection.includes(codexSentinel) &&
+                    // Echoing the sentinel is not enough: an unrelated 400 can name the model too.
+                    (rejection.includes('model_not_found') || rejection.includes('does not exist'))
                   ? 'model'
                   : null;
           const zero =
