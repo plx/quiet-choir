@@ -80,18 +80,18 @@ node "$QC_CHECKOUT/bin/run.js" workflow execute edited.workflow.ts \
 ```
 
 Export skips local/sleep effects. It keeps completed agent outputs, which retain harness and usage
-but do not pin an attempt number, and agent failures as `error` rules without their original `kind`,
-all in execution order. That covers settled failures (`onError: 'return'`) and failures the workflow
-absorbed, such as a body `try/catch` around an agent call or a settled map item, which leave the
-step `failed` in a completed run. Completed commands become `exec` rules in execution order, keyed
-by full step ID, the full argv as `argvPrefix` (omitted for a shell command), and the recorded
-`envSha256` and `inputSha256`; environment overlay values and stdin are never read or written, only
-those digests. A structured command exports its parsed value as `json`; a plain one exports
-`stdout`, plus `stderr` and `code` when they are not empty or zero. When it exports any exec rule it
-also sets `"commands": "fixture"`, so a replay whose argv or inputs drift fails at that step instead
-of running the real command; shorten `argvPrefix` or drop a digest by hand when a value legitimately
-changes per run. A run without commands exports exactly as before. It does not modify the source
-checkpoint.
+but do not pin an attempt number, and agent failures as `error` rules with their original `kind`
+(except `unknown` and `cancelled`), all in execution order. That covers settled failures
+(`onError: 'return'`) and failures the workflow absorbed, such as a body `try/catch` around an agent
+call or a settled map item, which leave the step `failed` in a completed run. Completed commands
+become `exec` rules in execution order, keyed by full step ID, the full argv as `argvPrefix`
+(omitted for a shell command), and the recorded `envSha256` and `inputSha256`; environment overlay
+values and stdin are never read or written, only those digests. A structured command exports its
+parsed value as `json`; a plain one exports `stdout`, plus `stderr` and `code` when they are not
+empty or zero. When it exports any exec rule it also sets `"commands": "fixture"`, so a replay whose
+argv or inputs drift fails at that step instead of running the real command; shorten `argvPrefix` or
+drop a digest by hand when a value legitimately changes per run. A run without commands exports
+exactly as before. It does not modify the source checkpoint.
 
 ## Command fixtures
 

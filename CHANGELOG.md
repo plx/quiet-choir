@@ -2,6 +2,12 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Fixture export now writes `kind` on the agent `error` rules it produces for settled failures and
+  for failures the workflow absorbed (behavior change for exported files), so a replay takes the
+  same kind-based branches and `retry.on` decisions as the original run. A failure whose recorded
+  kind is `unknown` (or `cancelled`, which would be fatal on replay) exports exactly as before, and
+  the attempt count is still not preserved (#305).
+
 - `--accept-code-change` now refuses, before changing the run, a resume that would meet a settled
   map whose `items`, `keys`, `version` or `cwd` changed after an item completed, or any changed map
   in a journal saved before per-component digests (behavior change): the CLI and its `--dry-run`

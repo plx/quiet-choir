@@ -90,9 +90,11 @@ running a real command such as a merge. Environment overlay values and stdin are
 A fixture `error` rule may carry `kind` (an `ErrorKind`). The call then rejects with a
 `HarnessError` of that kind whose message is the unchanged `Step <id>: <error>` text, so `retry.on`,
 `StepError.kind` and kind-based branches can be rehearsed while kindless rules behave exactly as
-before. Export still writes agent error rules without `kind`, including the rules it writes for
-agent failures the workflow absorbed (steps left `failed` in a completed run by a body `try/catch`
-or a settled map item), whose text comes from the step's recorded error.
+before. Export writes agent error rules with their recorded `kind` (#305), except `unknown`, which a
+kindless rule already replays as, and `cancelled`, which would be fatal on replay. That includes the
+rules it writes for agent failures the workflow absorbed (steps left `failed` in a completed run by
+a body `try/catch` or a settled map item), whose text comes from the step's recorded error and whose
+kind comes from the last attempt.
 
 ## Amendment: synthesized worktree isolation (#148)
 

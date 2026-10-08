@@ -5,6 +5,7 @@ import {
   type FixtureExecCall,
   type HarnessFixtures,
 } from '../../harnesses/fixture.js';
+import type { ErrorKind } from '../runtime/model.js';
 import { execResultSchema, execSummarySchema } from '../runtime/exec-schema.js';
 import { RunRefusedError } from '../runtime/run-errors.js';
 import type { RunRecord } from '../runtime/store.js';
@@ -14,7 +15,7 @@ import { stepErrorKind } from './failure-kind.js';
  * Export saved agent outputs, settled agent failures, absorbed agent failures (steps left `failed`
  * in a completed run by a body try/catch or a settled map item) and completed command results
  * without importing source, taking ownership, or rewriting a run. Failure rules carry the recorded
- * message but no kind or attempt pin. @internal
+ * message and, when the failure had a real category, its `kind`; they never pin an attempt. @internal
  */
 export function fixturesFromRun(run: RunRecord): HarnessFixtures {
   if (run.status !== 'completed')
@@ -54,10 +55,12 @@ export function fixturesFromRun(run: RunRecord): HarnessFixtures {
               step.settledError?.message,
               `Settled ${step.settledError?.kind ?? 'unknown'} failure`,
             ),
+            ...exportedKind(step.settledError?.kind),
           };
         // A failure the workflow absorbed leaves the step `failed` in a completed run. It has no
         // settledError: the runner records the latest message in `error` and the kind in the last
-        // attempt, and the kind is deliberately not exported.
+        // attempt. The kind is exported like a settled failure's, so a replay takes the same
+        // kind-based branch.
         if (step.status === 'failed')
           return {
             step: stepId,
@@ -67,6 +70,7 @@ export function fixturesFromRun(run: RunRecord): HarnessFixtures {
               step.error,
               `Failed ${stepErrorKind(step) ?? 'unknown'} failure`,
             ),
+            ...exportedKind(stepErrorKind(step)),
           };
         const data = result.parse(step.output);
         return { step: stepId, harness: stepHarness(step), output: data.output, usage: data.usage };
@@ -74,6 +78,18 @@ export function fixturesFromRun(run: RunRecord): HarnessFixtures {
     // A recorded replay must never fall through to a real command when argv or digests drift.
     ...(exec.length ? { exec, commands: 'fixture' } : {}),
   });
+}
+
+/**
+ * The optional `kind` field of an exported error rule. `unknown` is what a kindless failure records
+ * and a kindless rule replays as `unknown`, so it is left out and kindless exports stay unchanged.
+ * `cancelled` is left out too: a replayed `cancelled` HarnessError is fatal, so it would turn an
+ * absorbed failure into one that is never retried or settled.
+ */
+function exportedKind(kind: ErrorKind | null | undefined): { readonly kind?: ErrorKind } {
+  return kind === undefined || kind === null || kind === 'unknown' || kind === 'cancelled'
+    ? {}
+    : { kind };
 }
 
 /**
