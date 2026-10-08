@@ -34,6 +34,7 @@ import {
   type WorkflowClock,
 } from '../src/index.js';
 import { countCompletedSteps } from '../src/workflow/runtime/recovery-decision.js';
+import { writeCancelRequest } from '../src/workflow/runtime/cancel-request.js';
 import { inspectRun } from '../src/workflow/loader/inspection.js';
 import {
   harnessConfigDigest,
@@ -1401,6 +1402,211 @@ export default defineWorkflow({ name: 'debounce', version: '1', input: z.null(),
     });
     expect((await readRun(f.plan)).steps['call']?.status).toBe('completed');
     await expect(stat(f.agentLog)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+});
+
+/** What a forced `workflow cancel` leaves behind: the owner's dead lock and a request bound to it. */
+async function forcedCancelLeft(
+  stateDir: string,
+  runId: string,
+  options: { readonly requestToken?: string; readonly runDir?: boolean } = {},
+): Promise<{ readonly pid: number; readonly token: string; readonly requestPath: string }> {
+  if (options.runDir) await mkdir(join(stateDir, runId), { recursive: true });
+  const lock = await deadOwnerLock(stateDir, runId);
+  const owner = JSON.parse(await readFile(join(lock, 'owner.json'), 'utf8')) as {
+    readonly pid: number;
+    readonly token: string;
+  };
+  const requestPath = await writeCancelRequest(stateDir, runId, {
+    version: 1,
+    requestId: randomUUID(),
+    token: options.requestToken ?? owner.token,
+    pid: owner.pid,
+    host: hostname(),
+    osStartTime: 'Thu Oct  8 00:00:00 2026',
+    requestedAt: '2026-10-08T00:00:00.000Z',
+  });
+  return { pid: owner.pid, token: owner.token, requestPath };
+}
+
+/** The tick result of a run saved cancelled by honouring a forced cancel. */
+const honoured = (runId: string, pid: number) => ({
+  kind: 'workflow.tick.result',
+  ok: true,
+  resumed: [],
+  skipped: [
+    {
+      runId,
+      reason: 'cancelled',
+      message: `Run ${runId} cancelled by workflow cancel (requested 2026-10-08T00:00:00.000Z); its owner PID ${String(pid)} exited before saving, so stale recovery ended it instead of resuming it.`,
+    },
+  ],
+  observed: 0,
+  exitCode: 1,
+});
+
+// Issue #293 / ADR 0058: a forced cancel that killed its owner before it saved keeps a request bound
+// to that owner's lock token, and tick's stale recovery then ends the run as cancelled.
+describe('tick honouring a forced workflow cancel', { timeout: 40_000 }, () => {
+  it('saves a running run behind the killed owner lock as cancelled without running its body', async () => {
+    const f = await fixture();
+    await crashedWhileRunning(f.stateDir, 'run');
+    const before = await readRun(f.plan);
+    const { pid, requestPath } = await forcedCancelLeft(f.stateDir, 'run');
+    expect(oneEntryPerRun(await tick.execute(f.tickPlan))).toEqual(honoured('run', pid));
+    const saved = await readRun(f.plan);
+    expect(saved.status).toBe('cancelled');
+    expect(saved.error).toBe(
+      `Run run cancelled by workflow cancel (requested 2026-10-08T00:00:00.000Z); its owner PID ${String(pid)} exited before saving, so stale recovery ended it instead of resuming it.`,
+    );
+    expect(saved.rootCause).toEqual({
+      stepId: null,
+      error: saved.error,
+      errorKind: null,
+      effect: null,
+    });
+    expect(saved.recoveryCause).toEqual({ kind: 'cancelled' });
+    expect(saved.staleRecovery).toBeUndefined();
+    expect(saved.steps).toEqual(before.steps);
+    expect(saved.executions).toHaveLength((before.executions?.length ?? 0) + 1);
+    expect(saved.executions?.at(-1)).toMatchObject({ outcome: 'cancelled', error: saved.error });
+    expect(saved.events?.at(-1)).toMatchObject({ type: 'run.cancelled', message: saved.error });
+    // Nothing imported the workflow or ran its step, and the lock and request are gone.
+    expect(await readFile(f.imports, 'utf8')).toBe('import\n');
+    await expect(stat(f.effects)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(stat(join(f.stateDir, 'run', 'lock'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(stat(requestPath)).rejects.toMatchObject({ code: 'ENOENT' });
+
+    // Final: a later tick only observes it.
+    expect(oneEntryPerRun(await tick.execute(f.tickPlan))).toMatchObject({
+      resumed: [],
+      skipped: [],
+      observed: 1,
+      exitCode: 1,
+    });
+  });
+
+  it('saves a due suspended run behind the killed owner lock as cancelled', async () => {
+    const f = await fixture();
+    const { pid } = await forcedCancelLeft(f.stateDir, 'run');
+    expect(oneEntryPerRun(await tick.execute(f.tickPlan))).toEqual(honoured('run', pid));
+    expect((await readRun(f.plan)).status).toBe('cancelled');
+    await expect(stat(f.effects)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('ignores a request from another lock acquisition and recovers the run as stale', async () => {
+    // The request names T, but the run was unlocked, resumed and crashed again under a new token.
+    const f = await fixture('failure');
+    await crashedWhileRunning(f.stateDir, 'run');
+    const { requestPath } = await forcedCancelLeft(f.stateDir, 'run', {
+      requestToken: randomUUID(),
+    });
+    const request = await readFile(requestPath, 'utf8');
+    const baseline = countCompletedSteps(await readRun(f.plan));
+    expect(oneEntryPerRun(await tick.execute(f.tickPlan))).toMatchObject({
+      resumed: [{ runId: 'run', outcome: 'failed' }],
+      skipped: [],
+      exitCode: 1,
+    });
+    expect(await readFile(f.effects, 'utf8')).toBe('effect\n');
+    const saved = await readRun(f.plan);
+    expect(saved.status).toBe('failed');
+    expect(saved.staleRecovery).toEqual({
+      count: 1,
+      completedSteps: baseline,
+      at: expect.any(String) as unknown,
+    });
+    // The request stays inert: no later execution can match it.
+    expect(await readFile(requestPath, 'utf8')).toBe(request);
+  });
+
+  it('still recovers and resumes a running run behind a dead lock with no request', async () => {
+    const f = await fixture('failure');
+    await crashedWhileRunning(f.stateDir, 'run');
+    await deadOwnerLock(f.stateDir, 'run');
+    expect(oneEntryPerRun(await tick.execute(f.tickPlan))).toMatchObject({
+      resumed: [{ runId: 'run', outcome: 'failed' }],
+      exitCode: 1,
+    });
+    expect(await readFile(f.effects, 'utf8')).toBe('effect\n');
+    expect((await readRun(f.plan)).staleRecovery).toMatchObject({ count: 1 });
+  });
+
+  it('cancels a crash-looping or source-changed run instead of skipping it', async () => {
+    const looping = await fixture();
+    await crashedWhileRunning(looping.stateDir, 'run', (completedSteps) => ({
+      count: 3,
+      completedSteps,
+    }));
+    const loop = await forcedCancelLeft(looping.stateDir, 'run');
+    expect(oneEntryPerRun(await tick.execute(looping.tickPlan))).toEqual(honoured('run', loop.pid));
+    expect((await readRun(looping.plan)).status).toBe('cancelled');
+
+    const changed = await fixture();
+    await crashedWhileRunning(changed.stateDir, 'run');
+    await appendFile(changed.file, '\n// changed\n');
+    const change = await forcedCancelLeft(changed.stateDir, 'run');
+    expect(oneEntryPerRun(await tick.execute(changed.tickPlan))).toEqual(
+      honoured('run', change.pid),
+    );
+    expect((await readRun(changed.plan)).status).toBe('cancelled');
+    expect(await readFile(changed.imports, 'utf8')).toBe('import\n');
+  });
+
+  it('skips an unfinished format-1 run as incompatible and leaves it unchanged', async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'choir-tick-'));
+    roots.push(stateDir);
+    const time = '2026-01-01T00:00:00.000Z';
+    const legacy = join(stateDir, 'run-1.json');
+    await writeFile(
+      legacy,
+      JSON.stringify({
+        formatVersion: 1,
+        id: 'run-1',
+        workflow: { name: 'flat', version: '1', fingerprint: null },
+        status: 'running',
+        cwd: project,
+        input: null,
+        output: null,
+        error: null,
+        steps: {},
+        createdAt: time,
+        updatedAt: time,
+      }),
+    );
+    const before = await readFile(legacy, 'utf8');
+    await forcedCancelLeft(stateDir, 'run-1', { runDir: true });
+    expect(
+      oneEntryPerRun(await tick.execute({ kind: 'workflow.tick', runId: 'run-1', stateDir })),
+    ).toEqual({
+      kind: 'workflow.tick.result',
+      ok: true,
+      resumed: [],
+      skipped: [
+        {
+          runId: 'run-1',
+          reason: 'incompatible',
+          message: expect.stringMatching(/checkpoint format 1/u) as unknown,
+        },
+      ],
+      observed: 0,
+      exitCode: 1,
+    });
+    expect(await readFile(legacy, 'utf8')).toBe(before);
+  });
+
+  it('uses no --max-runs attempt to honour a request', async () => {
+    const first = await fixture('due', false, { runId: 'a' });
+    const second = await fixture('due', false, { runId: 'b', stateDir: first.stateDir });
+    await crashedWhileRunning(first.stateDir, 'a');
+    const { pid } = await forcedCancelLeft(first.stateDir, 'a');
+    const result = oneEntryPerRun(
+      await tick.execute({ kind: 'workflow.tick', stateDir: first.stateDir, maxRuns: 1 }),
+    );
+    expect(result.skipped).toEqual(honoured('a', pid).skipped);
+    expect(result.resumed).toEqual([{ runId: 'b', outcome: 'completed' }]);
+    expect(await readFile(second.effects, 'utf8')).toBe('effect\n');
+    await expect(stat(first.effects)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });
 

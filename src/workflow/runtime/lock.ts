@@ -307,6 +307,16 @@ export interface RunLock {
   ): ReturnType<HarnessInvocation['trackProcess']>;
 }
 
+/** One lock `acquireLock` took, with the owner it retired to take it. */
+interface AcquiredLock extends RunLock {
+  /**
+   * The token of the dead or released previous owner whose lock this acquisition retired itself,
+   * immediately before its own successful publish; undefined for a fresh acquisition, or when
+   * another lock was published in between (ADR 0058).
+   */
+  readonly reclaimedToken: string | undefined;
+}
+
 /**
  * The handle `lockRun` returns: the run lock plus a primary-only release. `workflow rm` uses it to
  * give up the primary lock while it keeps the legacy guard, which every writer takes first. @internal
@@ -318,6 +328,12 @@ export interface OwnedRunLock extends RunLock {
    * full release then releases only the guard.
    */
   releaseOwner(): Promise<void>;
+  /**
+   * The token of the dead or released owner whose primary lock this call retired just before
+   * taking it, or undefined. Tick's stale recovery honours a `workflow cancel` request only when the
+   * request names exactly this token (ADR 0058); the legacy guard's reclaimed token is ignored.
+   */
+  readonly reclaimedOwnerToken?: string | undefined;
 }
 
 /** Why a plain unlock entry accompanies a refusal for a race that a retry usually clears. */
@@ -409,7 +425,7 @@ export async function lockRun(
   const legacy = legacyRunPath(stateDir, runId);
   const primary = join(runDirectory(stateDir, runId), 'lock');
   const guard = await acquireLock(stateDir, runId, `${legacy}.lock`, options);
-  let owner: RunLock;
+  let owner: AcquiredLock;
   try {
     owner = await acquireLock(stateDir, runId, primary, options);
   } catch (error) {
@@ -453,7 +469,11 @@ export async function lockRun(
         cause: errors[0],
       });
   };
-  return Object.assign(release, { trackProcess: owner.trackProcess.bind(owner), releaseOwner });
+  return Object.assign(release, {
+    trackProcess: owner.trackProcess.bind(owner),
+    releaseOwner,
+    reclaimedOwnerToken: owner.reclaimedToken,
+  });
 }
 
 /**
@@ -675,7 +695,7 @@ async function acquireLock(
   runId: string,
   lockPath: string,
   options: RunLockOptions,
-): Promise<RunLock> {
+): Promise<AcquiredLock> {
   await prepareStateDirectory(resolve(stateDir), options.cwd);
   await createStorageDirectory(dirname(lockPath));
   const owner = {
@@ -725,8 +745,12 @@ async function acquireLock(
       cause === undefined ? undefined : { cause },
     );
   };
+  // The owner this call retired itself in the iteration before a successful publish. Cleared on
+  // every contended publish, so a lock another process published in between is never inherited.
+  let reclaimedToken: string | undefined;
   for (let attempt = 0; attempt < 3; attempt++) {
     if ((await publishLock(lockPath, owner)) === 'contended') {
+      reclaimedToken = undefined;
       let previous;
       try {
         previous = await readContended(lockPath);
@@ -809,6 +833,7 @@ async function acquireLock(
         if (mine.token !== marker.token) throw changed();
         await retire(lockPath, { owner: current.token, recovery: marker.token }, changed);
         retired = true;
+        reclaimedToken = current.token;
       } finally {
         if (!retired) await takeMarker(lockPath, marker.token).catch(() => undefined);
       }
@@ -861,6 +886,7 @@ async function acquireLock(
       await retire(lockPath, { owner: owner.token }, lost);
     };
     return Object.assign(release, {
+      reclaimedToken,
       trackProcess: (
         invocation: Pick<HarnessInvocation, 'runId' | 'stepId' | 'attempt'>,
         child: HarnessProcess,

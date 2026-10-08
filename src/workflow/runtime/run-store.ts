@@ -143,6 +143,10 @@ class FileOwnedRun implements ReleasableOwnedRun {
     private readonly lock: OwnedRunLock,
     private readonly writer: JournalWriter,
   ) {}
+  /** See {@link reclaimedOwnerToken}. */
+  public get reclaimedOwnerToken(): string | undefined {
+    return this.lock.reclaimedOwnerToken;
+  }
   public readonly trackProcess: RunLock['trackProcess'] = (invocation, child) =>
     this.#closed
       ? Promise.reject(new Error('Run storage is closed.'))
@@ -267,4 +271,14 @@ class FileOwnedRun implements ReleasableOwnedRun {
     await this.#queue.catch(() => undefined);
     await this.lock();
   }
+}
+
+/**
+ * The token of the dead or released owner whose primary lock this writer retired just before taking
+ * it (`OwnedRunLock.reclaimedOwnerToken`), or undefined for a fresh acquisition or any store other
+ * than the file store. Tick's stale recovery honours a `workflow cancel` request only when it names
+ * exactly this token (ADR 0058). @internal
+ */
+export function reclaimedOwnerToken(owned: OwnedRunStore): string | undefined {
+  return owned instanceof FileOwnedRun ? owned.reclaimedOwnerToken : undefined;
 }

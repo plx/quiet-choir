@@ -185,8 +185,9 @@ kind change still needs `--allow-harness-change`.
 
 The JSON lists `resumed` entries (outcome completed, suspended, interrupted, failed, cancelled or
 incompatible), `skipped` entries (reason not due, no longer due, locked, orphans, crash-loop,
-deadline, incompatible or unreadable) and an `observed` count of already-terminal runs, with each
-run in at most one entry. With --run, exits are 0 completed (now or earlier), 75
+deadline, incompatible, unreadable or cancelled, the last for a run a forced `workflow cancel` left
+behind its killed owner's lock) and an `observed` count of already-terminal runs, with each run in
+at most one entry. With --run, exits are 0 completed (now or earlier), 75
 pending/interrupted/locked/orphans/deadline, 1 failed/cancelled/crash-loop/incompatible/unreadable.
 Without it, run failures are data and the batch exits 0 unless the command fails. --max-runs bounds
 executed resumes across one invocation. Without --run, each scan visits runs in ascending run-ID

@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -16,6 +16,7 @@ import type { WorkflowFailure } from '../src/workflow/loader/failure.js';
 import type { WorkflowCommandResult } from '../src/workflow/loader/model.js';
 import { TickWorkflowExecutor } from '../src/workflow/loader/tick.js';
 import { formatArgv } from '../src/workflow/runtime/commands.js';
+import * as lock from '../src/workflow/runtime/lock.js';
 import { cancelRecord, cancelUnownedRun } from '../src/workflow/runtime/run-cancellation.js';
 import { FileRunStore } from '../src/workflow/runtime/run-store.js';
 import { lockRun, writeRun } from '../src/workflow/runtime/store.js';
@@ -33,6 +34,15 @@ import {
 // Issue #288 / ADR 0039: workflow cancel ends a live local run as `cancelled`, signalling only a
 // live, identity-verified owner, through a request bound to that owner's lock token. Issue #292 /
 // ADR 0057: a run no process owns is ended under its lock instead, without a signal.
+
+// Spy through to the real lock read, so a test can hold cancel's observations of the lock while a
+// tick reclaims it; lock.ts calls its own copy, and every other caller sees the actual behaviour.
+vi.mock('../src/workflow/runtime/lock.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof lock>();
+  return { ...actual, readContended: vi.fn(actual.readContended) };
+});
+const actualLock = await vi.importActual<typeof lock>('../src/workflow/runtime/lock.js');
+const readContendedSpy = vi.mocked(lock.readContended);
 
 // One program cache for the file, so each compile of the engine source after the first reuses its
 // parse and checks (see CONTRIBUTING.md, "Test timeouts and storage sync").
@@ -854,13 +864,151 @@ describe('workflow cancel waits', () => {
       pid: process.pid,
       signalsSent: 1,
       forced: false,
+      requestKept: true,
     });
     expect(failure.message).toMatch(
-      /exited without saving cancelled; the run is suspended, and the next workflow tick may resume it\.$/u,
+      /exited without saving cancelled; the run is suspended\. The cancel request stays bound to the exited owner, whose lock is gone or re-owned: a workflow tick that retires that owner's lock ends the run as cancelled; otherwise the next workflow tick may resume it\.$/u,
     );
     expect(failure.run?.status).toBe('suspended');
     expect(sendSignal).toHaveBeenCalledOnce();
+    // Kept but inert: no acquisition retires the released owner's lock, so no tick honours it.
+    expect(existsSync(requestPath())).toBe(true);
+  });
+
+  // Issue #293 / ADR 0058: the SIGINT was the owner's second signal, so it exited 130 at once and
+  // left both locks behind with its token and the run still running.
+  it('keeps the request when the owner is force-killed, and the next tick saves the run cancelled', async () => {
+    await suspendedRun();
+    await crashedWhileRunning();
+    await lockRun(stateDir, 'run-1');
+    const locks = [join(stateDir, 'run-1', 'lock'), join(stateDir, 'run-1.json.lock')];
+    const sendSignal = vi.fn(() => {
+      for (const lock of locks) {
+        const path = join(lock, 'owner.json');
+        const owner = JSON.parse(readFileSync(path, 'utf8')) as object;
+        writeFileSync(path, JSON.stringify({ ...owner, pid: DEAD }));
+      }
+    });
+    const failure = failed(await cancel(sendSignal));
+    expect(failure.code).toBe('run.unowned');
+    expect(workflowExitCodes[failure.code]).toBe(3);
+    expect(failure.details).toEqual({
+      reason: 'owner-exited',
+      pid: process.pid,
+      signalsSent: 1,
+      forced: false,
+      requestKept: true,
+    });
+    expect(failure.message).toMatch(
+      /exited without saving cancelled; the run is running\. The cancel request stays bound to the exited owner's lock, so the next workflow tick ends the run as cancelled instead of recovering it\.$/u,
+    );
+    expect(failure.run?.status).toBe('running');
+    expect(existsSync(requestPath())).toBe(true);
+    const { requestedAt } = JSON.parse(await readFile(requestPath(), 'utf8')) as {
+      readonly requestedAt: string;
+    };
+
+    const ticked = await new TickWorkflowExecutor({ typecheckCache, logger }).execute({
+      kind: 'workflow.tick',
+      runId: 'run-1',
+      stateDir,
+    });
+    expect(ticked).toEqual({
+      kind: 'workflow.tick.result',
+      ok: true,
+      resumed: [],
+      skipped: [
+        {
+          runId: 'run-1',
+          reason: 'cancelled',
+          message: `Run run-1 cancelled by workflow cancel (requested ${requestedAt}); its owner PID ${String(process.pid)} exited before saving, so stale recovery ended it instead of resuming it.`,
+        },
+      ],
+      observed: 0,
+      exitCode: 1,
+    });
+    const saved = await readRun({ stateDir, runId: 'run-1' });
+    expect(saved.status).toBe('cancelled');
+    expect(saved.recoveryCause).toEqual({ kind: 'cancelled' });
     expect(existsSync(requestPath())).toBe(false);
+    for (const lock of locks) expect(existsSync(lock)).toBe(false);
+  });
+
+  // A tick reclaims the force-killed owner's locks before cancel looks at them again: cancel sees
+  // the tick's token, yet the tick still checks the request under its own lock, so it must stay.
+  it('keeps the request when a tick re-owns the lock first, and that tick saves the run cancelled', async () => {
+    await suspendedRun();
+    await crashedWhileRunning();
+    await lockRun(stateDir, 'run-1');
+    const locks = [join(stateDir, 'run-1', 'lock'), join(stateDir, 'run-1.json.lock')];
+    let reclaimed!: () => void;
+    const tickOwns = new Promise<void>((resolve) => {
+      reclaimed = resolve;
+    });
+    let proceed!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      proceed = resolve;
+    });
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- called with the instance below
+    const realOpen = FileRunStore.prototype.open;
+    vi.spyOn(FileRunStore.prototype, 'open').mockImplementation(async function (
+      this: FileRunStore,
+      ...args
+    ) {
+      const owned = await realOpen.apply(this, args);
+      // The tick holds both locks, retired from the dead owner, before it reads the request.
+      reclaimed();
+      await gate;
+      return owned;
+    });
+    let ticking: ReturnType<TickWorkflowExecutor['execute']> | undefined;
+    const sendSignal = vi.fn(() => {
+      for (const lock of locks) {
+        const path = join(lock, 'owner.json');
+        const owner = JSON.parse(readFileSync(path, 'utf8')) as object;
+        writeFileSync(path, JSON.stringify({ ...owner, pid: DEAD }));
+      }
+      readContendedSpy.mockImplementation(async (path) => {
+        await tickOwns;
+        return actualLock.readContended(path);
+      });
+      ticking = new TickWorkflowExecutor({ typecheckCache, logger }).execute({
+        kind: 'workflow.tick',
+        runId: 'run-1',
+        stateDir,
+      });
+    });
+    let failure: WorkflowFailure;
+    try {
+      failure = failed(await cancel(sendSignal));
+    } finally {
+      readContendedSpy.mockImplementation(actualLock.readContended);
+      proceed();
+    }
+    const ticked = await ticking;
+    expect(failure.code).toBe('run.unowned');
+    expect(failure.details).toEqual({
+      reason: 'owner-exited',
+      pid: process.pid,
+      signalsSent: 1,
+      forced: false,
+      requestKept: true,
+    });
+    expect(failure.message).toMatch(
+      /exited without saving cancelled; the run is running\. The cancel request stays bound to the exited owner, whose lock is gone or re-owned: a workflow tick that retires that owner's lock ends the run as cancelled; otherwise stale recovery by the next workflow tick may resume it\.$/u,
+    );
+    expect(failure.run?.status).toBe('running');
+
+    expect(ticked).toMatchObject({
+      resumed: [],
+      skipped: [{ runId: 'run-1', reason: 'cancelled' }],
+      exitCode: 1,
+    });
+    const saved = await readRun({ stateDir, runId: 'run-1' });
+    expect(saved.status).toBe('cancelled');
+    expect(saved.recoveryCause).toEqual({ kind: 'cancelled' });
+    expect(existsSync(requestPath())).toBe(false);
+    for (const lock of locks) expect(existsSync(lock)).toBe(false);
   });
 });
 

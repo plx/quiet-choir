@@ -333,19 +333,23 @@ stale `running` run but before the runtime reopened it, so the run stays `runnin
 keeps the stale-recovery count tick saved, and the next tick recovers it as stale), `failed`,
 `cancelled` (only for a run saved as `cancelled`) or `incompatible` (each with a `message`).
 `skipped` has `{ runId, reason }` entries for runs left alone: `not due`, `no longer due` and
-`deadline` (with `nextWakeAt`), `locked`, and `orphans`, `crash-loop`, `incompatible` or
-`unreadable` (with a `message`). A `deadline` entry for a run tick never read, because the timeout
-had already fired, has a `message` instead of `nextWakeAt`. `observed` counts runs that were already
-completed, failed or cancelled. Each run appears in at most one entry; a later resume of the same
-run during `--watch` replaces its entry. Without `--run`, each scan visits runs in ascending run-ID
-order (by character code, so uppercase sorts before lowercase), whatever order the file system lists
-them in; `--max-runs N` therefore resumes the first N due runs in that order. It bounds executed
-resumes across the invocation; refusals before import do not count. With `--run`, exit is 0 when the
-run completed (in this tick or earlier), 75 when it is still pending (not due, suspended again,
-interrupted by the deadline or reported `interrupted`, locked, blocked by orphans, or skipped for
-the deadline), and 1 when it failed, was cancelled, or is crash-looping, incompatible or unreadable.
-`--watch` stops retrying a crash-looping run. Without `--run`, individual run outcomes do not change
-exit 0. Command errors retain the [CLI error contract](cli-contract.md).
+`deadline` (with `nextWakeAt`), `locked`, and `orphans`, `crash-loop`, `incompatible`, `unreadable`
+or `cancelled` (with a `message`). `cancelled` means tick saved a stale or due run as cancelled
+because a forced `workflow cancel` had killed its owner before it saved, and the run's cancel
+request names the dead lock tick retired
+([ADR 0058](decisions/0058-honour-a-forced-cancel-in-stale-recovery.md)). A `deadline` entry for a
+run tick never read, because the timeout had already fired, has a `message` instead of `nextWakeAt`.
+`observed` counts runs that were already completed, failed or cancelled. Each run appears in at most
+one entry; a later resume of the same run during `--watch` replaces its entry. Without `--run`, each
+scan visits runs in ascending run-ID order (by character code, so uppercase sorts before lowercase),
+whatever order the file system lists them in; `--max-runs N` therefore resumes the first N due runs
+in that order. It bounds executed resumes across the invocation; refusals before import do not
+count. With `--run`, exit is 0 when the run completed (in this tick or earlier), 75 when it is still
+pending (not due, suspended again, interrupted by the deadline or reported `interrupted`, locked,
+blocked by orphans, or skipped for the deadline), and 1 when it failed, was cancelled (including a
+`cancelled` skip), or is crash-looping, incompatible or unreadable. `--watch` stops retrying a
+crash-looping run. Without `--run`, individual run outcomes do not change exit 0. Command errors
+retain the [CLI error contract](cli-contract.md).
 
 `--watch` waits for the next due time or an inbox filesystem event, with a one-second fallback scan
 for missed events. `--timeout` defaults to 540s and accepts ms/s/m/h; it bounds the whole

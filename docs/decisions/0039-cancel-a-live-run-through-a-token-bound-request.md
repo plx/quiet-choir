@@ -3,7 +3,9 @@
 - Status: accepted
 - Issue: #288 (the cancel half of #142); amends the Consequences of
   [ADR 0029](0029-persist-interruptions-as-resumable-suspensions.md); the unowned refusal is
-  superseded by [ADR 0057](0057-end-an-unowned-run-as-cancelled.md)
+  superseded by [ADR 0057](0057-end-an-unowned-run-as-cancelled.md); a forced cancel's request
+  outliving its killed owner is amended by
+  [ADR 0058](0058-honour-a-forced-cancel-in-stale-recovery.md)
 
 ## Context
 
@@ -65,6 +67,10 @@ execution it names honours, delivered by a signal that only wakes that owner.
   with `error.code`, so the timeout is not a `workflow.cancel.result` with `ok: false`. Cancel
   removes its own request (only while `requestId` still matches) once the end is confirmed; after a
   timeout it leaves the request, so an owner whose event loop was blocked still honours it late.
+  (Amended by [ADR 0058](0058-honour-a-forced-cancel-in-stale-recovery.md): when the owner exited
+  without a terminal status, as a force-kill leaves it, cancel also keeps the request and reports
+  `details.requestKept: true`, and the tick that retires that owner's lock saves the run
+  `cancelled`.)
 - **Force escalates.** `--force` does not send two signals at once, which would almost always kill
   the owner before it saves `cancelled`. If the timeout passes and the same verified owner still
   holds the lock, cancel sends a second SIGINT, which force-kills the owner's process groups and
@@ -98,9 +104,10 @@ superseded by this command.
 - The identity re-check right before each signal narrows PID reuse to the unavoidable gap between
   the check and `kill`, like the recovery signals in [process lifecycle](../process-lifecycle.md).
 - A forced cancel, and a cancel whose SIGINT reaches an owner already draining an earlier signal (it
-  counts as the second signal), force-kill the owner and can leave a `running` record, which the
-  next tick's stale recovery resumes. Cancel then reports `run.unowned` with `forced` and the
-  status. Making a forced cancel stick is a follow-up.
+  counts as the second signal), force-kill the owner and can leave a `running` record. Cancel then
+  reports `run.unowned` with `forced` and the status. Since
+  [ADR 0058](0058-honour-a-forced-cancel-in-stale-recovery.md) the request stays bound to the dead
+  owner's lock, and the next tick's stale recovery saves the run `cancelled` instead of resuming it.
 - An embedder (`runWorkflow`) owner does not consult the request; if its handler aborts with
   `RunInterruptedError` the run suspends, and cancel reports `run.unowned` honestly rather than
   claiming success.

@@ -6,7 +6,7 @@ import { missingRunError } from './read-required-run.js';
 import { hasRecordedWork, hasTerminalOutcomes, SUPPORTED_SCHEMA_REVISION } from './record.js';
 import { chooseRecoveryHint, type RecoveryCause, type RecoveryHintInput } from './recovery-hint.js';
 import { RunInterruptedError, RunRefusedError } from './run-errors.js';
-import { openFileOwnedRun } from './run-store.js';
+import { openFileOwnedRun, type OwnedRunStore } from './run-store.js';
 import type { RunRecord } from './store.js';
 
 function message(error: unknown): string {
@@ -78,8 +78,8 @@ export interface CancelledRecord {
 
 /**
  * The one record transition that ends an unfinished run as `cancelled` without running its body,
- * shared by the runner's accepted-replay preflight abort and `workflow cancel` on a run no process
- * owns (ADR 0057). In memory only; the caller saves it under the run lock. It stamps the current
+ * shared by the runner's accepted-replay preflight abort, `workflow cancel` on a run no process
+ * owns (ADR 0057) and tick's stale recovery honouring a forced cancel (ADR 0058). In memory only; the caller saves it under the run lock. It stamps the current
  * storage format, engine and schema revision; drops a stale `interruptedBy`; saves the cancelled
  * status, error and root cause from `reason`; replaces the recovery cause and hint; settles every
  * running or suspended child frame as cancelled; and ends a new execution entry with a
@@ -135,6 +135,59 @@ export function cancelRecord(
   };
 }
 
+/** What {@link cancelUnownedRun} or {@link saveCancelledUnderLock} found under the run lock. @internal */
+export interface CancelUnownedRunResult {
+  /** The run's saved terminal status after the call. */
+  readonly status: 'completed' | 'failed' | 'cancelled';
+  /** The unfinished status this call ended, or null when the run had already ended. */
+  readonly previousStatus: 'running' | 'suspended' | null;
+}
+
+/**
+ * Save {@link cancelRecord}'s transition for `record`, the run as just read by the caller that holds
+ * its lock through `owned`. Shared by `workflow cancel` of a run no process owns (ADR 0057) and by
+ * tick's stale recovery honouring a forced cancel bound to the dead owner's lock (ADR 0058), so both
+ * leave the record the runner's own cancellation would. A run that already ended is reported as it
+ * is and not written, in any format. An unfinished record in any format but 6 or 7 is refused with
+ * `run.incompatible`, unchanged: format 1 cannot be saved without the definition, and formats 2 to
+ * 5 are read-only. The save is durable; a failed save restores `record` and rethrows. Runs no
+ * workflow code, launches nothing and leaves steps and worktrees as they are. The caller releases
+ * the lock. @internal
+ */
+export async function saveCancelledUnderLock(
+  owned: OwnedRunStore,
+  record: RunRecord,
+  reason: unknown,
+): Promise<CancelUnownedRunResult> {
+  const runId = record.id;
+  if (record.status === 'completed' || record.status === 'failed' || record.status === 'cancelled')
+    return { status: record.status, previousStatus: null };
+  if (record.formatVersion === 1)
+    throw new RunRefusedError(
+      'run.incompatible',
+      runId,
+      `Run ${runId} is ${record.status} in checkpoint format 1, which workflow cancel cannot save without the workflow definition. Resume it once with this build, or remove it with workflow rm.`,
+      { formatVersion: 1, status: record.status },
+    );
+  if (record.formatVersion !== 6 && record.formatVersion !== 7)
+    throw new RunRefusedError('run.incompatible', runId, oldFormatMessage(record.formatVersion), {
+      formatVersion: record.formatVersion,
+      status: record.status,
+    });
+  const previousStatus = record.status;
+  const cancelled = cancelRecord(record, reason, {
+    cause: () => ({ kind: 'cancelled' }),
+    sourceChanged: false,
+  });
+  try {
+    await owned.append(record, { durable: true, context: `Could not save run ${runId}` });
+  } catch (error) {
+    cancelled.restore();
+    throw error;
+  }
+  return { status: 'cancelled', previousStatus };
+}
+
 /** Where and how {@link cancelUnownedRun} takes the run. @internal */
 export interface CancelUnownedRunOptions {
   /** Absolute runs container. */
@@ -148,22 +201,12 @@ export interface CancelUnownedRunOptions {
   readonly signal?: AbortSignal | undefined;
 }
 
-/** What {@link cancelUnownedRun} found under the run lock. @internal */
-export interface CancelUnownedRunResult {
-  /** The run's saved terminal status after the call. */
-  readonly status: 'completed' | 'failed' | 'cancelled';
-  /** The unfinished status this call ended, or null when the run had already ended. */
-  readonly previousStatus: 'running' | 'suspended' | null;
-}
-
 /**
  * End an unfinished run that no process owns as `cancelled` (ADR 0057). Takes the run lock without
  * recovering a dead or released owner's lock (that refuses with `run.locked` and the unlock
- * command), re-reads the record under it, and saves {@link cancelRecord}'s transition durably. A
- * run that already ended is reported as it is and not written, in any format. An unfinished record
- * in any format but 6 or 7 is refused with `run.incompatible`, unchanged: format 1 cannot be saved
- * without the definition, and formats 2 to 5 are read-only. Runs no workflow code, launches nothing and leaves steps and
- * worktrees as they are. @internal
+ * command), re-reads the record under it, and saves the transition through
+ * {@link saveCancelledUnderLock}, which also reports an already ended run and refuses an
+ * unfinished record in formats 1 to 5 with `run.incompatible`. @internal
  */
 export async function cancelUnownedRun(
   options: CancelUnownedRunOptions,
@@ -179,41 +222,13 @@ export async function cancelUnownedRun(
   try {
     const record = await owned.read();
     if (record === undefined) throw await missingRunError({ stateDir, runId });
-    if (
-      record.status === 'completed' ||
-      record.status === 'failed' ||
-      record.status === 'cancelled'
-    )
-      result = { status: record.status, previousStatus: null };
-    else if (record.formatVersion === 1)
-      throw new RunRefusedError(
-        'run.incompatible',
-        runId,
-        `Run ${runId} is ${record.status} in checkpoint format 1, which workflow cancel cannot save without the workflow definition. Resume it once with this build, or remove it with workflow rm.`,
-        { formatVersion: 1, status: record.status },
-      );
-    else if (record.formatVersion !== 6 && record.formatVersion !== 7)
-      throw new RunRefusedError('run.incompatible', runId, oldFormatMessage(record.formatVersion), {
-        formatVersion: record.formatVersion,
-        status: record.status,
-      });
-    else {
-      const previousStatus = record.status;
-      const reason = new Error(
-        `Run ${runId} cancelled by workflow cancel (requested ${new Date().toISOString()}) while it was ${previousStatus} with no owner.`,
-      );
-      const cancelled = cancelRecord(record, reason, {
-        cause: () => ({ kind: 'cancelled' }),
-        sourceChanged: false,
-      });
-      try {
-        await owned.append(record, { durable: true, context: `Could not save run ${runId}` });
-      } catch (error) {
-        cancelled.restore();
-        throw error;
-      }
-      result = { status: 'cancelled', previousStatus };
-    }
+    result = await saveCancelledUnderLock(
+      owned,
+      record,
+      new Error(
+        `Run ${runId} cancelled by workflow cancel (requested ${new Date().toISOString()}) while it was ${record.status} with no owner.`,
+      ),
+    );
   } catch (error) {
     try {
       await owned.release();
