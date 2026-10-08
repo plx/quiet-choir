@@ -70,22 +70,23 @@ The known launches are the history's launches plus the healed step's latest laun
 execution; a launch without an entry (cancelled, interrupted or crashed) hides the earlier failures,
 and a step launched before the first failing launch does not qualify. A sibling launched in the same
 tick as a failing launch is not flagged whichever settled first, even when an earlier run's failure
-preceded both: a run starts its counter at the highest persisted stamp, so a relaunch can tie with
-the earlier failure, and the latest launch at or before the step's launch resolves that tie in
-favour of the relaunch. The history keeps at most 8 entries. When it is missing (records written
-before schema revision 12) or truncated, the recorded step qualifies when its `launchStamp` is at
-least `failureStamp`, the earlier watermark; losing a cancelled launch that a later launch overwrote
-only lets an earlier entry decide, which flags more, never less. When either stamp is missing
-(checkpoints written before #144, or a failure saved between retries), that pair falls back to the
-earlier launch-order rule: a higher `seq` qualifies. Strict replay allows saved terminal outcomes
-but stops before the next live effect. The end-of-body skipped-step error names healed steps too.
-Both stamp rules are conservative, not proof of dependence: a step launched after the failure by
-unrelated control flow is still flagged, already running concurrent work can finish, and a warning
-need not imply actual drift. `healedDependents` in `replay-decision.ts` encodes it. The
-`failureStamp` and `failureHistory` survive a later cancellation or interruption (including a
-`running` step left by a crashed owner) until the step completes, so a step that failed, was
-cancelled or interrupted in a later run, and then succeeds is checked when it completes (#297). A
-step that was only ever cancelled has no stamp and is not.
+preceded both. A run starts its counter one past the highest persisted stamp, so a relaunch is
+stamped after every earlier failure and every earlier launch, including a completed wait that
+observed the first failure without settling anything; stamps tie only within one execution, where
+the latest launch at or before the step's launch is the one it ran beside. The history keeps at most
+8 entries. When it is missing (records written before schema revision 12) or truncated, the recorded
+step qualifies when its `launchStamp` is at least `failureStamp`, the earlier watermark; losing a
+cancelled launch that a later launch overwrote only lets an earlier entry decide, which flags more,
+never less. When either stamp is missing (checkpoints written before #144, or a failure saved
+between retries), that pair falls back to the earlier launch-order rule: a higher `seq` qualifies.
+Strict replay allows saved terminal outcomes but stops before the next live effect. The end-of-body
+skipped-step error names healed steps too. Both stamp rules are conservative, not proof of
+dependence: a step launched after the failure by unrelated control flow is still flagged, already
+running concurrent work can finish, and a warning need not imply actual drift. `healedDependents` in
+`replay-decision.ts` encodes it. The `failureStamp` and `failureHistory` survive a later
+cancellation or interruption (including a `running` step left by a crashed owner) until the step
+completes, so a step that failed, was cancelled or interrupted in a later run, and then succeeds is
+checked when it completes (#297). A step that was only ever cancelled has no stamp and is not.
 
 New checkpoints use format 4 because older readers cannot interpret the new terminal status. Formats
 1–3 remain inspectable and are refused for resume/fork without changing their data. No implicit

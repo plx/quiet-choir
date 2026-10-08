@@ -1289,21 +1289,24 @@ export async function runWorkflow<
       ) + 1;
     // The run's settlement counter: each terminal step settlement increments it, and each live
     // launch is stamped with its current value (ADR 0007). Derived like nextSeq, so the record
-    // format is unchanged; any later launch reads at least every persisted stamp.
-    let settlements = Object.values(record.steps).reduce(
-      (highest, step) =>
-        Math.max(
-          highest,
-          step.launchStamp ?? 0,
-          step.settleStamp ?? 0,
-          step.failureStamp ?? 0,
-          ...(step.failureHistory ?? []).flatMap((entry) => [
-            entry.launchStamp,
-            entry.failureStamp,
-          ]),
-        ),
-      0,
-    );
+    // format is unchanged: it starts one past the highest persisted stamp (0 when none), so every
+    // launch of this execution strictly exceeds every stamp an earlier execution saved, including
+    // the launch of a wait that completed without a settlement. Ties span one execution only.
+    let settlements =
+      Object.values(record.steps).reduce(
+        (highest, step) =>
+          Math.max(
+            highest,
+            step.launchStamp ?? -1,
+            step.settleStamp ?? -1,
+            step.failureStamp ?? -1,
+            ...(step.failureHistory ?? []).flatMap((entry) => [
+              entry.launchStamp,
+              entry.failureStamp,
+            ]),
+          ),
+        -1,
+      ) + 1;
     // Stamps taken when the body requests an effect, before any awaited preparation; read and
     // removed when the effect reaches its record.
     const launchStamps = new Map<string, number>();

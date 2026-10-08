@@ -1707,9 +1707,9 @@ it('does not flag a fan-in sibling that completed while the healed step failed a
     { launchStamp: first.steps['impl']?.launchStamp, failureStamp: firstFailure },
     { launchStamp: impl?.launchStamp, failureStamp: impl?.settleStamp },
   ]);
-  // The watermark alone would flag followups: it launched at or after the first failure (the
-  // counter restarts at the highest persisted stamp, so the relaunches tie with it), but in the
-  // same tick as impl's second launch and before its second failure.
+  // The watermark alone would flag followups: it launched after the first failure (the counter
+  // restarts one past the highest persisted stamp), but in the same tick as impl's second launch
+  // and before its second failure.
   expect(followups?.launchStamp).toBeGreaterThanOrEqual(firstFailure);
   expect(followups?.launchStamp).toBe(impl?.launchStamp);
   expect(followups?.launchStamp).toBeLessThan(impl?.settleStamp ?? 0);
@@ -1734,6 +1734,75 @@ it('does not flag a fan-in sibling that completed while the healed step failed a
   expect(third.steps['impl']).toMatchObject({ status: 'completed' });
   expect(third.steps['impl']?.failureStamp).toBeUndefined();
   expect(third.steps['impl']?.failureHistory).toBeUndefined();
+});
+
+it('flags a completed wait that observed the first failure once a later run relaunched the healed step (#300)', async () => {
+  let execution = 1;
+  const ran: string[] = [];
+  const definition = workflow(async (ctx) => {
+    let failed = false;
+    try {
+      await ctx.step('healer', {
+        input: null,
+        schema: z.string(),
+        run: () => {
+          ran.push('healer');
+          if (execution < 3) throw new Error('healer failed');
+          return 'h';
+        },
+      });
+    } catch {
+      failed = true;
+    }
+    // Launched after the failure settled; a completed wait adds no settlement of its own.
+    const checked = await ctx.poll('ci', {
+      input: null,
+      schema: z.string(),
+      every: 1,
+      timeoutMs: 60_000,
+      observe: () => Promise.resolve({ done: true as const, value: 'green' }),
+    });
+    const ci = checked.by === 'poll' ? checked.value : 'timed out';
+    if (failed) throw new Error('tail');
+    return ctx.step('ship', {
+      input: null,
+      schema: z.string(),
+      run: () => {
+        ran.push('ship');
+        return ci;
+      },
+    });
+  });
+  await expect(runWorkflow(definition, options())).rejects.toThrow('tail');
+  const first = await readRun(options());
+  const firstFailure = first.steps['healer']?.failureStamp;
+  expect(first.steps['ci']?.status).toBe('completed');
+  expect(first.steps['ci']?.launchStamp).toBe(firstFailure);
+
+  execution = 2;
+  await expect(runWorkflow(definition, { ...options(), resume: true })).rejects.toThrow('tail');
+  const second = await readRun(options());
+  // The relaunch is stamped past every persisted stamp, the wait's launch included, so it cannot
+  // hide the first failure that the replayed wait observed.
+  expect(second.steps['healer']?.launchStamp).toBeGreaterThan(first.steps['ci']?.launchStamp ?? 0);
+  expect(second.steps['ci']?.launchStamp).toBe(first.steps['ci']?.launchStamp);
+  expect(second.steps['healer']?.failureHistory).toHaveLength(2);
+
+  execution = 3;
+  ran.length = 0;
+  const healed: WorkflowEvent[] = [];
+  const outcome = await runWorkflow(definition, {
+    ...options(),
+    resume: true,
+    strictReplay: true,
+    onEvent: (event) => {
+      if (event.type === 'replay.divergence') healed.push(event);
+    },
+  }).catch((error: unknown) => error);
+  expect(healed).toMatchObject([{ healedStepId: 'healer', skippedStepIds: ['ci'] }]);
+  expect(divergence(outcome)).toMatchObject({ reason: 'healed' });
+  expect(ran).toEqual(['healer']);
+  expect((await readRun(options())).steps['ship']).toBeUndefined();
 });
 
 it('falls back to the first-failure watermark once the failure history is truncated', async () => {

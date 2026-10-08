@@ -263,7 +263,10 @@ export interface PriorLaunch {
  * step reruns live and the body observes only the current run's outcome. No known launch at or
  * before `launch` means the step launched before the first failing launch since the healed step
  * last completed. Lost launches (a cancelled launch later overwritten) only make an earlier entry
- * decide, which flags more, never less.
+ * decide, which flags more, never less. A run starts its counter one past the highest persisted
+ * stamp, so a relaunch never ties with an earlier execution's failure or launch; "at or before"
+ * only resolves a tie within one execution, where a sibling launched in the same tick as the
+ * healed step's launch saw none of that launch's outcome.
  */
 function observedFailure(
   launch: number,
@@ -291,9 +294,10 @@ function observedFailure(
  * 3. Otherwise the per-launch rule decides: the healed step's latest known launch at or before the
  *    step's launch must have a failure that settled at or before it. A sibling relaunched in the
  *    same tick as a later failing launch is then not flagged, although an earlier failure precedes
- *    it. Stamps can tie, because a run starts its counter at the highest persisted stamp; picking
- *    the latest launch at or before the step's launch resolves a tie between a relaunch and an
- *    earlier failure in favour of the relaunch.
+ *    it. A run starts its counter one past the highest persisted stamp, so a relaunch is stamped
+ *    strictly after every earlier failure and every earlier launch, such as a completed wait that
+ *    observed the first failure; only launches within one execution can tie, and the latest launch
+ *    at or before the step's launch counts a same-tick relaunch as the one the step saw.
  *
  * Rule 3 flags a subset of what rule 2 flags, since every failure in a complete history settled at
  * or after `failureStamp`.

@@ -6,7 +6,9 @@
   of the healed step after an earlier run's failure (behavior change): a step that fails in run 1,
   fails again in run 2 while a `Promise.all` sibling relaunched with it completes, and heals in run
   3 no longer reports `replay.divergence` for that sibling, so a `--strict-replay` resume no longer
-  stops on it. A genuine dependent of any earlier failure is still flagged. Record format: schema
+  stops on it. A genuine dependent of any earlier failure is still flagged, including a completed
+  wait launched right after the first failure: each execution now starts the settlement counter one
+  past the highest saved stamp, so later launches never tie with earlier ones. Record format: schema
   revision 12 adds the nested step field `failureHistory` (at most 8 `{launchStamp, failureStamp}`
   entries, removed when the step completes); no step identity change. Revision-11 records read and
   resume unchanged and keep the conservative `failureStamp` watermark, as does a history that has

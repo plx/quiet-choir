@@ -652,16 +652,17 @@ describe('healedDependents', () => {
 
 describe('healedDependents with a failure history', () => {
   // The ticket's scenario (#300): H launched at 0 and failed at 2 in run 1; run 2 started its
-  // counter at 2, relaunched H at 2 (failed again at 4) and a sibling in the same tick.
+  // counter one past the highest persisted stamp, at 3, relaunched H at 3 (failed again at 5) and a
+  // sibling in the same tick.
   const repeated: HealedStep = {
     id: 'h',
     seq: 1,
     failureStamp: 2,
     failures: [
       { launchStamp: 0, failureStamp: 2 },
-      { launchStamp: 2, failureStamp: 4 },
+      { launchStamp: 3, failureStamp: 5 },
     ],
-    launchStamp: 2,
+    launchStamp: 3,
   };
   const cases: {
     name: string;
@@ -673,10 +674,27 @@ describe('healedDependents with a failure history', () => {
       name: 'a sibling relaunched in the same tick as the failing relaunch (stamp tie)',
       healed: repeated,
       prior: [
-        { id: 'h', seq: 1, launchStamp: 2 },
-        { id: 'followups', seq: 2, launchStamp: 2 },
+        { id: 'h', seq: 1, launchStamp: 3 },
+        { id: 'followups', seq: 2, launchStamp: 3 },
       ],
       expected: [],
+    },
+    {
+      // Run 1: H launched at 0 and failed at 1, then a wait launched at 1 and completed without a
+      // settlement. Run 2 starts one past it, so H's relaunch at 2 cannot hide the first failure.
+      name: 'a completed wait launched at the first failure stamp, before a later-run relaunch',
+      healed: {
+        id: 'h',
+        seq: 1,
+        failureStamp: 1,
+        failures: [
+          { launchStamp: 0, failureStamp: 1 },
+          { launchStamp: 2, failureStamp: 3 },
+        ],
+        launchStamp: 2,
+      },
+      prior: [{ id: 'poll', seq: 2, launchStamp: 1 }],
+      expected: ['poll'],
     },
     {
       name: 'a dependent of the first failure that replays across a later failure',
@@ -697,8 +715,8 @@ describe('healedDependents with a failure history', () => {
       name: 'a dependent launched after the latest failure',
       healed: repeated,
       prior: [
-        { id: 'followups', seq: 2, launchStamp: 2 },
-        { id: 'fallback', seq: 3, launchStamp: 4 },
+        { id: 'followups', seq: 2, launchStamp: 3 },
+        { id: 'fallback', seq: 3, launchStamp: 5 },
         { id: 'later', seq: 4, launchStamp: 7 },
       ],
       expected: ['fallback', 'later'],
@@ -706,7 +724,7 @@ describe('healedDependents with a failure history', () => {
     {
       name: 'a sibling launched while the latest failing launch was in flight',
       healed: repeated,
-      prior: [{ id: 's', seq: 2, launchStamp: 3 }],
+      prior: [{ id: 's', seq: 2, launchStamp: 4 }],
       expected: [],
     },
     {
@@ -744,27 +762,27 @@ describe('healedDependents with a failure history', () => {
       name: 'a truncated history falls back to the watermark',
       healed: {
         ...repeated,
-        failures: [{ launchStamp: 2, failureStamp: 4 }],
+        failures: [{ launchStamp: 3, failureStamp: 5 }],
       },
       prior: [
         { id: 'before', seq: 2, launchStamp: 1 },
-        { id: 'followups', seq: 3, launchStamp: 2 },
+        { id: 'followups', seq: 3, launchStamp: 3 },
       ],
       expected: ['followups'],
     },
     {
       name: 'a legacy record with only failureStamp keeps the watermark',
-      healed: { id: 'h', seq: 1, failureStamp: 2, launchStamp: 2 },
+      healed: { id: 'h', seq: 1, failureStamp: 2, launchStamp: 3 },
       prior: [
         { id: 'before', seq: 2, launchStamp: 1 },
-        { id: 'followups', seq: 3, launchStamp: 2 },
+        { id: 'followups', seq: 3, launchStamp: 3 },
       ],
       expected: ['followups'],
     },
     {
       name: 'an empty history keeps the watermark',
       healed: { ...repeated, failures: [] },
-      prior: [{ id: 'followups', seq: 2, launchStamp: 2 }],
+      prior: [{ id: 'followups', seq: 2, launchStamp: 3 }],
       expected: ['followups'],
     },
     {
@@ -773,7 +791,7 @@ describe('healedDependents with a failure history', () => {
       prior: [
         { id: 'legacy-earlier', seq: 0 },
         { id: 'legacy-later', seq: 2 },
-        { id: 'followups', seq: 3, launchStamp: 2 },
+        { id: 'followups', seq: 3, launchStamp: 3 },
       ],
       expected: ['legacy-later'],
     },

@@ -126,7 +126,9 @@ stamp of its first terminal failure since it last completed) and `failureHistory
 terminal failures since then, each with the launch that failed). A failed step reruns live, so the
 body that launched a step could only observe the failure of the healed step's latest launch at or
 before it; the step is flagged only when that launch failed and the failure had settled by its own
-launch. A `Promise.all` sibling launched in the same tick as the failing step is not flagged,
+launch. Each execution starts the counter one past the highest saved stamp, so a relaunch is always
+stamped after everything an earlier execution saved, such as a completed wait that observed the
+first failure. A `Promise.all` sibling launched in the same tick as the failing step is not flagged,
 whichever settled first, and neither is a sibling relaunched beside a later failing launch of the
 healed step after an earlier run's failure. If any are flagged, `replay.divergence` warns
 immediately, names the healed step and those IDs, and saves the warning. `--strict-replay` then
