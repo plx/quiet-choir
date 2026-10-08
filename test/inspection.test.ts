@@ -1248,6 +1248,8 @@ it('projects list rows to a bounded, exact key set while the human table keeps i
       'nextWakeAt',
       'ownership',
       'recordedStatus',
+      'errorKind',
+      'retryable',
       'stateDir',
       'status',
       'updatedAt',
@@ -1265,6 +1267,87 @@ it('projects list rows to a bounded, exact key set while the human table keeps i
     'unknownTokenAttempts',
   ]);
   expect(formatRunList(summaries)).toContain('run-00-0123456789abcdef  example@1  completed');
+});
+
+it('carries the failed root cause kind on list rows and the text table only for failed runs', () => {
+  const step = (kind: NonNullable<AttemptRecord['errorKind']>): StepRecord => ({
+    kind: 'agent',
+    harness: 'claude',
+    fingerprint: 'f',
+    status: 'failed',
+    attempts: 1,
+    output: null,
+    error: 'failed',
+    wakeAt: null,
+    attemptHistory: [
+      { attempt: 1, status: 'failed', errorKind: kind },
+    ] as unknown as AttemptRecord[],
+  });
+  const failedRun = (
+    id: string,
+    rootCause: NonNullable<RunRecord['rootCause']>,
+    kind: NonNullable<AttemptRecord['errorKind']> = 'overloaded',
+  ) =>
+    ({
+      ...record(id),
+      status: 'failed',
+      steps: { ask: step(kind) },
+      rootCause,
+    }) satisfies RunRecord;
+  const rowOf = (run: RunRecord, ownership = unlocked) => {
+    const summary = summarizeRun(run, ownership);
+    return { summary, row: toRunListRow(summary), text: formatRunList([summary]) };
+  };
+
+  const overloaded = rowOf(failedRun('a', { stepId: 'ask', error: 'x', errorKind: 'overloaded' }));
+  expect(overloaded.row).toMatchObject({ errorKind: 'overloaded', retryable: true });
+  expect(overloaded.text).toContain('failed [overloaded]');
+  // The --full summary carries the same kind on its normalized root cause.
+  expect(overloaded.summary.rootCause?.errorKind).toBe(overloaded.row.errorKind);
+
+  const auth = rowOf(
+    failedRun('b', { stepId: 'ask', error: 'x', errorKind: 'authentication' }, 'authentication'),
+  );
+  expect(auth.row).toMatchObject({ errorKind: 'authentication', retryable: false });
+  expect(auth.text).toContain('failed [authentication]');
+
+  // A legacy record without a stored kind falls back to the root step's last attempt.
+  const legacy = rowOf(failedRun('c', { stepId: 'ask', error: 'x' }, 'rate-limit'));
+  expect(legacy.row).toMatchObject({ errorKind: 'rate-limit', retryable: true });
+  expect(legacy.summary.rootCause?.errorKind).toBe('rate-limit');
+
+  const body = rowOf(failedRun('d', { stepId: null, error: 'bug', errorKind: null }));
+  expect(body.row).toMatchObject({ errorKind: null, retryable: false });
+  expect(body.text).toContain('failed  ');
+  expect(body.text).not.toContain('[');
+
+  const none = { errorKind: null, retryable: false };
+  const cancelled = rowOf({
+    ...failedRun('e', { stepId: 'ask', error: 'x', errorKind: 'cancelled' }, 'cancelled'),
+    status: 'cancelled',
+  });
+  expect(cancelled.summary.rootCause?.errorKind).toBe('cancelled');
+  expect(cancelled.row).toMatchObject(none);
+  expect(cancelled.text).not.toContain('[');
+
+  const suspended = rowOf({
+    ...failedRun('f', { stepId: 'ask', error: 'x', errorKind: 'overloaded' }),
+    status: 'suspended',
+  });
+  expect(suspended.row).toMatchObject(none);
+  expect(suspended.text).not.toContain('[');
+
+  const completed = rowOf({ ...record('g'), status: 'completed' });
+  expect(completed.row).toMatchObject(none);
+
+  const stale = rowOf({
+    ...record('h'),
+    rootCause: { stepId: 'ask', error: 'x', errorKind: 'overloaded' },
+    steps: { ask: step('overloaded') },
+  });
+  expect(stale.summary.status).toBe('stale');
+  expect(stale.row).toMatchObject(none);
+  expect(stale.text).not.toContain('[');
 });
 
 it('gives a stale or failed summary a resume next entry and prints it as Next:', async () => {

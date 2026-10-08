@@ -2,6 +2,17 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Failure kind on list rows (addition; no record format, `schemaRevision` or step identity change):
+  `workflow list --json` rows gain `errorKind` and `retryable` after `recordedStatus`: the root
+  cause's kind for a failed run (the stored kind, else the legacy fallback to the root step's last
+  attempt) and whether it is transient, as in failure documents. Body failures, older records
+  without a recoverable kind and every non-failed status, including a cancelled or interrupted run
+  that keeps a `rootCause`, give `null` and `false`. The text table appends `[<kind>]` to a failed
+  run's status and adds no column; `--full` summaries are unchanged and carry the same value as
+  `rootCause.errorKind`. Watch JSONL is unchanged: `--summary` lines already carry
+  `rootCause.errorKind` and `steps[].errorKind` (#275), and live `retryable` belongs to the event
+  stream (#280) (#281).
+
 - Failure kind on event lines (addition; no record format, `schemaRevision` or step identity
   change): `WorkflowEvent` gains an optional `errorKind`, the failed attempt's recorded kind on
   `step.failed` and the root cause's kind on `run.failed` that names a root effect. `--events` and

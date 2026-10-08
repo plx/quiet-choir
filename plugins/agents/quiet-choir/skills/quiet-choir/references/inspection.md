@@ -249,10 +249,12 @@ documents carry the compact `summary` instead of `run`.
 List sorts newest `updatedAt` first and supports running/failed/completed/cancelled/stale filters.
 Unreadable files are skipped with stderr warnings. JSON is
 `{kind:'workflow.list.result', ok:true, stateDir, runs, warnings}`. Each row is compact: `id`,
-`workflow`, `status`, `recordedStatus`, `counts`, `updatedAt`, `ownership`, `nextWakeAt`, `cwd`,
-`stateDir`, `warnings` and `usage` totals; `--full` returns whole summary objects. A missing
-directory produces an empty list. Neither command imports source, takes the writer lock, or performs
-recovery.
+`workflow`, `status`, `recordedStatus`, `errorKind`, `retryable`, `counts`, `updatedAt`,
+`ownership`, `nextWakeAt`, `cwd`, `stateDir`, `warnings` and `usage` totals; `--full` returns whole
+summary objects. A failed run's `errorKind` is its root cause's kind (as `rootCause.errorKind` in a
+`--full` summary) and `retryable` is whether it is transient; both are `null` and `false` for a body
+failure and every other status, and the text table shows `failed [<kind>]`. A missing directory
+produces an empty list. Neither command imports source, takes the writer lock, or performs recovery.
 
 ## Follow a run's events
 
@@ -340,15 +342,17 @@ true exactly when the kind is transient: `rate-limit`, `overloaded`, `timeout` o
 the set `retry.on: ['transient']` stands for. It is a classification, not a promise that a retry
 will succeed. `inspect --summary` step rows carry `errorKind` (the last attempt's kind, null for a
 step without a failed attempt), and the text view prints `[<kind>]` on the step line and
-`Root cause (<step>, <kind>)`. Attribution uses error identity/cause chains, not message matching.
-`WorkflowRunError` names the root step/kind and exposes `runId`, `stepId`, saved `run`, and original
-`cause`; `-v` prints the saved stack. A map's initiating step stays `failed`; an interrupted sibling
-is `cancelled`, with a distinct cancellation message and `cancelledBy` set to the initiating step ID
-(null for a mapper-body failure or run interrupt). First Ctrl-C/SIGTERM/SIGHUP, or tick's --timeout,
-records run status `suspended` with `interruptedBy: { reason, at }` (such as
-`Workflow interrupted by SIGINT.`) and no root cause; an explicit cancellation records `cancelled`
-with root cause `{ stepId: null, error }`. Completed or handled failures leave `rootCause` null when
-the run completes. Resolved, validated actions still save success after abort.
+`Root cause (<step>, <kind>)`. Watch adds no field: `--summary` lines carry `rootCause.errorKind`,
+and live `retryable` comes from `--events`. Attribution uses error identity/cause chains, not
+message matching. `WorkflowRunError` names the root step/kind and exposes `runId`, `stepId`, saved
+`run`, and original `cause`; `-v` prints the saved stack. A map's initiating step stays `failed`; an
+interrupted sibling is `cancelled`, with a distinct cancellation message and `cancelledBy` set to
+the initiating step ID (null for a mapper-body failure or run interrupt). First
+Ctrl-C/SIGTERM/SIGHUP, or tick's --timeout, records run status `suspended` with
+`interruptedBy: { reason, at }` (such as `Workflow interrupted by SIGINT.`) and no root cause; an
+explicit cancellation records `cancelled` with root cause `{ stepId: null, error }`. Completed or
+handled failures leave `rootCause` null when the run completes. Resolved, validated actions still
+save success after abort.
 
 `maps[id]` contains settled-map identity, status, and ordered item journals. Each committed item
 stores `{ ok, value/error }` and its owned step/nested-map IDs. Those outcomes replay as a unit; a
