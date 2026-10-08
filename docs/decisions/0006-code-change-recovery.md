@@ -191,9 +191,15 @@ bare map prefix is not enough: two invocations of one map ID, such as loop round
 treating them as siblings would let round 2 reuse past changed round-1 work. The key set alone is
 not enough either, because rounds may use the same keys. The digest covers full prefixes, so nested
 invocations under different outer items differ too. Resume restarts the body, so a deterministic
-body assigns the same ordinals in every execution. Questions and waits record it as well. Storing a
-run-level table of key sets would add a top-level field, and storing every key set on every step
-would grow quadratically.
+body assigns the same ordinals in every execution, with one exception: a committed settled map item
+or settled frame is claimed without running its body, so the invocations it recorded are not
+counted, and a later invocation under the same prefix (reachable through a bound view or `within`)
+gets a smaller ordinal than it had before. When a step claimed that way recorded an item under the
+new invocation's map prefix, the digest also covers a value unique to the execution. Its items still
+share one digest, and since it matches no earlier invocation's, it only blocks more; journaling
+per-prefix counts with each item would avoid that but add durable state for a rare case. Questions
+and waits record it as well. Storing a run-level table of key sets would add a top-level field, and
+storing every key set on every step would grow quadratically.
 
 `forkPrefixBlockers` now also skips a source step Y when Y's and the requested step X's recorded
 entries share an `invocation` but name different items. The rule is source-causal: in the source, X

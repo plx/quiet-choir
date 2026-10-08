@@ -145,7 +145,9 @@ export interface StepMapItem {
    * the same map prefix the workflow body started before it) and its sorted item prefixes. Steps
    * from different items of one invocation share it; another invocation of the same map ID, such as
    * a later loop round with the same keys, does not, and neither does a map at another prefix whose
-   * slash keys spell the same item prefixes.
+   * slash keys spell the same item prefixes. It is stable across resumes, except under the prefix of
+   * a nested invocation recorded by a skipped committed settled item or frame, where it is made
+   * unique to the execution so it only blocks more.
    */
   readonly invocation: string;
 }

@@ -576,6 +576,53 @@ it('does not treat a map at another prefix with the same item prefixes as a sibl
   expect(reusedIds(fork)).toEqual([]);
 });
 
+it('does not match an invocation numbered after a skipped settled item to an earlier one', async () => {
+  const state = { outer: true, fail: true, keys: ['a', 'b'] };
+  const { harness, live } = delayedFixture((id) => state.fail && id === 'w/inner/b/s2');
+  const definition = workflow(async (ctx) => {
+    const view = ctx.within('w');
+    if (state.outer)
+      await ctx.map('outer', ['k'], { concurrency: 1, onError: 'return' }, async () => {
+        // Through the root view, the nested map runs at `w/inner/`, outside the item's prefix.
+        await view.map('inner', ['a', 'b'], { concurrency: 1, key: (key) => key }, (key) =>
+          key === 'a' ? ctx.claude.text('s1', { prompt: key }) : Promise.resolve(null),
+        );
+        return 'ok';
+      });
+    await view.map('inner', state.keys, { concurrency: 1, key: (key) => key }, (key) =>
+      key === 'b' ? ctx.claude.text('s2', { prompt: key }) : Promise.resolve(null),
+    );
+    return 'done';
+  });
+  await expect(runWorkflow(definition, { ...options(), harness })).rejects.toThrow(
+    WorkflowRunError,
+  );
+  // The resume skips the committed item, so it never counts the item's `w/inner/` invocation.
+  state.fail = false;
+  await runWorkflow(definition, { ...options(), harness, resume: true });
+  const source = await readRun(options());
+  expect(source.status).toBe('completed');
+  const first = digest(['w/inner/', '0', 'w/inner/a/', 'w/inner/b/']);
+  expect(source.steps['w/inner/a/s1']?.mapItems).toEqual([
+    { item: 'w/inner/a/', invocation: first },
+  ]);
+  const healed = source.steps['w/inner/b/s2']?.mapItems;
+  expect(healed).toHaveLength(1);
+  expect(healed?.[0]?.item).toBe('w/inner/b/');
+  expect(healed?.[0]?.invocation).not.toBe(first);
+  live.length = 0;
+  state.outer = false;
+  state.keys = ['b'];
+  const fork = await runWorkflow(definition, {
+    ...options('fork'),
+    harness,
+    forkFrom: { runId: 'source' },
+  });
+  // The healed step launched after the dropped first invocation's step settled.
+  expect(live).toEqual(['w/inner/b/s2']);
+  expect(reusedIds(fork)).toEqual([]);
+});
+
 it('records the enclosing named-map item on a wait launched inside it', async () => {
   const ready = (id: string) =>
     ({
