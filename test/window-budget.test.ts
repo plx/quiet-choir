@@ -384,6 +384,7 @@ describe('the gate in a run', () => {
     expect(result).toMatchObject({ status: 'suspended', nextWakeAt: wake, error: null });
     const record = await readRun(options);
     expect(record).toMatchObject({ status: 'suspended', nextWakeAt: wake, rootCause: null });
+    expect(record.recoveryHint).toBeUndefined();
     expect(agent.calls).toEqual(['claude']);
   });
 
@@ -410,6 +411,9 @@ describe('the gate in a run', () => {
     expect(record.budgetStop).toMatchObject({ metric: 'maxWindowUtilization', resetsAt: null });
     expect(record.nextWakeAt ?? null).toBeNull();
     expect(Object.keys(record.steps)).toEqual(['one']);
+    expect(record.recoveryHint).toContain('--max-window-utilization');
+    expect(record.recoveryHint).toContain('--resume');
+    expect(record.recoveryHint).not.toContain('re-finalize');
 
     const done = await runWorkflow(twoClaude, {
       ...options,

@@ -47,6 +47,11 @@ const budgetFlags: Readonly<Record<keyof RunBudgetPolicy, string>> = {
   maxWindowUtilization: '--max-window-utilization',
 };
 
+/** The CLI flag of the cap behind a run-budget stop, for messages and recovery hints. @internal */
+export function runBudgetFlag(metric: keyof RunBudgetPolicy): string {
+  return budgetFlags[metric];
+}
+
 /** A latched operator stop, delivered only after admitted agent attempts drain. */
 export class RunBudgetExceededError extends Error {
   static {
@@ -70,7 +75,7 @@ export class RunBudgetExceededError extends Error {
    * millisecond reset of a `maxWindowUtilization` stop, or null when the run cannot wait for it.
    */
   public constructor(runId: string, stop: RunBudgetStop, wakeAt: number | null = null) {
-    const flag = budgetFlags[stop.metric];
+    const flag = runBudgetFlag(stop.metric);
     const reached =
       stop.metric === 'maxWindowUtilization'
         ? windowStopDescription(stop, wakeAt)

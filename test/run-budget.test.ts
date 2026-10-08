@@ -106,6 +106,12 @@ it.each(['cost', 'attempts'] as const)(
     expect(saved.budgetStop?.metric).toBe(
       metric === 'cost' ? 'maxRunCostUsd' : 'maxRunAgentAttempts',
     );
+    // Every recorded step is completed, yet the hint names the cap's flag, not the re-finalize text.
+    const flag = metric === 'cost' ? '--max-run-cost-usd' : '--max-run-agent-attempts';
+    expect(saved.recoveryHint).toContain(flag);
+    expect(saved.recoveryHint).toContain('--resume');
+    expect(saved.recoveryHint).not.toContain('re-finalize');
+    expect(saved.recoveryHint).not.toContain('accept-code-change');
     const resumed = await runWorkflow(definition, {
       runId: 'cap',
       stateDir,
@@ -154,6 +160,10 @@ it('latches even when caught, refuses later attempts and persists caps across re
   const record = await readRun(options);
   expect(Object.keys(record.steps)).toEqual(['one']);
   expect(record.status).toBe('failed');
+  // The refusal was caught and every step is terminal, but the budget hint still applies.
+  expect(record.recoveryHint).toContain('--max-run-agent-attempts');
+  expect(record.recoveryHint).toContain('--resume');
+  expect(record.recoveryHint).not.toContain('re-finalize');
   const done = await runWorkflow(definition, {
     ...options,
     resume: true,
@@ -201,10 +211,38 @@ it('counts retries and refuses the next retry without altering failed-attempt ev
     observed: 2,
   });
   expect(saved.steps['retry']).toMatchObject({ attempts: 2, status: 'failed' });
+  // A failed root step would otherwise get the plain effect resume.
+  expect(saved.recoveryHint).toContain('--max-run-agent-attempts');
+  expect(saved.recoveryHint).toContain('higher');
   expect(saved.steps['retry']?.attemptHistory?.map((attempt) => attempt.status)).toEqual([
     'failed',
     'failed',
   ]);
+});
+
+it('keeps the authoring hint for an unrelated error when a budget cap is set but not reached', async () => {
+  const stateDir = await directory();
+  const definition = defineWorkflow({
+    ...base,
+    async run(ctx) {
+      await ctx.claude.text('one', { prompt: 'one' });
+      throw new Error('body bug');
+    },
+  });
+  await expect(
+    runWorkflow(definition, {
+      stateDir,
+      runId: 'plain',
+      input: null,
+      maxRunAgentAttempts: 5,
+      harness: { invoke: () => Promise.resolve({ text: 'ok', sessionId: null }) },
+    }),
+  ).rejects.toThrow('body bug');
+  const saved = await readRun({ stateDir, runId: 'plain' });
+  expect(saved.status).toBe('failed');
+  expect(saved.budgetStop).toBeUndefined();
+  expect(saved.recoveryHint).toContain('re-finalize');
+  expect(saved.recoveryHint).not.toContain('--max-run-agent-attempts');
 });
 
 function untilAborted(signal: AbortSignal): Promise<never> {

@@ -21,6 +21,9 @@ const causes: readonly RecoveryCause[] = [
   { kind: 'map-changed', mapperOnly: true },
   { kind: 'map-changed', mapperOnly: false },
   { kind: 'configuration' },
+  { kind: 'budget', flag: '--max-run-cost-usd' },
+  { kind: 'budget', flag: '--max-run-agent-attempts' },
+  { kind: 'budget', flag: '--max-window-utilization' },
   { kind: 'authoring' },
   { kind: 'effect' },
   { kind: 'cancelled' },
@@ -35,6 +38,8 @@ const fixThenResume =
 const plainResume =
   'Resume with --resume once the cause is fixed or has passed; completed steps are reused and the failed step runs again.';
 const cancelledResume = 'Resume with --resume to continue; completed steps are reused.';
+const budgetResume = (flag: string): string =>
+  `A run budget refused a new agent attempt. Resume with --resume and a higher ${flag} value, or ${flag} off; completed steps are reused and replay without new spend.`;
 const grant =
   'Grant the access, then resume: --resume --grant fixer (or --grant write, or --grant all); completed steps are reused.';
 const nondeterminism =
@@ -93,6 +98,33 @@ describe('chooseRecoveryHint', () => {
       expect(chosen?.includes('--accept-code-change')).toBe(
         kind === 'configuration' || kind === 'authoring',
       );
+    },
+  );
+
+  // A budget stop names its cap's flag whatever else is true of the run.
+  const budgetRows = [
+    '--max-run-cost-usd',
+    '--max-run-agent-attempts',
+    '--max-window-utilization',
+  ].flatMap((flag) =>
+    [true, false].flatMap((allTerminal) =>
+      [true, false].map((sourceChanged) => ({ flag, allTerminal, sourceChanged })),
+    ),
+  );
+  it.each(budgetRows)(
+    'budget, $flag, allTerminal $allTerminal, sourceChanged $sourceChanged',
+    ({ flag, allTerminal, sourceChanged }) => {
+      const chosen = hint({ cause: { kind: 'budget', flag }, allTerminal, sourceChanged });
+      expect(chosen).toBe(budgetResume(flag));
+      expect(chosen).toContain(flag);
+      expect(chosen).toContain('--resume');
+      for (const absent of [
+        'accept-code-change',
+        're-finalize',
+        'terminal outcomes',
+        'Fix the workflow',
+      ])
+        expect(chosen).not.toContain(absent);
     },
   );
 

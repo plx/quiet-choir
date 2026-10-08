@@ -9,6 +9,7 @@ import type { WorkflowDeclaration } from './child-model.js';
 import {
   RunBudget,
   RunBudgetExceededError,
+  runBudgetFlag,
   runBudgetSchema,
   type RunBudgetPolicy,
 } from './run-budget.js';
@@ -4083,8 +4084,9 @@ export async function runWorkflow<
 /**
  * Classify a failure for recovery advice from error classes and the saved record, never from
  * message text. It searches the given errors' cause chains and aggregate members, and the first
- * matching rule wins: grant, divergence, settled map change, other configuration, cancelled run,
- * recorded effect failure, then authoring.
+ * matching rule wins: grant, divergence, settled map change, other configuration, run-budget stop,
+ * cancelled run, recorded effect failure, then authoring. A run-budget stop outranks the last
+ * three because a plain resume or a fix to the workflow would hit the same cap again.
  */
 function recoveryCause(errors: readonly unknown[], record: RunRecord): RecoveryCause {
   const seen = new Set<unknown>();
@@ -4112,6 +4114,8 @@ function recoveryCause(errors: readonly unknown[], record: RunRecord): RecoveryC
   const mapChange = found.map(settledMapChange).find((change) => change !== undefined);
   if (mapChange) return { kind: 'map-changed', mapperOnly: mapChange.mapperOnly };
   if (found.some((error) => error instanceof ConfigurationError)) return { kind: 'configuration' };
+  const budget = found.find((error) => error instanceof RunBudgetExceededError);
+  if (budget) return { kind: 'budget', flag: runBudgetFlag(budget.stop.metric) };
   if (record.status === 'cancelled') return { kind: 'cancelled' };
   const stepId = record.rootCause?.stepId;
   if (stepId != null && record.steps[stepId]?.status === 'failed') return { kind: 'effect' };
