@@ -10,6 +10,7 @@ import type { ExecutionLogger, ExecutionPlan, Executor } from './execution.js';
 import type { ProcessSupervisor } from '../processes/supervisor.js';
 import {
   probeHarnessContracts,
+  strictEnumFailure,
   strictVersionFailure,
   summarizeDoctorChecks,
   type DoctorOptions,
@@ -28,7 +29,8 @@ const widenStep =
 
 /**
  * Final line of the text report: the verdict and, unless everything passed, the next command. An
- * untested patch version names the contract run that justifies widening the tested range.
+ * untested patch version names the contract run that justifies widening the tested range; Codex
+ * effort values left unverified (the server rejected the sentinel model first) are named as such.
  */
 export function doctorVerdictLine(
   report: Pick<DoctorReport, 'verdict' | 'checks' | 'harnesses'>,
@@ -37,16 +39,38 @@ export function doctorVerdictLine(
   const untested = (check: DoctorReport['checks'][number]): boolean =>
     check.check === 'version' &&
     (check.status === 'warn' || check.message.includes(strictVersionFailure));
+  const unverified = (check: DoctorReport['checks'][number]): boolean =>
+    check.check === 'enums' &&
+    (check.status === 'warn' || check.message.includes(strictEnumFailure));
   const named = report.checks
     .filter(untested)
     .map((check) => `${check.harness} ${report.harnesses[check.harness]?.version ?? 'unknown'}`)
     .join(', ');
+  const efforts = report.checks
+    .filter(unverified)
+    .map((check) => check.harness)
+    .join(', ');
+  const reasons = (strict: boolean): string[] => [
+    ...(named
+      ? [
+          strict
+            ? `${named} is an untested patch version and --strict treats it as a failure; ${widenStep}`
+            : `${named} is an untested patch version; ${widenStep}`,
+        ]
+      : []),
+    ...(efforts
+      ? [
+          `${efforts} effort values are unverified because the server rejected the sentinel model before validating effort (no inference ran)${strict ? ' and --strict treats that as a failure' : ''}`,
+        ]
+      : []),
+  ];
   if (report.verdict === 'usable-with-warnings')
-    return `usable with warnings: ${named || 'a harness'} is an untested patch version; ${widenStep} (or pass --strict to treat this as a failure)`;
+    return `usable with warnings: ${reasons(false).join('; ') || `a harness is an untested patch version; ${widenStep}`} (or pass --strict to treat this as a failure)`;
   const onlyStrict =
-    named !== '' && report.checks.every((check) => check.status !== 'fail' || untested(check));
+    (named !== '' || efforts !== '') &&
+    report.checks.every((check) => check.status !== 'fail' || untested(check) || unverified(check));
   return onlyStrict
-    ? `blocked: ${named} is an untested patch version and --strict treats it as a failure; ${widenStep} (or rerun without --strict)`
+    ? `blocked: ${reasons(true).join('; ')} (or rerun without --strict)`
     : 'blocked: fix the FAIL checks above, then rerun `quiet-choir configuration doctor`';
 }
 

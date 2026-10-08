@@ -31,7 +31,8 @@ export default class ConfigurationDoctor extends BaseCommand {
     json: Flags.boolean({ default: false, description: 'Print a structured contract report' }),
     strict: Flags.boolean({
       default: false,
-      description: 'Treat an untested patch version as a failure (exit 1)',
+      description:
+        'Treat an untested patch version or unverified Codex effort values as a failure (exit 1)',
     }),
     harness: Flags.string({
       default: 'all',

@@ -29,8 +29,10 @@ export interface DoctorCheck {
   /** Stable check identifier. */
   readonly check: 'version' | 'argv' | 'hidden-flags' | 'enums' | 'inherited-defaults' | 'registry';
   /**
-   * Check result. `warn` is reported only by the version check, for an untested patch of a tested
-   * major.minor; every other drift, error or process warning is `fail`.
+   * Check result. `warn` is reported by the version check, for an untested patch of a tested
+   * major.minor, and by the Codex enums check when the server rejected the probe's sentinel model
+   * before validating effort, so effort drift is unverified. `strict` promotes both to `fail`; every
+   * other drift, error or process warning is `fail`.
    */
   readonly status: 'pass' | 'warn' | 'fail';
   /** `status !== 'fail'`: a warning keeps the harness usable unless `strict` promoted it. */
@@ -38,7 +40,11 @@ export interface DoctorCheck {
   /** Bounded diagnostic without full config or prompt contents. */
   readonly message: string;
 }
-/** Inputs for diagnostic probes. Probes use pre-inference rejections, never ordinary tasks. */
+/**
+ * Inputs for diagnostic probes. Probes use pre-inference rejections, never ordinary tasks: Claude
+ * gets a nonexistent model and a spend cap; Codex, which has no per-request cost cap, gets a
+ * nonexistent model and an invalid effort, so either rejection stops it before inference.
+ */
 export interface DoctorOptions {
   /** Optional live probe ownership for an embedder's force-stop handler; probes have no durable run. */
   readonly processSupervisor?: ProcessSupervisor;
@@ -60,7 +66,11 @@ export interface DoctorOptions {
   readonly timeoutMs?: number;
   /** Cancellation forwarded to every probe. */
   readonly signal?: AbortSignal;
-  /** Treat an untested patch version as a failure (status `fail`, verdict `blocked`). */
+  /**
+   * Treat every unverified fact as a failure (status `fail`, verdict `blocked`): an untested patch
+   * version, and Codex effort values left unverified because the server rejected the sentinel
+   * model first.
+   */
   readonly strict?: boolean;
 }
 /** Serializable contract report; ok is false only when the verdict is `blocked`. */
@@ -90,6 +100,8 @@ export interface DoctorReport {
 }
 /** Message suffix that marks a version warning promoted to a failure by `strict`. */
 export const strictVersionFailure = '; --strict treats an untested patch version as a failure';
+/** Message suffix that marks the Codex unverified-effort warning promoted to a failure by `strict`. */
+export const strictEnumFailure = '; --strict treats unverified effort values as a failure';
 /** Derive the report-level result from per-check statuses; shared by the registry path. */
 export function summarizeDoctorChecks(
   checks: readonly Pick<DoctorCheck, 'harness' | 'check' | 'status' | 'message'>[],
@@ -265,6 +277,8 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
     let help = '';
     let exact: ProcessResult | undefined;
     let rejection = '';
+    // Which pre-inference rejection the Codex probe observed; null when it saw neither.
+    let codexRejection: 'effort' | 'model' | null = null;
     await check('argv', async () => {
       const previousZeroInference = zeroInference;
       zeroInference = false;
@@ -284,11 +298,7 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
         // Exercise --profile without adding files to the user's configuration directory.
         // Only the two native auth/config files are copied; no directory scan or secret logging.
         const probeHome = join(directory, 'codex-home');
-        let inheritedModel: string | null = null;
         if (harness === 'codex') {
-          inheritedModel = (
-            await readInheritedCodexConfig(codexHome(options), options.codexProfile)
-          ).model;
           await mkdir(probeHome, { mode: 0o700 });
           for (const name of ['config.toml', 'auth.json']) {
             try {
@@ -305,6 +315,8 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
           await writeFile(join(probeHome, 'quiet-choir-probe.config.toml'), '', { mode: 0o600 });
         }
         const invalidModel = `claude-quiet-choir-nonexistent-${randomUUID()}`;
+        // No known family prefix (gpt-, o3, codex), so Codex applies no model-specific handling.
+        const codexSentinel = `quiet-choir-nonexistent-${randomUUID()}`;
         const request: HarnessRequestInput =
           harness === 'claude'
             ? {
@@ -352,7 +364,9 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
                   prompt: '',
                   sandbox: 'workspace-write',
                   effort: 'low',
-                  model: inheritedModel ?? 'gpt-5',
+                  // A nonexistent model cannot reach inference even if a future CLI stops
+                  // rejecting the invalid effort below.
+                  model: codexSentinel,
                   // harnessProfile selects a config.toml profile, so probing it needs the
                   // inherited role restricted mode would otherwise skip; CODEX_HOME still
                   // points at the private probeHome copy, never the caller's real home.
@@ -371,6 +385,10 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
         try {
           // Deliberately invalid effort is possible only in this diagnostic, after ordinary validation.
           if (harness === 'codex') {
+            // Fail closed rather than probe with a configured model if the adapter drops the flag.
+            const model = invocation.args.indexOf('--model');
+            if (model < 0 || invocation.args[model + 1] !== codexSentinel)
+              throw new Error('Doctor could not locate the adapter model argument.');
             const index = invocation.args.findIndex((arg) =>
               arg.startsWith('model_reasoning_effort='),
             );
@@ -385,23 +403,36 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
           const parsed =
             harness === 'claude' ? parseClaude(exact.stdout, true) : parseCodex(exact.stdout);
           rejection = parsed.kind === 'failure' ? parsed.failure.reason : '';
+          const status = parsed.kind === 'failure' ? parsed.failure.apiStatus : null;
+          // The server's validation order is unknown: accept whichever sentinel it rejects first.
+          if (harness === 'codex' && parsed.kind === 'failure')
+            codexRejection =
+              status === 400 &&
+              rejection.includes("Invalid value: 'bogus'") &&
+              rejection.includes('Supported values are:')
+                ? 'effort'
+                : (status === 400 ||
+                      status === 404 ||
+                      // Codex prints non-400 HTTP rejections as prose with no parsed status.
+                      /^unexpected status (?:400|404) /u.test(rejection)) &&
+                    rejection.includes(codexSentinel)
+                  ? 'model'
+                  : null;
           const zero =
             parsed.kind === 'failure' &&
             noMeasuredSpend(exact.stdout) &&
             (harness === 'claude'
-              ? parsed.failure.apiStatus === 404 &&
+              ? status === 404 &&
                 parsed.failure.usage?.costUsd === 0 &&
                 rejection.includes(invalidModel)
-              : parsed.failure.apiStatus === 400 &&
-                rejection.includes("Invalid value: 'bogus'") &&
-                rejection.includes('Supported values are:'));
+              : codexRejection !== null);
           // Retain earlier harness failures rather than allowing a later successful probe to erase them.
           zeroInference = zero && previousZeroInference;
           return {
             ok: zero && exact.code === 1 && exact.signal === null && !warning(exact),
             message: zero
-              ? `Verified pre-inference rejection with zero reported spend${warning(exact) ? `; process/stderr warning: ${[...exact.warnings, exact.stderr.slice(-1024)].filter(Boolean).join('; ')}` : ''}.`
-              : `Expected zero-cost ${harness === 'claude' ? '404 invalid model' : '400 invalid effort'}; received ${parsed.kind === 'failure' ? rejection : parsed.kind}${exact.stderr ? `; stderr: ${exact.stderr.slice(-1024)}` : ''}`,
+              ? `Verified pre-inference rejection${codexRejection === null ? '' : codexRejection === 'model' ? ' (sentinel model)' : ' (invalid effort)'} with zero reported spend${warning(exact) ? `; process/stderr warning: ${[...exact.warnings, exact.stderr.slice(-1024)].filter(Boolean).join('; ')}` : ''}.`
+              : `Expected zero-cost ${harness === 'claude' ? '404 invalid model' : '400 invalid effort or 400/404 unknown sentinel model'}; received ${parsed.kind === 'failure' ? rejection : parsed.kind}${exact.stderr ? `; stderr: ${exact.stderr.slice(-1024)}` : ''}`,
           };
         } finally {
           await invocation.dispose();
@@ -461,6 +492,14 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
     });
     await check('enums', async () => {
       if (harness === 'codex') {
+        if (codexRejection === 'model') {
+          const strict = options.strict === true;
+          return {
+            ok: !strict,
+            warn: !strict,
+            message: `Effort values unavailable: the server rejected the sentinel model before validating effort; enum drift unverified${strict ? strictEnumFailure : ''}.`,
+          };
+        }
         const list = rejection.split('Supported values are:')[1]?.split('.')[0] ?? '';
         const values = [...list.matchAll(/'([^']+)'/gu)].flatMap((match) =>
           match[1] ? [match[1]] : [],
