@@ -110,6 +110,7 @@ export type {
   MapItemRecord,
   StepRecord,
   FailureEntry,
+  StepMapItem,
   FailedAttempt,
   AttemptRecord,
   StepRedefinition,

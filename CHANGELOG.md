@@ -2,6 +2,21 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Default (prefix) fork reuse no longer reruns the surviving items of a named map after the fork
+  drops one of its keys (behavior change): source steps under a removed key, including keys that
+  contain `/`, now count as sibling items instead of causes, so later steps in the surviving items
+  are reused. Steps after the map, such as a root step over its results, still run live, and another
+  invocation of the same map ID (for example a later loop round, even with the same keys) still
+  counts as a cause, as do removed-key steps that a different execution of the source (before a
+  resume) launched. Record format: schema revision 13 adds the nested step field `mapItems`
+  (`{item, invocation}` per enclosing named-map item: the exact item prefix and a digest of a value
+  unique to the body execution, the invocation's map prefix, its ordinal among that execution's
+  invocations of the same map ID and its item-prefix set), recorded on live launches, questions and
+  waits, and on reused fork copies with the fork's own scopes; no step identity change. Revision-12
+  records read and resume unchanged, and a fork from one keeps the earlier, conservative behavior; a
+  revision-12 build refuses to rewrite a revision-13 record. New public type `StepMapItem`. See ADR
+  0006 (#302).
+
 - The healed-step check no longer flags a sibling that was relaunched beside a later failing launch
   of the healed step after an earlier run's failure (behavior change): a step that fails in run 1,
   fails again in run 2 while a `Promise.all` sibling relaunched with it completes, and heals in run

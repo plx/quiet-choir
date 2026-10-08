@@ -207,6 +207,7 @@ import {
   healedDependents,
   legacyKind,
   replayRefusalMessage,
+  type MapItemScope,
   type ReplayInput,
 } from './replay-decision.js';
 import { digest, jsonValue } from './json.js';
@@ -240,6 +241,7 @@ import {
   refuseRecordSchemaDrift,
   SUPPORTED_SCHEMA_REVISION,
   type RunRecord,
+  type StepMapItem,
   type StepRecord,
   type AttemptRecord,
   withProjectInstructions,
@@ -576,6 +578,16 @@ export interface RunOptions extends WorkflowCodeOptions {
   readonly allowModelOverride?: boolean;
   /** Unawaited observer; synchronous throws and promise rejections cannot affect execution. */
   readonly onEvent?: (event: WorkflowEvent) => void | Promise<void>;
+}
+
+/**
+ * The persisted `mapItems` of a step launched inside these named-map items, or undefined outside
+ * every map item.
+ */
+function recordedMapItems(scopes: readonly MapItemScope[]): StepMapItem[] | undefined {
+  return scopes.length === 0
+    ? undefined
+    : scopes.map(({ item, invocation }) => ({ item, invocation }));
 }
 
 function message(error: unknown): string {
@@ -1377,6 +1389,11 @@ export async function runWorkflow<
     const names = new NameScopes();
     const origins = new FailureOrigins();
     const visitedMaps = new Set<string>();
+    // Per body execution, like visitedMaps: numbers repeated invocations of one map prefix.
+    const mapInvocations = new Map<string, number>();
+    // Per body execution: makes map invocation digests unique to this execution, because ordinals
+    // are not stable across executions (#302).
+    const executionNonce = randomUUID();
     const maps = (record.maps ??= {});
     // `effect` is the call-site effect kind (the harness for an agent call), or null for a scope,
     // phase, map or child operation; a failure before the step has a record reports it.
@@ -1691,6 +1708,9 @@ export async function runWorkflow<
       const launchStamp = takeLaunchStamp(id);
       // Captured with the ID's naming context: sibling named-map items are independent for fork reuse.
       const mapItems = names.items;
+      // The persisted form a live launch or a reused copy records, so a later fork of this run can
+      // recognize sibling items whose keys it dropped (#302).
+      const stepMapItems = recordedMapItems(mapItems);
       const requestedIdentity = spec.identity;
       const observedExec = spec.exec;
       const wakeAt = spec.wakeAt === undefined ? null : spec.wakeAt;
@@ -1894,6 +1914,9 @@ export async function runWorkflow<
         };
         delete copied.failureStamp;
         delete copied.failureHistory;
+        // The source's scopes name its own invocations; the copy records where this run used it.
+        if (stepMapItems === undefined) delete copied.mapItems;
+        else copied.mapItems = stepMapItems;
         settle(copied);
         attributeFrame(copied);
         Object.defineProperty(record.steps, id, {
@@ -1969,6 +1992,8 @@ export async function runWorkflow<
         try {
           if (attempt === 1) {
             step.launchStamp = launchStamp;
+            if (stepMapItems === undefined) delete step.mapItems;
+            else step.mapItems = stepMapItems;
             if (redefined) {
               (step.redefinitions ??= []).push({
                 fingerprint: step.fingerprint,
@@ -3200,6 +3225,8 @@ export async function runWorkflow<
       maps,
       used,
       visitedMaps,
+      mapInvocations,
+      executionNonce,
       save,
       acceptCodeChange: Boolean(options.acceptCodeChange),
       nextSeq: () => nextSeq++,
@@ -3333,6 +3360,7 @@ export async function runWorkflow<
       beforeLive,
       nextSeq: () => nextSeq++,
       launchStamp: takeLaunchStamp,
+      mapItems: () => recordedMapItems(names.items),
       warn: (message) => {
         // Persisted by the next completion, failure or suspension save; bounded like worktrees.
         record.waitWarnings = [...new Set([...(record.waitWarnings ?? []), message])].slice(-20);

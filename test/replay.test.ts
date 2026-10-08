@@ -274,6 +274,9 @@ const reusedIds = (record: RunRecord): string[] =>
     .filter(([, step]) => step.reusedFrom !== undefined)
     .map(([id]) => id)
     .sort();
+/** The invocation digest a step recorded for its innermost named-map item. */
+const invocationOf = (record: RunRecord, id: string): string | undefined =>
+  record.steps[id]?.mapItems?.at(-1)?.invocation;
 const mapItems = Array.from({ length: 12 }, (_, index) => `item ${String(index)}`);
 /** A 12x3 named map at concurrency 6, optionally followed by a root step over its results. */
 function reviewMap(state: { edited?: boolean; pause?: boolean; summary?: boolean }) {
@@ -416,6 +419,291 @@ it('treats sibling items of nested named maps as independent, through a within v
     ['a/inner/x', 'a/inner/y', 'b/inner/x', 'b/inner/y'].map((item) => `outer/${item}/w/${stage}`);
   expect(live).toEqual(leaves('s2'));
   expect(reusedIds(fork)).toEqual(leaves('s1'));
+});
+
+/** A sequential named map keyed by its items, followed by a root step over its results. */
+function keyedReview(state: { keys: string[] }) {
+  return workflow(async (ctx) => {
+    const results = await ctx.map(
+      'review',
+      state.keys,
+      { concurrency: 1, key: (key) => key },
+      async (key) => {
+        const s1 = await ctx.claude.text('s1', { prompt: `s1 ${key}` });
+        return (await ctx.claude.text('s2', { prompt: `s2 ${s1.output}` })).output;
+      },
+    );
+    await ctx.step('summary', { input: results, schema: z.number(), run: () => results.length });
+    return 'done';
+  });
+}
+
+it('reuses surviving named-map items after a fork drops a key, and runs the root step live', async () => {
+  const { harness, live } = delayedFixture();
+  const state = { keys: ['a', 'gone/x', 'b'] };
+  const definition = keyedReview(state);
+  await runWorkflow(definition, { ...options(), harness });
+  const source = await readRun(options());
+  // Each step records its exact item prefix and its invocation's digest, shared by its items.
+  const invocation = invocationOf(source, 'review/a/s1');
+  expect(invocation).toMatch(/^[0-9a-f]{64}$/u);
+  expect(source.steps['review/b/s1']?.mapItems).toEqual([{ item: 'review/b/', invocation }]);
+  expect(source.steps['review/gone/x/s1']?.mapItems).toEqual([
+    { item: 'review/gone/x/', invocation },
+  ]);
+  expect(source.steps['summary']).not.toHaveProperty('mapItems');
+  live.length = 0;
+  // The source ran 'gone/x' between 'a' and 'b', so 'b' launched after its steps settled.
+  state.keys = ['a', 'b'];
+  const fork = await runWorkflow(definition, {
+    ...options('fork'),
+    harness,
+    forkFrom: { runId: 'source' },
+  });
+  expect(live).toEqual([]);
+  expect(reusedIds(fork)).toEqual(['review/a/s1', 'review/a/s2', 'review/b/s1', 'review/b/s2']);
+  expect(fork.forkedFrom).toMatchObject({ cursor: 4, reuseClosed: false });
+  // The removed key's steps are possible causes of a step outside the map.
+  expect(fork.steps['summary']?.reusedFrom).toBeUndefined();
+  expect(fork.steps['summary']?.status).toBe('completed');
+  // Reused copies carry this run's own invocation, not the source's.
+  const forkInvocation = invocationOf(fork, 'review/a/s1');
+  expect(forkInvocation).not.toBe(invocation);
+  expect(fork.steps['review/b/s1']?.mapItems).toEqual([
+    { item: 'review/b/', invocation: forkInvocation },
+  ]);
+  // A fork of the fork that also drops 'a' still reuses 'b'.
+  state.keys = ['b'];
+  const again = await runWorkflow(definition, {
+    ...options('fork-again'),
+    harness,
+    forkFrom: { runId: 'fork' },
+  });
+  expect(live).toEqual([]);
+  expect(reusedIds(again)).toEqual(['review/b/s1', 'review/b/s2']);
+  expect(again.steps['summary']?.reusedFrom).toBeUndefined();
+});
+
+it('does not treat another invocation of the same map ID as a sibling of a dropped key', async () => {
+  const { harness, live } = delayedFixture();
+  const state = { first: ['r1-a', 'r1-gone'] };
+  const definition = workflow(async (ctx) => {
+    for (const keys of [state.first, ['r2-a', 'r2-b']])
+      await ctx.map('review', keys, { concurrency: 1, key: (key) => key }, (key) =>
+        ctx.claude.text('s', { prompt: key }),
+      );
+    return 'done';
+  });
+  await runWorkflow(definition, { ...options(), harness });
+  live.length = 0;
+  state.first = ['r1-a'];
+  const fork = await runWorkflow(definition, {
+    ...options('fork'),
+    harness,
+    forkFrom: { runId: 'source' },
+  });
+  // Round 2 launched after the dropped round-1 item settled, in another invocation.
+  expect(live).toEqual(['review/r2-a/s', 'review/r2-b/s']);
+  expect(reusedIds(fork)).toEqual(['review/r1-a/s']);
+});
+
+it('does not treat a later invocation of the same map ID with the same keys as a sibling', async () => {
+  const { harness, live } = delayedFixture();
+  const state = { keys: ['a', 'gone', 'b'] };
+  const definition = workflow(async (ctx) => {
+    for (const round of [1, 2])
+      await ctx.map('review', state.keys, { concurrency: 1, key: (key) => key }, (key) =>
+        ctx.claude.text(`r${String(round)}`, { prompt: `${key} round ${String(round)}` }),
+      );
+    return 'done';
+  });
+  await runWorkflow(definition, { ...options(), harness });
+  const source = await readRun(options());
+  // Same keys in both rounds, but each round is its own invocation.
+  expect(invocationOf(source, 'review/b/r1')).toBe(invocationOf(source, 'review/a/r1'));
+  expect(invocationOf(source, 'review/b/r2')).toBe(invocationOf(source, 'review/a/r2'));
+  expect(invocationOf(source, 'review/a/r2')).not.toBe(invocationOf(source, 'review/a/r1'));
+  live.length = 0;
+  state.keys = ['a', 'b'];
+  const fork = await runWorkflow(definition, {
+    ...options('fork'),
+    harness,
+    forkFrom: { runId: 'source' },
+  });
+  // Round 2 launched after the dropped round-1 item settled, so it may depend on it.
+  expect(live).toEqual(['review/a/r2', 'review/b/r2']);
+  expect(reusedIds(fork)).toEqual(['review/a/r1', 'review/b/r1']);
+});
+
+it('does not treat a map at another prefix with the same item prefixes as a sibling', async () => {
+  const { harness, live } = delayedFixture();
+  const state = { first: true, keys: ['a', 'b'] };
+  const definition = workflow(async (ctx) => {
+    // `review` with slash keys spells the same item prefixes as the map at `review/group/`.
+    if (state.first)
+      await ctx.map(
+        'review',
+        ['group/a', 'group/b'],
+        { concurrency: 1, key: (key) => key },
+        (key) =>
+          key === 'group/a' ? ctx.claude.text('s1', { prompt: key }) : Promise.resolve(null),
+      );
+    await ctx
+      .within('review')
+      .map('group', state.keys, { concurrency: 1, key: (key) => key }, (key) =>
+        ctx.claude.text('s2', { prompt: key }),
+      );
+    return 'done';
+  });
+  await runWorkflow(definition, { ...options(), harness });
+  const source = await readRun(options());
+  expect(source.steps['review/group/a/s1']?.mapItems?.[0]?.item).toBe('review/group/a/');
+  expect(source.steps['review/group/b/s2']?.mapItems?.[0]?.item).toBe('review/group/b/');
+  expect(invocationOf(source, 'review/group/b/s2')).not.toBe(
+    invocationOf(source, 'review/group/a/s1'),
+  );
+  live.length = 0;
+  state.first = false;
+  state.keys = ['b'];
+  const fork = await runWorkflow(definition, {
+    ...options('fork'),
+    harness,
+    forkFrom: { runId: 'source' },
+  });
+  // The second map launched after the first map's dropped step settled, so it may depend on it.
+  expect(live).toEqual(['review/group/b/s2']);
+  expect(reusedIds(fork)).toEqual([]);
+});
+
+it('does not match an invocation after a skipped settled item to an earlier one', async () => {
+  const state = { outer: true, fail: true, keys: ['a', 'b'] };
+  const { harness, live } = delayedFixture((id) => state.fail && id === 'w/inner/b/s2');
+  const definition = workflow(async (ctx) => {
+    const view = ctx.within('w');
+    if (state.outer)
+      await ctx.map('outer', ['k'], { concurrency: 1, onError: 'return' }, async () => {
+        // Through the root view, the nested map runs at `w/inner/`, outside the item's prefix.
+        await view.map('inner', ['a', 'b'], { concurrency: 1, key: (key) => key }, (key) =>
+          key === 'a' ? ctx.claude.text('s1', { prompt: key }) : Promise.resolve(null),
+        );
+        return 'ok';
+      });
+    await view.map('inner', state.keys, { concurrency: 1, key: (key) => key }, (key) =>
+      key === 'b' ? ctx.claude.text('s2', { prompt: key }) : Promise.resolve(null),
+    );
+    return 'done';
+  });
+  await expect(runWorkflow(definition, { ...options(), harness })).rejects.toThrow(
+    WorkflowRunError,
+  );
+  // The resume skips the committed item, so it never counts the item's `w/inner/` invocation.
+  state.fail = false;
+  await runWorkflow(definition, { ...options(), harness, resume: true });
+  const source = await readRun(options());
+  expect(source.status).toBe('completed');
+  const first = invocationOf(source, 'w/inner/a/s1');
+  expect(source.steps['w/inner/a/s1']?.mapItems).toEqual([
+    { item: 'w/inner/a/', invocation: first },
+  ]);
+  const healed = source.steps['w/inner/b/s2']?.mapItems;
+  expect(healed).toHaveLength(1);
+  expect(healed?.[0]?.item).toBe('w/inner/b/');
+  expect(healed?.[0]?.invocation).not.toBe(first);
+  live.length = 0;
+  state.outer = false;
+  state.keys = ['b'];
+  const fork = await runWorkflow(definition, {
+    ...options('fork'),
+    harness,
+    forkFrom: { runId: 'source' },
+  });
+  // The healed step launched after the dropped first invocation's step settled.
+  expect(live).toEqual(['w/inner/b/s2']);
+  expect(reusedIds(fork)).toEqual([]);
+});
+
+it('does not match same-ID map invocations that started in another order across a resume', async () => {
+  const state = { flip: false, fail: true, forked: false };
+  const { harness, live } = delayedFixture((id) => state.fail && id === 'm/b/y');
+  const keyed = { concurrency: 1, key: (key: string) => key };
+  const definition = workflow(async (ctx) => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    // Two concurrent invocations of map `m` with the same keys; `y` waits for `x` to settle.
+    const first = () =>
+      ctx.map('m', ['a', 'b'], keyed, async (key) => {
+        if (key === 'a') await ctx.claude.text('x', { prompt: 'x' });
+        release();
+        return null;
+      });
+    const second = () =>
+      ctx.map('m', state.forked ? ['b'] : ['a', 'b'], keyed, async (key) => {
+        if (key !== 'b') return null;
+        await gate;
+        return (await ctx.claude.text('y', { prompt: 'y' })).output;
+      });
+    if (state.forked) release();
+    const started = state.forked
+      ? [second()]
+      : state.flip
+        ? [second(), first()]
+        : [first(), second()];
+    await Promise.all(started);
+    return 'done';
+  });
+  await expect(runWorkflow(definition, { ...options(), harness })).rejects.toThrow(
+    WorkflowRunError,
+  );
+  // The resume starts the invocations in the other order, so each takes the other's ordinal.
+  state.flip = true;
+  state.fail = false;
+  await runWorkflow(definition, { ...options(), harness, resume: true });
+  const source = await readRun(options());
+  expect(source.status).toBe('completed');
+  expect(source.steps['m/a/x']?.mapItems?.[0]?.item).toBe('m/a/');
+  expect(source.steps['m/b/y']?.mapItems?.[0]?.item).toBe('m/b/');
+  expect(invocationOf(source, 'm/b/y')).not.toBe(invocationOf(source, 'm/a/x'));
+  live.length = 0;
+  // The fork drops `x` and the second map's `a` key, so only the source can name `x` a sibling.
+  state.forked = true;
+  const fork = await runWorkflow(definition, {
+    ...options('fork'),
+    harness,
+    forkFrom: { runId: 'source' },
+  });
+  // `y` launched after `x` settled, in another invocation: a possible dependent, so it reruns.
+  expect(live).toEqual(['m/b/y']);
+  expect(reusedIds(fork)).toEqual([]);
+});
+
+it('records the enclosing named-map item on a wait launched inside it', async () => {
+  const ready = (id: string) =>
+    ({
+      timeoutMs: 60_000,
+      poll: {
+        input: id,
+        schema: z.boolean(),
+        every: 1_000,
+        observe: () => Promise.resolve({ done: true as const, value: true }),
+      },
+    }) as const;
+  const definition = workflow(async (ctx) => {
+    await ctx.map('gate', ['a'], { concurrency: 1, key: (key) => key }, () =>
+      ctx.wait('ready', ready('inside')),
+    );
+    await ctx.wait('outside', ready('outside'));
+    return 'done';
+  });
+  await runWorkflow(definition, options());
+  const record = await readRun(options());
+  expect(record.steps['gate/a/ready']).toMatchObject({
+    kind: 'wait',
+    status: 'completed',
+    mapItems: [{ item: 'gate/a/', invocation: expect.stringMatching(/^[0-9a-f]{64}$/u) as string }],
+  });
+  expect(record.steps['outside']).not.toHaveProperty('mapItems');
 });
 
 it('re-runs a sequential chain from its changed step', async () => {

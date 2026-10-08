@@ -88,9 +88,11 @@ export interface ForkRequest {
  * Select a reusable source step. `matching` reuses any terminal source step with the same ID and
  * identity. `prefix` (the default) also requires `forkPrefixBlockers` to find nothing: every
  * source step that had settled before this step's source launch is already reused, and no live
- * target step settled before this request, ignoring sibling named-map items. A miss closes nothing,
- * because later decisions read the reused copies already in the target; the caller must insert a
- * reused copy synchronously, before an await lets another launch decide. @internal
+ * target step settled before this request, ignoring sibling named-map items. Source siblings are
+ * recognized by the target's item prefixes and by the item scopes the source recorded on each step
+ * (`StepRecord.mapItems`), so steps under a key the target dropped do not block. A miss closes
+ * nothing, because later decisions read the reused copies already in the target; the caller must
+ * insert a reused copy synchronously, before an await lets another launch decide. @internal
  */
 export function reuseCandidate(
   provenance: ForkProvenance,

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { RequestSummary } from '../src/workflow/runtime/observability-model.js';
-import type { MapComponents, StepRecord } from '../src/workflow/runtime/record.js';
+import type { MapComponents, StepMapItem, StepRecord } from '../src/workflow/runtime/record.js';
 import {
   decideReplay,
   decideSettledMapReplay,
@@ -818,12 +818,25 @@ describe('forkPrefixBlockers', () => {
     reusedFrom: { runId, stateDir: '/state', stepId, fingerprint: 'fp', at: 'now' },
     settleStamp: 1,
   });
-  const scope = (map: string, keys: string[], key: string): MapItemScope => ({
+  // A fake invocation digest: the map prefix plus its keys, unless a case names another.
+  const scope = (
+    map: string,
+    keys: string[],
+    key: string,
+    invocation = `${map}[${keys.join(',')}]`,
+  ): MapItemScope => ({
     map,
     item: `${map}${key}/`,
     items: new Set(keys.map((k) => `${map}${k}/`)),
+    invocation,
   });
   const review = (key: string): MapItemScope => scope('review/', ['0', '1', '2'], key);
+  // What a source step recorded at launch: the item prefix and the source invocation's digest.
+  const recorded = (...scopes: MapItemScope[]): StepMapItem[] =>
+    scopes.map(({ item, invocation }) => ({ item, invocation }));
+  // The source ran 'review' over a, gone and b; the target dropped 'gone'.
+  const sourceReview = (key: string): MapItemScope => scope('review/', ['a', 'gone', 'b'], key);
+  const targetReview = (key: string): MapItemScope => scope('review/', ['a', 'b'], key);
   const cases: {
     name: string;
     id?: string;
@@ -964,6 +977,186 @@ describe('forkPrefixBlockers', () => {
         'review/a/b/s': { seq: 2, launchStamp: 5 },
       },
       expected: [],
+    },
+    {
+      name: 'a removed-key sibling recorded in the same source invocation does not block',
+      id: 'review/b/s2',
+      mapItems: [targetReview('b')],
+      source: {
+        'review/a/s1': {
+          seq: 1,
+          launchStamp: 0,
+          settleStamp: 1,
+          mapItems: recorded(sourceReview('a')),
+        },
+        'review/gone/s1': {
+          seq: 2,
+          launchStamp: 1,
+          settleStamp: 2,
+          mapItems: recorded(sourceReview('gone')),
+        },
+        'review/b/s1': {
+          seq: 3,
+          launchStamp: 2,
+          settleStamp: 3,
+          mapItems: recorded(sourceReview('b')),
+        },
+        'review/b/s2': { seq: 4, launchStamp: 5, mapItems: recorded(sourceReview('b')) },
+      },
+      target: { 'review/a/s1': reused('review/a/s1'), 'review/b/s1': reused('review/b/s1') },
+      expected: [],
+    },
+    {
+      name: 'a removed key containing a slash is recognized by its recorded item',
+      id: 'review/b/s',
+      mapItems: [scope('review/', ['b'], 'b')],
+      source: {
+        'review/gone/x/s': {
+          seq: 1,
+          launchStamp: 0,
+          settleStamp: 1,
+          mapItems: recorded(scope('review/', ['gone/x', 'b'], 'gone/x')),
+        },
+        'review/b/s': {
+          seq: 2,
+          launchStamp: 5,
+          mapItems: recorded(scope('review/', ['gone/x', 'b'], 'b')),
+        },
+      },
+      expected: [],
+    },
+    {
+      name: 'a recorded source item counts even when the target splits the key differently',
+      id: 'review/a/s',
+      mapItems: [scope('review/', ['a'], 'a')],
+      source: {
+        // In the source, 'a/b' was its own item; the target has only the key 'a'.
+        'review/a/b/s': {
+          seq: 1,
+          launchStamp: 0,
+          settleStamp: 1,
+          mapItems: recorded(scope('review/', ['a', 'a/b'], 'a/b')),
+        },
+        'review/a/s': {
+          seq: 2,
+          launchStamp: 5,
+          mapItems: recorded(scope('review/', ['a', 'a/b'], 'a')),
+        },
+      },
+      expected: [],
+    },
+    {
+      name: 'nested maps: steps under a removed outer key do not block',
+      id: 'outer/a/inner/x/s',
+      mapItems: [scope('outer/', ['a'], 'a'), scope('outer/a/inner/', ['x'], 'x')],
+      source: {
+        'outer/gone/inner/x/s': {
+          seq: 1,
+          launchStamp: 0,
+          settleStamp: 1,
+          mapItems: recorded(
+            scope('outer/', ['a', 'gone'], 'gone'),
+            scope('outer/gone/inner/', ['x'], 'x'),
+          ),
+        },
+        'outer/a/pre': {
+          seq: 2,
+          launchStamp: 0,
+          settleStamp: 2,
+          mapItems: recorded(scope('outer/', ['a', 'gone'], 'a')),
+        },
+        'outer/a/inner/x/s': {
+          seq: 3,
+          launchStamp: 5,
+          mapItems: recorded(
+            scope('outer/', ['a', 'gone'], 'a'),
+            scope('outer/a/inner/', ['x'], 'x'),
+          ),
+        },
+      },
+      target: { 'outer/a/pre': reused('outer/a/pre') },
+      expected: [],
+    },
+    {
+      name: 'the same map ID in another invocation still blocks',
+      id: 'review/r2-b/s',
+      mapItems: [scope('review/', ['r2-b'], 'r2-b')],
+      source: {
+        // Round 1 ran the same map ID with other keys; the target dropped its key.
+        'review/r1-a/s': {
+          seq: 1,
+          launchStamp: 0,
+          settleStamp: 1,
+          mapItems: recorded(scope('review/', ['r1-a'], 'r1-a')),
+        },
+        'review/r2-b/s': {
+          seq: 2,
+          launchStamp: 5,
+          mapItems: recorded(scope('review/', ['r2-a', 'r2-b'], 'r2-b')),
+        },
+      },
+      expected: ['review/r1-a/s'],
+    },
+    {
+      name: 'a requested step saved without mapItems is blocked by a removed-key step',
+      id: 'review/b/s2',
+      mapItems: [targetReview('b')],
+      source: {
+        'review/gone/s1': {
+          seq: 1,
+          launchStamp: 1,
+          settleStamp: 2,
+          mapItems: recorded(sourceReview('gone')),
+        },
+        'review/b/s2': { seq: 2, launchStamp: 5 },
+      },
+      expected: ['review/gone/s1'],
+    },
+    {
+      name: 'a recorded step in the same item still blocks',
+      id: 'review/b/s2',
+      mapItems: [targetReview('b')],
+      source: {
+        'review/b/s1': {
+          seq: 1,
+          launchStamp: 0,
+          settleStamp: 1,
+          mapItems: recorded(sourceReview('b')),
+        },
+        'review/b/s2': { seq: 2, launchStamp: 5, mapItems: recorded(sourceReview('b')) },
+      },
+      expected: ['review/b/s1'],
+    },
+    {
+      name: 'a recorded item step does not shield a plain step outside the map',
+      id: 'review/b/s2',
+      mapItems: [targetReview('b')],
+      source: {
+        plan: { seq: 1, launchStamp: 0, settleStamp: 1 },
+        'review/b/s2': { seq: 2, launchStamp: 5, mapItems: recorded(sourceReview('b')) },
+      },
+      expected: ['plan'],
+    },
+    {
+      name: 'a root step after the map is blocked by a removed-key step',
+      id: 'summary',
+      source: {
+        'review/gone/s1': {
+          seq: 1,
+          launchStamp: 0,
+          settleStamp: 1,
+          mapItems: recorded(sourceReview('gone')),
+        },
+        'review/b/s1': {
+          seq: 2,
+          launchStamp: 0,
+          settleStamp: 2,
+          mapItems: recorded(sourceReview('b')),
+        },
+        summary: { seq: 3, launchStamp: 5 },
+      },
+      target: { 'review/b/s1': reused('review/b/s1') },
+      expected: ['review/gone/s1'],
     },
     {
       name: 'a root step after the map depends on every item',

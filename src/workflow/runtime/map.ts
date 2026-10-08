@@ -53,6 +53,13 @@ interface MapDependencies {
   readonly maps: Record<string, MapRecord>;
   readonly used: Set<string>;
   readonly visitedMaps: Set<string>;
+  /**
+   * How many invocations of each qualified map prefix this execution of the workflow body has
+   * started; it numbers repeated invocations of one map ID, such as loop rounds, for fork reuse.
+   */
+  readonly mapInvocations: Map<string, number>;
+  /** A random value unique to this execution of the workflow body, for the invocation digest. */
+  readonly executionNonce: string;
   readonly save: () => Promise<void>;
   /** Whether this resume explicitly accepts code changes; a committed map then accepts a mapper-only change. */
   readonly acceptCodeChange: boolean;
@@ -81,6 +88,8 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
     maps,
     used,
     visitedMaps,
+    mapInvocations,
+    executionNonce,
     save,
     acceptCodeChange,
     nextSeq,
@@ -173,7 +182,23 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
             return value;
           });
           const items = new Set(keys.map((key) => `${prefix}${key}/`));
-          itemPaths = [...items].map((item) => ({ map: prefix, item, items }));
+          // Names this invocation by this body execution's nonce, its qualified map prefix, its
+          // ordinal among the execution's invocations of the prefix and its key set; steps record it
+          // (#302). The ordinal tells loop rounds apart within one execution, and the prefix tells
+          // apart maps whose slash keys spell the same item prefixes. Ordinals are not stable across
+          // executions (concurrent invocations can start in another order, and a skipped settled item
+          // or frame does not count the invocations it recorded), so the nonce keeps a digest from
+          // matching one recorded by another execution. Steps from different executions of the source
+          // are then never siblings, which only blocks more.
+          const ordinal = mapInvocations.get(prefix) ?? 0;
+          mapInvocations.set(prefix, ordinal + 1);
+          const invocation = digest([
+            executionNonce,
+            prefix,
+            String(ordinal),
+            ...[...items].sort(),
+          ]);
+          itemPaths = [...items].map((item) => ({ map: prefix, item, items, invocation }));
           journalId = names.qualify(id);
         } catch (error) {
           origins.markFatal(error);
