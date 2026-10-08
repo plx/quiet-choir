@@ -100,8 +100,8 @@ jobs:
     name: Tests / Node.js ${{ matrix.node-version }}
     runs-on: ubuntu-latest
     # measured: on 74bf584 (before the per-suite program caches in #286) the 22.13 job took 7m25s
-    # (Vitest 429 s) and the 26 job 5m48s (331 s); both are above 5 minutes, so 10 minutes would
-    # leave less than 2x headroom.
+    # (Vitest 429 s) and the 26 job 5m48s (331 s). On #286's CI run 22.13 took 5m49s (Vitest 333 s)
+    # and 26 took 4m09s (229 s); 22.13 is still above 5 minutes, so the matrix keeps 15.
     timeout-minutes: 15
 
     strategy:
@@ -141,10 +141,10 @@ jobs:
     name: Tests / Node.js 24 coverage (${{ matrix.shard }}/3)
     runs-on: ubuntu-latest
     # measured: unsharded, this leg took 13m57s on 74bf584 (Vitest 819 s, tick.test.ts 527 s).
-    # Locally the shared program caches cut the coverage run from 268 s to 134 s and tick.test.ts
-    # from 226 s to 98 s, which projects to about 4 minutes for the slowest shard; keep 15 until CI
-    # shows each shard at 5 minutes or less.
-    timeout-minutes: 15
+    # Sharded on #286's CI run the jobs took 2m17s, 4m22s and 2m40s; the slowest, shard 2 (Vitest
+    # 247 s), holds tick.test.ts (206 s) and replay-loader (131 s), so 10 minutes leaves over 2x
+    # headroom.
+    timeout-minutes: 10
 
     strategy:
       fail-fast: false

@@ -46,9 +46,11 @@ the Vitest workers and never instruments spawned children (it sets no `NODE_V8_C
 `74bf584` the unsharded Node 24 job took 13m57s (Vitest 819 s, `test/tick.test.ts` alone 527 s)
 against 7m25s on 22.13 and 5m48s on 26. A shared program cache in every compile-heavy suite (see
 below) cut the local Node 24 coverage run from 268 s to 134 s and `test/tick.test.ts` from 226 s to
-98 s. The shard and test jobs keep a 15-minute limit until CI measures them at 5 minutes or less,
-and coverage-gate, which only merges, has 10. `test/tick.test.ts` is the slowest file and bounds its
-shard, so keep new compile-heavy tests on the suite's cache rather than adding shards.
+98 s. On that change's CI run the three shard jobs took 2m17s to 4m22s and have a 10-minute limit;
+the first shard start to the end of coverage-gate (about 20 s, limit 10) took 4m43s. The 22.13 and
+26 test jobs took 5m49s and 4m09s, and keep a 15-minute limit because 22.13 is still above 5
+minutes. `test/tick.test.ts` is the slowest file and bounds its shard, so keep new compile-heavy
+tests on the suite's cache rather than adding shards.
 
 Cookbook changes must update `examples/patterns/` and the corresponding named fences in both
 physical skill copies. `skills:check` enforces source equality and the 30-line workflow limit;

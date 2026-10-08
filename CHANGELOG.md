@@ -1487,9 +1487,11 @@
   and the GitHub rehearsal helper now share one program cache per file, which cut the local Node 24
   coverage run from 268 s to 134 s (tick from 226 s to 98 s) and the run without coverage from 96 s
   to 66 s. CI runs the coverage suite in three `vitest --shard` jobs that save blob reports, and a
-  coverage-gate job merges them and enforces the unchanged thresholds. The coverage slowdown comes
-  from in-process TypeScript compiles under precise coverage; coverage-v8 never instruments spawned
-  children. No runtime behavior changes; see CONTRIBUTING.md.
+  coverage-gate job merges them and enforces the unchanged thresholds. On the change's CI run the
+  Node 24 coverage critical path fell from 13m57s to 4m43s, 22.13 from 7m25s to 5m49s and 26 from
+  5m48s to 4m09s. The coverage slowdown comes from in-process TypeScript compiles under precise
+  coverage; coverage-v8 never instruments spawned children. No runtime behavior changes; see
+  CONTRIBUTING.md.
 
 - Add Workflow Lab Batch 02: six idiomatic ports with domain schemas, named roles, code-owned
   commands/writes, approved isolated setup, recoverable mutation tests, inline lifecycle children
