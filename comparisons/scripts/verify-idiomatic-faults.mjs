@@ -73,7 +73,13 @@ export async function killCase(root, batch, name) {
       existsSync(marker),
       `Worker did not reach its write boundary: ${output.slice(-3000)}`,
     );
-    const point = JSON.parse(await readFile(marker, 'utf8'));
+    // The worker creates the marker before writing its JSON, so a poll can see it still empty.
+    let text = await readFile(marker, 'utf8');
+    while (text === '' && Date.now() < deadline) {
+      await delay(20);
+      text = await readFile(marker, 'utf8');
+    }
+    const point = JSON.parse(text);
     const filesystemAfterKill = await snapshot(env.cwd);
     if (batch === 2 && name === 'test-gap-filler') {
       assert.equal(filesystemAfterKill.targetPristine, false);

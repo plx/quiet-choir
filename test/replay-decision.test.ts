@@ -650,6 +650,167 @@ describe('healedDependents', () => {
   });
 });
 
+describe('healedDependents with a failure history', () => {
+  // The ticket's scenario (#300): H launched at 0 and failed at 2 in run 1; run 2 started its
+  // counter one past the highest persisted stamp, at 3, relaunched H at 3 (failed again at 5) and a
+  // sibling in the same tick.
+  const repeated: HealedStep = {
+    id: 'h',
+    seq: 1,
+    failureStamp: 2,
+    failures: [
+      { launchStamp: 0, failureStamp: 2 },
+      { launchStamp: 3, failureStamp: 5 },
+    ],
+    launchStamp: 3,
+  };
+  const cases: {
+    name: string;
+    healed: HealedStep;
+    prior: PriorLaunch[];
+    expected: string[];
+  }[] = [
+    {
+      name: 'a sibling relaunched in the same tick as the failing relaunch (stamp tie)',
+      healed: repeated,
+      prior: [
+        { id: 'h', seq: 1, launchStamp: 3 },
+        { id: 'followups', seq: 2, launchStamp: 3 },
+      ],
+      expected: [],
+    },
+    {
+      // Run 1: H launched at 0 and failed at 1, then a wait launched at 1 and completed without a
+      // settlement. Run 2 starts one past it, so H's relaunch at 2 cannot hide the first failure.
+      name: 'a completed wait launched at the first failure stamp, before a later-run relaunch',
+      healed: {
+        id: 'h',
+        seq: 1,
+        failureStamp: 1,
+        failures: [
+          { launchStamp: 0, failureStamp: 1 },
+          { launchStamp: 2, failureStamp: 3 },
+        ],
+        launchStamp: 2,
+      },
+      prior: [{ id: 'poll', seq: 2, launchStamp: 1 }],
+      expected: ['poll'],
+    },
+    {
+      name: 'a dependent of the first failure that replays across a later failure',
+      healed: {
+        id: 'h',
+        seq: 1,
+        failureStamp: 1,
+        failures: [
+          { launchStamp: 0, failureStamp: 1 },
+          { launchStamp: 3, failureStamp: 5 },
+        ],
+        launchStamp: 3,
+      },
+      prior: [{ id: 'dependent', seq: 2, launchStamp: 2 }],
+      expected: ['dependent'],
+    },
+    {
+      name: 'a dependent launched after the latest failure',
+      healed: repeated,
+      prior: [
+        { id: 'followups', seq: 2, launchStamp: 3 },
+        { id: 'fallback', seq: 3, launchStamp: 5 },
+        { id: 'later', seq: 4, launchStamp: 7 },
+      ],
+      expected: ['fallback', 'later'],
+    },
+    {
+      name: 'a sibling launched while the latest failing launch was in flight',
+      healed: repeated,
+      prior: [{ id: 's', seq: 2, launchStamp: 4 }],
+      expected: [],
+    },
+    {
+      name: 'a relaunch cancelled without a failure entry hides the earlier failure',
+      healed: {
+        id: 'h',
+        seq: 1,
+        failureStamp: 1,
+        failures: [{ launchStamp: 0, failureStamp: 1 }],
+        launchStamp: 3,
+      },
+      prior: [
+        { id: 'dependent', seq: 2, launchStamp: 1 },
+        { id: 'sibling', seq: 3, launchStamp: 4 },
+      ],
+      expected: ['dependent'],
+    },
+    {
+      name: 'a step launched before the first failing launch',
+      healed: {
+        id: 'h',
+        seq: 2,
+        failureStamp: 6,
+        failures: [{ launchStamp: 5, failureStamp: 6 }],
+        launchStamp: 5,
+      },
+      prior: [
+        { id: 'early', seq: 1, launchStamp: 4 },
+        { id: 'sibling', seq: 3, launchStamp: 5 },
+        { id: 'dependent', seq: 4, launchStamp: 6 },
+      ],
+      expected: ['dependent'],
+    },
+    {
+      name: 'a truncated history falls back to the watermark',
+      healed: {
+        ...repeated,
+        failures: [{ launchStamp: 3, failureStamp: 5 }],
+      },
+      prior: [
+        { id: 'before', seq: 2, launchStamp: 1 },
+        { id: 'followups', seq: 3, launchStamp: 3 },
+      ],
+      expected: ['followups'],
+    },
+    {
+      name: 'a legacy record with only failureStamp keeps the watermark',
+      healed: { id: 'h', seq: 1, failureStamp: 2, launchStamp: 3 },
+      prior: [
+        { id: 'before', seq: 2, launchStamp: 1 },
+        { id: 'followups', seq: 3, launchStamp: 3 },
+      ],
+      expected: ['followups'],
+    },
+    {
+      name: 'an empty history keeps the watermark',
+      healed: { ...repeated, failures: [] },
+      prior: [{ id: 'followups', seq: 2, launchStamp: 3 }],
+      expected: ['followups'],
+    },
+    {
+      name: 'a sibling without a launch stamp still falls back to seq for that pair',
+      healed: repeated,
+      prior: [
+        { id: 'legacy-earlier', seq: 0 },
+        { id: 'legacy-later', seq: 2 },
+        { id: 'followups', seq: 3, launchStamp: 3 },
+      ],
+      expected: ['legacy-later'],
+    },
+    {
+      name: 'a history without a failure stamp falls back to seq',
+      healed: { ...repeated, failureStamp: undefined },
+      prior: [
+        { id: 'before', seq: 0, launchStamp: 9 },
+        { id: 'after', seq: 2, launchStamp: 0 },
+      ],
+      expected: ['after'],
+    },
+  ];
+
+  it.each(cases)('$name', ({ healed, prior, expected }) => {
+    expect(healedDependents(healed, prior)).toEqual(expected);
+  });
+});
+
 describe('forkPrefixBlockers', () => {
   // The request is X; unless a case says otherwise X launched in the source at stamp 5 (seq 5)
   // and in the target at stamp 3, outside any named map.

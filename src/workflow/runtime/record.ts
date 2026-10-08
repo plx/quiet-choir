@@ -128,6 +128,37 @@ export interface FailedAttempt {
   readonly usage: AgentUsage | null;
 }
 
+/** One terminal failure in a step's {@link StepRecord.failureHistory}. */
+export interface FailureEntry {
+  /** The `launchStamp` of the execution that failed. */
+  readonly launchStamp: number;
+  /** The `settleStamp` of its terminal failure. */
+  readonly failureStamp: number;
+}
+
+/** Most `failureHistory` entries a step keeps; the oldest is dropped first. @internal */
+export const MAX_FAILURE_HISTORY = 8;
+
+/**
+ * Record a terminal failure settled at `stamp` on `step`: keep the first `failureStamp` since the
+ * step last completed and append the failing launch to `failureHistory`, dropping the oldest
+ * entries beyond {@link MAX_FAILURE_HISTORY}. A step without a `launchStamp` loses its history
+ * instead, so the healed check falls back to the `failureStamp` watermark rather than trusting a
+ * history with a gap. @internal
+ */
+export function recordTerminalFailure(step: StepRecord, stamp: number): void {
+  step.failureStamp ??= stamp;
+  if (step.launchStamp === undefined) {
+    delete step.failureHistory;
+    return;
+  }
+  const history = [
+    ...(step.failureHistory ?? []),
+    { launchStamp: step.launchStamp, failureStamp: stamp },
+  ];
+  step.failureHistory = history.slice(-MAX_FAILURE_HISTORY);
+}
+
 /** Persisted state of one effect. */
 export interface StepRecord {
   /** Owning inline workflow frame, or null/absent for the root. */
@@ -223,12 +254,24 @@ export interface StepRecord {
   /**
    * The `settleStamp` of this step's first terminal failure since it last completed. A healed step
    * flags only recorded steps whose `launchStamp` is at least this value (they were launched after
-   * the failure could be observed). Kept through a later cancellation or interruption, so a step
-   * carrying it takes part in the healed check when it completes. Removed when the step completes;
-   * absent in older checkpoints and after a failure saved between retries, where the runner falls
-   * back to `seq` order.
+   * the failure could be observed), narrowed per launch by `failureHistory` when that history is
+   * complete. Kept through a later cancellation or interruption, so a step carrying it takes part
+   * in the healed check when it completes. Removed when the step completes; absent in older
+   * checkpoints and after a failure saved between retries, where the runner falls back to `seq`
+   * order.
    */
   failureStamp?: number;
+  /**
+   * The terminal failures since this step last completed, oldest first: each pairs the launch that
+   * failed with the failure's `settleStamp`. It explains which failure a later launch of another
+   * step could observe, so a healed step flags a sibling relaunched alongside a later failing
+   * launch only when it launched after that launch's failure. Holds at most 8 entries (the oldest
+   * is dropped first), is kept through cancellations and interruptions, and is removed with
+   * `failureStamp` when the step completes.
+   * Absent in checkpoints saved before schema revision 12; when it is absent or its first entry is
+   * not `failureStamp` (truncated), the healed check uses the `failureStamp` watermark.
+   */
+  failureHistory?: FailureEntry[];
   /** Source checkpoint of a reused completed effect. */
   reusedFrom?: ReusedStep;
   /** Total started attempts across resumes. */
@@ -584,6 +627,15 @@ const stepSchema = z
     launchStamp: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
     settleStamp: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
     failureStamp: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+    failureHistory: z
+      .array(
+        z.object({
+          launchStamp: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+          failureStamp: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+        }),
+      )
+      .max(MAX_FAILURE_HISTORY)
+      .optional(),
     reusedFrom: reusedStepSchema.optional(),
     fingerprint: z.string(),
     status: z.enum([
@@ -1203,9 +1255,10 @@ export function withProjectInstructions(
  * `sensitiveOptions`. Revision 10 (#284) added the top-level `recoveryCause`, the typed cause
  * behind a failed run's recovery hint and `next` commands. Revision 11 (#289) changed only a
  * nested shape: the optional structured `issues` of a rejection in `question.rejections`.
+ * Revision 12 (#300) changed only a nested shape: the step field `failureHistory` in `steps`.
  * @internal
  */
-export const SUPPORTED_SCHEMA_REVISION = 11;
+export const SUPPORTED_SCHEMA_REVISION = 12;
 
 /**
  * Whether a run recorded any work: at least one step or settled map. A failed run without any gets

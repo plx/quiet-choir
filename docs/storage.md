@@ -396,7 +396,13 @@ refuses to rewrite it; every failed or cancelled run this build saves carries th
 (#289) changes only a nested shape: a rejection in `question.rejections` may carry an optional,
 bounded `issues` list of `{code, path, message}`. Revision-10 records read and resume unchanged, and
 a rejection without `issues` stays valid. A revision-10 build reads a revision-11 record, but its
-parse strips the nested field, so it refuses to rewrite it.
+parse strips the nested field, so it refuses to rewrite it. Revision 12 (#300) changes only a nested
+shape: a step in `steps` may carry `failureHistory`, at most 8 `{launchStamp, failureStamp}` entries
+for its terminal failures since it last completed, which the healed-step check uses to tell which
+failure a later launch could observe ([ADR 0007](decisions/0007-durable-failure-outcomes.md)). Step
+identity is unchanged. Revision-11 records read and resume unchanged; a failed step without the
+history keeps the conservative `failureStamp` watermark until it completes. A revision-11 build
+reads a revision-12 record, but its parse strips `failureHistory`, so it refuses to rewrite it.
 
 **Refusals.** A build must not rewrite a record it cannot fully read: its parse strips unknown
 top-level fields, and the next compaction would write the record back without them. When a record

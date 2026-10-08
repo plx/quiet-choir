@@ -121,21 +121,29 @@ followed by a cancelled or interrupted relaunch (the `failureStamp` is kept thro
 step still counts as failed, also when a crashed owner left it `running`) is checked the same way
 when it finally succeeds. A step that was only ever cancelled never failed and reports nothing. Each
 step record carries `launchStamp` (a run-level settlement counter's value when the body requested
-the effect), `settleStamp` (the counter after its latest terminal settlement) and `failureStamp`
-(the stamp of its first terminal failure since it last completed). A step is flagged when its
-`launchStamp` is at least the healed step's `failureStamp`, so a `Promise.all` sibling launched in
-the same tick as the failing step is not flagged, whichever settled first. If any are flagged,
-`replay.divergence` warns immediately, names the healed step and those IDs, and saves the warning.
-`--strict-replay` then stops before the next live effect, while permitting terminal replay;
-`--strict-replay` works the same with `workflow resume RUN` and with `execute --resume`. Concurrent
-work already in flight can still finish. The end-of-run skipped-path error also names healed steps.
+the effect), `settleStamp` (the counter after its latest terminal settlement), `failureStamp` (the
+stamp of its first terminal failure since it last completed) and `failureHistory` (up to 8 recent
+terminal failures since then, each with the launch that failed). A failed step reruns live, so the
+body that launched a step could only observe the failure of the healed step's latest launch at or
+before it; the step is flagged only when that launch failed and the failure had settled by its own
+launch. Each execution starts the counter one past the highest saved stamp, so a relaunch is always
+stamped after everything an earlier execution saved, such as a completed wait that observed the
+first failure. A `Promise.all` sibling launched in the same tick as the failing step is not flagged,
+whichever settled first, and neither is a sibling relaunched beside a later failing launch of the
+healed step after an earlier run's failure. If any are flagged, `replay.divergence` warns
+immediately, names the healed step and those IDs, and saves the warning. `--strict-replay` then
+stops before the next live effect, while permitting terminal replay; `--strict-replay` works the
+same with `workflow resume RUN` and with `execute --resume`. Concurrent work already in flight can
+still finish. The end-of-run skipped-path error also names healed steps.
 
 The rule is a watermark, not proof of dependence: a step launched after the failure by unrelated
 control flow (for example, a step started when another sibling completed after the failure had
-settled) is still flagged, and the earliest failure is kept across repeated failures. Records
-without stamps (checkpoints written before them, or a failure saved between retries) fall back per
-pair to launch order: a step with a higher `seq` is flagged. Explicit settled outcomes prevent the
-branch from changing in the first place.
+settled) is still flagged. When the history is missing (records written before it) or has dropped
+entries (more than 8 failures), a step is flagged when its `launchStamp` is at least the earliest
+`failureStamp`, which also flags siblings of later failing launches. Records without stamps
+(checkpoints written before them, or a failure saved between retries) fall back per pair to launch
+order: a step with a higher `seq` is flagged. Explicit settled outcomes prevent the branch from
+changing in the first place.
 
 ## Choose a recovery path
 

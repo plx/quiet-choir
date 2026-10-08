@@ -1391,6 +1391,7 @@ async function stripStamps(runId: string): Promise<RunRecord> {
     delete step.launchStamp;
     delete step.settleStamp;
     delete step.failureStamp;
+    delete step.failureHistory;
   }
   await writeFile(join(stateDir, runId, 'run.json'), JSON.stringify(record));
   await writeFile(join(stateDir, runId, 'journal.jsonl'), '');
@@ -1592,10 +1593,24 @@ it('keeps the earliest failure stamp across repeated failures until the step com
   const firstFailure = first.steps['healer']?.failureStamp;
   expect(firstFailure).toBeDefined();
   expect(first.steps['dependent']?.launchStamp).toBeGreaterThanOrEqual(firstFailure ?? 0);
+  expect(first.steps['healer']?.failureHistory).toEqual([
+    { launchStamp: first.steps['healer']?.launchStamp, failureStamp: firstFailure },
+  ]);
   // The second failure settles after the dependent launched; only the first one explains it.
   await expect(runWorkflow(definition, { ...options(), resume: true })).rejects.toThrow('tail');
   const second = await readRun(options());
   expect(second.steps['healer']?.failureStamp).toBe(firstFailure);
+  // Both failures, each with the launch that failed; the dependent replayed in the second run.
+  expect(second.steps['healer']?.failureHistory).toEqual([
+    { launchStamp: first.steps['healer']?.launchStamp, failureStamp: firstFailure },
+    {
+      launchStamp: second.steps['healer']?.launchStamp,
+      failureStamp: second.steps['healer']?.settleStamp,
+    },
+  ]);
+  expect(second.steps['healer']?.launchStamp).toBeGreaterThan(
+    first.steps['healer']?.launchStamp ?? 0,
+  );
   expect(second.steps['healer']?.settleStamp).toBeGreaterThan(
     second.steps['dependent']?.launchStamp ?? 0,
   );
@@ -1614,9 +1629,233 @@ it('keeps the earliest failure stamp across repeated failures until the step com
   const third = await readRun(options());
   expect(third.steps['healer']).toMatchObject({ status: 'completed' });
   expect(third.steps['healer']?.failureStamp).toBeUndefined();
+  expect(third.steps['healer']?.failureHistory).toBeUndefined();
   expect(third.steps['healer']?.settleStamp).toBeGreaterThan(
     second.steps['healer']?.settleStamp ?? 0,
   );
+});
+
+it('does not flag a fan-in sibling that completed while the healed step failed again (#300)', async () => {
+  let execution = 1;
+  const ran: string[] = [];
+  const followupsFailed = deferred();
+  const followupsDone = deferred();
+  const definition = workflow(async (ctx) => {
+    const [impl] = await Promise.all([
+      ctx.step('impl', {
+        input: null,
+        schema: z.string(),
+        run: async () => {
+          ran.push('impl');
+          // Run 1 fails after followups; run 2 fails again after followups completed.
+          if (execution === 1) {
+            await followupsFailed.promise;
+            throw new Error('impl failed');
+          }
+          if (execution === 2) {
+            await followupsDone.promise;
+            throw new Error('impl failed again');
+          }
+          return 'implemented';
+        },
+      }),
+      ctx.step('followups', {
+        input: null,
+        schema: z.string(),
+        run: () => {
+          ran.push('followups');
+          if (execution === 1) throw new Error('followups failed');
+          return 'followups';
+        },
+      }),
+    ]);
+    await ctx.step('ship', {
+      input: null,
+      schema: z.null(),
+      run: () => {
+        ran.push('ship');
+        return null;
+      },
+    });
+    return impl;
+  });
+  const onEvent = (event: WorkflowEvent) => {
+    if (event.type === 'step.failed' && event.stepId === 'followups') followupsFailed.resolve();
+    if (event.type === 'step.completed' && event.stepId === 'followups') followupsDone.resolve();
+  };
+  await expect(runWorkflow(definition, { ...options(), onEvent })).rejects.toThrow(
+    'followups failed',
+  );
+  const first = await readRun(options());
+  expect(first.steps['impl']?.status).toBe('failed');
+  expect(first.steps['followups']?.status).toBe('failed');
+  const firstFailure = first.steps['impl']?.failureStamp ?? 0;
+  expect(firstFailure).toBe(first.steps['impl']?.settleStamp);
+
+  execution = 2;
+  await expect(runWorkflow(definition, { ...options(), resume: true, onEvent })).rejects.toThrow(
+    'impl failed again',
+  );
+  const second = await readRun(options());
+  const impl = second.steps['impl'];
+  const followups = second.steps['followups'];
+  expect(followups?.status).toBe('completed');
+  expect(impl?.status).toBe('failed');
+  // The earliest failure is kept; the history adds the second failing launch.
+  expect(impl?.failureStamp).toBe(firstFailure);
+  expect(impl?.failureHistory).toEqual([
+    { launchStamp: first.steps['impl']?.launchStamp, failureStamp: firstFailure },
+    { launchStamp: impl?.launchStamp, failureStamp: impl?.settleStamp },
+  ]);
+  // The watermark alone would flag followups: it launched after the first failure (the counter
+  // restarts one past the highest persisted stamp), but in the same tick as impl's second launch
+  // and before its second failure.
+  expect(followups?.launchStamp).toBeGreaterThanOrEqual(firstFailure);
+  expect(followups?.launchStamp).toBe(impl?.launchStamp);
+  expect(followups?.launchStamp).toBeLessThan(impl?.settleStamp ?? 0);
+
+  execution = 3;
+  ran.length = 0;
+  const events: WorkflowEvent[] = [];
+  const resumed = await runWorkflow(definition, {
+    ...options(),
+    resume: true,
+    strictReplay: true,
+    onEvent: (event) => {
+      events.push(event);
+    },
+  });
+  expect(resumed.status).toBe('completed');
+  expect(resumed.output).toBe('implemented');
+  expect(ran).toEqual(['impl', 'ship']);
+  expect(events.filter((event) => event.type === 'replay.divergence')).toEqual([]);
+  const third = await readRun(options());
+  expect(third.replayWarnings ?? []).toEqual([]);
+  expect(third.steps['impl']).toMatchObject({ status: 'completed' });
+  expect(third.steps['impl']?.failureStamp).toBeUndefined();
+  expect(third.steps['impl']?.failureHistory).toBeUndefined();
+});
+
+it('flags a completed wait that observed the first failure once a later run relaunched the healed step (#300)', async () => {
+  let execution = 1;
+  const ran: string[] = [];
+  const definition = workflow(async (ctx) => {
+    let failed = false;
+    try {
+      await ctx.step('healer', {
+        input: null,
+        schema: z.string(),
+        run: () => {
+          ran.push('healer');
+          if (execution < 3) throw new Error('healer failed');
+          return 'h';
+        },
+      });
+    } catch {
+      failed = true;
+    }
+    // Launched after the failure settled; a completed wait adds no settlement of its own.
+    const checked = await ctx.poll('ci', {
+      input: null,
+      schema: z.string(),
+      every: 1,
+      timeoutMs: 60_000,
+      observe: () => Promise.resolve({ done: true as const, value: 'green' }),
+    });
+    const ci = checked.by === 'poll' ? checked.value : 'timed out';
+    if (failed) throw new Error('tail');
+    return ctx.step('ship', {
+      input: null,
+      schema: z.string(),
+      run: () => {
+        ran.push('ship');
+        return ci;
+      },
+    });
+  });
+  await expect(runWorkflow(definition, options())).rejects.toThrow('tail');
+  const first = await readRun(options());
+  const firstFailure = first.steps['healer']?.failureStamp;
+  expect(first.steps['ci']?.status).toBe('completed');
+  expect(first.steps['ci']?.launchStamp).toBe(firstFailure);
+
+  execution = 2;
+  await expect(runWorkflow(definition, { ...options(), resume: true })).rejects.toThrow('tail');
+  const second = await readRun(options());
+  // The relaunch is stamped past every persisted stamp, the wait's launch included, so it cannot
+  // hide the first failure that the replayed wait observed.
+  expect(second.steps['healer']?.launchStamp).toBeGreaterThan(first.steps['ci']?.launchStamp ?? 0);
+  expect(second.steps['ci']?.launchStamp).toBe(first.steps['ci']?.launchStamp);
+  expect(second.steps['healer']?.failureHistory).toHaveLength(2);
+
+  execution = 3;
+  ran.length = 0;
+  const healed: WorkflowEvent[] = [];
+  const outcome = await runWorkflow(definition, {
+    ...options(),
+    resume: true,
+    strictReplay: true,
+    onEvent: (event) => {
+      if (event.type === 'replay.divergence') healed.push(event);
+    },
+  }).catch((error: unknown) => error);
+  expect(healed).toMatchObject([{ healedStepId: 'healer', skippedStepIds: ['ci'] }]);
+  expect(divergence(outcome)).toMatchObject({ reason: 'healed' });
+  expect(ran).toEqual(['healer']);
+  expect((await readRun(options())).steps['ship']).toBeUndefined();
+});
+
+it('falls back to the first-failure watermark once the failure history is truncated', async () => {
+  let failures = 9;
+  const definition = workflow(async (ctx) => {
+    try {
+      await ctx.step('healer', {
+        input: null,
+        schema: z.string(),
+        run: () => {
+          if (failures > 0) {
+            failures -= 1;
+            throw new Error('healer failed');
+          }
+          return 'h';
+        },
+      });
+    } catch {
+      await ctx.step('dependent', { input: null, schema: z.string(), run: () => 'd' });
+      throw new Error('tail');
+    }
+    return 'done';
+  });
+  await expect(runWorkflow(definition, options())).rejects.toThrow('tail');
+  const first = await readRun(options());
+  const firstFailure = first.steps['healer']?.failureStamp;
+  expect(firstFailure).toBeDefined();
+  for (let resume = 1; resume < 9; resume++)
+    await expect(runWorkflow(definition, { ...options(), resume: true })).rejects.toThrow('tail');
+  const failed = await readRun(options());
+  const history = failed.steps['healer']?.failureHistory ?? [];
+  expect(history).toHaveLength(8);
+  expect(failed.steps['healer']?.failureStamp).toBe(firstFailure);
+  // The first failure was dropped, so the history no longer starts at failureStamp.
+  expect(history[0]?.failureStamp).toBeGreaterThan(firstFailure ?? 0);
+  expect(history.at(-1)?.failureStamp).toBe(failed.steps['healer']?.settleStamp);
+  // Every kept launch came after the dependent launched; only the watermark still sees it.
+  expect(failed.steps['dependent']?.launchStamp).toBe(first.steps['dependent']?.launchStamp);
+  expect(history[0]?.launchStamp).toBeGreaterThan(failed.steps['dependent']?.launchStamp ?? 0);
+  const healed: WorkflowEvent[] = [];
+  await expect(
+    runWorkflow(definition, {
+      ...options(),
+      resume: true,
+      onEvent: (event) => {
+        if (event.type === 'replay.divergence') healed.push(event);
+      },
+    }),
+  ).rejects.toThrow('Healed steps: healer');
+  expect(healed).toMatchObject([{ healedStepId: 'healer', skippedStepIds: ['dependent'] }]);
+  const saved = await readRun(options());
+  expect(saved.steps['healer']?.failureHistory).toBeUndefined();
+  expect(saved.steps['healer']?.failureStamp).toBeUndefined();
 });
 
 /** Settles with the abort reason once `signal` aborts, as a cancellable effect would. */

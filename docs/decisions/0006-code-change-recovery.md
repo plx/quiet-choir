@@ -15,7 +15,8 @@ without changing the run too. Amended by #216: the preflight also refuses an acc
 would skip a completed step, settled map or child frame (`ReplaySkippedError`). Amended by #217: the
 preflight synthesizes every Git worktree effect and consumes delivered but unconsumed answers, so it
 no longer stops early at either. Amended by #284: a failed run saves its typed recovery cause, and
-its `next` entries follow that cause as its recovery hint does.
+its `next` entries follow that cause as its recovery hint does. Amended by #300: a terminal failure
+also appends to a bounded `failureHistory`, which makes the healed-step check per launch.
 
 ## Context
 
@@ -75,18 +76,25 @@ heuristic and does not replace the end-of-body completed-step check. Ordinary wa
 perform new effects before final rejection.
 
 `seq` is launch order, not causality, so the healed-step check does not use it when it can avoid it
-(#144). The run keeps a settlement counter, derived at run start from the highest persisted stamp
-like `nextSeq`, so the checkpoint format is unchanged. Each terminal settlement increments it and
-records `settleStamp`; a terminal failure also records `failureStamp`, kept until the step
-completes, so the earliest failure since the last success wins. Each live launch records
-`launchStamp`, taken synchronously when the body requests the effect, before awaited preparation.
-When a failed step heals, a recorded step is flagged when its `launchStamp` (as saved before this
-execution) is at least the healed step's `failureStamp`: it was launched after the failure could be
-observed. Same-tick `Promise.all` siblings are therefore not flagged. When either stamp is missing,
-for legacy records or a failure saved between retries, that pair falls back to the `seq` rule. The
-rule is a conservative watermark: a step launched later by unrelated control flow is still flagged.
-Fork-reused copies are stamped on the target run's clock. The pre-live skipped-step check above
-still compares `seq`. `workflow resume` accepts `--strict-replay` like `execute --resume`.
+(#144). The run keeps a settlement counter, derived at run start as one past the highest persisted
+stamp like `nextSeq`, so the checkpoint format is unchanged and every launch of a later execution
+follows every stamp an earlier one saved. Each terminal settlement increments it and records
+`settleStamp`; a terminal failure also records `failureStamp`, kept until the step completes, so the
+earliest failure since the last success wins, and appends `{launchStamp, failureStamp}` to the
+step's bounded `failureHistory` (at most 8 entries, oldest dropped first, removed on completion;
+#300). Each live launch records `launchStamp`, taken synchronously when the body requests the
+effect, before awaited preparation. When a failed step heals, a recorded step is flagged when its
+`launchStamp` (as saved before this execution) shows that it was launched after a failure the body
+could observe. With a complete history, that is the failure of the healed step's latest known launch
+at or before the recorded step's launch, so a sibling relaunched in the same tick as a later failing
+launch is not flagged. When the history is missing (records before schema revision 12) or truncated,
+the watermark decides: the `launchStamp` is at least the healed step's `failureStamp`. Same-tick
+`Promise.all` siblings are not flagged by either rule. When either stamp is missing, for legacy
+records or a failure saved between retries, that pair falls back to the `seq` rule. Both rules are
+conservative: a step launched later by unrelated control flow is still flagged. The counter's start
+also covers the history's stamps. Fork-reused copies are stamped on the target run's clock. The
+pre-live skipped-step check above still compares `seq`. `workflow resume` accepts `--strict-replay`
+like `execute --resume`.
 
 Formats 1 and 2 remain readable for inspection, but execution/fork refuses them without modifying
 checkpoint data. They lack callback/source/order metadata needed to justify this reuse contract. Use

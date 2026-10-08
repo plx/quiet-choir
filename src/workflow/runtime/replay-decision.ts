@@ -25,13 +25,17 @@
  *   effect.
  * - A healed step (one that carries a terminal failure from an earlier run, `failureStamp`, kept
  *   through later cancellations and interruptions, or is still recorded failed, and completes now)
- *   flags a recorded step as a possible dependent only when that step was launched at or after the
- *   healed step's first failure settled (`launchStamp >= failureStamp`, see `healedDependents`). A
- *   sibling launched in the same tick, before the failure existed, is not flagged. The rule is a
- *   watermark, not proof of dependence: a step launched later by unrelated control flow is still
- *   flagged. When either stamp is missing (checkpoints saved before stamps, or a failure saved
- *   between retries) the pair falls back to launch order: the step is flagged when its `seq` is
- *   higher.
+ *   flags a recorded step as a possible dependent only when that step was launched after a failure
+ *   of the healed step that the body could observe (see `healedDependents`). With a complete
+ *   `failureHistory`, that is the failure of the healed step's latest launch at or before the
+ *   step's launch, and only when it had settled by then: a sibling launched in the same tick as a
+ *   failing launch is not flagged, even when an earlier run's failure preceded both. Without a
+ *   complete history (a legacy checkpoint, or more failures than the bounded history keeps) the
+ *   rule is the watermark `launchStamp >= failureStamp` against the first failure since the step
+ *   last completed. Either rule is conservative, not proof of dependence: a step launched later by
+ *   unrelated control flow is still flagged. When either stamp is missing (checkpoints saved before
+ *   stamps, or a failure saved between retries) the pair falls back to launch order: the step is
+ *   flagged when its `seq` is higher.
  * - Default (prefix) fork reuse is causal (`forkPrefixBlockers`): a requested step is reused only
  *   when every source step that had settled before its source launch is already reused into the
  *   target, and no live target step settled before its target launch. Steps in sibling items of a
@@ -46,7 +50,7 @@
  * ESLint keeps this module free of runtime imports.
  */
 import type { ErrorMode } from './model.js';
-import type { MapComponents, StepRecord } from './record.js';
+import type { FailureEntry, MapComponents, StepRecord } from './record.js';
 
 /** Facts about one effect invocation, all gathered by the runner before the decision. @internal */
 export interface ReplayInput {
@@ -231,6 +235,13 @@ export interface HealedStep {
   readonly seq: number;
   /** The settlement stamp of its first terminal failure, when the failure recorded one. */
   readonly failureStamp?: number | undefined;
+  /**
+   * Its terminal failures since it last completed, oldest first (`StepRecord.failureHistory`). Used
+   * only when its first entry is `failureStamp`; otherwise the history is truncated or missing.
+   */
+  readonly failures?: readonly FailureEntry[] | undefined;
+  /** Its latest launch stamp before this execution, which may have ended without a failure. */
+  readonly launchStamp?: number | undefined;
 }
 
 /** One recorded step as the run observed it at resume start. @internal */
@@ -244,20 +255,67 @@ export interface PriorLaunch {
 }
 
 /**
- * The recorded steps that may depend on a healed step's earlier failure, in `prior` order. With
- * both stamps, a step is flagged when it was launched at or after the failure settled
- * (`launchStamp >= failureStamp`), regardless of `seq`. When either stamp is missing, that pair
- * falls back to launch order (`seq` higher than the healed step's).
+ * Whether a step launched at `launch` may have observed one of the healed step's failures, using
+ * a complete failure history. The healed step's known launches are its history's launches plus its
+ * latest launch before this execution. The latest known launch at or before `launch` decides: the
+ * step may depend on that launch's failure only when one settled by `launch`. A launch without a
+ * failure entry (cancelled, interrupted or crashed) hides every earlier failure, because a failed
+ * step reruns live and the body observes only the current run's outcome. No known launch at or
+ * before `launch` means the step launched before the first failing launch since the healed step
+ * last completed. Lost launches (a cancelled launch later overwritten) only make an earlier entry
+ * decide, which flags more, never less. A run starts its counter one past the highest persisted
+ * stamp, so a relaunch never ties with an earlier execution's failure or launch; "at or before"
+ * only resolves a tie within one execution, where a sibling launched in the same tick as the
+ * healed step's launch saw none of that launch's outcome.
+ */
+function observedFailure(
+  launch: number,
+  failures: readonly FailureEntry[],
+  latestLaunch: number | undefined,
+): boolean {
+  let decisive: number | undefined;
+  for (const known of [...failures.map((entry) => entry.launchStamp), latestLaunch])
+    if (known !== undefined && known <= launch && (decisive === undefined || known > decisive))
+      decisive = known;
+  if (decisive === undefined) return false;
+  return failures.some((entry) => entry.launchStamp === decisive && entry.failureStamp <= launch);
+}
+
+/**
+ * The recorded steps that may depend on a healed step's earlier failure, in `prior` order, by the
+ * first rule that applies to each pair:
+ *
+ * 1. When the healed step has no `failureStamp` or the other step no `launchStamp`, launch order
+ *    decides (`seq` higher than the healed step's).
+ * 2. When the healed step's `failures` history is missing or empty, or its first entry is not
+ *    `failureStamp` (the bounded history dropped entries, or a build before schema revision 12
+ *    recorded the earlier failure), the watermark decides: the step was launched at or after the
+ *    first failure settled (`launchStamp >= failureStamp`), regardless of `seq`.
+ * 3. Otherwise the per-launch rule decides: the healed step's latest known launch at or before the
+ *    step's launch must have a failure that settled at or before it. A sibling relaunched in the
+ *    same tick as a later failing launch is then not flagged, although an earlier failure precedes
+ *    it. A run starts its counter one past the highest persisted stamp, so a relaunch is stamped
+ *    strictly after every earlier failure and every earlier launch, such as a completed wait that
+ *    observed the first failure; only launches within one execution can tie, and the latest launch
+ *    at or before the step's launch counts a same-tick relaunch as the one the step saw.
+ *
+ * Rule 3 flags a subset of what rule 2 flags, since every failure in a complete history settled at
+ * or after `failureStamp`.
  *
  * @internal
  */
 export function healedDependents(healed: HealedStep, prior: readonly PriorLaunch[]): string[] {
+  const { failureStamp, failures } = healed;
+  const complete =
+    failures !== undefined && failures.length > 0 && failures[0]?.failureStamp === failureStamp;
   return prior
     .filter((other) =>
       other.id === healed.id
         ? false
-        : healed.failureStamp !== undefined && other.launchStamp !== undefined
-          ? other.launchStamp >= healed.failureStamp
+        : failureStamp !== undefined && other.launchStamp !== undefined
+          ? complete
+            ? observedFailure(other.launchStamp, failures, healed.launchStamp)
+            : other.launchStamp >= failureStamp
           : other.seq > healed.seq,
     )
     .map((other) => other.id);
