@@ -1366,7 +1366,16 @@ it('gives a stale or failed summary a resume next entry and prints it as Next:',
   expect(stale.summary.status).toBe('stale');
   expect(stale.summary.next?.map((entry) => entry.argv)).toEqual([resume('stale')]);
   expect(toRunListRow(stale.summary)).not.toHaveProperty('next');
-  await save({ ...record('failed'), status: 'failed', error: 'Effect failed.', launch });
+  // A failed run's entry needs recorded work to reuse (#284); one that recorded nothing gets none.
+  await save({ ...record('empty'), status: 'failed', error: 'Body failed.', launch });
+  expect((await inspectRun({ stateDir, runId: 'empty' })).summary.next).toEqual([]);
+  await save({
+    ...record('failed'),
+    status: 'failed',
+    error: 'Effect failed.',
+    steps: { prepare: baseStep({}) },
+    launch,
+  });
   const failed = await inspectRun({ stateDir, runId: 'failed' });
   expect(failed.summary.next?.[0]?.argv).toEqual([
     'quiet-choir',

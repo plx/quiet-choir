@@ -8,7 +8,8 @@ import {
 } from '../runtime/commands.js';
 import type { CliErrorCode } from '../runtime/run-errors.js';
 import type { JsonValue } from '../runtime/model.js';
-import { recordSchemaDrift } from '../runtime/record.js';
+import { hasRecordedWork, recordSchemaDrift } from '../runtime/record.js';
+import type { RecoveryCause } from '../runtime/recovery-hint.js';
 import type { RunRecord } from '../runtime/store.js';
 
 // The runtime builds its own refusal commands, so these live there; they stay importable here.
@@ -57,13 +58,90 @@ function fork(
   );
 }
 
+/** Fork refuses legacy (format 1) checkpoints, so such a run never gets a fork entry. */
+function canFork(run: RunRecord | null | undefined): boolean {
+  return !run || run.formatVersion === 6 || run.formatVersion === 7;
+}
+
 /**
- * Follow-ups for a saved run in a given (possibly derived) status: resume a failed or stale run;
- * answer a suspended run's waiting questions (at most {@link maxAnswerEntries}), then resume it.
- * A run without a stored entrypoint (an embedded run) cannot be resumed by ID and gets none, and
- * neither does a run this build cannot fully read (`recordSchemaDrift`): it refuses to resume it
- * until quiet-choir is upgraded. Resume entries repeat the run's recorded launch policy (fixture
- * harness, block wait mode).
+ * A failed run's follow-ups, chosen by its saved {@link RecoveryCause} as the recovery hint is
+ * ([ADR 0006](../../../docs/decisions/0006-code-change-recovery.md)). A plain resume would repeat a
+ * grant, divergence, settled-map or run-budget failure, so those causes get the grant, fork or cap
+ * that the hint names instead. Every other cause, and a record saved before the cause was (schema
+ * revision 10), keeps the plain resume. A legacy (format 1) run gets no fork entry.
+ */
+function failedNext(
+  run: RunRecord,
+  entrypoint: string,
+  stateDir: string,
+  launcher: CommandLauncher | undefined,
+): NextCommand[] {
+  const cause: RecoveryCause | undefined = run.recoveryCause;
+  const forks = (why: string): NextCommand[] =>
+    canFork(run) ? [{ why, argv: fork(launcher, entrypoint, run.id, stateDir) }] : [];
+  switch (cause?.kind) {
+    case 'grant':
+      // `workflow resume` takes no --grant; `execute --resume` resumes the stored entrypoint too.
+      return [
+        {
+          why: `Profile ${cause.profile} needs ${cause.access} access; grant it and resume. The grant is saved for later resumes, and completed steps are reused.`,
+          argv: workflowArgv(
+            launcher,
+            'execute',
+            '--resume',
+            '--run-id',
+            run.id,
+            '--state-dir',
+            stateDir,
+            '--grant',
+            cause.profile,
+            ...launchPolicyFlags(run.launch),
+          ),
+        },
+      ];
+    case 'divergence':
+      return forks(
+        'Replay left the recorded path, so a resume repeats the divergence; fork a new run that reruns the changed steps and reuses the rest.',
+      );
+    case 'map-changed':
+      return cause.mapperOnly
+        ? [
+            {
+              why: "Only a settled map's mapper changed; accept the change and resume to keep its completed items.",
+              argv: resume(launcher, run, run.id, stateDir, '--accept-code-change'),
+            },
+            ...forks('Or fork a new run under the current code, reusing matching completed steps.'),
+          ]
+        : forks(
+            'A settled map changed after an item completed, so a resume is refused; restore the map and resume, or fork a new run under the current code.',
+          );
+    case 'budget':
+      return [
+        {
+          why: `A run budget stopped the run and stays in force on resume; substitute <LIMIT> with a higher ${cause.flag} value or off. Completed steps are reused.`,
+          argv: resume(launcher, run, run.id, stateDir, cause.flag, '<LIMIT>'),
+        },
+      ];
+    default:
+      return [
+        {
+          why: 'Resume the failed run; completed steps are reused and failed ones run again.',
+          argv: resume(launcher, run, run.id, stateDir),
+        },
+      ];
+  }
+}
+
+/**
+ * Follow-ups for a saved run in a given (possibly derived) status: for a failed run, the entries
+ * its saved `recoveryCause` selects (`--grant` for a grant failure, a fork after a replay
+ * divergence or settled-map change, `<flag> <LIMIT>` after a run-budget stop, otherwise a plain
+ * resume), and none when it recorded no step or map, matching its absent recovery hint; resume a
+ * stale run; answer a suspended run's waiting questions (at most {@link maxAnswerEntries}), then
+ * resume it. A run without a stored entrypoint (an embedded run) cannot be resumed by ID and gets
+ * none, and neither does a run this build cannot fully read (`recordSchemaDrift`): it refuses to
+ * resume it until quiet-choir is upgraded. Resume entries repeat the run's recorded launch policy
+ * (fixture harness, block wait mode).
  * @internal
  */
 export function runNextCommands(
@@ -74,12 +152,7 @@ export function runNextCommands(
 ): NextCommand[] {
   if (!run.launch || recordSchemaDrift(run)) return [];
   if (status === 'failed')
-    return [
-      {
-        why: 'Resume the failed run; completed steps are reused and failed ones run again.',
-        argv: resume(launcher, run, run.id, stateDir),
-      },
-    ];
+    return hasRecordedWork(run) ? failedNext(run, run.launch.entrypoint, stateDir, launcher) : [];
   if (status === 'stale')
     return [
       {
@@ -200,6 +273,10 @@ export function relaunchNextCommands(
 export interface FailureNextContext {
   readonly code: CliErrorCode;
   readonly details: JsonValue;
+  /**
+   * The saved run, re-read after the failure. A failed run's `recoveryCause` selects its entries
+   * through {@link runNextCommands}.
+   */
   readonly run: RunRecord | null;
   readonly runId: string | null;
   readonly stateDir: string | null;
@@ -215,10 +292,9 @@ function incompatibleNext(
   stateDir: string,
 ): NextCommand[] {
   const { launcher, run } = context;
-  // Fork refuses legacy (format 1) checkpoints, so such a run never gets a fork entry.
-  const canFork = !run || run.formatVersion === 6 || run.formatVersion === 7;
+  const forkable = canFork(run);
   if (details['reason'] === 'entrypoint_missing')
-    return canFork
+    return forkable
       ? [
           {
             why: 'The stored entrypoint is gone (moved checkout or deleted file); fork from its new location, substituting <ENTRYPOINT>.',
@@ -243,7 +319,7 @@ function incompatibleNext(
         why: 'Resume with the entrypoint the run was launched from.',
         argv: resume(launcher, run, runId, stateDir),
       },
-      ...(canFork
+      ...(forkable
         ? [
             {
               why: 'Or fork a new run from the requested entrypoint.',
@@ -259,7 +335,7 @@ function incompatibleNext(
     why: 'Fork a new run under the current code, reusing matching completed steps.',
     argv: fork(launcher, entrypoint, runId, stateDir),
   };
-  const forks = canFork ? [forkEntry] : [];
+  const forks = forkable ? [forkEntry] : [];
   return details['canAcceptCodeChange'] === true && run?.status !== 'completed'
     ? [
         {
@@ -287,7 +363,8 @@ function lockedNext(details: Record<string, JsonValue> | undefined): NextCommand
 }
 
 /**
- * Follow-ups for a failure document, by error code. A rehearsal, and any code without a runnable
+ * Follow-ups for a failure document, by error code. A failed run's entries follow its saved
+ * `recoveryCause` (see {@link runNextCommands}). A rehearsal, and any code without a runnable
  * remedy, gets none. @internal
  */
 export function failureNextCommands(context: FailureNextContext): NextCommand[] {
