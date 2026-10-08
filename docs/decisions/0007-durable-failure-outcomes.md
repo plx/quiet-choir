@@ -7,7 +7,9 @@ Amended by #274 (invalid-request, overloaded and the transient retry alias). Ame
 (commands and files take `onError: 'return'`; settled commands keep `ExecStepError` fields). Amended
 by #109 (the `idle-timeout` kind joins the transient set; see
 [0042](0042-idle-deadlines-and-tool-use-diagnostics.md)). Amended by #170 (`ctx.merge` and child
-workflows take `onError: 'return'`; a settled child frame is terminal).
+workflows take `onError: 'return'`; a settled child frame is terminal). Amended by #297 (a step that
+carries a `failureStamp` takes part in the healed check after a later cancelled or interrupted
+relaunch).
 
 ## Context
 
@@ -65,7 +67,11 @@ launch-order rule: a higher `seq` qualifies. Strict replay allows saved terminal
 before the next live effect. The end-of-body skipped-step error names healed steps too. The rule is
 a conservative watermark, not proof of dependence: a step launched after the failure by unrelated
 control flow is still flagged, already running concurrent work can finish, and a warning need not
-imply actual drift. `healedDependents` in `replay-decision.ts` encodes it.
+imply actual drift. `healedDependents` in `replay-decision.ts` encodes it. The `failureStamp`
+survives a later cancellation or interruption (including a `running` step left by a crashed owner)
+until the step completes, so a step that failed, was cancelled or interrupted in a later run, and
+then succeeds is checked when it completes (#297). A step that was only ever cancelled has no stamp
+and is not.
 
 New checkpoints use format 4 because older readers cannot interpret the new terminal status. Formats
 1–3 remain inspectable and are refused for resume/fork without changing their data. No implicit
