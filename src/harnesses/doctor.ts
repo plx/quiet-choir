@@ -299,6 +299,9 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
         // Only the two native auth/config files are copied; no directory scan or secret logging.
         const probeHome = join(directory, 'codex-home');
         if (harness === 'codex') {
+          // Preflight only (result discarded; the probe model is the sentinel): validates config
+          // and profile with redacted errors before Codex can echo raw config lines.
+          await readInheritedCodexConfig(codexHome(options), options.codexProfile);
           await mkdir(probeHome, { mode: 0o700 });
           for (const name of ['config.toml', 'auth.json']) {
             try {

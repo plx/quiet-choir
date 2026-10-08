@@ -302,6 +302,16 @@ it.each([
   expect(argv(report)).toMatchObject({ status: 'fail', ok: false });
   expect(report).toMatchObject({ ok: false, zeroInference: false });
 });
+it('rejects invalid Codex config with a redacted error before spawning the argv probe', async () => {
+  const secret = 'sk-secret-doctor-preflight';
+  await writeFile(join(directory, 'config.toml'), `experimental_bearer_token = "${secret}`);
+  const report = await probeHarnessContracts(await probeOptions('codex', 'ok'));
+  expect(argv(report)).toMatchObject({ status: 'fail', ok: false });
+  expect(argv(report)?.message).toContain('Invalid TOML in Codex configuration');
+  expect(JSON.stringify(report)).not.toContain(secret);
+  expect(report.checks.map((check) => check.message).join('\n')).not.toContain(secret);
+  expect(await callsLog()).not.toContain('--output-schema');
+});
 it('fails the Codex argv check on a stderr warning but keeps zero inference', async () => {
   const report = await probeHarnessContracts(await probeOptions('codex', 'model-first+warning'));
   expect(argv(report)).toMatchObject({ status: 'fail', ok: false });
