@@ -164,7 +164,7 @@ const execRule = z
   .strict()
   .refine(
     (value) => ['json', 'stdout', 'error'].filter((key) => Object.hasOwn(value, key)).length === 1,
-    'Exactly one of json, stdout or error is required.',
+    'Exactly one of json or stdout is required, or error alone for a simulated failure.',
   )
   .refine((value) => value.kind === undefined || value.error !== undefined, 'kind requires error.')
   .refine(

@@ -122,6 +122,32 @@ describe('exec fixture rules', () => {
     ).toMatchObject({ code: 2, argvPrefix: ['gh'] });
   });
 
+  it('accepts exec error rules, keeps result rules valid, and refuses malformed error rules (AC3, AC5)', () => {
+    const parse = (rule: object) => parseHarnessFixtures({ version: 1, calls: [], exec: [rule] });
+    expect(parse({ step: 'x', error: 'Cannot start gh.' }).exec).toEqual([
+      { step: 'x', error: 'Cannot start gh.' },
+    ]);
+    expect(parse({ step: 'x', error: 'too slow', kind: 'timeout', attempt: 1 }).exec).toEqual([
+      { step: 'x', error: 'too slow', kind: 'timeout', attempt: 1 },
+    ]);
+    expect(() => parse({ step: 'x', error: 'e', stdout: '' })).toThrow('Exactly one of json');
+    expect(() => parse({ step: 'x', error: 'e', json: null })).toThrow('Exactly one of json');
+    expect(() => parse({ step: 'x', kind: 'timeout', stdout: '' })).toThrow('kind requires error');
+    expect(() => parse({ step: 'x', error: 'e', stderr: 'oops' })).toThrow(
+      'stderr and code require json or stdout',
+    );
+    expect(() => parse({ step: 'x', error: 'e', code: 1 })).toThrow(
+      'stderr and code require json or stdout',
+    );
+    expect(() => parse({ step: 'x', error: '' })).toThrow();
+    expect(() => parse({ step: 'x', error: 'e', kind: 'exploded' })).toThrow();
+    // Result rules are unchanged: stderr and code stay valid, and a result rule may not carry kind.
+    expect(parse({ step: 'x', json: null, stderr: 'warn', code: 2 }).exec).toEqual([
+      { step: 'x', json: null, stderr: 'warn', code: 2 },
+    ]);
+    expect(parse({ step: 'x', stdout: 'out' }).exec).toEqual([{ step: 'x', stdout: 'out' }]);
+  });
+
   it('matches argv prefixes only on argv commands, and environment and stdin digests', () => {
     const prefixed = rules([
       { step: '*', argvPrefix: ['gh', 'pr'], stdout: 'prefixed' },
@@ -204,6 +230,54 @@ describe('exec fixture rules', () => {
       '{"shell":"make"}',
     );
     expect(entries.stale()).toEqual([2]);
+  });
+});
+
+describe('exec error rules', () => {
+  it('answers a result rule with its unchanged result and an error rule with an ExecError (AC1, AC3)', async () => {
+    const entries = rules([
+      { step: 'ok', stdout: 'out', stderr: 'err', code: 3 },
+      { step: 'spawn', error: 'Cannot start gh. Is it installed?' },
+      { step: 'slow', error: 'exceeded its 1000ms deadline.', kind: 'timeout' },
+    ]);
+    const ok = entries.match(request(['a']), at('ok'));
+    const spawn = entries.match(request(['a']), at('spawn'));
+    const slow = entries.match(request(['a']), at('slow'));
+    if (!ok || !spawn || !slow) throw new Error('expected matches');
+    await expect(entries.answer(ok.rule)).resolves.toEqual(entries.result(ok.rule));
+    const failure = async (rule: typeof spawn.rule) => {
+      const error: unknown = await entries.answer(rule).then(
+        () => undefined,
+        (caught: unknown) => caught,
+      );
+      if (!(error instanceof ExecError)) throw new Error('expected an ExecError');
+      return error;
+    };
+    const spawnFailure = await failure(spawn.rule);
+    expect(spawnFailure.kind).toBe('process');
+    expect(spawnFailure.message).toBe('Cannot start gh. Is it installed?');
+    expect(spawnFailure.diagnostics).toEqual({
+      code: null,
+      signal: null,
+      stdoutTail: '',
+      stderrTail: '',
+      truncated: false,
+      durationMs: 0,
+    });
+    const slowFailure = await failure(slow.rule);
+    expect(slowFailure.kind).toBe('timeout');
+    expect(slowFailure.message).toBe('exceeded its 1000ms deadline.');
+    expect(slowFailure.diagnostics.code).toBeNull();
+  });
+
+  it('keeps first-match order and occurrence counting for error rules', () => {
+    const entries = rules([
+      { step: 'poll', attempt: 1, error: 'down' },
+      { step: 'poll', attempt: 2, stdout: 'up' },
+    ]);
+    expect(entries.match(request(['a']), at('poll', 1))?.index).toBe(0);
+    expect(entries.match(request(['a']), at('poll', 2))?.index).toBe(1);
+    expect(entries.stale()).toEqual([]);
   });
 });
 
@@ -297,6 +371,159 @@ describe('dry-run command fixtures', () => {
     expect(report.warnings).toContainEqual(
       expect.stringContaining('Exec fixture rules 1 matched no command'),
     );
+  });
+});
+
+describe('exec error rules end to end', () => {
+  const Settled = z.json();
+  const flaky = (retry: { maxAttempts: number; delayMs: number; on?: ['transient'] }) =>
+    definition(z.string(), async (ctx) => {
+      const result = await ctx.exec('probe', ['qc-test-missing-binary', 'probe'], { retry });
+      return result.stdout;
+    });
+  const exec: NonNullable<HarnessFixtures['exec']> = [
+    { step: 'probe', attempt: 1, error: 'exceeded its 1000ms deadline.', kind: 'timeout' },
+    { step: 'probe', attempt: 2, stdout: 'recovered' },
+  ];
+  /** Both ways to run a fixture: --dry-run and --harness fixture, which never spawn here. */
+  function runners(fixtures: HarnessFixtures) {
+    const harness = new RehearsalHarness({ kind: 'fixture', config: {}, fixtures });
+    const refuse = { run: () => Promise.reject(new Error('spawned a real command')) };
+    return {
+      harness,
+      dry: { harness, rehearsal: harness.hooks, processRunner: harness.processRunner },
+      fixture: {
+        harness: new FixtureHarness(fixtures),
+        processRunner: refuse,
+        execRunner: new FixtureProcessRunner(fixtures, refuse),
+      },
+    };
+  }
+
+  it('fails ctx.exec with a process ExecError for a spawn failure and records it in the report (AC1)', async () => {
+    const fixtures = parseHarnessFixtures({
+      version: 1,
+      calls: [],
+      exec: [{ step: 'probe', error: 'Cannot start gh. Is it installed?' }],
+    });
+    const workflow = definition(Settled, async (ctx) => {
+      try {
+        await ctx.exec('probe', ['qc-test-missing-binary']);
+        return null;
+      } catch (error) {
+        if (!(error instanceof ExecError)) throw error;
+        return { kind: error.kind, message: error.message, ...error.diagnostics };
+      }
+    });
+    const expected = {
+      kind: 'process',
+      message: 'Cannot start gh. Is it installed?',
+      code: null,
+      signal: null,
+      stdoutTail: '',
+      stderrTail: '',
+      truncated: false,
+      durationMs: 0,
+    };
+    const { harness, dry, fixture } = runners(fixtures);
+    const dryResult = await runWorkflow(workflow, { ...options('dry'), ...dry });
+    expect(dryResult.output).toEqual(expected);
+    expect((await runWorkflow(workflow, { ...options('fixture'), ...fixture })).output).toEqual(
+      expected,
+    );
+    const report = harness.report(dryResult);
+    expect(report.commands).toEqual([
+      expect.objectContaining({
+        stepId: 'probe',
+        outputSource: 'fixture',
+        fixtureIndex: 0,
+        error: 'Cannot start gh. Is it installed?',
+      }),
+    ]);
+    expect(report.staleExecFixtures).toEqual([]);
+    expect(report.warnings.some((warning) => warning.startsWith('Commands are synthesized'))).toBe(
+      false,
+    );
+  });
+
+  it('retries a simulated timeout under retry.on transient and takes the attempt-2 result rule (AC1)', async () => {
+    const fixtures = parseHarnessFixtures({ version: 1, calls: [], exec });
+    const workflow = flaky({ maxAttempts: 2, delayMs: 1, on: ['transient'] });
+    const { harness, dry, fixture } = runners(fixtures);
+    const dryResult = await runWorkflow(workflow, { ...options('dry'), ...dry });
+    expect(dryResult.output).toBe('recovered');
+    expect(dryResult.steps['probe']?.attempts).toBe(2);
+    expect(dryResult.steps['probe']?.attemptHistory?.[0]?.execError).toMatchObject({ code: null });
+    expect(harness.report(dryResult).commands.map((entry) => entry.fixtureIndex)).toEqual([0, 1]);
+    expect(harness.report(dryResult).commands[0]?.error).toBe('exceeded its 1000ms deadline.');
+    expect(harness.report(dryResult).commands[1]?.error).toBeNull();
+    const fixtureResult = await runWorkflow(workflow, { ...options('fixture'), ...fixture });
+    expect(fixtureResult.output).toBe('recovered');
+    expect(fixtureResult.steps['probe']?.attempts).toBe(2);
+  });
+
+  it('does not retry a timeout when retry.on excludes it', async () => {
+    const fixtures = parseHarnessFixtures({ version: 1, calls: [], exec });
+    const { dry } = runners(fixtures);
+    await expect(
+      runWorkflow(
+        definition(z.string(), async (ctx) => {
+          const result = await ctx.exec('probe', ['qc-test-missing-binary'], {
+            retry: { maxAttempts: 2, delayMs: 1, on: ['process'] },
+          });
+          return result.stdout;
+        }),
+        { ...options('dry'), ...dry },
+      ),
+    ).rejects.toMatchObject({
+      stepId: 'probe',
+      message: expect.stringContaining('exceeded its 1000ms deadline.') as unknown,
+    });
+    expect((await readRun(options('dry'))).steps['probe']?.attempts).toBe(1);
+  });
+
+  it('settles an error rule under onError: return with its kind and null process fields (AC1)', async () => {
+    const fixtures = parseHarnessFixtures({
+      version: 1,
+      calls: [],
+      exec: [{ step: 'probe', error: 'exceeded its 1000ms deadline.', kind: 'timeout' }],
+    });
+    const workflow = definition(Settled, async (ctx) => {
+      const result = await ctx.exec('probe', ['qc-test-missing-binary'], { onError: 'return' });
+      return result.ok ? null : jsonValue(result.error);
+    });
+    const { dry, fixture } = runners(fixtures);
+    const dryResult = await runWorkflow(workflow, { ...options('dry'), ...dry });
+    expect(dryResult.output).toMatchObject({
+      kind: 'timeout',
+      message: 'exceeded its 1000ms deadline.',
+      code: null,
+      signal: null,
+    });
+    expect(dryResult.steps['probe']?.status).toBe('settled-failed');
+    const fixtureResult = await runWorkflow(workflow, { ...options('fixture'), ...fixture });
+    expect(fixtureResult.output).toEqual(dryResult.output);
+  });
+
+  it('rejects a matched error rule without calling the fallback runner (AC1)', async () => {
+    const fixtures = parseHarnessFixtures({
+      version: 1,
+      calls: [],
+      exec: [{ step: 'probe', error: 'Cannot start gh.' }],
+    });
+    let fallbackCalls = 0;
+    const fallback = {
+      run: () => {
+        fallbackCalls += 1;
+        return Promise.reject(new Error('fallback used'));
+      },
+    };
+    const runner = new FixtureProcessRunner(fixtures, fallback);
+    const invocation = { ...at('probe'), signal: new AbortController().signal };
+    await expect(
+      runner.run(request(['gh']), invocation as unknown as Parameters<typeof runner.run>[1]),
+    ).rejects.toMatchObject({ kind: 'process', message: 'Cannot start gh.' });
+    expect(fallbackCalls).toBe(0);
   });
 });
 
