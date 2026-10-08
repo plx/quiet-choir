@@ -2,7 +2,8 @@
  * The accepted-replay preflight's parts (#215). `runWorkflow({ resume: true, acceptCodeChange:
  * true })` replays the changed body against a disposable copy of the run before it touches the
  * real record, so a changed completed or settled-failed step, or a body that would skip a completed
- * step, settled map or child frame (#216), is refused without recording the acceptance, clearing
+ * step, settled map or child frame (#216), or a settled map whose items, keys, version or cwd
+ * changed after an item completed (#303), is refused without recording the acceptance, clearing
  * the saved output or failing the run. The CLI's `--accept-code-change`
  * relies on the same preflight and maps its refusal to `run.incompatible`.
  *
@@ -14,13 +15,14 @@
  * The copy also holds the pending answer deliveries of the run's waiting questions, so it consumes
  * a delivered but unconsumed answer as the real run would. Only a completed-step identity change
  * ({@link StepIdentityChangedError}) or a skipped completed step, settled map or child frame
- * ({@link ReplaySkippedError}) counts as a finding.
+ * ({@link ReplaySkippedError}) or a non-mapper settled-map change ({@link SettledMapChangedError};
+ * a mapper-only change is accepted) counts as a finding.
  *
  * Completion, suspension, a refusal, a synthesis gap, a rehearsal limitation or any other failure
  * finds nothing, so the real run proceeds and reproduces any genuine problem itself; only an abort
  * propagates. What can still stop the probe before a changed step: a synthesized value that fails
- * validation (such as a refinement), a question with no delivery, an unresolved external wait, a
- * non-mapper settled-map refusal (#303), or a failure to copy the run. Synthesized values can also
+ * validation (such as a refinement), a question with no delivery, an unresolved external wait, or
+ * a failure to copy the run. Synthesized values can also
  * steer the copy onto a different branch from a real run, so a finding is as good as the
  * rehearsal's path parity (ADR 0006). @internal
  */
@@ -33,7 +35,11 @@ import { answerCandidates } from './inbox.js';
 import type { Harness, HarnessResponse } from './model.js';
 import { runDirectory } from './paths.js';
 import type { RunRecord } from './record.js';
-import { ReplaySkippedError, StepIdentityChangedError } from './run-errors.js';
+import {
+  ReplaySkippedError,
+  SettledMapChangedError,
+  StepIdentityChangedError,
+} from './run-errors.js';
 import type { RunOptions } from './runner.js';
 import { writeRun } from './store.js';
 import { synthesizeOutput } from './synthesize.js';
@@ -237,14 +243,15 @@ const refusals = new WeakSet<Error>();
 
 /**
  * The rejection for an accepted resume whose preflight met a changed completed or settled-failed
- * step, or skipped recorded work: an error of the same class and fields, the probe's error as its
- * cause, and a message saying the run was left unchanged. A skip's message also names the fork that
- * replaces the resume, as a changed step's message already does. @internal
+ * step, a non-mapper settled-map change, or skipped recorded work: an error of the same class and
+ * fields, the probe's error as its cause, and a message saying the run was left unchanged. A skip's
+ * or a settled-map change's message also names the fork that replaces the resume, as a changed
+ * step's message already does. @internal
  */
 export function acceptedReplayRefusal(
-  change: StepIdentityChangedError | ReplaySkippedError,
+  change: StepIdentityChangedError | ReplaySkippedError | SettledMapChangedError,
   runId: string,
-): StepIdentityChangedError | ReplaySkippedError {
+): StepIdentityChangedError | ReplaySkippedError | SettledMapChangedError {
   const refused = `${change.message} The accepted replay was refused before run ${runId} was changed.`;
   const error =
     change instanceof ReplaySkippedError
@@ -253,22 +260,29 @@ export function acceptedReplayRefusal(
           { kind: change.kind, skipped: change.skipped, healed: change.healed },
           { cause: change },
         )
-      : new StepIdentityChangedError(
-          refused,
-          { stepId: change.stepId, components: change.components, status: change.status },
-          { cause: change },
-        );
+      : change instanceof SettledMapChangedError
+        ? new SettledMapChangedError(
+            `${refused} Fork a new run with --fork-from RUN --reuse matching --invalidate ${change.mapId}.`,
+            { mapId: change.mapId, components: change.components, legacy: change.legacy },
+            { cause: change },
+          )
+        : new StepIdentityChangedError(
+            refused,
+            { stepId: change.stepId, components: change.components, status: change.status },
+            { cause: change },
+          );
   refusals.add(error);
   return error;
 }
 
 /**
  * Whether `error` is the runner's own preflight refusal, thrown before the run was changed. A
- * {@link StepIdentityChangedError} or {@link ReplaySkippedError} reached any other way, such as the
- * cause of a saved failure after the preflight failed open, is not. @internal
+ * {@link StepIdentityChangedError}, {@link ReplaySkippedError} or {@link SettledMapChangedError}
+ * reached any other way, such as the cause of a saved failure after the preflight failed open, is
+ * not. @internal
  */
 export function isAcceptedReplayRefusal(
   error: unknown,
-): error is StepIdentityChangedError | ReplaySkippedError {
+): error is StepIdentityChangedError | ReplaySkippedError | SettledMapChangedError {
   return error instanceof Error && refusals.has(error);
 }

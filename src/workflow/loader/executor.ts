@@ -964,8 +964,8 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         ...(rehearsal === undefined ? {} : { rehearsal: rehearsal.report(run) }),
       };
     } catch (thrown: unknown) {
-      // An accepted resume reports a changed completed step, or a skipped completed step, settled
-      // map or child frame, as run.incompatible, with the real state directory and entrypoint:
+      // An accepted resume reports a changed completed step, a settled map changed beyond its
+      // mapper (#303), or a skipped completed step, settled map or child frame, as run.incompatible, with the real state directory and entrypoint:
       // from a dry run's failure, or from runWorkflow's own preflight refusal. Only that marked
       // refusal left the run unchanged; a real run that failed on the divergence after its
       // preflight found nothing stays workflow.failed.

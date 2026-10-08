@@ -12,18 +12,15 @@ import type { ExecutionScopes } from './scopes.js';
 import type { NameScopes } from './names.js';
 import {
   decideSettledMapReplay,
-  mapperOnlyChange,
   settledMapRefusalMessage,
   type MapItemScope,
 } from './replay-decision.js';
 import type { OperationTracker } from './tracking.js';
 import { errorKind } from './step-error.js';
+import { SettledMapChangedError, isMapperOnlyChange } from './run-errors.js';
 import { ownedRecords, settledFailure, settlesFailure } from './settled-outcome.js';
 import type { JsonValue, Settled, MapOptions, WorkflowContext } from './model.js';
 import type { MapComponents, MapRecord, RunRecord, StepRecord } from './store.js';
-
-/** Settled map refusals thrown by this module, with whether only the mapper changed. */
-const settledMapRefusals = new WeakMap<Error, { readonly mapperOnly: boolean }>();
 
 /**
  * Whether an error is a settled map refusal for a change after an item completed, and whether only
@@ -31,7 +28,9 @@ const settledMapRefusals = new WeakMap<Error, { readonly mapperOnly: boolean }>(
  * the message text. @internal
  */
 export function settledMapChange(error: unknown): { readonly mapperOnly: boolean } | undefined {
-  return error instanceof Error ? settledMapRefusals.get(error) : undefined;
+  return error instanceof SettledMapChangedError
+    ? { mapperOnly: isMapperOnlyChange(error) }
+    : undefined;
 }
 
 /** Owned map execution dependencies; never part of the public workflow API. @internal */
@@ -267,8 +266,15 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
           switch (decision.kind) {
             case 'refuse':
             case 'refuse-legacy': {
-              const error = validationError(settledMapRefusalMessage(journalId, decision));
-              settledMapRefusals.set(error, { mapperOnly: mapperOnlyChange(decision) });
+              const error = new SettledMapChangedError(
+                settledMapRefusalMessage(journalId, decision),
+                {
+                  mapId: journalId,
+                  components: decision.kind === 'refuse' ? decision.changed : [],
+                  legacy: decision.kind === 'refuse-legacy',
+                },
+              );
+              origins.markFatal(error);
               throw error;
             }
             case 'reset':

@@ -112,6 +112,7 @@ import {
   preflightProbeOptions,
   preflightRunOptions,
 } from './accepted-replay-preflight.js';
+import type { SettledMapChangedError } from './run-errors.js';
 import {
   findAcceptedReplayDivergence,
   isValidRunId,
@@ -562,9 +563,12 @@ export interface RunOptions extends WorkflowCodeOptions {
    * Explicitly accept only source/schema changes on resume; local callback identity still applies.
    * The changed body first replays once on a disposable copy of the run, with every unfinished
    * effect synthesized. If it meets a changed completed or settled-failed step, the resume rejects
-   * with a bare {@link StepIdentityChangedError}; if it finishes without revisiting a completed
-   * step, settled map or completed or settled child frame, with a bare {@link ReplaySkippedError}.
-   * Either way the run is left unchanged. Top-level code outside effects therefore runs one extra
+   * with a bare {@link StepIdentityChangedError}; if it meets a settled map whose items, keys,
+   * version or cwd changed (or whose journal predates per-component fingerprints) after an item
+   * completed, with a bare {@link SettledMapChangedError}; if it finishes without revisiting a
+   * completed step, settled map or completed or settled child frame, with a bare
+   * {@link ReplaySkippedError}. Either way the run is left unchanged. A mapper-only map change is
+   * accepted. Top-level code outside effects therefore runs one extra
    * time.
    */
   readonly acceptCodeChange?: boolean;
@@ -989,13 +993,14 @@ export async function runWorkflow<
         existing.engine.zod !== engine.zod ||
         existing.engine.tsx !== engine.tsx);
     // #215: every gate above has passed and nothing has touched `existing` yet. An accepted replay
-    // that would meet a changed completed step, or skip a completed step, settled map or child
-    // frame (#216), is found on a disposable copy of the record read under this lock, and refused
+    // that would meet a changed completed step, a settled map changed beyond its mapper (#303), or
+    // skip a completed step, settled map or child frame (#216), is found on a disposable copy of the record read under this lock, and refused
     // before the acceptance is recorded. The probe's own nested run
     // carries rehearsal hooks, as does a dry run, which is already a disposable copy.
     if (options.acceptCodeChange && existing && options.rehearsal === undefined) {
       let copy: Awaited<ReturnType<typeof disposableRunCopy>> | undefined;
-      let change: StepIdentityChangedError | ReplaySkippedError | undefined;
+      let change:
+        StepIdentityChangedError | ReplaySkippedError | SettledMapChangedError | undefined;
       try {
         copy = await disposableRunCopy(existing, stateDir);
         await runWorkflow(definition, {

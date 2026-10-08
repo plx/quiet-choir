@@ -153,12 +153,12 @@ export function compareResume(
 /**
  * Recovery advice for a code-only change. A completed run's outcome is final, so the fork path comes
  * first; either way the accepted resume is previewed with a dry run, because it refuses without
- * changes when a completed step's identity changed.
+ * changes when a completed step's identity, or a settled map's items, keys, version or cwd, changed.
  */
 function acceptAdvice(saved: Pick<RunRecord, 'id' | 'status'>): string {
   return saved.status === 'completed'
     ? `Create a new run with --fork-from ${saved.id} (--reuse matching reruns only changed steps). To re-finalize this run instead, preview with --dry-run --resume --accept-code-change, then use --resume --accept-code-change.`
-    : `Preview with --dry-run --resume --accept-code-change, then use --resume --accept-code-change (it refuses without changes when a completed step's identity changed), or create a new run with --fork-from ${saved.id}.`;
+    : `Preview with --dry-run --resume --accept-code-change, then use --resume --accept-code-change (it refuses without changes when a completed step's identity, or a settled map's items, keys, version or cwd, changed), or create a new run with --fork-from ${saved.id}.`;
 }
 
 /** Read compatibility without a writer lock or workflow-body execution; imports are the caller's responsibility. */
