@@ -73,6 +73,21 @@ export function processRequest(
   };
 }
 
+/**
+ * The message of a command whose exit code is outside its `okExitCodes`, or that ended by a signal
+ * or without a code. Fixture export matches it to tell a reproducible exit failure from other
+ * `process` failures. @internal
+ */
+export function execExitFailureMessage(exit: string): string {
+  return `Command exited with ${exit}.`;
+}
+
+/**
+ * The prefix of an `exec.json` failure whose stdout did not parse or did not match the schema; the
+ * parse or validation message follows. Fixture export matches it. @internal
+ */
+export const EXEC_SCHEMA_FAILURE_PREFIX = 'Command stdout did not match its JSON schema: ';
+
 /** Execute and validate inside the runtime's single tracked effect. @internal */
 export async function executeCommand<T>(
   runner: ProcessRunner | undefined,
@@ -95,7 +110,7 @@ export async function executeCommand<T>(
     (accepted !== 'any' && !accepted.includes(result.code))
   )
     throw new ExecError(
-      `Command exited with ${result.signal ?? String(result.code)}.`,
+      execExitFailureMessage(result.signal ?? String(result.code)),
       'process',
       result,
       failure(),
@@ -107,7 +122,7 @@ export async function executeCommand<T>(
     return schema.parse(JSON.parse(result.stdout) as JsonValue);
   } catch (cause) {
     throw new ExecError(
-      `Command stdout did not match its JSON schema: ${cause instanceof Error ? cause.message : String(cause)}`,
+      `${EXEC_SCHEMA_FAILURE_PREFIX}${cause instanceof Error ? cause.message : String(cause)}`,
       'schema',
       result,
       { cause, ...failure() },
