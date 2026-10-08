@@ -7,6 +7,13 @@
 - Amended by #267: `step.failed` and `step.settled` lines carry the step's error text as `msg`, from
   a new optional `WorkflowEvent.error` bounded to one line of at most 500 characters with no stack
   (the `message` field is untouched, so the debug log is unchanged).
+- Amended by #280: the line shape gains `errorKind` and `retryable` after `attempt`, always on
+  `step.failed` (`errorKind` is JSON `null` with `retryable: false` when the attempt recorded no
+  kind, the one exception to "absent fields are omitted") and on `run.failed` only when it names a
+  root effect and the source supplied a kind. `WorkflowEvent` gains an optional `errorKind`, set by
+  the runner from the stored attempt kind and `rootCause.errorKind`, so nothing classifies again;
+  `retryable` is computed only by `failureKind`, in the line formatter. `step.settled` and every
+  other line are unchanged.
 
 ## Context
 
