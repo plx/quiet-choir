@@ -561,7 +561,7 @@ it.each([false, true])(
     const saved = await readRun(options());
     expect(saved.replayWarnings).toEqual([warnings[0]?.message]);
     // Same source, different path: the hint blames a body-computed value, not a code change.
-    for (const phrase of ['ctx.now', 'ctx.step', '--strict-replay'])
+    for (const phrase of ['ctx.now', 'ctx.step', 'strictReplay: true'])
       expect(saved.recoveryHint).toContain(phrase);
     expect(saved.recoveryHint).not.toContain('accept-code-change');
     if (strictReplay) {
