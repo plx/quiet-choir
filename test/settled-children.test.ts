@@ -492,7 +492,8 @@ it('refuses an accepted resume that skips a settled frame without changing the r
   expect((failed as Error).cause).toMatchObject({ kind: 'child-frames', skipped: ['child'] });
   // Typed, the skip gets the divergence hint, not advice to re-finalize with --accept-code-change.
   const hint = (await readRun(options)).recoveryHint;
-  for (const phrase of ['ctx.now', 'ctx.step', '--strict-replay']) expect(hint).toContain(phrase);
+  for (const phrase of ['ctx.now', 'ctx.step', 'strictReplay: true'])
+    expect(hint).toContain(phrase);
   expect(hint).not.toContain('accept-code-change');
 });
 

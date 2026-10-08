@@ -14,6 +14,7 @@ const defaults: RecoveryHintInput = {
   allTerminal: false,
   sourceChanged: false,
   runId: 'run-1',
+  launchable: true,
 };
 const causes: readonly RecoveryCause[] = [
   { kind: 'grant', profile: 'fixer', access: 'write' },
@@ -44,13 +45,13 @@ const budgetResume = (flag: string): string =>
 const grant =
   'Grant the access, then resume: --resume --grant fixer (or --grant write, or --grant all); completed steps are reused.';
 const nondeterminism =
-  'The workflow source is unchanged, so the body likely computed a value outside a durable effect (time, randomness, environment or file contents) that changed a step identity or the replay path. Compute such values with ctx.now or inside ctx.step so replay reuses them, then fork a new run with --fork-from run-1; --resume --strict-replay stops at the first divergence before live work.';
+  'The workflow source is unchanged, so the body likely computed a value outside a durable effect (time, randomness, environment or file contents) that changed a step identity or the replay path. Compute such values with ctx.now or inside ctx.step so replay reuses them, then fork a new run with --fork-from run-1; workflow resume run-1 --strict-replay stops at the first divergence before live work.';
 const mapperOnly =
   'Resume with --resume --accept-code-change to keep completed map items and run unfinished ones with the edited mapper, or fork a new run with --fork-from run-1.';
 const mapChanged =
   "A settled map's items, keys, version or cwd changed after an item completed, or its journal predates per-component fingerprints; accepting code changes cannot reuse it. Restore the map and resume, or fork a new run with --fork-from run-1.";
 const changedPath =
-  'Replay left the recorded path after the accepted source change. Restore the replay path, or fork a new run with --fork-from run-1; --resume --strict-replay stops at the first divergence before live work.';
+  'Replay left the recorded path after the accepted source change. Restore the replay path, or fork a new run with --fork-from run-1; workflow resume run-1 --strict-replay stops at the first divergence before live work.';
 
 describe('chooseRecoveryHint', () => {
   it.each(
@@ -183,5 +184,31 @@ describe('chooseRecoveryHint', () => {
     const changed = hint({ cause: { kind: 'divergence' }, sourceChanged: true });
     expect(changed).toContain('--strict-replay');
     expect(changed).not.toContain('accept-code-change');
+  });
+
+  it.each([false, true])(
+    'suggests workflow resume for strict replay of a divergence (source changed: %s)',
+    (sourceChanged) => {
+      const chosen = hint({ cause: { kind: 'divergence' }, sourceChanged });
+      expect(chosen).toContain('workflow resume run-1 --strict-replay');
+      expect(chosen).not.toContain('--resume --strict-replay');
+    },
+  );
+
+  it.each([false, true])(
+    'gives an embedded run launcher-neutral strict-replay advice (source changed: %s)',
+    (sourceChanged) => {
+      const chosen = hint({ cause: { kind: 'divergence' }, sourceChanged, launchable: false });
+      expect(chosen).not.toContain('workflow resume');
+      expect(chosen).not.toContain('--resume --strict-replay');
+      expect(chosen).toContain('strictReplay: true');
+      expect(chosen).toContain('--fork-from run-1');
+      expect(chosen).toContain('stops at the first divergence before live work');
+    },
+  );
+
+  it('leaves non-divergence hints unchanged for an embedded run', () => {
+    for (const cause of causes.filter((candidate) => candidate.kind !== 'divergence'))
+      expect(hint({ cause, launchable: false })).toBe(hint({ cause }));
   });
 });

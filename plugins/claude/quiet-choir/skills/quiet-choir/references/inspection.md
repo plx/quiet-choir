@@ -65,7 +65,7 @@ scripts, use stable CLI `error.code` and structured harness categories instead o
 | `Run <id> has <count> live or unverified harness processes …`                                                                                | Survivor or unverifiable child record                                                                                       | Inspect; `--resume --kill-orphans` handles only confirmed identities.                                                                                                                           |
 | `Profile <name> requires <access> access. Retry with --grant <name>, --grant <access>, or --grant all.`                                      | The call needs an operator grant this run lacks                                                                             | Resume with `--resume --grant <name>` (or `--grant <access>`); no code change or `--accept-code-change` is needed.                                                                              |
 | `Profile <name> requires <access> access for call-site capability overrides, which profile grants do not cover. …`                           | A call with call-site capability overrides (`strictProfiles: false`) needs an access-class grant                            | Resume with `--resume --grant <access>` (or `--grant all`); a grant of the profile does not admit it.                                                                                           |
-| `Replay skipped recorded steps (<ids>); workflow control flow changed.` (or `settled maps`)                                                  | With unchanged source, the body computed a value outside a durable effect (time, randomness, environment or file contents)  | Compute it with `ctx.now` or inside `ctx.step`, fork with `--fork-from <run>`, and use `--resume --strict-replay` to stop at the first divergence before live work.                             |
+| `Replay skipped recorded steps (<ids>); workflow control flow changed.` (or `settled maps`)                                                  | With unchanged source, the body computed a value outside a durable effect (time, randomness, environment or file contents)  | Compute it with `ctx.now` or inside `ctx.step`, fork with `--fork-from <run>`, and use `workflow resume <run> --strict-replay` to stop at the first divergence before live work.                |
 | `Replay divergence before live step <id>: …`                                                                                                 | The same divergence, stopped before live work by `--strict-replay`                                                          | As above: move the value into `ctx.now` or `ctx.step`, then fork with `--fork-from <run>`.                                                                                                      |
 | `Step <id> (<kind>) failed: …`                                                                                                               | The named effect failed; `<kind>` is the call-site effect (the harness for an agent call), even when the step has no record | Read `rootCause` (its `effect` names the kind) and the step's attempts; fix the cause and follow `recoveryHint`.                                                                                |
 | `Workflow <changes> changed; <unchanged> unchanged.`                                                                                         | Source/schema or name/version/cwd compatibility changed                                                                     | Read `check-resume --json` details; compare saved cwd/name/version. Accept eligible code edits or fork/start anew as directed.                                                                  |
@@ -206,19 +206,20 @@ warnings. `recoveryHint` is advice chosen from the typed failure cause, never fr
 grant failure suggests `--resume --grant <profile>` (only `--grant <access>` for a call with
 call-site capability overrides); a replay divergence with unchanged source blames a value computed
 in the body (compute it with `ctx.now` or inside `ctx.step`) and suggests `--fork-from` or
-`--resume --strict-replay`; a settled map that changed after an item committed suggests
-`--resume --accept-code-change` when only its mapper changed, and otherwise restoring the map or
-`--fork-from`; a configuration or authoring failure suggests fixing the workflow, adding
-`--accept-code-change` when the fix edits code, and, when all recorded effects have terminal
-outcomes, re-finalizing with no repeated work; a run-budget stop suggests resuming with a higher
-value of the cap's flag or the flag off; an effect failure or a cancellation suggests a plain
-`--resume`. A run that recorded no step or map, and any dry-run, gets no hint. `recoveryCause` is
-the typed cause behind the hint (`kind` `grant` with `profile`, `access` and, for call-site
-capability overrides, `classOnly`, `divergence`, `map-changed` with `mapperOnly`, `configuration`,
-`budget` with `flag`, `authoring`, `effect` or `cancelled`), saved on every failed or cancelled run
-even without a hint; it selects a failed run's `next` entries and is absent after success and on
-records from older builds. The CLI appends the hint only to this invocation's `workflow.failed` or
-`workflow.interrupted` message, never to a refusal. Use
+`workflow resume RUN --strict-replay` (a run without a stored entrypoint, such as an embedded
+`runWorkflow` without `launch`, is told to resume strictly through its embedding application); a
+settled map that changed after an item committed suggests `--resume --accept-code-change` when only
+its mapper changed, and otherwise restoring the map or `--fork-from`; a configuration or authoring
+failure suggests fixing the workflow, adding `--accept-code-change` when the fix edits code, and,
+when all recorded effects have terminal outcomes, re-finalizing with no repeated work; a run-budget
+stop suggests resuming with a higher value of the cap's flag or the flag off; an effect failure or a
+cancellation suggests a plain `--resume`. A run that recorded no step or map, and any dry-run, gets
+no hint. `recoveryCause` is the typed cause behind the hint (`kind` `grant` with `profile`, `access`
+and, for call-site capability overrides, `classOnly`, `divergence`, `map-changed` with `mapperOnly`,
+`configuration`, `budget` with `flag`, `authoring`, `effect` or `cancelled`), saved on every failed
+or cancelled run even without a hint; it selects a failed run's `next` entries and is absent after
+success and on records from older builds. The CLI appends the hint only to this invocation's
+`workflow.failed` or `workflow.interrupted` message, never to a refusal. Use
 `workflow check-resume FILE --run-id ID --json` to compare run gates without a writer lock; it
 imports trusted source but does not call its body. Unlike inspection alone, it can identify changed
 source files and schemas.

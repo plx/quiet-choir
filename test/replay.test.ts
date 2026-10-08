@@ -1271,14 +1271,15 @@ it.each([false, true])(
     if (strictReplay) expect(saved.steps['live/a/run']).toBeUndefined();
     // The same source took a different path, so the hint blames a body-computed value even when
     // the strict stop cancelled map siblings.
-    for (const phrase of ['ctx.now', 'ctx.step', '--strict-replay', '--fork-from source'])
+    for (const phrase of ['ctx.now', 'ctx.step', 'strictReplay: true', '--fork-from source'])
       expect(saved.recoveryHint).toContain(phrase);
     expect(saved.recoveryHint).not.toContain('accept-code-change');
   },
 );
 
 const nondeterministicHint = (hint: string | undefined): void => {
-  for (const phrase of ['ctx.now', 'ctx.step', '--strict-replay']) expect(hint).toContain(phrase);
+  for (const phrase of ['ctx.now', 'ctx.step', 'strictReplay: true'])
+    expect(hint).toContain(phrase);
   expect(hint).not.toContain('accept-code-change');
 };
 
@@ -1309,6 +1310,34 @@ it.each([false, true])(
     nondeterministicHint((await readRun(options())).recoveryHint);
   },
 );
+
+it('names workflow resume for a divergence only when the run stored a launch', async () => {
+  let early = true;
+  let fail = true;
+  const definition = workflow(async (ctx) => {
+    if (early) await ctx.step('early', { input: null, schema: z.string(), run: () => 'e' });
+    await ctx.step('shared', { input: null, schema: z.string(), run: () => 's' });
+    if (fail) throw new Error('pause');
+    return ctx.step('late', { input: null, schema: z.string(), run: () => 'l' });
+  });
+  const launch = { entrypoint: '/project/workflow.ts', tsconfig: null };
+  await expect(runWorkflow(definition, { ...options('launched'), launch })).rejects.toThrow(
+    'pause',
+  );
+  await expect(runWorkflow(definition, options('embedded'))).rejects.toThrow('pause');
+  early = false;
+  fail = false;
+  for (const runId of ['launched', 'embedded'])
+    await expect(
+      runWorkflow(definition, { ...options(runId), resume: true }),
+    ).rejects.toBeInstanceOf(WorkflowRunError);
+  const launched = (await readRun(options('launched'))).recoveryHint;
+  expect(launched).toContain('workflow resume launched --strict-replay');
+  expect(launched).not.toContain('strictReplay: true');
+  const embedded = (await readRun(options('embedded'))).recoveryHint;
+  expect(embedded).toContain('strictReplay: true');
+  expect(embedded).not.toContain('workflow resume');
+});
 
 it('advises against body-computed values when strict replay stops after a healed step', async () => {
   let attempt = 0;

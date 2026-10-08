@@ -11,8 +11,10 @@
  * - A run with no recorded step or map gets no hint: there is nothing to reuse.
  * - Only a configuration or authoring failure, or a settled map whose only change is its mapper,
  *   suggests `--accept-code-change`. A grant failure names `--grant` (with the access class alone
- *   when call-site capability overrides make a profile grant ineffective), a replay divergence names
- *   `--strict-replay` and `--fork-from`, and any other settled map change names `--fork-from`.
+ *   when call-site capability overrides make a profile grant ineffective), a replay divergence
+ *   names `--fork-from` and, only for a run with a stored launch, `workflow resume RUN
+ *   --strict-replay` (an embedded run without one is told to resume strictly through its embedding
+ *   application), and any other settled map change names `--fork-from`.
  * - A divergence with unchanged source blames a value computed in the body outside a durable effect.
  * - A configuration or authoring failure after all recorded work is terminal keeps the re-finalize
  *   text, including "All recorded work has terminal outcomes" and "re-finalize".
@@ -103,6 +105,11 @@ export interface RecoveryHintInput {
   readonly sourceChanged: boolean;
   /** The run's ID, for fork advice. */
   readonly runId: string;
+  /**
+   * Whether the run has a stored launch, so `workflow resume RUN` can resume it. An embedded run
+   * without `launch` has no entrypoint, and that command rejects it.
+   */
+  readonly launchable: boolean;
 }
 
 /** The recovery hint to save on a failed run, or undefined for none. @internal */
@@ -114,10 +121,14 @@ export function chooseRecoveryHint(input: RecoveryHintInput): string | undefined
       return cause.classOnly
         ? `Grant the access class, then resume: --resume --grant ${cause.access} (or --grant all); a call with call-site capability overrides ignores profile grants. Completed steps are reused.`
         : `Grant the access, then resume: --resume --grant ${cause.profile} (or --grant ${cause.access}, or --grant all); completed steps are reused.`;
-    case 'divergence':
+    case 'divergence': {
+      const strict = input.launchable
+        ? `workflow resume ${input.runId} --strict-replay`
+        : 'resuming with strict replay (strictReplay: true in the embedding application)';
       return input.sourceChanged
-        ? `Replay left the recorded path after the accepted source change. Restore the replay path, or fork a new run with --fork-from ${input.runId}; --resume --strict-replay stops at the first divergence before live work.`
-        : `The workflow source is unchanged, so the body likely computed a value outside a durable effect (time, randomness, environment or file contents) that changed a step identity or the replay path. Compute such values with ctx.now or inside ctx.step so replay reuses them, then fork a new run with --fork-from ${input.runId}; --resume --strict-replay stops at the first divergence before live work.`;
+        ? `Replay left the recorded path after the accepted source change. Restore the replay path, or fork a new run with --fork-from ${input.runId}; ${strict} stops at the first divergence before live work.`
+        : `The workflow source is unchanged, so the body likely computed a value outside a durable effect (time, randomness, environment or file contents) that changed a step identity or the replay path. Compute such values with ctx.now or inside ctx.step so replay reuses them, then fork a new run with --fork-from ${input.runId}; ${strict} stops at the first divergence before live work.`;
+    }
     case 'map-changed':
       return cause.mapperOnly
         ? `Resume with --resume --accept-code-change to keep completed map items and run unfinished ones with the edited mapper, or fork a new run with --fork-from ${input.runId}.`
