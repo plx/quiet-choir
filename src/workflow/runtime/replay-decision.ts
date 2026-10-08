@@ -23,13 +23,15 @@
  * - Fork reuse is considered only for an absent step in a forked run.
  * - Strict healed divergence permits terminal replay and fork reuse but stops before the next live
  *   effect.
- * - A healed step (failed before, completes now) flags a recorded step as a possible dependent
- *   only when that step was launched at or after the healed step's first failure settled
- *   (`launchStamp >= failureStamp`, see `healedDependents`). A sibling launched in the same tick,
- *   before the failure existed, is not flagged. The rule is a watermark, not proof of dependence:
- *   a step launched later by unrelated control flow is still flagged. When either stamp is missing
- *   (checkpoints saved before stamps, or a failure saved between retries) the pair falls back to
- *   launch order: the step is flagged when its `seq` is higher.
+ * - A healed step (one that carries a terminal failure from an earlier run, `failureStamp`, kept
+ *   through later cancellations and interruptions, or is still recorded failed, and completes now)
+ *   flags a recorded step as a possible dependent only when that step was launched at or after the
+ *   healed step's first failure settled (`launchStamp >= failureStamp`, see `healedDependents`). A
+ *   sibling launched in the same tick, before the failure existed, is not flagged. The rule is a
+ *   watermark, not proof of dependence: a step launched later by unrelated control flow is still
+ *   flagged. When either stamp is missing (checkpoints saved before stamps, or a failure saved
+ *   between retries) the pair falls back to launch order: the step is flagged when its `seq` is
+ *   higher.
  * - Default (prefix) fork reuse is causal (`forkPrefixBlockers`): a requested step is reused only
  *   when every source step that had settled before its source launch is already reused into the
  *   target, and no live target step settled before its target launch. Steps in sibling items of a
