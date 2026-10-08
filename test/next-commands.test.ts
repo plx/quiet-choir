@@ -556,8 +556,16 @@ describe('launch policy on next entries', () => {
 
 describe('cause-aware failed-run entries (#284)', () => {
   const grant: RecoveryCause = { kind: 'grant', profile: 'edit', access: 'write' };
+  // Call-site capability overrides ignore profile grants, so the entry grants the access class.
+  const classGrant: RecoveryCause = {
+    kind: 'grant',
+    profile: 'text',
+    access: 'write',
+    classOnly: true,
+  };
   const causes: readonly [string, RecoveryCause | undefined, readonly (readonly string[])[]][] = [
     ['grant', grant, [grantResume('edit')]],
+    ['grant (call-site capability overrides)', classGrant, [grantResume('write')]],
     ['divergence', { kind: 'divergence' }, [fork(entrypoint)]],
     [
       'map-changed (mapper only)',
@@ -646,6 +654,9 @@ describe('cause-aware failed-run entries (#284)', () => {
       runNextCommands(failed(cause), 'failed', stateDir).map((entry) => entry.why);
     expect(why(grant)).toEqual([
       'Profile edit needs write access; grant it and resume. The grant is saved for later resumes, and completed steps are reused.',
+    ]);
+    expect(why(classGrant)).toEqual([
+      'Profile text needs write access for call-site capability overrides, which profile grants do not cover; grant the access class and resume. The grant is saved for later resumes, and completed steps are reused.',
     ]);
     expect(why({ kind: 'budget', flag: '--max-run-cost-usd' })).toEqual([
       'A run budget stopped the run and stays in force on resume; substitute <LIMIT> with a higher --max-run-cost-usd value or off. Completed steps are reused.',

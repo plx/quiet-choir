@@ -1493,6 +1493,7 @@ describe('revision-nine records (a grant failure before recoveryCause, #284)', (
   it('round-trip every recovery cause through the record parser', async () => {
     const causes = [
       { kind: 'grant', profile: 'edit', access: 'write' },
+      { kind: 'grant', profile: 'text', access: 'write', classOnly: true },
       { kind: 'divergence' },
       { kind: 'map-changed', mapperOnly: true },
       { kind: 'configuration' },

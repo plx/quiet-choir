@@ -82,9 +82,12 @@ function failedNext(
   switch (cause?.kind) {
     case 'grant':
       // `workflow resume` takes no --grant; `execute --resume` resumes the stored entrypoint too.
+      // Call-site capability overrides ignore profile grants, so only the access class admits them.
       return [
         {
-          why: `Profile ${cause.profile} needs ${cause.access} access; grant it and resume. The grant is saved for later resumes, and completed steps are reused.`,
+          why: cause.classOnly
+            ? `Profile ${cause.profile} needs ${cause.access} access for call-site capability overrides, which profile grants do not cover; grant the access class and resume. The grant is saved for later resumes, and completed steps are reused.`
+            : `Profile ${cause.profile} needs ${cause.access} access; grant it and resume. The grant is saved for later resumes, and completed steps are reused.`,
           argv: workflowArgv(
             launcher,
             'execute',
@@ -94,7 +97,7 @@ function failedNext(
             '--state-dir',
             stateDir,
             '--grant',
-            cause.profile,
+            cause.classOnly ? cause.access : cause.profile,
             ...launchPolicyFlags(run.launch),
           ),
         },

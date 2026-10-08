@@ -4118,7 +4118,13 @@ function classifyRecoveryCause(errors: readonly unknown[], record: RunRecord): R
   };
   for (const error of errors) visit(error);
   const grant = found.find((error) => error instanceof GrantRequiredError);
-  if (grant) return { kind: 'grant', profile: grant.profile, access: grant.access };
+  if (grant)
+    return {
+      kind: 'grant',
+      profile: grant.profile,
+      access: grant.access,
+      ...(grant.classOnly ? { classOnly: true as const } : {}),
+    };
   if (
     found.some(
       (error) =>

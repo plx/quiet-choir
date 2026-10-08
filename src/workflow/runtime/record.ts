@@ -987,7 +987,12 @@ const recordFieldsSchema = z.object({
   recoveryHint: z.string().optional(),
   recoveryCause: z
     .discriminatedUnion('kind', [
-      z.object({ kind: z.literal('grant'), profile: z.string(), access: z.string() }),
+      z.object({
+        kind: z.literal('grant'),
+        profile: z.string(),
+        access: z.string(),
+        classOnly: z.literal(true).optional(),
+      }),
       z.object({ kind: z.literal('divergence') }),
       z.object({ kind: z.literal('map-changed'), mapperOnly: z.boolean() }),
       z.object({ kind: z.literal('configuration') }),

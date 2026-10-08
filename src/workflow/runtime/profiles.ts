@@ -377,12 +377,17 @@ export function profileGrantDigest(profile: ResolvedProfile): string {
   });
 }
 
-/** Check a profile/harness capability against persisted operator grants. @internal */
+/**
+ * Check a profile/harness capability against persisted operator grants. `classOnly` marks a call
+ * with call-site capability overrides, whose caller has already dropped named-profile grants: only
+ * an access-class grant can admit it, and the error says so. @internal
+ */
 export function requireGrant(
   profile: ResolvedProfile,
   grants: readonly string[],
   pins: Readonly<Record<string, string>>,
   access = profile.access,
+  classOnly = false,
 ): void {
   if (
     rank[access] < rank.write ||
@@ -392,7 +397,7 @@ export function requireGrant(
     (grants.includes(profile.name) && pins[profile.name] === profileGrantDigest(profile))
   )
     return;
-  throw new GrantRequiredError(profile.name, access);
+  throw new GrantRequiredError(profile.name, access, classOnly);
 }
 
 /**
@@ -431,6 +436,7 @@ export function resolveProfileCall(
       raw.length ? grants.filter((grant) => !Object.hasOwn(manifest.profiles, grant)) : grants,
       pins,
       access,
+      raw.length > 0,
     );
     return { profile, options };
   }
@@ -484,6 +490,7 @@ export function resolveProfileCall(
       raw.length ? grants.filter((grant) => !Object.hasOwn(manifest.profiles, grant)) : grants,
       pins,
       access,
+      raw.length > 0,
     );
   } else {
     requireGrant(
@@ -491,6 +498,7 @@ export function resolveProfileCall(
       raw.length ? grants.filter((grant) => !Object.hasOwn(manifest.profiles, grant)) : grants,
       pins,
       controlAccess('codex', resolved),
+      raw.length > 0,
     );
   }
   validateAgentOptions(harness, resolved);

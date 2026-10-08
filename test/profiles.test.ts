@@ -32,6 +32,7 @@ import { claudeDefinition, codexDefinition } from '../src/harnesses/builtins/def
 import { digest } from '../src/workflow/runtime/json.js';
 import { parseClaude } from '../src/harnesses/protocol.js';
 import { planInvocation } from '../src/harnesses/invocation.js';
+import { runNextCommands } from '../src/workflow/loader/next-commands.js';
 
 let stateDir: string;
 const reply = {
@@ -313,6 +314,46 @@ it('saves no recovery hint for a grant failure on the first effect', async () =>
   expect(saved.recoveryHint).toBeUndefined();
   // The cause is saved even without a hint; a run that recorded nothing gets no next entry.
   expect(saved.recoveryCause).toEqual({ kind: 'grant', profile: 'edit', access: 'write' });
+});
+
+it('advises an access-class grant when call-site capability overrides ignore profile grants', async () => {
+  const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
+  const definition = defineWorkflow({
+    ...base,
+    strictProfiles: false,
+    async run(ctx) {
+      await ctx.step('prepare', { input: null, schema: z.string(), run: () => 'ready' });
+      return (await ctx.claude.text('edit', { prompt: 'x', tools: ['Edit'] })).output;
+    },
+  });
+  const error: unknown = await runWorkflow(definition, { ...setup(), harness: { invoke } }).catch(
+    (cause: unknown) => cause,
+  );
+  expect(error).toBeInstanceOf(WorkflowRunError);
+  expect((error as Error).message).toContain('Retry with --grant write or --grant all.');
+  expect((error as Error).message).not.toContain('--grant text');
+  const saved = await readRun(setup());
+  expect(saved.recoveryCause).toEqual({
+    kind: 'grant',
+    profile: 'text',
+    access: 'write',
+    classOnly: true,
+  });
+  expect(saved.recoveryHint).toContain('--resume --grant write (or --grant all)');
+  expect(saved.recoveryHint).not.toContain('--grant text');
+  // An embedded run stores no entrypoint, so give it one to see the CLI's next entry.
+  const launch = { entrypoint: join(stateDir, 'w.mts'), tsconfig: null };
+  const [entry, ...rest] = runNextCommands({ ...saved, launch }, 'failed', stateDir);
+  expect(rest).toEqual([]);
+  expect(entry?.argv.slice(-2)).toEqual(['--grant', 'write']);
+  // A grant of the profile repeats the failure; the emitted access-class grant completes the run.
+  await expect(
+    runWorkflow(definition, { ...setup(), resume: true, harness: { invoke }, grants: ['text'] }),
+  ).rejects.toThrow('Retry with --grant write or --grant all.');
+  await expect(
+    runWorkflow(definition, { ...setup(), resume: true, harness: { invoke }, grants: ['write'] }),
+  ).resolves.toMatchObject({ status: 'completed' });
+  expect(invoke).toHaveBeenCalledTimes(1);
 });
 
 it('pins named grants to capabilities across explicit source acceptance', async () => {
