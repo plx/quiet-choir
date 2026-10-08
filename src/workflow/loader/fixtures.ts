@@ -8,6 +8,7 @@ import {
 } from '../../harnesses/fixture.js';
 import type { ErrorKind, JsonValue } from '../runtime/model.js';
 import { EXEC_SCHEMA_FAILURE_PREFIX, execExitFailureMessage } from '../runtime/exec.js';
+import { EXEC_TAIL_LIMIT } from '../runtime/exec-error.js';
 import type { ExecSummary } from '../runtime/exec-model.js';
 import { execResultSchema, execSummarySchema } from '../runtime/exec-schema.js';
 import { RunRefusedError } from '../runtime/run-errors.js';
@@ -192,6 +193,11 @@ interface ExecFailure {
  * failure kept `parsed`, the rule uses `json: parsed` unless the tail is complete JSON that parses
  * to it in another layout (pretty-printed output under 1024 characters keeps its bytes), so a
  * truncated tail still reproduces `parsed`, and export, replay and export again give the same rule.
+ *
+ * A `schema` failure without `parsed` whose stdout tail fills the tail bound (`EXEC_TAIL_LIMIT`)
+ * may have lost its start, and the surviving suffix can be valid JSON that matches the schema (an
+ * unparsable prefix, then more than 1024 whitespace characters, then good JSON). Replaying that
+ * tail would succeed, so no rule is exported and the replay fails at the step instead.
  */
 function execFailureRule(
   key: Pick<FixtureExecCall, 'step' | 'argvPrefix' | 'envSha256' | 'inputSha256'>,
@@ -216,6 +222,8 @@ function execFailureRule(
   const stdout = failure.stdoutTail ?? '';
   const stderr = failure.stderrTail ?? '';
   const { parsed } = failure;
+  if (failure.kind === 'schema' && parsed === undefined && stdout.length >= EXEC_TAIL_LIMIT)
+    return undefined;
   const output =
     parsed !== undefined && (stdout === JSON.stringify(parsed) || !parsesTo(stdout, parsed))
       ? { json: parsed }

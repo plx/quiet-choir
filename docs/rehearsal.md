@@ -105,12 +105,13 @@ output under 1024 characters keeps its bytes as `stdout`); without `parsed` it i
 `stdout`. The replay sends that result through the same exit-code and schema checks, so the settled
 error or the thrown `ExecError` has the same message, kind, code, signal, output tails and `parsed`,
 and a retried failure fails every attempt again. The tails are the last 1024 characters, which is
-all the workflow saw. Three edges are lossy: a long pretty-printed `exec.json` output replays in
-compact form, so its `stdoutTail` differs in whitespace; an `exec.json` output longer than 1024
-characters without `parsed` (not JSON, or over 16 KiB) replays from its tail, so the parse message
-can differ; and a replayed `ExecError` reports `truncated: false` and `durationMs: 0`. Spawn
-failures, timeouts, signal kills, `output-limit` failures and kinds from a custom process runner get
-no rule until exec rules can describe errors
+all the workflow saw. Two edges are lossy: a long pretty-printed `exec.json` output replays in
+compact form, so its `stdoutTail` differs in whitespace; and a replayed `ExecError` reports
+`truncated: false` and `durationMs: 0`. An `exec.json` schema failure without `parsed` (not JSON, or
+over 16 KiB) whose stdout tail fills all 1024 characters gets no rule, because the tail may have
+lost its start and could replay as valid output; export still sets `"commands": "fixture"`, so the
+replay fails at that step. Spawn failures, timeouts, signal kills, `output-limit` failures and kinds
+from a custom process runner get no rule until exec rules can describe errors
 ([#307](https://github.com/plx/quiet-choir/issues/307)). When the run has any completed,
 settled-failed or failed command, export also sets `"commands": "fixture"`, even when a failure
 produced no rule, so a replay whose argv or inputs drift, or that reaches such a failure, fails at

@@ -8,10 +8,12 @@
   change for exported files, #306). That covers an exit code outside `okExitCodes` and an
   `exec.json` schema failure: the replay rebuilds the same `ExecStepError` or thrown `ExecError`
   message, kind, code, signal, tails and `parsed`, and export, replay and export again give the same
-  file. A spawn failure, timeout, signal kill or output-limit failure gets no rule until #307, but
-  the export now sets `"commands": "fixture"` whenever the run has any completed or failed command,
-  so a run whose only command failed that way no longer replays by running the real command or
-  synthesizing a success: the replay fails at that step with `No exec fixture matches step`.
+  file. An `exec.json` schema failure without `parsed` whose stdout tail fills all 1024 characters
+  also gets no rule, since the truncated tail could replay as valid output. A spawn failure,
+  timeout, signal kill or output-limit failure gets no rule until #307, but the export now sets
+  `"commands": "fixture"` whenever the run has any completed or failed command, so a run whose only
+  command failed that way no longer replays by running the real command or synthesizing a success:
+  the replay fails at that step with `No exec fixture matches step`.
 - Fixture export now writes `kind` on the agent `error` rules it produces for settled failures and
   for failures the workflow absorbed (behavior change for exported files), so a replay takes the
   same kind-based branches and `retry.on` decisions as the original run. A failure whose recorded

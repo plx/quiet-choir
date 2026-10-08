@@ -96,9 +96,11 @@ and `parsed` of an exit-code or `exec.json` schema failure; the runtime and the 
 failure messages that tell these apart. `json: parsed` is used unless the tail is complete JSON for
 it in another layout, which keeps short pretty-printed output byte for byte, still reproduces
 `parsed` when stdout was longer than its 1024-character tail, and makes export, replay and export a
-fixed point. Spawn failures, timeouts, signal kills, `output-limit` and custom runner kinds cannot
-come from a command result; they wait for exec error rules (#307). Such a failure gets no rule, but
-it still makes the export set `commands: "fixture"`, so its replay fails at that step instead of
+fixed point. An `exec.json` schema failure with no `parsed` whose stdout tail fills the 1024
+characters gets no rule either, as a tail that lost its start can be valid JSON and replay as
+success. Spawn failures, timeouts, signal kills, `output-limit` and custom runner kinds cannot come
+from a command result; they wait for exec error rules (#307). Such a failure gets no rule, but it
+still makes the export set `commands: "fixture"`, so its replay fails at that step instead of
 running the command or synthesizing a success.
 
 A fixture `error` rule may carry `kind` (an `ErrorKind`). The call then rejects with a

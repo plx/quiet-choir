@@ -552,6 +552,59 @@ describe('fixture export of settled and absorbed exec failures', () => {
     }
   });
 
+  it('exports no rule for an unparsed schema failure whose tail may be truncated, and keeps commands: fixture (AC2, AC6)', async () => {
+    // An invalid prefix, more than 1024 whitespace characters, then schema-valid JSON: the stdout is
+    // not JSON (no `parsed`), but its last 1024 characters are valid JSON that matches the schema.
+    const hidden = `x${' '.repeat(1100)}{"n":1}`;
+    const workflow = definition(z.json(), async (ctx) => {
+      const long = await ctx.exec.json(
+        'long',
+        node(`process.stdout.write(${JSON.stringify(hidden)})`),
+        { schema: Shape, onError: 'return' },
+      );
+      return long.ok ? 'ran' : long.error.kind;
+    });
+    const { source, fixtures } = await exportSource(workflow);
+    expect(source.output).toBe('schema');
+    expect(source.steps['long']?.status).toBe('settled-failed');
+    expect(JSON.parse(hidden.slice(-1024))).toEqual({ n: 1 });
+    expect(fixtures).toEqual({ version: 1, unmatched: 'error', calls: [], commands: 'fixture' });
+
+    await writeFile(join(root, 'export.json'), JSON.stringify(fixtures));
+    const selection = await readHarnessSelection('fixture:export.json', undefined, root);
+    const harness = new RehearsalHarness(selection);
+    await expect(
+      runWorkflow(workflow, {
+        ...options('dry'),
+        harness,
+        rehearsal: harness.hooks,
+        processRunner: harness.processRunner,
+      }),
+    ).rejects.toMatchObject({
+      stepId: 'long',
+      message: expect.stringContaining('No exec fixture matches step long') as unknown,
+    });
+  });
+
+  it('still exports and replays an unparsed schema failure whose tail is under 1024 characters (AC2, AC7)', async () => {
+    const workflow = definition(z.json(), async (ctx) => {
+      const short = await ctx.exec.json('short', node("process.stdout.write('not json')"), {
+        schema: Shape,
+        onError: 'return',
+      });
+      return short.ok ? null : jsonValue(short.error);
+    });
+    const { source, fixtures } = await exportSource(workflow);
+    expect(source.output).toMatchObject({ kind: 'schema', stdoutTail: 'not json' });
+    expect(fixtures).toMatchObject({
+      commands: 'fixture',
+      exec: [{ ...key(source, 'short'), stdout: 'not json' }],
+    });
+    const { dry, fixture } = await replays(workflow, fixtures);
+    expect(dry.output).toEqual(source.output);
+    expect(fixture.output).toEqual(source.output);
+  });
+
   it('exports a failure the workflow absorbed with try/catch, and the replay catch sees the same error (AC5)', async () => {
     const workflow = definition(z.json(), async (ctx) => {
       try {
