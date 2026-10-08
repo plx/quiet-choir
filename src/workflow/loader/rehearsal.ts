@@ -78,7 +78,10 @@ export interface RehearsalCommand {
   readonly outputSource: 'fixture' | 'synthesized' | 'live';
   /** Matched index in the fixture file's `exec` array, or null. */
   readonly fixtureIndex: number | null;
-  /** The refusal of an unmatched command under `commands: 'fixture'`, or null. */
+  /**
+   * The refusal of an unmatched command under `commands: 'fixture'`, the message of a matched exec
+   * error rule, or null.
+   */
   readonly error: string | null;
 }
 /** Plain-data report; its checkpoint has already been removed from temporary storage. @internal */
@@ -97,6 +100,16 @@ export interface RehearsalReport {
   readonly skippedSleeps: readonly string[];
   /** Indices into the fixture file's `exec` array of rules that matched no command. */
   readonly staleExecFixtures: readonly number[];
+  /**
+   * Agent rules that matched no call, as indices into the `calls` array of their own fixture file:
+   * `harness` is the name of a `--harness NAME=fixture:FILE` file, or null for the global
+   * `--harness fixture:FILE` file. Unlike `calls[].fixtureIndex`, which indexes the rules of all
+   * files combined, these indices are the ones a file's author can find.
+   */
+  readonly staleCallFixtures: readonly {
+    readonly harness: string | null;
+    readonly index: number;
+  }[];
   readonly warnings: readonly string[];
 }
 
@@ -107,6 +120,10 @@ export class RehearsalHarness extends FixtureHarness {
   private readonly calls: RehearsalCall[] = [];
   private readonly commands: RehearsalCommand[] = [];
   private readonly execRules: FixtureExecRules;
+  /** Per combined agent rule, the fixture file it came from and its index in that file. */
+  private readonly callSources: readonly { harness: string | null; index: number }[];
+  /** Combined indices of agent rules that matched a call. */
+  private readonly usedCalls = new Set<number>();
   public readonly processRunner: ProcessRunner = {
     run: (request, invocation) => {
       invocation.signal.throwIfAborted();
@@ -117,9 +134,9 @@ export class RehearsalHarness extends FixtureHarness {
           ...entry,
           outputSource: 'fixture',
           fixtureIndex: match.index,
-          error: null,
+          error: match.rule.error ?? null,
         });
-        return Promise.resolve(this.execRules.result(match.rule));
+        return this.execRules.answer(match.rule);
       }
       // Unlike `unmatched`, the commands mode is honored here: its purpose is to forbid synthesis.
       if (this.execRules.commands === 'fixture') {
@@ -187,16 +204,27 @@ export class RehearsalHarness extends FixtureHarness {
     selection: HarnessSelection,
     private readonly stubPatterns: readonly string[] = [],
   ) {
+    // Named files first, then the global file: the combined order is first-match order.
+    const named = Object.entries(selection.named ?? {});
     super({
       version: 1,
       calls: [
-        ...Object.entries(selection.named ?? {}).flatMap(([harness, fixtures]) =>
+        ...named.flatMap(([harness, fixtures]) =>
           fixtures.calls.map((call) => ({ ...call, harness })),
         ),
         ...(selection.fixtures?.calls ?? []),
       ],
       unmatched: 'synthesize',
     });
+    this.callSources = [
+      ...named.flatMap(([harness, fixtures]) =>
+        fixtures.calls.map((_, index) => ({ harness: harness, index })),
+      ),
+      ...(selection.fixtures?.calls ?? []).map((_, index) => ({
+        harness: null as string | null,
+        index,
+      })),
+    ];
     this.cli = new CliHarness(selection.config);
     // Named fixture files cannot carry exec rules; commands come only from the global file.
     this.execRules = new FixtureExecRules(selection.fixtures?.exec, selection.fixtures?.commands);
@@ -211,6 +239,7 @@ export class RehearsalHarness extends FixtureHarness {
   ): Promise<HarnessResponse> {
     invocation.signal.throwIfAborted();
     const match = this.match(request);
+    if (match) this.usedCalls.add(match.index);
     const call: RehearsalCall = {
       stepId: request.call.stepId,
       harness: request.harness,
@@ -335,6 +364,17 @@ export class RehearsalHarness extends FixtureHarness {
       this.warnings.add(
         `Exec fixture rules ${staleExecFixtures.join(', ')} matched no command; check their step, argvPrefix, digests and occurrence. Rules for steps replayed from a checkpoint are always stale.`,
       );
+    const staleCallFixtures = this.callSources.filter((_, index) => !this.usedCalls.has(index));
+    if (staleCallFixtures.length)
+      this.warnings.add(
+        `Agent fixture rules ${staleCallFixtures
+          .map(({ harness, index }) =>
+            harness === null ? String(index) : `${harness}:${String(index)}`,
+          )
+          .join(
+            ', ',
+          )} matched no call; check their step, harness and attempt. Rules for steps replayed from a checkpoint are always stale.`,
+      );
     // A fully completed resume short-circuits before body events; all saved effects replay as a unit.
     const replayed =
       this.calls.length === 0 &&
@@ -372,6 +412,7 @@ export class RehearsalHarness extends FixtureHarness {
       ),
       stubbedSteps: [...this.stubbedSteps],
       staleExecFixtures,
+      staleCallFixtures,
       skippedSleeps: [...this.skippedSleeps].filter((id) => {
         const step = record?.steps[id];
         return (

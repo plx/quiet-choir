@@ -954,6 +954,72 @@ describe('rehearsal execution and isolation', () => {
     expect(report.warnings.join(' ')).toContain('default/profile limits');
   });
 
+  it('reports agent rules that matched no call, by file and per-file index, with a warning (AC2)', async () => {
+    const options = await setup();
+    const harness = new RehearsalHarness({
+      kind: 'fixture',
+      config: {},
+      named: {
+        codex: parseHarnessFixtures({
+          version: 1,
+          calls: [
+            { step: 'two', text: 'from codex' },
+            { step: 'never', text: 'unused named rule' },
+          ],
+        }),
+      },
+      fixtures: parseHarnessFixtures({
+        version: 1,
+        calls: [
+          { step: 'one', text: 'from global' },
+          { step: 'typo-step', text: 'unused global rule' },
+        ],
+      }),
+    });
+    const run = await runWorkflow(
+      workflow(async (ctx) => {
+        const first = await ctx.claude.text('one', { prompt: 'a' });
+        const second = await ctx.codex.text('two', { prompt: 'b' });
+        return `${first.output}|${second.output}`;
+      }),
+      { ...options, harness, rehearsal: harness.hooks },
+    );
+    expect(run.output).toBe('from global|from codex');
+    const report = harness.report(run);
+    expect(report.staleCallFixtures).toEqual([
+      { harness: 'codex', index: 1 },
+      { harness: null, index: 1 },
+    ]);
+    // calls[].fixtureIndex still indexes the combined rules: named files first, then the global file.
+    expect(report.calls.map((call) => call.fixtureIndex)).toEqual([2, 0]);
+    expect(report.warnings).toContainEqual(
+      expect.stringMatching(
+        /^Agent fixture rules codex:1, 1 matched no call;.*replayed from a checkpoint are always stale\.$/u,
+      ),
+    );
+  });
+
+  it('reports no stale agent rules and no warning when every rule matched or none exist (AC2)', async () => {
+    const options = await setup();
+    const harness = new RehearsalHarness({
+      kind: 'fixture',
+      config: {},
+      fixtures: parseHarnessFixtures({ version: 1, calls: [{ step: 'one', text: 'used' }] }),
+    });
+    const run = await runWorkflow(
+      workflow(async (ctx) => (await ctx.claude.text('one', { prompt: 'a' })).output),
+      { ...options, harness, rehearsal: harness.hooks },
+    );
+    const report = harness.report(run);
+    expect(report.staleCallFixtures).toEqual([]);
+    expect(report.warnings.some((warning) => warning.startsWith('Agent fixture rules'))).toBe(
+      false,
+    );
+    expect(
+      new RehearsalHarness({ kind: 'cli', config: {} }).report(null).staleCallFixtures,
+    ).toEqual([]);
+  });
+
   it.each([
     {
       name: 'date',

@@ -107,11 +107,12 @@ without `parsed` whose stdout tail fills all 1024 characters gets no rule (the t
 its start and replay as valid output or an invented `parsed`), neither does an `exec.json` exit
 failure recorded as `truncated`, and neither does a `parsed` whose compact form is over 16 KiB, so
 its replay fails at that step. Spawn failures, timeouts, signal kills, `output-limit` failures and
-custom runner kinds get no rule yet. When the run has any completed, settled-failed or failed
-command, export also sets `"commands": "fixture"`, even when a failure produced no rule, so a replay
-whose argv or inputs drift, or that reaches such a failure, fails at that step instead of running
-the real command; shorten `argvPrefix` or drop a digest by hand when a value legitimately changes
-per run. A run without commands exports exactly as before. It does not modify the source checkpoint.
+custom runner kinds get no exported rule (an exec error rule can describe them by hand; export does
+not produce them yet). When the run has any completed, settled-failed or failed command, export also
+sets `"commands": "fixture"`, even when a failure produced no rule, so a replay whose argv or inputs
+drift, or that reaches such a failure, fails at that step instead of running the real command;
+shorten `argvPrefix` or drop a digest by hand when a value legitimately changes per run. A run
+without commands exports exactly as before. It does not modify the source checkpoint.
 
 ## Command fixtures
 
@@ -151,10 +152,22 @@ and concurrent commands count in launch order, so prefer full step IDs for a run
 command from a callback's or observer's `context.exec` matches by its parent step or wait ID. All of
 one parent's commands share its occurrence, so tell them apart with `argvPrefix`.
 
-Exactly one of `json` (serialized as stdout) and `stdout` is required; `stderr` defaults to empty
-and `code` (0-255) to 0. The result then goes through the step's usual checks: a code outside
-`okExitCodes` fails like a real exit (kind `process`), and `ctx.exec.json` parses and validates the
-stdout with its schema.
+Exactly one of `json` (serialized as stdout), `stdout` and `error` is required. A result rule takes
+`stderr`, default empty, and `code` (0-255), default 0; the result then goes through the step's
+usual checks: a code outside `okExitCodes` fails like a real exit (kind `process`), and
+`ctx.exec.json` parses and validates the stdout with its schema.
+
+An error rule (`error`: the message, plus an optional `kind` that requires `error`; `stderr` and
+`code` are refused beside it) simulates a command with no result, such as a missing binary or a
+timeout. It matches like any rule (filters, first match, occurrence counting) and the command
+rejects immediately with an `ExecError` of that `kind` (default `process`, not the `unknown` of
+agent rules, because the real runner reports unclassified failures as `process`) whose message is
+the `error` text verbatim, with no `Step <id>: ` prefix. Like a real spawn failure it has no process
+result: `error.diagnostics` has a null `code` and `signal`, empty tails, `truncated: false` and a
+duration of 0. A real timeout's signal and partial output are not reproduced. `retry.on`
+(`transient` covers `timeout`), `onError: 'return'` and `try/catch` then behave as with the real
+runner, so `{ "step": "gate-*", "attempt": 1, "error": "timed out", "kind": "timeout" }` followed by
+a `gate-*` result rule rehearses a retry that recovers.
 
 A command no rule matches is synthesized under `--dry-run` and runs for real under
 `--harness fixture`. With `"commands": "fixture"` it instead fails at its step as a configuration
@@ -228,11 +241,15 @@ report contains:
   wait whose callback or observer ran it through `context.exec`, the wait of a command poll's check,
   or null for `ctx.exec`), command, cwd, whether it is structured, output source (`fixture`,
   `synthesized`, or `live` for an observer's or command poll's `live: true` command that ran for
-  real), the matched index in the file's `exec` array (or null), and `error`, the refusal of an
+  real), the matched index in the file's `exec` array (or null), and `error`: the refusal of an
   unmatched command under `commands: "fixture"` (such an entry has output source `fixture` and index
-  null).
+  null), or the message of a matched exec error rule (output source `fixture` and the rule's index).
 - `staleExecFixtures`: indices of exec rules that matched no command, with a warning when any exist.
   A resume preview reports rules for replayed steps as stale.
+- `staleCallFixtures`: agent `calls` rules that matched no call, as `{ harness, index }` with a
+  warning when any exist. `index` is the position in that file's own `calls` array; `harness` is the
+  name of a `--harness NAME=fixture:FILE` file, or null for the global file. Unlike
+  `calls[].fixtureIndex` (combined across files), rules for replayed steps are always stale.
 - `harnessCounts` (`providerCounts` retains built-in compatibility counts),
   `nominalClaudeCeilingUsd`, `stubbedSteps`, `skippedSleeps`, and `warnings`.
 

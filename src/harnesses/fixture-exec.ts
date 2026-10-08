@@ -4,6 +4,7 @@ import type {
   ProcessRunRequest,
   ProcessRunner,
 } from '../workflow/runtime/exec-model.js';
+import { ExecError } from '../workflow/runtime/exec-error.js';
 import { digest } from '../workflow/runtime/json.js';
 import type { HarnessInvocation } from '../harness-kit.js';
 import { ConfigurationError, matchesStepGlob } from '../harness-kit.js';
@@ -68,7 +69,10 @@ export class FixtureExecRules {
     return found;
   }
 
-  /** The command result a rule describes; okExitCodes and schemas still apply downstream. */
+  /**
+   * The command result a result rule describes; okExitCodes and schemas still apply downstream. An
+   * error rule has no result: use {@link FixtureExecRules.answer}, which rejects for it.
+   */
   public result(rule: FixtureExecCall): ExecResult {
     return {
       code: rule.code ?? 0,
@@ -78,6 +82,17 @@ export class FixtureExecRules {
       truncated: false,
       durationMs: 0,
     };
+  }
+
+  /**
+   * Answer a command with a matched rule: resolve the rule's result, or reject with the
+   * `ExecError` an error rule simulates (kind `process` unless the rule sets one), immediately and
+   * without a process result, so retries, settlement and try/catch see what a spawn failure gives.
+   */
+  public answer(rule: FixtureExecCall): Promise<ExecResult> {
+    if (rule.error !== undefined)
+      return Promise.reject(new ExecError(rule.error, rule.kind ?? 'process'));
+    return Promise.resolve(this.result(rule));
   }
 
   /** The fatal error for a command no rule matches under `commands: 'fixture'`. */
@@ -118,7 +133,7 @@ function filtersMatch(
 
 /**
  * Process runner for `ctx.exec` under a fixture harness: matched commands are answered from exec
- * rules without spawning, unmatched ones fail under `commands: 'fixture'` and otherwise run through
+ * rules without spawning (an error rule rejects like a failed spawn), unmatched ones fail under `commands: 'fixture'` and otherwise run through
  * the fallback. Worktree Git never goes through it. @internal
  */
 export class FixtureProcessRunner implements ProcessRunner {
@@ -136,7 +151,7 @@ export class FixtureProcessRunner implements ProcessRunner {
   public run(request: ProcessRunRequest, invocation: HarnessInvocation): Promise<ExecResult> {
     invocation.signal.throwIfAborted();
     const match = this.#rules.match(request, invocation);
-    if (match) return Promise.resolve(this.#rules.result(match.rule));
+    if (match) return this.#rules.answer(match.rule);
     if (this.#rules.commands === 'fixture')
       return Promise.reject(this.#rules.unmatched(request, invocation));
     return this.#fallback.run(request, invocation);

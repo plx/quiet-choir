@@ -163,9 +163,10 @@ spawning; unmatched commands run for real there, and worktree Git always does. A
 exports completed command results as exec rules keyed by argv and environment/stdin digests, and
 settled or absorbed command failures as rules with their exit `code` and recorded output tails when
 a command result reproduces them (an exit code outside `okExitCodes` or an `exec.json` schema
-failure). A spawn failure, timeout, signal or output-limit failure gets no rule yet; the export
-still sets `"commands": "fixture"`, so a replay of that run fails at that step. File effects, local
-callbacks, and top-level workflow code still run for real unless selected by `--stub-steps`.
+failure). A spawn failure, timeout, signal or output-limit failure gets no exported rule yet (an
+`exec` rule with `error` and optional `kind` can describe one by hand); the export still sets
+`"commands": "fixture"`, so a replay of that run fails at that step. File effects, local callbacks,
+and top-level workflow code still run for real unless selected by `--stub-steps`.
 
 Commands a callback or observer runs through `context.exec` are rehearsed the same way: synthesized
 or answered by an `exec` rule, and listed in `commands` with `parentStepId` set to the step or wait
