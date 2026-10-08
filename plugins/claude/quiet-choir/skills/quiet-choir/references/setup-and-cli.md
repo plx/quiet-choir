@@ -215,11 +215,15 @@ the same major.minor warns; another major.minor, an unparseable or prerelease ve
 exit and process warnings fail. The exact-argv probe runs whenever `--version` answered, whatever
 the grade. Reports carry `verdict` (`ok`, `usable-with-warnings`, `blocked`) and `warnings`; text
 output ends with a verdict line and the next command, and the exit is 1 only when blocked, so a
-warning exits 0. `--strict` turns an untested patch version into a failure. Auth/transport failures,
-stderr warnings and any measured spend fail. The Claude probe caps spend (`maxBudgetUsd 0.01`,
-nonexistent model); the Codex probe (invalid effort) has no cost cap and `zeroInference` is judged
-after the call, so an untested CLI that stopped rejecting bad input could run one tiny inference.
-Current tested bounds are Claude 2.1.283 and Codex 0.157.1; to widen them, run
+warning exits 0. `--strict` turns an untested patch version, or unverified Codex effort values, into
+a failure. Auth/transport failures, stderr warnings and any measured spend fail. The Claude probe
+caps spend (`maxBudgetUsd 0.01`, nonexistent model). Codex has no cost cap, so its probe sends a
+fresh nonexistent model (`quiet-choir-nonexistent-<uuid>`) and an invalid effort, and passes on a
+400 listing the efforts or a 400/404 naming the sentinel with not-found wording; after a model
+rejection the Codex enums check warns (drift unverified, nothing spent). `zeroInference` is still
+judged after the call; the remaining exposure is a CLI that substitutes a known model, which
+`npm run build && npm run test:contract:doctor` detects against a loopback fake API. Current tested
+bounds are Claude 2.1.283 and Codex 0.157.1; to widen them, run
 `npm run build && npm run test:contract` from a checkout, review the captures, then raise
 `testedHarnessVersions`. Codex's argv probe uses private temporary copies of config/auth and an
 empty native profile; selected user/profile defaults are inspected separately, without printing

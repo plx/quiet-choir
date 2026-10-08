@@ -49,10 +49,11 @@ async function binary(provider: 'claude' | 'codex', mode = 'ok'): Promise<string
     path,
     `#!${process.execPath}
 const fs = require('node:fs');
-const a=process.argv.slice(2), mode=${JSON.stringify(mode)}, provider=${JSON.stringify(provider)};
+const a=process.argv.slice(2), parts=${JSON.stringify(mode)}.split('+'), mode=parts[0], provider=${JSON.stringify(provider)};
+const has=(part)=>parts.includes(part), model=parts.find((part)=>part.startsWith('model-'));
 fs.appendFileSync(${JSON.stringify(join(directory, 'calls'))},JSON.stringify({harness:provider,args:a})+'\\n');
 if(mode==='hang') {setInterval(()=>{},1000);return;}
-if(a.includes('--version')) {if(mode==='cleanup')require('node:child_process').spawn('/bin/sleep',['30'],{stdio:'ignore'}).unref();console.log(mode==='version'?'9.9.9':mode==='garbage'?'no version here':mode==='patch'?${JSON.stringify(untestedPatch(provider))}:${JSON.stringify(testedHarnessVersions[provider].minimum)});process.exit(0);}
+if(a.includes('--version')) {if(mode==='cleanup')require('node:child_process').spawn('/bin/sleep',['30'],{stdio:'ignore'}).unref();console.log(mode==='version'?'9.9.9':mode==='garbage'?'no version here':has('patch')?${JSON.stringify(untestedPatch(provider))}:${JSON.stringify(testedHarnessVersions[provider].minimum)});process.exit(0);}
 if(a.includes('--help')) {console.log(${JSON.stringify(provider === 'claude' ? claudeHelp : codexHelp)}.replace(mode==='enums'?'xhigh':'not-found', 'ultra'));process.exit(0);}
 if(a.includes('abc')) {console.error(mode==='hidden'?'unknown option --max-turns':"argument 'abc' is invalid. must be a number");process.exit(1);}
 if(a.some(v=>v.includes('quiet-choir-missing-'))) {console.error('System prompt file not found');process.exit(1);}
@@ -60,7 +61,7 @@ const paths = a.filter(v=>v.startsWith('--image=')).map(v=>v.slice(8));
 for(let i=0;i<a.length;i++) if(['--system-prompt-file','--append-system-prompt-file','--agents','--settings','--mcp-config','--output-schema'].includes(a[i])) paths.push(a[i+1]);
 if(provider==='codex') {paths.push(process.env.CODEX_HOME,process.env.CODEX_HOME+'/quiet-choir-probe.config.toml');if(fs.existsSync(process.env.CODEX_HOME+'/auth.json')) paths.push(process.env.CODEX_HOME+'/auth.json');}
 fs.writeFileSync(${JSON.stringify(join(directory, `${provider}-paths`))},JSON.stringify(paths.map(path=>({path, mode:fs.statSync(path).mode&511}))));
-if(provider==='codex'&&!a.includes('model_reasoning_effort="bogus"')) throw Error('probe could run inference');
+if(provider==='codex'&&!(a.includes('model_reasoning_effort="bogus"')&&a.includes('--model')&&a[a.indexOf('--model')+1].startsWith('quiet-choir-nonexistent-'))) throw Error('probe could run inference');
 if(provider==='claude'&&!a[a.indexOf('--model')+1].startsWith('claude-quiet-choir-nonexistent-')) throw Error('probe could run inference');
 if(mode==='unknown') {console.error('unknown option --agents');process.exit(1);}
 let out=${JSON.stringify(fixture.stdout)};
@@ -69,8 +70,18 @@ if(mode==='auth') out=JSON.stringify({type:'result',is_error:true,subtype:'error
 if(mode==='cost') out=out.replace('"total_cost_usd":0','"total_cost_usd":0.25');
 if(mode==='tokens') out=out.replace('"input_tokens":0','"input_tokens":1');
 if(mode==='cache') out=out.replace('"cache_read_input_tokens":0','"cache_read_input_tokens":1');
-if(mode==='warning') console.error('Warning: unknown value ignored');
+if(has('warning')) console.error('Warning: unknown value ignored');
 if(mode==='enums'&&provider==='codex') out=out.replaceAll("'xhigh'", "'ultra'");
+if(provider==='codex'&&model){
+  // The server rejects the unknown model before the effort. model-first and model-other mirror
+  // codex-cli 0.160.0 against the local fake API (test/doctor-contract.mjs), which prints a 404 as
+  // prose without a parsed status; model-envelope is a synthetic JSON envelope carrying status 404.
+  const q=String.fromCharCode(96), sent=a[a.indexOf('--model')+1], named=model==='model-other'?'quiet-choir-nonexistent-other':sent;
+  const text=model==='model-echo'||model==='model-echo-code'?'Invalid image for model '+q+named+q:model==='model-code'?'Unknown model: '+named:'The model '+q+named+q+' does not exist or you do not have access to it.';
+  const error=model==='model-envelope'||model==='model-code'||model==='model-echo-code'?JSON.stringify({type:'error',error:{type:'invalid_request_error',code:model==='model-echo-code'?'invalid_image':'model_not_found',message:text,param:null},status:404}):'unexpected status 404 Not Found: '+text+', url: http://127.0.0.1:12345/v1/responses';
+  out=[{type:'thread.started',thread_id:'00000000-0000-4000-8000-000000000000'},{type:'item.completed',item:{id:'item_0',type:'error',message:'Model metadata for '+q+sent+q+' not found. Defaulting to fallback metadata; this can degrade performance and cause issues.'}},{type:'turn.started'},{type:'error',message:error},{type:'turn.failed',error:{message:error}}].map((line)=>JSON.stringify(line)).join('\\n')+'\\n';
+}
+if(provider==='codex'&&(has('tokens')||has('output'))) out=out.replace('{"type":"turn.failed",','{"type":"turn.failed","usage":{"input_tokens":'+(has('tokens')?1:0)+',"cached_input_tokens":0,"output_tokens":'+(has('output')?1:0)+'},');
 process.stdout.write(out);process.exit(1);
 `,
     { mode: 0o700 },
@@ -121,10 +132,14 @@ it('runs five checks per harness using full adapter argv and proves zero inferen
       '--no-chrome',
     ]),
   );
+  // The probe sends a fresh nonexistent model, never the configured one, beside the bogus effort.
+  const codexArgs = codex ?? [];
+  expect(codexArgs[codexArgs.indexOf('--model') + 1]).toMatch(/^quiet-choir-nonexistent-/u);
+  expect(codex).not.toContain('configured-model');
+  expect(codex).toContain('model_reasoning_effort="bogus"');
   expect(codex).toEqual(
     expect.arrayContaining([
       '--model',
-      'configured-model',
       '--profile',
       'quiet-choir-probe',
       '--strict-config',
@@ -230,6 +245,89 @@ it.each([
   expect(argv(report)).toMatchObject({ status: 'pass', ok: true });
   expect(await callsLog()).toContain('--output-schema');
   expect(report).toMatchObject({ ok: false, verdict: 'blocked', zeroInference: true });
+});
+const enums = (report: DoctorReport) => report.checks.find((check) => check.check === 'enums');
+it('passes the Codex invalid-effort rejection and compares the reported effort values', async () => {
+  const report = await probeHarnessContracts(await probeOptions('codex', 'ok'));
+  expect(argv(report)).toMatchObject({ status: 'pass', ok: true });
+  expect(argv(report)?.message).toContain('(invalid effort)');
+  expect(enums(report)).toMatchObject({ status: 'pass', ok: true });
+  expect(report).toMatchObject({ ok: true, zeroInference: true, verdict: 'ok' });
+});
+it.each(['model-first', 'model-envelope', 'model-code'])(
+  'accepts a %s rejection of the sentinel model and warns that effort values are unverified',
+  async (mode) => {
+    const report = await probeHarnessContracts(await probeOptions('codex', mode));
+    expect(argv(report)).toMatchObject({ status: 'pass', ok: true });
+    expect(argv(report)?.message).toContain('(sentinel model)');
+    expect(enums(report)).toMatchObject({ status: 'warn', ok: true });
+    expect(enums(report)?.message).toContain('enum drift unverified');
+    expect(report).toMatchObject({
+      ok: true,
+      zeroInference: true,
+      verdict: 'usable-with-warnings',
+    });
+    expect(report.warnings).toEqual([
+      expect.stringContaining('codex enums: Effort values unavailable'),
+    ]);
+  },
+);
+it('fails unverified Codex effort values under strict', async () => {
+  const report = await probeHarnessContracts({
+    ...(await probeOptions('codex', 'model-first')),
+    strict: true,
+  });
+  expect(argv(report)?.status).toBe('pass');
+  expect(enums(report)).toMatchObject({ status: 'fail', ok: false });
+  expect(enums(report)?.message).toContain('--strict treats unverified effort values');
+  expect(report).toMatchObject({ ok: false, zeroInference: true, verdict: 'blocked' });
+});
+it('fails a Codex model rejection that names a different model', async () => {
+  const report = await probeHarnessContracts(await probeOptions('codex', 'model-other'));
+  expect(argv(report)).toMatchObject({ status: 'fail', ok: false });
+  expect(argv(report)?.message).toContain(
+    'Expected zero-cost 400 invalid effort or 400/404 unknown sentinel model',
+  );
+  expect(enums(report)?.status).toBe('fail');
+  expect(report).toMatchObject({ ok: false, zeroInference: false, verdict: 'blocked' });
+});
+it('fails a Codex 400 that merely echoes the sentinel model without not-found wording', async () => {
+  const report = await probeHarnessContracts(await probeOptions('codex', 'model-echo'));
+  expect(argv(report)).toMatchObject({ status: 'fail', ok: false });
+  expect(enums(report)?.status).toBe('fail');
+  expect(report.warnings).toEqual([]);
+  expect(report).toMatchObject({ ok: false, zeroInference: false, verdict: 'blocked' });
+});
+it('fails a Codex envelope that echoes the sentinel model under a different error code', async () => {
+  const report = await probeHarnessContracts(await probeOptions('codex', 'model-echo-code'));
+  expect(argv(report)).toMatchObject({ status: 'fail', ok: false });
+  expect(report).toMatchObject({ ok: false, zeroInference: false, verdict: 'blocked' });
+});
+it.each([
+  ['ok', 'tokens'],
+  ['ok', 'output'],
+  ['model-first', 'tokens'],
+  ['model-first', 'output'],
+  ['model-envelope', 'tokens'],
+])('fails zero inference for a Codex %s rejection that reports %s', async (mode, spend) => {
+  const report = await probeHarnessContracts(await probeOptions('codex', `${mode}+${spend}`));
+  expect(argv(report)).toMatchObject({ status: 'fail', ok: false });
+  expect(report).toMatchObject({ ok: false, zeroInference: false });
+});
+it('rejects invalid Codex config with a redacted error before spawning the argv probe', async () => {
+  const secret = 'sk-secret-doctor-preflight';
+  await writeFile(join(directory, 'config.toml'), `experimental_bearer_token = "${secret}`);
+  const report = await probeHarnessContracts(await probeOptions('codex', 'ok'));
+  expect(argv(report)).toMatchObject({ status: 'fail', ok: false });
+  expect(argv(report)?.message).toContain('Invalid TOML in Codex configuration');
+  expect(JSON.stringify(report)).not.toContain(secret);
+  expect(report.checks.map((check) => check.message).join('\n')).not.toContain(secret);
+  expect(await callsLog()).not.toContain('--output-schema');
+});
+it('fails the Codex argv check on a stderr warning but keeps zero inference', async () => {
+  const report = await probeHarnessContracts(await probeOptions('codex', 'model-first+warning'));
+  expect(argv(report)).toMatchObject({ status: 'fail', ok: false });
+  expect(report.zeroInference).toBe(true);
 });
 it('blocks an argv probe failure and still reports the probe check', async () => {
   const report = await probeHarnessContracts(await probeOptions('claude', 'auth'));
@@ -389,6 +487,24 @@ it.each([
   ],
   ['patch', ['--strict'], /^blocked: .*--strict.*npm run test:contract/u, 1],
   ['version', [], /^blocked: .*quiet-choir configuration doctor/u, 1],
+  [
+    'model-first',
+    [],
+    /^usable with warnings: codex effort values are unverified because the server rejected the sentinel model .*\(or pass --strict/u,
+    undefined,
+  ],
+  [
+    'model-first',
+    ['--strict'],
+    /^blocked: codex effort values are unverified .*--strict treats that as a failure \(or rerun without --strict\)$/u,
+    1,
+  ],
+  [
+    'patch+model-first',
+    [],
+    /^usable with warnings: codex \S+ is an untested patch version; .*test:contract.*; codex effort values are unverified/u,
+    undefined,
+  ],
 ] as const)(
   'ends text output with the verdict line and next command (%s %j)',
   async (mode, extra, last, exit) => {
@@ -399,6 +515,12 @@ it.each([
     expect(output[0]).toMatch(/^(PASS|WARN|FAIL) codex version: /u);
     if (mode === 'patch' && extra.length === 0) expect(output[0]).toMatch(/^WARN /u);
     if (mode === 'patch' && extra.length === 1) expect(output[0]).toMatch(/^FAIL /u);
+    if (mode.includes('model-first'))
+      expect(output).toContainEqual(
+        expect.stringMatching(
+          extra.length ? /^FAIL codex enums: Effort values unavailable/u : /^WARN codex enums: /u,
+        ),
+      );
     if (exit === undefined) expect(error).toBeUndefined();
     else expect(error).toMatchObject({ oclif: { exit } });
   },

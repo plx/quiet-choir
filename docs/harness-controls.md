@@ -179,16 +179,22 @@ The version check grades what `--version` reports. Inside the range is `PASS`. O
 same major.minor as a bound (an untested patch such as 2.1.285) is `WARN`. Another major.minor, an
 unparseable or prerelease/build-suffixed version, a nonzero exit and process or stderr warnings are
 `FAIL`. Each check has `status` `pass`, `warn` or `fail` (`ok` is `status !== 'fail'`); only the
-version check can warn. See
+version check and the Codex enums check (below) can warn. See
 [ADR 0040](decisions/0040-grade-harness-versions-against-a-tested-range.md).
 
-Exact-argv probes use a nonexistent Claude model (404, zero cost) or an invalid Codex effort (400
-with the enum list). They exercise all applicable typed flags through the production argument
-builder, with representative permission/effort choices. Codex's probe layers an empty native profile
-over temporary private copies of user config/auth files, selects the inspected model (or `gpt-5`
-when omitted), and removes those copies afterward. It does not modify user profile files. It reads
-selected native or legacy profile defaults separately. Project/managed layers can still change
-actual defaults; this inspection is not an effective-config resolver.
+Exact-argv probes use a nonexistent Claude model (404, zero cost), or for Codex both a fresh
+nonexistent model (`quiet-choir-nonexistent-<uuid>`) and an invalid effort. Codex passes when the
+server rejects either one first: a 400 with the supported effort list, or a 400 or 404 naming the
+exact sentinel model with not-found wording (the API error code `model_not_found`, or
+`does not exist` in the message). After a model rejection the effort list is unavailable, so the
+Codex enums check reports `WARN` (enum drift unverified; nothing was spent) and `--strict` fails it.
+The probes exercise all applicable typed flags through the production argument builder, with
+representative permission/effort choices. Codex's probe layers an empty native profile over
+temporary private copies of user config/auth files, sends the sentinel through the adapter's
+`--model` option (the doctor fails closed if the argv does not carry it), and removes those copies
+afterward. It does not modify user profile files. The inherited-defaults check reads selected native
+or legacy profile defaults separately. Project/managed layers can still change actual defaults; this
+inspection is not an effective-config resolver.
 
 The exact-argv probe runs whenever the binary answered `--version`, whatever the version grade, and
 is reported independently of it. Authentication, transport, unknown flags, any stderr warning,
@@ -197,21 +203,26 @@ used. `zeroInference` means every attempted exact-argv probe proved a pre-infere
 probe skipped because the binary never answered `--version` is not a passing check.
 
 Text output ends with a verdict line: `ok`; `usable with warnings: ...` naming the untested version
-and the next step; or `blocked: ...`. `--json` adds `verdict` (`ok`, `usable-with-warnings` or
-`blocked`) and `warnings` (one `<harness> <check>: <message>` per warning) to the report, and `ok`
-is `verdict !== 'blocked'`. The exit code is 1 only when the verdict is `blocked`, so a warning
-exits 0. `--strict` (`DoctorOptions.strict`) turns an untested patch version into a failure, so
-scripts that want the old behavior exit 1. Executable overrides are available as `--claude-binary`
-and `--codex-binary`.
+and the next step, or the unverified Codex effort values; or `blocked: ...`. `--json` adds `verdict`
+(`ok`, `usable-with-warnings` or `blocked`) and `warnings` (one `<harness> <check>: <message>` per
+warning) to the report, and `ok` is `verdict !== 'blocked'`. The exit code is 1 only when the
+verdict is `blocked`, so a warning exits 0. `--strict` (`DoctorOptions.strict`) turns an untested
+patch version or unverified Codex effort values into a failure, so scripts that want every fact
+verified exit 1. Executable overrides are available as `--claude-binary` and `--codex-binary`.
 
-Probing an untested CLI carries a small cost risk. The Claude probe caps spend with
-`maxBudgetUsd: 0.01` and a nonexistent model. The Codex probe sends `model_reasoning_effort="bogus"`
-with no cost cap, and `zeroInference` is judged after the call, so a CLI that stopped rejecting bad
-input could run one tiny inference before the doctor notices.
+Probing an untested CLI carries a small residual risk. The Claude probe caps spend with
+`maxBudgetUsd: 0.01` and a nonexistent model. Codex has no per-request cost cap (codex-cli 0.160.0
+rejects `model_max_output_tokens` and `rollout_budget.limit_tokens` under `--strict-config`), so its
+probe relies on the nonexistent model and the invalid effort, either of which stops the request
+before inference. `zeroInference` is still judged after the call from the observed output. The
+remaining exposure is a CLI that silently substitutes a known model for the unknown one;
+`npm run build && npm run test:contract:doctor` runs the installed Codex against a loopback fake API
+and fails unless every request carries the sentinel model and the bogus effort. See
+[ADR 0040](decisions/0040-grade-harness-versions-against-a-tested-range.md).
 
-To widen the range after a CLI update, run `npm run build && npm run test:contract` from a
-quiet-choir checkout, review the captures, then raise `testedHarnessVersions` `maximum` (or lower
-`minimum`) in `src/harnesses/tested-versions.ts`.
+To widen the range after a CLI update, run `npm run build && npm run test:contract` (and, for Codex,
+`npm run test:contract:doctor`) from a quiet-choir checkout, review the captures, then raise
+`testedHarnessVersions` `maximum` (or lower `minimum`) in `src/harnesses/tested-versions.ts`.
 
 `CliHarness` also reads `--version` on each provider's first live use in a run invocation. Saved
 `harnesses` record binary/version, and inspect shows them. Discovery failures and version changes on
