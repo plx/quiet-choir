@@ -41,14 +41,46 @@
  * A later build may add kinds, and only together with a record schema revision.
  */
 export type RecoveryCause =
-  | { readonly kind: 'grant'; readonly profile: string; readonly access: string }
-  | { readonly kind: 'divergence' }
-  | { readonly kind: 'map-changed'; readonly mapperOnly: boolean }
-  | { readonly kind: 'configuration' }
-  | { readonly kind: 'budget'; readonly flag: string }
-  | { readonly kind: 'authoring' }
-  | { readonly kind: 'effect' }
-  | { readonly kind: 'cancelled' };
+  | {
+      /** A missing access grant. */
+      readonly kind: 'grant';
+      /** The profile that needs the grant, as `--grant` names it. */
+      readonly profile: string;
+      /** The access level the profile requires, such as `write`. */
+      readonly access: string;
+    }
+  | {
+      /** A replay that left the recorded path. */
+      readonly kind: 'divergence';
+    }
+  | {
+      /** A settled map that changed after an item completed. */
+      readonly kind: 'map-changed';
+      /** Whether only the map's mapper changed, so `--accept-code-change` can keep its items. */
+      readonly mapperOnly: boolean;
+    }
+  | {
+      /** Any other configuration error. */
+      readonly kind: 'configuration';
+    }
+  | {
+      /** A run-budget stop. */
+      readonly kind: 'budget';
+      /** The CLI flag of the cap that stopped the run, such as `--max-run-cost-usd`. */
+      readonly flag: string;
+    }
+  | {
+      /** A workflow body, output or call-site failure. */
+      readonly kind: 'authoring';
+    }
+  | {
+      /** A durable effect's recorded failure. */
+      readonly kind: 'effect';
+    }
+  | {
+      /** A cancelled run. */
+      readonly kind: 'cancelled';
+    };
 
 /** Facts about one failed invocation, all gathered by the runner. @internal */
 export interface RecoveryHintInput {
