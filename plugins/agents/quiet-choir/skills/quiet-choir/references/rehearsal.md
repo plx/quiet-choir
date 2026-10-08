@@ -100,16 +100,18 @@ the failure's `parsed` value as `json` or the recorded stdout tail as `stdout` (
 pretty-printed JSON under 1024 characters keeps its bytes). The replay sends that result through the
 same exit-code and schema checks, so the settled error or thrown `ExecError` has the same message,
 kind, code, signal, tails and `parsed`. Long pretty-printed JSON replays compact (its `stdoutTail`
-differs in whitespace), and a replayed `ExecError` reports `truncated: false` and `durationMs: 0`.
-Any `exec.json` failure (exit code or schema) without `parsed` whose stdout tail fills all 1024
-characters gets no rule (the tail may have lost its start and replay as valid output or an invented
-`parsed`), and neither does a `parsed` whose compact form is over 16 KiB, so its replay fails at
-that step. Spawn failures, timeouts, signal kills, `output-limit` failures and custom runner kinds
-get no rule yet. When the run has any completed, settled-failed or failed command, export also sets
-`"commands": "fixture"`, even when a failure produced no rule, so a replay whose argv or inputs
-drift, or that reaches such a failure, fails at that step instead of running the real command;
-shorten `argvPrefix` or drop a digest by hand when a value legitimately changes per run. A run
-without commands exports exactly as before. It does not modify the source checkpoint.
+differs in whitespace), output rebuilt from `parsed` uses the checkpoint's sorted key order (a
+schema failure's message can list its issues in a different order), and a replayed `ExecError`
+reports `truncated: false` and `durationMs: 0`. Any `exec.json` failure (exit code or schema)
+without `parsed` whose stdout tail fills all 1024 characters gets no rule (the tail may have lost
+its start and replay as valid output or an invented `parsed`), neither does an `exec.json` exit
+failure recorded as `truncated`, and neither does a `parsed` whose compact form is over 16 KiB, so
+its replay fails at that step. Spawn failures, timeouts, signal kills, `output-limit` failures and
+custom runner kinds get no rule yet. When the run has any completed, settled-failed or failed
+command, export also sets `"commands": "fixture"`, even when a failure produced no rule, so a replay
+whose argv or inputs drift, or that reaches such a failure, fails at that step instead of running
+the real command; shorten `argvPrefix` or drop a digest by hand when a value legitimately changes
+per run. A run without commands exports exactly as before. It does not modify the source checkpoint.
 
 ## Command fixtures
 

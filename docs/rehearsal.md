@@ -105,14 +105,17 @@ output under 1024 characters keeps its bytes as `stdout`); without `parsed` it i
 `stdout`. The replay sends that result through the same exit-code and schema checks, so the settled
 error or the thrown `ExecError` has the same message, kind, code, signal, output tails and `parsed`,
 and a retried failure fails every attempt again. The tails are the last 1024 characters, which is
-all the workflow saw. Two edges are lossy: a long pretty-printed `exec.json` output replays in
-compact form, so its `stdoutTail` differs in whitespace; and a replayed `ExecError` reports
-`truncated: false` and `durationMs: 0`. Any `exec.json` failure (exit code or schema) without
-`parsed` (not JSON, over 16 KiB, or thrown rather than settled) whose stdout tail fills all 1024
-characters gets no rule, because the tail may have lost its start and could replay as valid output
-or an invented `parsed`; a `parsed` value whose compact form is over 16 KiB gets no rule either, as
-the replay would drop it. Export still sets `"commands": "fixture"`, so the replay fails at that
-step. Spawn failures, timeouts, signal kills, `output-limit` failures and kinds from a custom
+all the workflow saw. Three edges are lossy: a long pretty-printed `exec.json` output replays in
+compact form, so its `stdoutTail` differs in whitespace; output rebuilt from `parsed` uses the
+checkpoint's sorted key order, so a schema failure's message can list its issues in a different
+order; and a replayed `ExecError` reports `truncated: false` and `durationMs: 0`. Any `exec.json`
+failure (exit code or schema) without `parsed` (not JSON, over 16 KiB, or thrown rather than
+settled) whose stdout tail fills all 1024 characters gets no rule, because the tail may have lost
+its start and could replay as valid output or an invented `parsed`; an `exec.json` exit failure
+recorded as `truncated` gets no rule either, since a short tail can still be valid JSON that replay
+would turn into an invented `parsed`; and a `parsed` value whose compact form is over 16 KiB gets no
+rule, as the replay would drop it. Export still sets `"commands": "fixture"`, so the replay fails at
+that step. Spawn failures, timeouts, signal kills, `output-limit` failures and kinds from a custom
 process runner get no rule until exec rules can describe errors
 ([#307](https://github.com/plx/quiet-choir/issues/307)). When the run has any completed,
 settled-failed or failed command, export also sets `"commands": "fixture"`, even when a failure

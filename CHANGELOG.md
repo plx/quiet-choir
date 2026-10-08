@@ -10,11 +10,12 @@
   message, kind, code, signal, tails and `parsed`, and export, replay and export again give the same
   file. An `exec.json` failure (exit code or schema) without `parsed` whose stdout tail fills all
   1024 characters also gets no rule, since the truncated tail could replay as valid output or an
-  invented `parsed`, and neither does a `parsed` whose compact form is over 16 KiB. A spawn failure,
-  timeout, signal kill or output-limit failure gets no rule until #307, but the export now sets
-  `"commands": "fixture"` whenever the run has any completed or failed command, so a run whose only
-  command failed that way no longer replays by running the real command or synthesizing a success:
-  the replay fails at that step with `No exec fixture matches step`.
+  invented `parsed`, and neither does an `exec.json` exit failure recorded as `truncated` or a
+  `parsed` whose compact form is over 16 KiB. A spawn failure, timeout, signal kill or output-limit
+  failure gets no rule until #307, but the export now sets `"commands": "fixture"` whenever the run
+  has any completed or failed command, so a run whose only command failed that way no longer replays
+  by running the real command or synthesizing a success: the replay fails at that step with
+  `No exec fixture matches step`.
 - Fixture export now writes `kind` on the agent `error` rules it produces for settled failures and
   for failures the workflow absorbed (behavior change for exported files), so a replay takes the
   same kind-based branches and `retry.on` decisions as the original run. A failure whose recorded

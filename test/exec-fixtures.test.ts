@@ -653,6 +653,37 @@ describe('fixture export of settled and absorbed exec failures', () => {
     await expectReplayFailsAt(workflow, fixtures, 'probe');
   });
 
+  it('exports no rule for a settled exec.json exit failure recorded as truncated, and keeps commands: fixture (AC2, AC6)', async () => {
+    // A custom runner can report a truncated capture whose short stdout is still complete JSON. The
+    // runtime keeps no `parsed` for it, but replaying the tail would invent one.
+    const workflow = definition(z.string(), async (ctx) => {
+      const result = await ctx.exec.json(
+        'probe',
+        node('process.stdout.write(\'{"n":1}\');process.exit(1)'),
+        { schema: Shape, onError: 'return' },
+      );
+      return result.ok ? 'ran' : result.error.kind;
+    });
+    const truncating = {
+      run: async (...args: Parameters<typeof native.run>) => ({
+        ...(await native.run(...args)),
+        truncated: true,
+      }),
+    };
+    const source = await runWorkflow(workflow, {
+      ...options('source'),
+      harness: new FixtureHarness({ version: 1, calls: [] }),
+      processRunner: truncating,
+    });
+    expect(source.output).toBe('process');
+    expect(source.steps['probe']?.status).toBe('settled-failed');
+    expect(source.steps['probe']?.execError).toMatchObject({ truncated: true });
+    expect(source.steps['probe']?.settledError?.stdoutTail).toBe('{"n":1}');
+    const fixtures = fixturesFromRun(source);
+    expect(fixtures).toEqual({ version: 1, unmatched: 'error', calls: [], commands: 'fixture' });
+    await expectReplayFailsAt(workflow, fixtures, 'probe');
+  });
+
   it('exports no rule when json: parsed would serialize past the parsed byte bound (AC2, AC6)', async () => {
     // 15000 bytes as printed, which the runtime keeps as `parsed`, but 66000 bytes once each 1e20
     // is re-serialized as 100000000000000000000, so the replay would lose `parsed`.

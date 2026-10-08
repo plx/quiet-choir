@@ -147,7 +147,8 @@ function execFixtures(run: RunRecord): {
     };
     if (step.status === 'settled-failed') {
       const error = step.settledError;
-      const rule = error && execFailureRule(key, summary, error);
+      const rule =
+        error && execFailureRule(key, summary, { ...error, truncated: step.execError?.truncated });
       return rule ? [rule] : [];
     }
     // A failure the workflow absorbed (try/catch, or a settled map item) leaves the step `failed`
@@ -184,6 +185,8 @@ interface ExecFailure {
   readonly stdoutTail?: string | undefined;
   readonly stderrTail?: string | undefined;
   readonly parsed?: JsonValue | undefined;
+  /** Whether the runner cut the captured output; only an exit failure can record it. */
+  readonly truncated?: boolean | undefined;
 }
 
 /**
@@ -210,6 +213,14 @@ interface ExecFailure {
  * most `SETTLED_PARSED_MAX_BYTES` bytes. When the compact form of `parsed` is larger (such as `1e20`
  * values that print longer than they were written), the replay would lose `parsed`, so no rule is
  * exported.
+ *
+ * An `exec.json` exit failure whose capture was truncated also gets no rule: the runtime keeps no
+ * `parsed` for a truncated capture, but a short tail can still be valid JSON that the replay would
+ * record as an invented `parsed`. A schema failure cannot be truncated, so it is unaffected.
+ *
+ * Two more edges are lossy. Output reconstructed from `parsed` uses the checkpoint's sorted key
+ * order, so a schema failure's message can list its issues in a different order than the original.
+ * A replayed `ExecError` reports `truncated: false` and `durationMs: 0`.
  */
 function execFailureRule(
   key: Pick<FixtureExecCall, 'step' | 'argvPrefix' | 'envSha256' | 'inputSha256'>,
@@ -231,6 +242,7 @@ function execFailureRule(
       summary.structured &&
       failure.message.startsWith(EXEC_SCHEMA_FAILURE_PREFIX));
   if (!reproducible) return undefined;
+  if (summary.structured && failure.truncated === true) return undefined;
   const stdout = failure.stdoutTail ?? '';
   const stderr = failure.stderrTail ?? '';
   const { parsed } = failure;
