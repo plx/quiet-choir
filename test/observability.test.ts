@@ -17,6 +17,7 @@ import {
 } from '../src/index.js';
 import { MAX_RUN_EVENTS } from '../src/workflow/runtime/observability.js';
 import { recordEventLines } from '../src/workflow/loader/event-follow.js';
+import { EventLineMemory, formatEventLine } from '../src/workflow/loader/events.js';
 import { summarizeRun } from '../src/workflow/loader/inspection.js';
 
 let stateDir: string;
@@ -701,4 +702,103 @@ it('carries the error on step.settled for onError: return and none on step.cance
   );
   expect(cancelled.some((event) => event.type === 'step.cancelled')).toBe(true);
   expect(cancelled.filter((event) => event.error !== undefined)).toEqual([]);
+});
+
+const harnessFailure = (kind: 'rate-limit' | 'schema' | 'timeout') =>
+  new HarnessError({
+    harness: 'claude',
+    kind,
+    exit: { code: 1, signal: null },
+    failure: null,
+    reason: `${kind} failure`,
+    stderr: '',
+    stdout: '',
+  });
+
+it('carries the recorded kind of each attempt on step.failed and the root cause kind on run.failed', async () => {
+  let calls = 0;
+  const events = await failureEvents(
+    (ctx) =>
+      ctx.step('flaky', {
+        input: null,
+        schema: z.string(),
+        retry: { maxAttempts: 2, delayMs: 0 },
+        run: () => {
+          calls += 1;
+          throw calls === 1 ? harnessFailure('rate-limit') : new Error('plain failure');
+        },
+      }),
+    { runId: 'kinds' },
+  );
+  const record = await readRun({ ...options(), runId: 'kinds' });
+  const history = record.steps['flaky']?.attemptHistory ?? [];
+  const failed = events.filter((event) => event.type === 'step.failed');
+  expect(failed.map((event) => event.errorKind)).toEqual(history.map((entry) => entry.errorKind));
+  expect(failed.map((event) => event.errorKind)).toEqual(['rate-limit', 'unknown']);
+  const runFailed = events.find((event) => event.type === 'run.failed');
+  expect(runFailed).toMatchObject({ stepId: 'flaky', errorKind: record.rootCause?.errorKind });
+  expect(runFailed?.errorKind).toBe('unknown');
+  // No other event carries the field.
+  expect(events.filter((event) => event.errorKind !== undefined)).toHaveLength(3);
+});
+
+it('writes the same failure pair live and from the record, and none on a body failure', async () => {
+  const live: string[] = [];
+  const memory = new EventLineMemory();
+  const execute = async (
+    runId: string,
+    run: (ctx: WorkflowContext) => Promise<unknown>,
+  ): Promise<string[]> => {
+    const lines: string[] = [];
+    await runWorkflow(workflow(run), {
+      ...options(),
+      runId,
+      onEvent: (event) => {
+        const text = formatEventLine(event, memory);
+        if (text !== null) lines.push(text);
+      },
+    }).catch(() => undefined);
+    return lines;
+  };
+  live.push(
+    ...(await execute('parity-step', (ctx) =>
+      ctx.step('timed-out', {
+        input: null,
+        schema: z.string(),
+        retry: { maxAttempts: 2, delayMs: 0 },
+        run: () => {
+          throw harnessFailure('timeout');
+        },
+      }),
+    )),
+  );
+  const followed = recordEventLines(
+    await readRun({ ...options(), runId: 'parity-step' }),
+    null,
+    'all',
+  ).lines;
+  const pairs = (lines: readonly string[]): unknown[] =>
+    lines
+      .map((text) => JSON.parse(text) as Record<string, unknown>)
+      .filter((line) => line['ev'] === 'step.failed' || line['ev'] === 'run.failed')
+      .map((line) => [line['ev'], line['errorKind'], line['retryable']]);
+  expect(pairs(live)).toEqual([
+    ['step.failed', 'timeout', true],
+    ['step.failed', 'timeout', true],
+    ['run.failed', 'timeout', true],
+  ]);
+  expect(pairs(followed)).toEqual(pairs(live));
+
+  const body = await execute('parity-body', () => {
+    throw new Error('body failure');
+  });
+  const bodyFailed = JSON.parse(body.at(-1) ?? '') as Record<string, unknown>;
+  expect(bodyFailed['ev']).toBe('run.failed');
+  expect(bodyFailed).not.toHaveProperty('errorKind');
+  expect(bodyFailed).not.toHaveProperty('retryable');
+  expect(
+    recordEventLines(await readRun({ ...options(), runId: 'parity-body' }), null, 'all')
+      .lines.map((text) => JSON.parse(text) as Record<string, unknown>)
+      .find((line) => line['ev'] === 'run.failed'),
+  ).not.toHaveProperty('errorKind');
 });

@@ -3,6 +3,7 @@ import { errorKind } from '../src/workflow/runtime/step-error.js';
 
 import { workflowErrorDocument } from '../src/cli/workflow-errors.js';
 import {
+  attemptErrorKind,
   failureKind,
   rootCauseErrorKind,
   rootCauseSummary,
@@ -46,6 +47,27 @@ function step(status: StepRecord['status'], kinds: AttemptRecord['errorKind'][] 
       : {}),
   };
 }
+
+describe('attemptErrorKind', () => {
+  it('returns the recorded kind, and null for a missing kind or a missing attempt', () => {
+    expect(attemptErrorKind({ errorKind: 'rate-limit' })).toBe('rate-limit');
+    expect(attemptErrorKind({ errorKind: 'unknown' })).toBe('unknown');
+    expect(attemptErrorKind({})).toBeNull();
+    expect(attemptErrorKind(undefined)).toBeNull();
+  });
+
+  it('is what stepErrorKind reads from the last attempt', () => {
+    for (const kinds of [
+      ['rate-limit', 'authentication'],
+      ['timeout'],
+      ['schema', undefined],
+      [],
+    ] as const) {
+      const record = step('failed', [...kinds]);
+      expect(stepErrorKind(record)).toBe(attemptErrorKind(record.attemptHistory?.at(-1)));
+    }
+  });
+});
 
 describe('stepErrorKind', () => {
   it('uses the last attempt, and null without an attempt or a kind', () => {

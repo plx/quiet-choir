@@ -1,4 +1,5 @@
 import type { ErrorKind } from '../runtime/model.js';
+import type { AttemptRecord } from '../runtime/record.js';
 import type { RunRecord, StepRecord } from '../runtime/store.js';
 import { isTransientErrorKind } from '../runtime/step-error.js';
 
@@ -9,9 +10,16 @@ export interface RootCauseSummary {
   readonly errorKind: ErrorKind | null;
 }
 
+/** One attempt's recorded error kind, or null for a missing attempt or a missing kind. @internal */
+export function attemptErrorKind(
+  attempt: Pick<AttemptRecord, 'errorKind'> | undefined,
+): ErrorKind | null {
+  return attempt?.errorKind ?? null;
+}
+
 /** A step's error kind: the kind of its last recorded attempt, or null without one. @internal */
 export function stepErrorKind(step: Pick<StepRecord, 'attemptHistory'>): ErrorKind | null {
-  return step.attemptHistory?.at(-1)?.errorKind ?? null;
+  return attemptErrorKind(step.attemptHistory?.at(-1));
 }
 
 /**

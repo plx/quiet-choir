@@ -6,6 +6,8 @@ import {
 } from '../src/workflow/loader/event-follow.js';
 import { EVENT_LINE_MAX_BYTES, type EventLine } from '../src/workflow/loader/event-line.js';
 import type { AttemptRecord, RunRecord, StepRecord } from '../src/workflow/runtime/record.js';
+import { rootCauseSummary } from '../src/workflow/loader/failure-kind.js';
+import type { ErrorKind } from '../src/workflow/runtime/model.js';
 import type { ExecutionRecord, RunEvent } from '../src/workflow/runtime/observability-model.js';
 
 /** Fields a test may set, including to undefined to model an older record that lacks them. */
@@ -173,7 +175,12 @@ describe('recordEventLines derivation', () => {
     expect(lines[3]).toBe(
       `{"t":"${at(10)}","run":"r1","ev":"step.completed","step":"local","ms":10,"phase":"review"}`,
     );
-    expect(parsed[4]).toMatchObject({ harness: 'claude', attempt: 1 });
+    expect(parsed[4]).toMatchObject({
+      harness: 'claude',
+      attempt: 1,
+      errorKind: null,
+      retryable: false,
+    });
     expect(parsed[4]).not.toHaveProperty('costUsd');
     expect(parsed[5]).toMatchObject({ harness: 'claude', costUsd: 0.25, ms: 30 });
     expect(parsed[5]).not.toHaveProperty('attempt');
@@ -187,6 +194,8 @@ describe('recordEventLines derivation', () => {
       run: 'r1',
       ev: 'run.failed',
       step: 'agent',
+      errorKind: null,
+      retryable: false,
       ms: 90,
       msg: 'Step agent failed',
     });
@@ -358,6 +367,174 @@ describe('recordEventLines step errors', () => {
     const [text] = read(run).lines.filter((line) => line.includes('"step":"big"'));
     expect(Buffer.byteLength(text ?? '')).toBeLessThanOrEqual(EVENT_LINE_MAX_BYTES);
     expect((JSON.parse(text ?? '') as EventLine).msg?.endsWith('…')).toBe(true);
+  });
+});
+
+describe('recordEventLines failure kinds', () => {
+  const failed = (...kinds: (ErrorKind | undefined)[]): AttemptRecord[] =>
+    kinds.map((errorKind, index) =>
+      attempt(index + 1, 'failed', 10 * (index + 1), {
+        errorKind,
+      }),
+    );
+  const pairOf = (line: EventLine | undefined): unknown => [line?.errorKind, line?.retryable];
+
+  it('writes each failed attempt with its own recorded kind and retryable flag', () => {
+    const run = record({
+      steps: { flaky: step(failed('rate-limit', 'schema', undefined), { status: 'failed' }) },
+    });
+    const lines = parse(read(run).lines).filter((line) => line.step === 'flaky');
+    expect(lines.map((line) => [line.ev, line.attempt, line.errorKind, line.retryable])).toEqual([
+      ['step.failed', 1, 'rate-limit', true],
+      ['step.failed', 2, 'schema', false],
+      ['step.failed', 3, null, false],
+    ]);
+    expect(read(run).lines[1]).toBe(
+      `{"t":"${at(10)}","run":"r1","ev":"step.failed","step":"flaky","attempt":1,"errorKind":"rate-limit","retryable":true,"ms":10,"msg":"boom"}`,
+    );
+  });
+
+  it('matches the step kind for the last failed attempt and leaves step.settled alone', () => {
+    const history = failed('timeout', 'unknown');
+    const run = record({
+      steps: {
+        soft: step(history, { status: 'settled-failed' }),
+        hard: step(failed('timeout', 'idle-timeout'), { status: 'failed' }),
+      },
+    });
+    const lines = parse(read(run).lines);
+    const soft = lines.filter((line) => line.step === 'soft');
+    expect(soft.map((line) => [line.ev, line.errorKind, line.retryable])).toEqual([
+      ['step.failed', 'timeout', true],
+      ['step.settled', undefined, undefined],
+    ]);
+    const hard = lines.filter((line) => line.step === 'hard').at(-1);
+    expect(pairOf(hard)).toEqual(['idle-timeout', true]);
+  });
+
+  it('writes null and false for a failed step without attempt history', () => {
+    const run = record({
+      steps: {
+        broken: step([], { status: 'failed', attempts: 1, finishedAt: at(27), error: 'broken' }),
+        old: step([], { status: 'settled-failed', attempts: 1, finishedAt: at(28) }),
+        done: step([], { status: 'completed', attempts: 1, finishedAt: at(29) }),
+      },
+    });
+    const lines = parse(read(run).lines);
+    expect(lines.find((line) => line.step === 'broken')).toMatchObject({
+      ev: 'step.failed',
+      errorKind: null,
+      retryable: false,
+    });
+    for (const id of ['old', 'done']) {
+      const found = lines.find((line) => line.step === id);
+      expect(found).not.toHaveProperty('errorKind');
+      expect(found).not.toHaveProperty('retryable');
+    }
+  });
+
+  it('gives run.failed the root cause kind in the latest execution, as rootCause reports', () => {
+    const run = record({
+      status: 'failed',
+      executions: [{ ...execution(1, 0, 90), outcome: 'failed' }],
+      events: [event('run.started', 0), event('run.failed', 90, { stepId: 'a' })],
+      rootCause: { stepId: 'a', error: 'boom', errorKind: 'overloaded', effect: null },
+      steps: { a: step(failed('overloaded'), { status: 'failed' }) },
+    });
+    const last = parse(read(run).lines).at(-1);
+    expect(last).toMatchObject({ ev: 'run.failed', step: 'a' });
+    expect(pairOf(last)).toEqual([rootCauseSummary(run)?.errorKind, true]);
+    // An older record without the stored kind falls back through the root step's last attempt.
+    const legacy = parse(
+      read({ ...run, rootCause: { stepId: 'a', error: 'boom', effect: null } }).lines,
+    ).at(-1);
+    expect(pairOf(legacy)).toEqual(['overloaded', true]);
+  });
+
+  it('writes no pair on run.failed without a root effect', () => {
+    const run = record({
+      status: 'failed',
+      executions: [{ ...execution(1, 0, 90), outcome: 'failed' }],
+      events: [event('run.started', 0), event('run.failed', 90)],
+      rootCause: { stepId: null, error: 'body', errorKind: null, effect: null },
+    });
+    const last = parse(read(run).lines).at(-1);
+    expect(last).toMatchObject({ ev: 'run.failed' });
+    expect(last).not.toHaveProperty('errorKind');
+    expect(last).not.toHaveProperty('retryable');
+  });
+
+  it('takes an earlier execution run.failed kind from the root step attempt in that execution', () => {
+    const run = record({
+      status: 'failed',
+      executions: [
+        { ...execution(1, 0, 50), outcome: 'failed' },
+        { ...execution(2, 60, 120), outcome: 'failed' },
+      ],
+      events: [
+        event('run.started', 0),
+        event('run.failed', 50, { stepId: 'a' }),
+        event('run.started', 60, { execution: 2 }),
+        event('run.failed', 120, { execution: 2, stepId: 'b' }),
+        event('run.failed', 55, { execution: 1, stepId: 'gone' }),
+      ],
+      // A later resume replaced the root cause with another step's.
+      rootCause: { stepId: 'b', error: 'boom', errorKind: 'schema', effect: null },
+      steps: {
+        a: step(
+          [
+            attempt(1, 'failed', 20, { errorKind: 'rate-limit', execution: 1 }),
+            attempt(2, 'failed', 40, { errorKind: 'timeout', execution: 1 }),
+            attempt(3, 'completed', 80, { execution: 2 }),
+          ],
+          { status: 'completed' },
+        ),
+        b: step([attempt(1, 'failed', 100, { errorKind: 'schema', execution: 2 })], {
+          status: 'failed',
+        }),
+      },
+    });
+    const failures = parse(read(run).lines).filter((line) => line.ev === 'run.failed');
+    expect(failures.map((line) => [line.step, line.errorKind, line.retryable])).toEqual([
+      ['a', 'timeout', true],
+      ['gone', undefined, undefined],
+      ['b', 'schema', false],
+    ]);
+    expect(failures[1]).not.toHaveProperty('errorKind');
+  });
+
+  it('omits the pair for an earlier run.failed when the record has no attempt in that execution', () => {
+    const run = record({
+      status: 'failed',
+      executions: [
+        { ...execution(1, 0, 50), outcome: 'failed' },
+        { ...execution(2, 60, 120), outcome: 'failed' },
+      ],
+      events: [event('run.started', 0), event('run.failed', 50, { stepId: 'a' })],
+      rootCause: null,
+      steps: {
+        a: step([attempt(1, 'failed', 90, { errorKind: 'timeout', execution: 2 })], {
+          status: 'failed',
+        }),
+      },
+    });
+    const earlier = parse(read(run).lines).find((line) => line.ev === 'run.failed');
+    expect(earlier).toMatchObject({ step: 'a' });
+    expect(earlier).not.toHaveProperty('errorKind');
+  });
+
+  it('keeps an oversized step.failed line within 512 bytes and keeps the pair', () => {
+    const run = record({
+      steps: {
+        [`${'a/'.repeat(200)}x`]: step(
+          [attempt(1, 'failed', 10, { error: 'e'.repeat(2000), errorKind: 'timeout' })],
+          { status: 'failed', phase: 'p'.repeat(300) },
+        ),
+      },
+    });
+    const [text] = read(run).lines.filter((line) => line.includes('"ev":"step.failed"'));
+    expect(Buffer.byteLength(text ?? '')).toBeLessThanOrEqual(EVENT_LINE_MAX_BYTES);
+    expect(JSON.parse(text ?? '')).toMatchObject({ errorKind: 'timeout', retryable: true });
   });
 });
 
