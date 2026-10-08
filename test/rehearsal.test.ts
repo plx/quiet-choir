@@ -725,6 +725,62 @@ describe('typed fixture error kinds', () => {
     ]);
   });
 
+  describe('replays an exported recovery hint without appending it again', () => {
+    const settling = workflow(async (ctx) => {
+      const settled = await ctx.claude.text('x', {
+        prompt: 'p',
+        onError: 'return',
+        retry: { maxAttempts: 1 },
+      });
+      return settled.ok ? settled.value.output : `${settled.error.kind}|${settled.error.message}`;
+    });
+    const roundTrip = async (source: Awaited<ReturnType<typeof runWorkflow>>, hint: string) => {
+      const options = await setup();
+      const message = source.steps['x']?.settledError?.message ?? '';
+      expect(message.split(hint)).toHaveLength(2);
+      const fixtures = fixturesFromRun(source);
+      const replay = await runWorkflow(settling, {
+        ...options,
+        runId: 'replay',
+        harness: new FixtureHarness(fixtures),
+      });
+      // A fixture rule prefixes its step, so only an unprefixed adapter message gains `Step x: `.
+      const replayed = message.startsWith('Step x: ') ? message : `Step x: ${message}`;
+      expect(replay.steps['x']?.settledError?.message).toBe(replayed);
+      expect(replay.output).toBe(`${String(source.steps['x']?.settledError?.kind)}|${replayed}`);
+      expect(JSON.stringify(fixturesFromRun(replay))).toBe(JSON.stringify(fixtures));
+    };
+
+    it.each([
+      ['turn-limit', 'Step x hit maxTurns='],
+      ['budget-limit', 'Step x hit maxBudgetUsd='],
+    ] as const)('for a %s failure', async (kind, hint) => {
+      const options = await setup();
+      const source = await runWorkflow(settling, {
+        ...options,
+        harness: new FixtureHarness({ version: 1, calls: [{ step: 'x', error: 'capped', kind }] }),
+      });
+      expect(source.steps['x']?.settledError?.kind).toBe(kind);
+      await roundTrip(source, hint);
+    });
+
+    it('for an idle-timeout failure from a plain process error', async () => {
+      const options = await setup();
+      const stalled: Harness = {
+        invoke: () =>
+          Promise.reject(
+            Object.assign(new Error('fake produced no output for 100ms (idleTimeoutMs).'), {
+              code: 'QUIET_CHOIR_IDLE_TIMEOUT',
+            }),
+          ),
+      };
+      const source = await runWorkflow(settling, { ...options, harness: stalled });
+      expect(source.steps['x']?.settledError?.kind).toBe('idle-timeout');
+      expect(fixturesFromRun(source).calls[0]).toMatchObject({ kind: 'idle-timeout' });
+      await roundTrip(source, 'Step x produced no output for idleTimeoutMs=');
+    });
+  });
+
   it('does not retry a kind that retry.on leaves out', async () => {
     const options = await setup();
     const harness = new FixtureHarness({

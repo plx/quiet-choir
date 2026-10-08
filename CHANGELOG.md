@@ -6,7 +6,9 @@
   for failures the workflow absorbed (behavior change for exported files), so a replay takes the
   same kind-based branches and `retry.on` decisions as the original run. A failure whose recorded
   kind is `unknown` (or `cancelled`, which would be fatal on replay) exports exactly as before, and
-  the attempt count is still not preserved (#305).
+  the attempt count is still not preserved. A replayed `turn-limit`, `budget-limit` or
+  `idle-timeout` rule whose message already carries the step's recovery hint keeps it instead of
+  gaining a second one, so replaying and re-exporting is stable (#305).
 
 - `--accept-code-change` now refuses, before changing the run, a resume that would meet a settled
   map whose `items`, `keys`, `version` or `cwd` changed after an item completed, or any changed map
