@@ -11,8 +11,9 @@
  * - A run with no recorded step or map gets no hint: there is nothing to reuse.
  * - Only a configuration or authoring failure, or a settled map whose only change is its mapper,
  *   suggests `--accept-code-change`. A grant failure names `--grant` (with the access class alone
- *   when call-site capability overrides make a profile grant ineffective), a replay divergence names
- *   `workflow resume RUN --strict-replay` and `--fork-from`, and any other settled map change names `--fork-from`.
+ *   when call-site capability overrides make a profile grant ineffective), a replay divergence
+ *   names `workflow resume RUN --strict-replay` and `--fork-from`, and any other settled map change
+ *   names `--fork-from`.
  * - A divergence with unchanged source blames a value computed in the body outside a durable effect.
  * - A configuration or authoring failure after all recorded work is terminal keeps the re-finalize
  *   text, including "All recorded work has terminal outcomes" and "re-finalize".
