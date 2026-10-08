@@ -392,6 +392,7 @@ The loader's pure `runNextCommands` chooses a failed run's entries from that cau
 | -------------------------------------------------------------- | --------------------------------------------------------------- |
 | any, when the run recorded no step or map                      | none, matching the absent hint                                  |
 | `grant`                                                        | `execute --resume --run-id RUN --state-dir DIR --grant PROFILE` |
+| `grant` with `classOnly`                                       | `execute --resume --run-id RUN --state-dir DIR --grant ACCESS`  |
 | `divergence`                                                   | a fork from the stored entrypoint                               |
 | `map-changed`, mapper only                                     | `resume … --accept-code-change`, then a fork                    |
 | `map-changed`, otherwise                                       | a fork                                                          |
@@ -399,12 +400,14 @@ The loader's pure `runNextCommands` chooses a failed run's entries from that cau
 | `configuration`, `authoring`, `effect`, `cancelled`, or absent | `resume RUN --state-dir DIR`, unchanged                         |
 
 The grant entry uses `execute --resume` because `workflow resume` has no `--grant` flag; it resumes
-the stored entrypoint like `resume`, and the grant is saved for later resumes. Resume entries repeat
-the recorded launch policy as before. A legacy (format 1) checkpoint gets no fork entry, as for
-`run.incompatible`. `<LIMIT>` is a placeholder for a higher cap or `off`; the flag parser refuses it
-unreplaced. The divergence entry is only the fork: suggesting `resume --strict-replay` belongs with
-the hint wording (#298). Records from before revision 10 have no cause and keep the plain resume.
-Stale and suspended entries do not change.
+the stored entrypoint like `resume`, and the grant is saved for later resumes. A call with call-site
+capability overrides ignores named-profile grants, so its cause carries `classOnly: true` and both
+the hint and the entry name only the access class. Resume entries repeat the recorded launch policy
+as before. A legacy (format 1) checkpoint gets no fork entry, as for `run.incompatible`. `<LIMIT>`
+is a placeholder for a higher cap or `off`; the flag parser refuses it unreplaced. The divergence
+entry is only the fork: suggesting `resume --strict-replay` belongs with the hint wording (#298).
+Records from before revision 10 have no cause and keep the plain resume. Stale and suspended entries
+do not change.
 
 Limits: a grant failure on the first effect records nothing, so it gets no hint and no entry,
 although `execute --resume --grant` would work; hint and entry stay consistent, and a later change

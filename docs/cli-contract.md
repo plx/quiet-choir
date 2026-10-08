@@ -663,7 +663,7 @@ placeholders. Text inspect and human failure messages print each entry as
 | Source                                                | Entries                                                                                                                   |
 | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | `workflow.failed`, saved failed run, nothing recorded | none, as there is no recovery hint: the run recorded no step or map                                                       |
-| `workflow.failed`, saved failed run, grant cause      | `execute --resume --run-id RUN --state-dir DIR --grant PROFILE` (`workflow resume` takes no `--grant`)                    |
+| `workflow.failed`, saved failed run, grant cause      | `execute --resume --run-id RUN --state-dir DIR --grant PROFILE`, or `ACCESS` for call-site overrides                      |
 | `workflow.failed`, saved failed run, divergence       | a fork from the stored entrypoint; none for a legacy checkpoint                                                           |
 | `workflow.failed`, saved failed run, map changed      | `resume … --accept-code-change`, then a fork, when only the mapper changed; otherwise only a fork                         |
 | `workflow.failed`, saved failed run, budget stop      | `resume RUN --state-dir DIR <FLAG> <LIMIT>`, FLAG being the stopping cap's flag                                           |
@@ -701,7 +701,11 @@ A failed run's entries follow its saved `recoveryCause`, the same typed cause th
 plain resume would repeat a grant, divergence, settled-map or run-budget failure, so those causes
 get the grant, fork or cap the hint names. The grant and cap entries repeat the recorded launch
 policy, as resume entries do; `--grant` is saved with the run, so later resumes need not repeat it.
-A `workflow.interrupted` or `start.timeout` document whose saved run failed gets the same entries.
+The grant entry uses `execute --resume` because `workflow resume` takes no `--grant`. A call with
+call-site capability overrides (under `strictProfiles: false`) ignores named-profile grants, so its
+grant cause carries `classOnly` and its entry grants the access class (`write` or `exec`) instead of
+the profile. A `workflow.interrupted` or `start.timeout` document whose saved run failed gets the
+same entries.
 
 `run.locked` refusals from `resume`, `execute`, `start`, `tick`, `clean`, `rm`, `cancel` and
 `unlock` build the unlock entry once, in the runtime, and render both the prose and

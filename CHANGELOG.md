@@ -6,12 +6,13 @@
   change): failed and cancelled runs save the typed `recoveryCause` behind their `recoveryHint`
   (`RecoveryCause` is now a public type), and a failed run's `next` entries in failure documents,
   `inspect --summary` and `list --full` follow it. A grant failure gets
-  `workflow execute --resume --run-id RUN --state-dir DIR --grant <profile>`, a replay divergence a
-  fork, a settled map change a fork (after an `--accept-code-change` resume when only the mapper
-  changed), and a run-budget stop `resume` with the cap's flag and the new `<LIMIT>` placeholder. A
-  failed run that recorded no step or map now gets no entry, matching its absent hint. Other causes
-  and records from older builds keep the plain resume. A revision-9 build refuses to rewrite a
-  record that carries `recoveryCause` (#284).
+  `workflow execute --resume --run-id RUN --state-dir DIR --grant <profile>` (`--grant <access>`,
+  and a cause with `classOnly`, when call-site capability overrides make profile grants
+  ineffective), a replay divergence a fork, a settled map change a fork (after an
+  `--accept-code-change` resume when only the mapper changed), and a run-budget stop `resume` with
+  the cap's flag and the new `<LIMIT>` placeholder. A failed run that recorded no step or map now
+  gets no entry, matching its absent hint. Other causes and records from older builds keep the plain
+  resume. A revision-9 build refuses to rewrite a record that carries `recoveryCause` (#284).
 
 - Run-budget recovery hint (fix; no record format, `schemaRevision` or step identity change): a run
   stopped by `--max-run-cost-usd`, `--max-run-agent-attempts` or a window stop that cannot wait
