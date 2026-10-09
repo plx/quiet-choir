@@ -194,11 +194,14 @@ computation, in a quarantined object store:
   `remote.<name>.promisor` with `git config --name-only --get-regexp` and, if either is set, reads
   `git --version` and refuses with a `ConfigurationError` on older (or unrecognized) Git. The same
   memoized check runs before the rehearsal's first `git status` read (the ledger's dirty-source
-  check or a `checkout` target's check), which is refused the same way instead of running. One store
-  per run, not per merge, keeps a preview's commit resolvable by later rehearsal steps, such as an
-  isolation with `base: { commit }` or a stacked merge; real commits still resolve through the
-  alternate. The runner removes the directory when the execution ends, on every path, after its
-  operations drain. A killed process leaks it in the temporary directory.
+  check or a `checkout` target's check), which is refused the same way instead of running; a second
+  memoized check, before `git status` reads only, lists `submodule.<name>.url` and refuses the read
+  the same way when any submodule is initialized, since `status` recurses into submodules that can
+  themselves be partial clones (`merge-tree` does not recurse into them). One store per run, not per
+  merge, keeps a preview's commit resolvable by later rehearsal steps, such as an isolation with
+  `base: { commit }` or a stacked merge; real commits still resolve through the alternate. The
+  runner removes the directory when the execution ends, on every path, after its operations drain. A
+  killed process leaks it in the temporary directory.
 - The real merge and the preview share the code, not just the idea: `computeIntegration` (virtual
   merge-base commits, `merge-tree`, conflict collection, the `onConflict: 'fail'` error, squash and
   the custom-message commit), `commitTree` and `resolveCommit`. Inputs are checked the same way
@@ -277,9 +280,10 @@ the real code and messages:
   because `git status` otherwise refreshes stat data in the index. The shared status check (the real
   ledger's, the real `checkout` target check and the rehearsal's) runs without rename detection:
   whether its output is empty does not depend on renames, and rename detection reads blob contents.
-  The rehearsal still refuses its `status` reads in a partial clone on Git older than 2.44 (it
-  ignores `GIT_NO_LAZY_FETCH`), since `status` without rename detection is not known to read no
-  missing object there. Close variants are refused before they reach the runner.
+  The rehearsal still refuses its `status` reads in a partial clone, or with an initialized
+  submodule, on Git older than 2.44 (it ignores `GIT_NO_LAZY_FETCH`), since `status` without rename
+  detection is not known to read no missing object there. Close variants are refused before they
+  reach the runner.
 - The checks run through a read-only driver the rehearsal never replaces, so they still run after a
   merge preview has switched rehearsal Git to the quarantined driver, which refuses them.
 - `git worktree list` is ordered against a concurrent `worktree add` only by the in-process

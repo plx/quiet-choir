@@ -14,7 +14,8 @@
   ledger skips these and keeps the cache root the ledger pinned, as the real resume does. The
   rehearsal's read-only Git additionally runs exactly `git --version`,
   `git status --porcelain --untracked-files=normal --no-renames` (with `GIT_OPTIONAL_LOCKS=0`, so it
-  never refreshes the index; in a partial clone on Git older than 2.44, which ignores
+  never refreshes the index; in a partial clone, or with an initialized submodule (which `status`
+  recurses into and which can itself be a partial clone), on Git older than 2.44, which ignores
   `GIT_NO_LAZY_FETCH`, the rehearsal refuses with a configuration error instead of running it),
   `git check-ref-format <ref>`, `git worktree list --porcelain -z` and `git symbolic-ref -q <ref>`,
   and still writes nothing to the repository; its worktree listing is ordered only against runs in
