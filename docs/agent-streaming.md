@@ -14,7 +14,31 @@ initialization reports them. The first initialization is immediate; subsequent s
 to about ten per second. These notifications are lossy and never journaled. Finished events describe
 the outcome after local JSON/Zod validation. Observer failures cannot fail a call.
 
+A tool summary names the tool and, when the native input has one, a short target:
+`Claude tool: Edit …/src/harnesses/stream.ts`, `Codex command_execution: item.started git status`.
+Claude targets come only from the first tool call's `file_path`, `notebook_path`, `command`,
+`pattern`, `url`, `query`, `path` or `description` input, in that order, with ` (+N more)` when the
+message carries further tool calls; `StructuredOutput` in a structured call has none, because its
+input is the result. Codex targets are a `command_execution` command (one `bash`/`zsh`/`sh` `-c` or
+`-lc` wrapper is stripped), a `file_change`'s first path with ` (+N more)` for further files, an
+`mcp_tool_call`'s `server/tool`, or a `web_search` query. A target keeps only its first line, with
+control characters and whitespace runs collapsed, and is at most 80 code points: a path keeps its
+tail after a leading `…`, anything else its head before a trailing `…`. An http(s) URL loses its
+userinfo, query and fragment. File contents, edit strings, prompts, MCP arguments and command output
+are never read, but the first 80 characters of a command can appear, so an inline secret there can
+reach the progress line. Progress stays lossy stderr/`onEvent` output and is never journaled. Lines
+without a usable target keep their plain summary.
+
+Claude reports `thinking_tokens` status lines about once a second while it thinks. They read
+`Claude: thinking (~N tokens)` (or `Claude: thinking` without an estimate), and a burst of
+consecutive thinking lines offers its first line and then at most one line per 10 seconds; any other
+progress line starts a new burst.
+
 Both `agent.finished` and `step.completed` can carry the same usage; do not sum across event types.
+`agent.finished` also carries `durationMs`, the attempt's monotonic duration including any admission
+wait (the same value as `attemptHistory[].durationMs`), and its progress line shows
+`completed durationMs=1234`. It is not `diagnostics.durationMs`, which is the duration the native
+CLI reported.
 
 Each attempt saves the first native session ID before processing more stdout. Claude also receives a
 UUID before spawn, stored as `requestedSessionId`. Derive it with
@@ -44,6 +68,13 @@ each stream to recover its output, including split UTF-8 characters. Cross-strea
 callback arrival order, not a total order of native writes. The final
 `{ "type": "truncated", "reason": "maxTranscriptBytes" }` marker is included in the cap. Transcript
 truncation does not fail a valid call.
+
+`workflow transcript RUN STEP [--attempt N] [--stream stderr]` does that decoding: it reads the run
+record without importing workflow code, selects the agent step's latest (or `--attempt N`) attempt,
+and writes the selected stream's native bytes to stdout unchanged, so Claude stream-json or Codex
+JSONL can go straight into `jq`. A truncated transcript prints a warning on stderr. It reads only a
+retained receipt whose file resolves inside the run's `attempts/` directory, opened without
+following symlinks. See [the CLI contract](cli-contract.md#workflow-transcript) for its failures.
 
 | Policy / CLI flag                               | Default | Meaning                                                                 |
 | ----------------------------------------------- | ------- | ----------------------------------------------------------------------- |

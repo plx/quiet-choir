@@ -7,7 +7,22 @@ stdout stays clean. Embedded observers receive `agent.started`, `agent.progress`
 journaled, and cannot fail a call. Final success still requires a valid terminal protocol,
 successful process exit and local JSON/Zod validation. Events after a native result are allowed.
 
+A tool summary ends with a short target when the native input has one, such as
+`Claude tool: Edit …/src/app.ts` or `Codex command_execution: item.started git status`. Claude reads
+only the first tool call's `file_path`, `notebook_path`, `command`, `pattern`, `url`, `query`,
+`path` or `description` (adding ` (+N more)` for further calls; never for structured
+`StructuredOutput`); Codex uses the command (one `sh -c`/`-lc` wrapper stripped), the first changed
+file (` (+N more)`), the MCP `server/tool` or the search query. Targets keep their first line, at
+most 80 code points (a path keeps its tail, anything else its head, cut with `…`), and URLs lose
+userinfo, query and fragment. File contents, edit strings, prompts, MCP arguments and command output
+never appear, but a command's first 80 characters can, so keep secrets out of inline commands.
+Claude `thinking_tokens` lines read `Claude: thinking (~N tokens)`; a burst of them shows its first
+line and then at most one per 10 seconds.
+
 Both `agent.finished` and `step.completed` can carry the same usage; do not sum across event types.
+`agent.finished` also has `durationMs`, the attempt's monotonic duration including admission waiting
+(as in `attemptHistory[].durationMs`, unlike the native `diagnostics.durationMs`); its progress line
+shows `completed durationMs=1234`.
 
 ## Early session IDs
 
@@ -32,6 +47,12 @@ outside the worktree; choose explicit storage accordingly because raw output can
 Each JSONL entry has `stream: "stdout" | "stderr"` and `base64`. Decode and concatenate entries for
 each stream to recover raw bytes, including split UTF-8 characters. A capped file ends with
 `{ "type": "truncated", "reason": "maxTranscriptBytes" }`; this marker counts toward its cap.
+`workflow transcript RUN STEP [--attempt N] [--stream stderr]` does this for you: it writes the
+latest (or Nth) attempt's native bytes to stdout unchanged, ready for `jq`, and warns on stderr when
+the file was capped. An unknown run exits 3 (`run.not_found`); a wrong step, a non-agent step, an
+unknown attempt or a missing transcript (`transcripts: off`, or removed by `on-failure`) exits 2
+(`usage.flag` with `details.reason`); a missing, escaping or malformed file exits 3
+(`run.unreadable`).
 
 | CLI flag / policy                               | Default | Purpose                                                      |
 | ----------------------------------------------- | ------- | ------------------------------------------------------------ |

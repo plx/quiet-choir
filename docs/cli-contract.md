@@ -686,6 +686,33 @@ for what the record can and cannot supply.
   `--wait-created` without `--follow` are `usage.flag` (exit 2).
 - `--log-level debug` reports each read on stderr (`Events: read run …`).
 
+## Workflow transcript
+
+`workflow transcript RUN STEP [--attempt N] [--stream stdout|stderr] [--state-dir DIR] [--json]`
+decodes one agent attempt's
+[private transcript](agent-streaming.md#private-transcripts-and-independent-caps) from the persisted
+record without importing the workflow. `STEP` is the full step ID, as `inspect` shows it;
+`--attempt N` (an integer from 1) selects a recorded attempt, otherwise the latest one.
+
+- Stdout carries only the decoded native bytes of `--stream` (default `stdout`: Claude stream-json
+  or Codex JSONL, ready for `jq`), unchanged and in order; `--stream stderr` prints the native
+  stderr instead. Exit 0. A transcript cut at `maxTranscriptBytes` still exits 0 and prints a
+  one-line warning on stderr. A reader that closes the pipe stops the decode, and the command exits
+  0 without a message.
+- `--json` only turns a failure into a `workflow.error` document on stdout (with the compact
+  `summary`, never the whole record); without it the failure message goes to stderr.
+- An unknown run is `run.not_found` (exit 3, with candidate state directories, as for the other run
+  commands).
+- A step or attempt that cannot be selected is `usage.flag` (exit 2; nothing changed) with
+  `details: {runId, stepId, attempt, reason}`. `reason` is `unknown-step` (with `agentSteps`, up to
+  20 agent step IDs that have a retained transcript), `not-agent`, `unknown-attempt`, or
+  `no-transcript` (the attempt ran under `transcripts: off`, or `on-failure` removed it after a
+  successful attempt).
+- A retained receipt whose file is missing or unreadable, resolves outside the run's `attempts/`
+  directory, is a symlink, or holds a malformed entry is `run.unreadable` (exit 3, with
+  `details: {runId, stepId, attempt, path}`). The containment check runs before any read, so a
+  hand-edited record cannot make the command print another file.
+
 ## Next commands
 
 Every failure document has a top-level `next` array, and `inspect --json --summary` (and

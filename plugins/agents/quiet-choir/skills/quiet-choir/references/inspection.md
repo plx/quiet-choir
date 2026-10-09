@@ -395,9 +395,11 @@ and does not increment attempts. Observer synchronous exceptions and asynchronou
 ignored so they cannot invalidate execution. Observer promises are not awaited and do not keep the
 run lock held; synchronous observer work still runs inline. Notifications are not durably queued or
 guaranteed to be delivered. `agent.started`, `agent.progress`, and `agent.finished` add bounded
-native activity and final attempt diagnostics. Use `workflow execute --progress` for stderr activity
-while preserving JSON stdout. These are lossy summaries, not token delivery or a durable queue; use
-[attempt records and transcripts](agent-streaming.md) for retained evidence.
+native activity and final attempt diagnostics; `agent.finished` carries the attempt's monotonic
+`durationMs`, the same value as `attemptHistory[].durationMs`. Use `workflow execute --progress` for
+stderr activity while preserving JSON stdout. These are lossy summaries, not token delivery or a
+durable queue; use [attempt records and transcripts](agent-streaming.md) for retained evidence, and
+`workflow transcript RUN STEP` to print an attempt's decoded native output.
 
 Usage is computed by `summarizeUsage(run)`, with one entry per local agent attempt across
 executions. Replays count once; copied fork attempts are excluded. Full JSON inspection adds
