@@ -2,7 +2,7 @@ import { defineWorkflow, z } from '../../../src/index.js';
 
 const text = { input: {}, schema: z.string(), run: () => 'value' };
 
-// QC005 on every root receiver and loop form; within and dynamic IDs are clean.
+// QC005 on every root receiver and loop form; per-item within prefixes and dynamic IDs are clean.
 export default defineWorkflow({
   name: 'durability-qc005-forms',
   version: '1',

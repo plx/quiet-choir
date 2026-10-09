@@ -115,8 +115,39 @@ describe('durability lint', () => {
 
   it('flags literal IDs in array callbacks, while loops and reuse on agent and exec receivers', () => {
     // claude.text in items.map, exec.json in a while loop, ctx.exec reused after an if that does
-    // not return; within(ctx.id(...)) and ctx.id IDs in a loop are clean.
+    // not return; a per-item within(ctx.id(...)) prefix and ctx.id IDs in a loop are clean.
     expect(found('qc005-forms')).toEqual(['QC005@13', 'QC005@17', 'QC005@22']);
+    expect(of('qc005-forms')[0]?.message).toContain(
+      "Literal ID 'review' is inside a loop of its ID namespace, so every iteration reuses it",
+    );
+  });
+
+  it('keys IDs by literal scope and within prefix and flags literal prefixes reused in loops', () => {
+    // A const within view (15) and an inline within (17) reusing an ID; sibling literal scopes
+    // (20) and a scope and a within sharing one path (22); a literal within in a for-of body (25)
+    // and a literal scope in an array callback (29), reported at the prefix; a view created before
+    // a loop and used in it (33) and a fixed-path view in a root named-map callback (38). Different
+    // prefixes, nested scopes through a view, per-item, templated and variable prefixes, a literal
+    // prefix whose effects use ctx.id, exclusive branches and a view's calls inside its own named
+    // maps (the item path) are clean.
+    expect(found('qc005-prefixes')).toEqual([
+      'QC005@15',
+      'QC005@17',
+      'QC005@20',
+      'QC005@22',
+      'QC005@25',
+      'QC005@29',
+      'QC005@33',
+      'QC005@38',
+    ]);
+    const message = (line: number) =>
+      of('qc005-prefixes').find((finding) => finding.line === line)?.message;
+    expect(message(25)).toBe(
+      "Literal prefix 'x' in ctx.within(...) is inside a loop, so every iteration reuses the literal IDs under it (such as 'per' at line 26); derive the prefix per item with ctx.id(...), or use a named ctx.map.",
+    );
+    expect(message(29)).toContain("Literal prefix 'y' in ctx.scope(...) is inside a loop");
+    expect(message(33)).toContain("Literal ID 'each' is inside a loop of its ID namespace");
+    expect(message(22)).toContain("Literal ID 'leaf' is already used at line 21");
   });
 
   it('treats a callback as a loop only for standard-library iteration APIs', () => {
