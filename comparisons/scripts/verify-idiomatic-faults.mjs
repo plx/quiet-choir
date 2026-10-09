@@ -298,11 +298,13 @@ export async function extraContracts(root) {
   const qaStep = (await readRun(qaOptions)).steps['test'];
   assert.equal(qaStep.status, 'settled-failed');
   assert.equal(qaStep.settledError.kind, 'timeout');
-  await drive(verifyStage, { ...qaOptions, resume: true });
-  assert.equal(
-    (await readRun(qaOptions)).steps['test'].attemptHistory?.length,
-    qaStep.attemptHistory?.length,
-  );
+  assert.ok(qaStep.attemptHistory?.length >= 1);
+  const resumed = await drive(verifyStage, { ...qaOptions, resume: true });
+  assert.equal(resumed.result.status, 'completed');
+  assert.equal(resumed.result.output.gate, 'blocked');
+  const resumedStep = (await readRun(qaOptions)).steps['test'];
+  assert.equal(resumedStep.status, 'settled-failed');
+  assert.equal(resumedStep.attemptHistory?.length, qaStep.attemptHistory?.length);
   results.push({
     workflow: 'sdlc-orchestrator',
     fixture: 'lifecycle-verification-timeout-blocks-gate',
