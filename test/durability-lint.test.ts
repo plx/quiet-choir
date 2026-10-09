@@ -122,6 +122,16 @@ describe('durability lint', () => {
     );
   });
 
+  it('counts an early return only within its own function', () => {
+    // A return inside an arrow closure (15), a nested function declaration (24) and a scope
+    // callback (33) only leaves that function, so the later outer uses (20, 29, 38) report. A
+    // closure inside an outer early-return branch and a same-function throw are clean.
+    expect(found('qc005-function-boundary')).toEqual(['QC005@20', 'QC005@29', 'QC005@38']);
+    expect(of('qc005-function-boundary')[0]?.message).toContain(
+      "Literal ID 'x' is already used at line 15",
+    );
+  });
+
   it('keys IDs by literal scope and within prefix and flags literal prefixes reused in loops', () => {
     // A const within view (15) and an inline within (17) reusing an ID; sibling literal scopes
     // (20) and a scope and a within sharing one path (22); a literal within in a for-of body (25)
