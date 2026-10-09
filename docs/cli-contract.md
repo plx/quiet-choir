@@ -708,8 +708,13 @@ record without importing the workflow. `STEP` is the full step ID, as `inspect` 
   20 agent step IDs that have a retained transcript), `not-agent`, `unknown-attempt`, or
   `no-transcript` (the attempt ran under `transcripts: off`, or `on-failure` removed it after a
   successful attempt).
-- A retained receipt whose file is missing or unreadable, resolves outside the run's `attempts/`
-  directory, is a symlink, or holds a malformed entry is `run.unreadable` (exit 3, with
+- The recorded receipt path counts only through its
+  `RUN/attempts/<sha256 of STEP>/<attempt>.<harness>.jsonl` tail, which is read under the current
+  state directory, so a state directory reached through a symlink or moved elsewhere still works;
+  the result's `path` is still the recorded one.
+- A retained receipt whose path lacks that tail for this run and step (a step reused in a fork
+  points into its source run), or whose file is missing or unreadable, resolves outside the run's
+  `attempts/` directory, is a symlink, or holds a malformed entry is `run.unreadable` (exit 3, with
   `details: {runId, stepId, attempt, path}`). The containment check runs before any read, so a
   hand-edited record cannot make the command print another file.
 

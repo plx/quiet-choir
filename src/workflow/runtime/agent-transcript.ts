@@ -28,6 +28,11 @@ async function privateDirectory(path: string): Promise<void> {
   await chmod(path, 0o700);
 }
 
+/** The directory under a run's `attempts/` that holds a step's transcripts. @internal */
+export function transcriptDirectoryName(stepId: string): string {
+  return createHash('sha256').update(stepId).digest('hex');
+}
+
 /** Runtime-owned raw byte transcript, bounded independently of protocol parsing. @internal */
 export class AttemptTranscript implements AgentTranscriptWriter {
   readonly #path: string;
@@ -55,7 +60,7 @@ export class AttemptTranscript implements AgentTranscriptWriter {
     if (!Number.isSafeInteger(cap) || cap < 128)
       throw new Error('maxTranscriptBytes must be a safe integer of at least 128.');
     const parent = join(runDirectory, 'attempts');
-    const directory = join(parent, createHash('sha256').update(stepId).digest('hex'));
+    const directory = join(parent, transcriptDirectoryName(stepId));
     await privateDirectory(parent);
     await privateDirectory(directory);
     await syncDirectory(runDirectory);

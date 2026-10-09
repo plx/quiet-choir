@@ -74,8 +74,10 @@ truncation does not fail a valid call.
 record without importing workflow code, selects the agent step's latest (or `--attempt N`) attempt,
 and writes the selected stream's native bytes to stdout unchanged, so Claude stream-json or Codex
 JSONL can go straight into `jq`. A truncated transcript prints a warning on stderr. It reads only a
-retained receipt whose file resolves inside the run's `attempts/` directory, opened without
-following symlinks. See [the CLI contract](cli-contract.md#workflow-transcript) for its failures.
+retained receipt's `<runId>/attempts/<hash>/<file>` tail, re-rooted under the current state
+directory (so a moved or symlinked state directory still works), whose file resolves inside the
+run's `attempts/` directory, opened without following symlinks. See
+[the CLI contract](cli-contract.md#workflow-transcript) for its failures.
 
 | Policy / CLI flag                               | Default | Meaning                                                                 |
 | ----------------------------------------------- | ------- | ----------------------------------------------------------------------- |

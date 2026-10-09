@@ -1,7 +1,7 @@
 import { realpath } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { isAbsolute, join, relative, sep } from 'node:path';
 
-import { readAttemptTranscript } from '../runtime/agent-transcript.js';
+import { readAttemptTranscript, transcriptDirectoryName } from '../runtime/agent-transcript.js';
 import { runDirectory } from '../runtime/paths.js';
 import { RunRefusedError } from '../runtime/run-errors.js';
 import type { AttemptRecord, RunRecord, StepRecord } from '../runtime/store.js';
@@ -10,6 +10,8 @@ import type { TranscriptWorkflowPlan, WorkflowCommandResult } from './model.js';
 
 /** At most this many agent steps with a transcript are listed for an unknown step. */
 const maxListedSteps = 20;
+/** The `<attempt>.<harness>.jsonl` name an attempt transcript is created with. */
+const transcriptFileName = /^\d+\.[A-Za-z0-9_-]+\.jsonl$/u;
 
 /** Why `workflow transcript` could not select a transcript: always `usage.flag`. @internal */
 export type TranscriptSelectionReason =
@@ -22,9 +24,11 @@ function agentStep(step: StepRecord): boolean {
 /**
  * Decode one agent attempt's transcript of a run that `readRequiredRun` already returned. A wrong
  * step, a non-agent step, an unknown attempt or an attempt without a retained transcript is a
- * `usage.flag` failure with `details.reason`. A retained receipt whose file is missing, outside the
- * run's `attempts/` directory, a symlink or malformed throws `run.unreadable`. Decoded bytes go to
- * `onChunk` in order, and `signal` stops the read between chunks. @internal
+ * `usage.flag` failure with `details.reason`. The receipt's path counts only through its
+ * `<runId>/attempts/<step hash>/<attempt>.<harness>.jsonl` tail, re-rooted under `stateDir`. A
+ * receipt without that tail for this run and step, or whose file is missing, resolves outside the
+ * run's `attempts/` directory, is a symlink or is malformed, throws `run.unreadable`. Decoded bytes
+ * go to `onChunk` in order, and `signal` stops the read between chunks. @internal
  */
 export async function decodeStepTranscript(
   plan: TranscriptWorkflowPlan,
@@ -105,23 +109,37 @@ export async function decodeStepTranscript(
       { runId: plan.runId, stepId: plan.stepId, attempt: attempt.attempt, path: receipt.path },
       cause === undefined ? undefined : { cause },
     );
-  // A record is ordinary JSON on disk; a hand-edited path must not steer the read elsewhere.
+  // A record is ordinary JSON on disk; a hand-edited path must not steer the read elsewhere. Only
+  // the receipt's run-relative tail counts, re-rooted under this state directory, so a state
+  // directory reached through another spelling, a symlink or after a move still resolves.
   const attempts = join(runDirectory(stateDir, plan.runId), 'attempts');
+  const recorded = isAbsolute(receipt.path) ? receipt.path.split(sep).slice(-4) : [];
+  const [runId, attemptsName, hashDir, file] = recorded;
+  if (
+    runId !== plan.runId ||
+    attemptsName !== 'attempts' ||
+    hashDir !== transcriptDirectoryName(plan.stepId) ||
+    file === undefined ||
+    !transcriptFileName.test(file)
+  )
+    throw unreadable(
+      `The transcript path recorded for attempt ${String(attempt.attempt)} of step ${plan.stepId} is not ${plan.runId}/attempts/<sha256 of the step ID>/<attempt>.<harness>.jsonl; refusing to read it.${
+        step.reusedFrom === undefined
+          ? ''
+          : ` The step was reused from run ${step.reusedFrom.runId}; read the transcript there.`
+      }`,
+    );
   const inside = (root: string, path: string): boolean => {
     const rest = relative(root, path);
     return rest !== '' && rest !== '..' && !rest.startsWith(`..${sep}`) && !isAbsolute(rest);
   };
-  if (!isAbsolute(receipt.path) || !inside(attempts, resolve(receipt.path)))
-    throw unreadable(
-      `The transcript path recorded for attempt ${String(attempt.attempt)} of step ${plan.stepId} is outside ${attempts}; refusing to read it.`,
-    );
   let path: string;
   try {
     const [root, parent] = await Promise.all([
       realpath(attempts),
-      realpath(dirname(resolve(receipt.path))),
+      realpath(join(attempts, hashDir)),
     ]);
-    path = join(parent, basename(receipt.path));
+    path = join(parent, file);
     if (!inside(root, path))
       throw unreadable(
         `The transcript of attempt ${String(attempt.attempt)} of step ${plan.stepId} resolves outside ${attempts}; refusing to read it.`,

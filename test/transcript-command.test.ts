@@ -1,5 +1,5 @@
-import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { cp, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { basename, dirname, join, relative } from 'node:path';
 
 import { describe, expect } from 'vitest';
 
@@ -169,6 +169,41 @@ describe('workflow.transcript', () => {
     expect(removed.message).toContain('on-failure');
   });
 
+  it('re-roots the receipt under the current state directory', async ({ stateDir, runs }) => {
+    await seed(runs, stateDir);
+    const recordPath = join(runDirectory(stateDir, 'source'), 'run.json');
+    const record = JSON.parse(await readFile(recordPath, 'utf8')) as {
+      steps: Record<string, { attemptHistory: { transcript: { path: string } }[] }>;
+    };
+    const receipt = record.steps['task']?.attemptHistory[0]?.transcript;
+    if (!receipt) throw new Error('expected a transcript receipt');
+    const tail = relative(stateDir, receipt.path);
+
+    // The state directory reached through a symlinked alias.
+    const alias = join(stateDir, 'alias');
+    await symlink(stateDir, alias);
+    expect(await transcript(alias, { stepId: 'task' })).toMatchObject({
+      output: native.join(''),
+      result: { ok: true, path: receipt.path },
+    });
+
+    // The whole run directory moved to another state directory.
+    const moved = join(stateDir, 'moved');
+    await cp(runDirectory(stateDir, 'source'), join(moved, 'source'), { recursive: true });
+    expect(await transcript(moved, { stepId: 'task' })).toMatchObject({
+      output: native.join(''),
+      result: { ok: true, path: receipt.path },
+    });
+
+    // A receipt recorded under a state directory that no longer exists.
+    receipt.path = join(stateDir, 'gone', tail);
+    await writeFile(recordPath, JSON.stringify(record));
+    expect(await transcript(stateDir, { stepId: 'task' })).toMatchObject({
+      output: native.join(''),
+      result: { ok: true, path: join(stateDir, 'gone', tail) },
+    });
+  });
+
   it('fails run.unreadable for a receipt outside the run, a missing file, a symlink or bad bytes', async ({
     stateDir,
     runs,
@@ -180,8 +215,10 @@ describe('workflow.transcript', () => {
       steps: Record<string, { attemptHistory: { transcript: { path: string } }[] }>;
     };
     const receipt = record.steps['task']?.attemptHistory[0]?.transcript;
-    if (!receipt) throw new Error('expected a transcript receipt');
+    const first = record.steps['first']?.attemptHistory[0]?.transcript;
+    if (!receipt || !first) throw new Error('expected transcript receipts');
     const path = receipt.path;
+    const hashDir = dirname(path);
     const secret = join(stateDir, 'secret.jsonl');
     await writeFile(secret, `${JSON.stringify({ stream: 'stdout', base64: 'c2VjcmV0' })}\n`);
     const rewrite = async (to: string): Promise<WorkflowCommandResult> => {
@@ -190,32 +227,51 @@ describe('workflow.transcript', () => {
       return (await transcript(stateDir, { stepId: 'task' })).result;
     };
 
+    const attempts = join(runDirectory(stateDir, 'source'), 'attempts');
     for (const escaping of [
       secret,
-      join(runDirectory(stateDir, 'source'), 'attempts', '..', '..', 'secret.jsonl'),
+      join(attempts, '..', '..', 'secret.jsonl'),
       'attempts/relative.jsonl',
-    ])
-      expect(await rewrite(escaping)).toMatchObject({
+      // Another step's transcript: the hash segment must be this step's.
+      first.path,
+      join(attempts, 'f'.repeat(64), basename(path)),
+      // Another run's attempts directory, or a name the runtime never creates.
+      join(stateDir, 'other', 'attempts', basename(hashDir), basename(path)),
+      join(hashDir, 'notes.txt'),
+    ]) {
+      const result = await rewrite(escaping);
+      expect(result).toMatchObject({
         ok: false,
         code: 'run.unreadable',
-        details: { stepId: 'task', attempt: 1 },
+        details: { stepId: 'task', attempt: 1, path: escaping },
       });
+      if (result.ok) throw new Error('expected a failure');
+      expect(result.message).toContain('refusing to read it');
+    }
+    await writeFile(recordPath, original);
 
-    // A directory link inside attempts/ that points elsewhere is refused after resolving it.
-    const linked = join(runDirectory(stateDir, 'source'), 'attempts', 'linked');
+    // The step's own directory as a link that points elsewhere is refused after resolving it.
     await mkdir(join(stateDir, 'elsewhere'));
-    await writeFile(join(stateDir, 'elsewhere', '1.claude.jsonl'), await readFile(secret));
-    await symlink(join(stateDir, 'elsewhere'), linked);
-    expect(await rewrite(join(linked, '1.claude.jsonl'))).toMatchObject({
-      code: 'run.unreadable',
-    });
+    await writeFile(join(stateDir, 'elsewhere', basename(path)), await readFile(secret));
+    await rename(hashDir, `${hashDir}.real`);
+    await symlink(join(stateDir, 'elsewhere'), hashDir);
+    const linked = (await transcript(stateDir, { stepId: 'task' })).result;
+    expect(linked).toMatchObject({ code: 'run.unreadable' });
+    if (linked.ok) throw new Error('expected a failure');
+    expect(linked.message).toContain('resolves outside');
+    await rm(hashDir);
+    await rename(`${hashDir}.real`, hashDir);
 
     // The file itself as a symlink is refused by O_NOFOLLOW.
-    const fileLink = join(runDirectory(stateDir, 'source'), 'attempts', 'file-link.jsonl');
-    await symlink(secret, fileLink);
-    expect(await rewrite(fileLink)).toMatchObject({ code: 'run.unreadable' });
+    await rename(path, `${path}.real`);
+    await symlink(secret, path);
+    expect((await transcript(stateDir, { stepId: 'task' })).result).toMatchObject({
+      code: 'run.unreadable',
+    });
+    await rm(path);
+    await rename(`${path}.real`, path);
+    expect((await transcript(stateDir, { stepId: 'task' })).output).toBe(native.join(''));
 
-    await writeFile(recordPath, original);
     await writeFile(path, 'not json\n');
     const malformed = (await transcript(stateDir, { stepId: 'task' })).result;
     expect(malformed).toMatchObject({ ok: false, code: 'run.unreadable' });
