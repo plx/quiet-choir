@@ -68,8 +68,9 @@ check with no errors and before import.
     a named-map mapper, a non-literal prefix and a child workflow each start a namespace; literal
     `ctx.scope` and `ctx.within` prefixes extend it to a path. Different branches of one
     `if`/`else`, `?:` or `switch` (when the earlier clause ends in `break`, `continue`, `return` or
-    `throw`), and an `if` branch ending in `return` or `throw` versus code after that `if`, are
-    exclusive and not reuse. Every occurrence after the first is reported.
+    `throw`), and an `if` branch ending in `return` or `throw` versus code after that `if` in the
+    same function, are exclusive and not reuse; since #330 a `return` inside a nested function does
+    not count. Every occurrence after the first is reported.
   - QC006: a call resolving to a `@deprecated` `WorkflowContext.map` overload, detected through the
     JSDoc tag, so the rule disappears when #158 removes the positional overloads. Retired by #339;
     see the amendment below.
@@ -214,6 +215,6 @@ Limits: views are tracked only through `const` declarations initialized directly
 call, registered at their first visit outside a callback zone; `let`, `var`, destructuring,
 parameters, reassignment, views passed to a helper and views used inside a nested function with its
 own `WorkflowContext` parameter stay unknown and silent. A non-literal prefix is never compared with
-its siblings, even when it is loop-invariant. The early-return exclusivity of #330 can now hide a
-duplicate between two sibling literal scopes when the first callback returns early; that is a false
-negative only.
+its siblings, even when it is loop-invariant. #330 fixed the early-return exclusivity: a `return` or
+`throw` counts only within one function, so sibling literal scopes whose first callback returns
+early now report their shared inner ID.

@@ -1002,9 +1002,10 @@ namespace. A view keeps its own path, except inside a scope or named map launche
 it uses that callback's path; root calls in a view's `phase` body use the view's path. A literal
 `ctx.scope('x', ...)` or `ctx.within('x')` created inside a loop is reported at the prefix when a
 literal-ID effect runs under it. Reuse in different branches of one `if`/`else`, `?:` or `switch`,
-or in an `if` branch that ends in `return`/`throw` versus code after it, is not reported. Use
-`ctx.id(...)` for the ID or the prefix, or a named map. Views stored in `let`/`var`, destructured or
-passed to a helper are not checked.
+or in an `if` branch that ends in `return`/`throw` versus code after it in the same function, is not
+reported; a `return` inside a nested function or scope callback does not count. Use `ctx.id(...)`
+for the ID or the prefix, or a named map. Views stored in `let`/`var`, destructured or passed to a
+helper are not checked.
 
 #### Suppress a finding
 
