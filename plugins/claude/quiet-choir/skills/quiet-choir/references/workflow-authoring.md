@@ -5,8 +5,9 @@
 Default-export `defineWorkflow({ name, version, input, output, run })`. Schemas alone infer
 TypeScript input/output types and validate data at runtime. Callback return types cannot widen a
 workflow or step's schema contract. Never cast the output schema: write the actual shape, or use
-`z.json()` without a cast. Zero-parameter callbacks returning literals may need `as const`,
-especially async local steps. This example can be saved under `examples/` in a checkout:
+`z.json()` without a cast. Zero-parameter workflow and local-step callbacks returning literals may
+need `as const`, especially async local steps; `ctx.poll` callbacks keep literals without it. This
+example can be saved under `examples/` in a checkout:
 
 ```ts
 import { defineWorkflow, z } from '../src/index.js';

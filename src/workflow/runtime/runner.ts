@@ -95,6 +95,9 @@ import type {
   WaitOutcome,
   PollOptions,
   CommandPollOptions,
+  PollCallOptions,
+  PollReadonly,
+  PollResult,
   PollOutcome,
   SignalOutcome,
   DeadlineOutcome,
@@ -3710,10 +3713,13 @@ export async function runWorkflow<
           (outcome) => outcome as WaitOutcome<S>,
         ),
       sleepUntil: (id, deadline) => waitOperation(id, { deadline }, () => null),
-      // Cast: one implementation serves the observer and command overloads.
+      // Cast: one implementation serves the inferred overload and the observer and command ones.
       poll: <T, N extends JsonInput = JsonValue>(
         id: string,
-        settings: PollOptions<T, N> | CommandPollOptions<T, unknown, N>,
+        settings:
+          | PollOptions<T, N>
+          | CommandPollOptions<T, unknown, N>
+          | PollCallOptions<T, unknown, N, PollResult<PollReadonly<T>, PollReadonly<N>>>,
       ) =>
         waitOperation(
           id,

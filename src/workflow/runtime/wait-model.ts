@@ -95,6 +95,50 @@ export interface PollErrorPolicy {
   readonly retryAfterMs?: (error: unknown) => number | null;
 }
 
+/**
+ * The result of one poll check: terminal with a `value` the poll's `schema` validates, or
+ * nonterminal with an optional `note` that is saved for the next check (and validated with
+ * `noteSchema` when the poll has one).
+ */
+export type PollResult<T, N extends JsonInput = JsonValue> =
+  | {
+      /** The check found the awaited state. */
+      readonly done: true;
+      /** Terminal value, parsed by the poll's `schema`. */
+      readonly value: T;
+    }
+  | {
+      /** The check found nothing final yet. */
+      readonly done: false;
+      /** Progress for the next check's `previous.note`; omitted or null saves null. */
+      readonly note?: N | null;
+    };
+
+/**
+ * `X` with readonly arrays, tuples and object properties at every depth; primitives, literals and
+ * functions are unchanged. The inferred `ctx.poll` overload captures a callback's result as a
+ * `const` type parameter, which turns an array literal such as `[1, 2]` into `readonly [1, 2]`, so
+ * that result is checked against `PollResult<PollReadonly<T>, PollReadonly<N>>`: an array literal
+ * still matches `z.array(...)`, a tuple schema or a `noteSchema` array. The outcome keeps the
+ * schema's own type `T`, because the runtime parses the value with `schema`.
+ */
+export type PollReadonly<X> = X extends (...args: never[]) => unknown
+  ? X
+  : X extends readonly unknown[]
+    ? X[number][] extends X
+      ? PollReadonlyArray<X[number]>
+      : { readonly [K in keyof X]: PollReadonly<X[K]> }
+    : X extends object
+      ? { readonly [K in keyof X]: PollReadonly<X[K]> }
+      : X;
+
+/**
+ * A {@link PollReadonly} array. An interface rather than a mapped array type, so that a recursive
+ * element type such as {@link JsonValue} is expanded only as deep as a check needs.
+ */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface PollReadonlyArray<E> extends ReadonlyArray<PollReadonly<E>> {}
+
 /** One read-only check; only its final value becomes a workflow branch decision. */
 export interface PollSource<T, N extends JsonInput = JsonValue> {
   /** Explicit dependencies, included in durable identity. */
@@ -140,14 +184,7 @@ export interface PollSource<T, N extends JsonInput = JsonValue> {
    * records nothing and reruns on resume. `context.previous` carries the persisted note and check
    * count from earlier checks.
    */
-  readonly observe: NoInfer<
-    (
-      context: PollContext<N>,
-    ) => Promise<
-      | { readonly done: true; readonly value: T }
-      | { readonly done: false; readonly note?: N | null }
-    >
-  >;
+  readonly observe: NoInfer<(context: PollContext<N>) => Promise<PollResult<T, N>>>;
   /** Only a {@link CommandPollSource} runs a command; an observer poll has none. */
   readonly command?: never;
 }
@@ -203,13 +240,7 @@ export interface CommandPollSource<T, O = unknown, N extends JsonInput = JsonVal
     (
       output: O,
       previous: PollContext<N>['previous'],
-    ) =>
-      | { readonly done: true; readonly value: T }
-      | { readonly done: false; readonly note?: N | null }
-      | Promise<
-          | { readonly done: true; readonly value: T }
-          | { readonly done: false; readonly note?: N | null }
-        >
+    ) => PollResult<T, N> | Promise<PollResult<T, N>>
   >;
   /** Only an observer {@link PollSource} has `observe`. */
   readonly observe?: never;
@@ -296,22 +327,23 @@ export type WaitOutcome<S> =
       ? DeadlineOutcome
       : never);
 
+/** The finite time bound a `ctx.poll` call must include: `timeoutMs` or `deadline`, not both. */
+export type PollTimeBound =
+  | {
+      /** Relative duration, pinned on first open. */
+      readonly timeoutMs: number;
+      /** Mutually exclusive with the relative duration. */
+      readonly deadline?: never;
+    }
+  | {
+      /** Absolute epoch time from input or recorded data. */
+      readonly deadline: number;
+      /** Mutually exclusive with the absolute deadline. */
+      readonly timeoutMs?: never;
+    };
+
 /** A polling convenience call must include a finite time bound. */
-export type PollOptions<T, N extends JsonInput = JsonValue> = PollSource<T, N> &
-  (
-    | {
-        /** Relative duration, pinned on first open. */
-        readonly timeoutMs: number;
-        /** Mutually exclusive with the relative duration. */
-        readonly deadline?: never;
-      }
-    | {
-        /** Absolute epoch time from input or recorded data. */
-        readonly deadline: number;
-        /** Mutually exclusive with the absolute deadline. */
-        readonly timeoutMs?: never;
-      }
-  );
+export type PollOptions<T, N extends JsonInput = JsonValue> = PollSource<T, N> & PollTimeBound;
 
 /**
  * A command poll's time bound, like {@link PollOptions}: `ctx.poll` requires `timeoutMs` or
@@ -322,20 +354,97 @@ export type CommandPollOptions<T, O = unknown, N extends JsonInput = JsonValue> 
   O,
   N
 > &
+  PollTimeBound;
+
+/**
+ * The options of an inferred `ctx.poll` call, in either form: an observer {@link PollSource} or a
+ * {@link CommandPollSource}, with a time bound. `T` comes only from `schema`, never from a
+ * callback; `N` from `noteSchema` (or {@link JsonValue} without one) and `O` from `output`. A
+ * callback's parameter annotations cannot supply `N` or `O`.
+ *
+ * Only a callback without parameters is captured. Its signatures here take no parameters and
+ * return `R`, which `ctx.poll` captures as a `const` type parameter checked against a
+ * {@link PollResult} of {@link PollReadonly} views of `T` and `N`; so it keeps a literal terminal
+ * value such as `'green'` from a conditional expression or a statement return without `as const`,
+ * and an array literal still matches an array or tuple schema.
+ *
+ * A callback with parameters, a rest parameter included, resolves to the explicit-type-argument
+ * overloads and is typed as it is there. Without annotations it leaves `R` without an inference,
+ * which rejects these options before the callback is typed against them. With annotations it
+ * satisfies no zero-parameter signature, but it is typed once, here: an `observe` callback gets no
+ * contextual type (as when the command overload was tried first), and a `done` callback gets the
+ * signature of {@link CommandPollSource.done}.
+ *
+ * `R`'s constraint keeps those literals, but a result that fails it makes `R` fall back to the
+ * constraint itself, and the callback's own check against an intersection member skips
+ * TypeScript's weak-type check: a primitive would pass as the value or note of an all-optional
+ * object schema. So the zero-parameter signature also returns `C`, an unconstrained capture of the
+ * same result (it defaults to `R`), and a `C` that fails the schemas turns the options into a shape
+ * no callback satisfies.
+ */
+export type PollCallOptions<T, O, N extends JsonInput, R, C = R> = Omit<
+  PollSource<T, N>,
+  'observe' | 'command'
+> &
+  PollTimeBound &
   (
     | {
-        /** Relative duration, pinned on first open. */
-        readonly timeoutMs: number;
-        /** Mutually exclusive with the relative duration. */
-        readonly deadline?: never;
+        /** Read external state, as {@link PollSource.observe}. */
+        readonly observe: NoInfer<() => Promise<PollResult<T, N> | PollCapturedResult<T, N, R>>> &
+          (() => Promise<R>) &
+          (() => Promise<C>);
+        /** Only a command poll runs a command. */
+        readonly command?: never;
       }
-    | {
-        /** Absolute epoch time from input or recorded data. */
-        readonly deadline: number;
-        /** Mutually exclusive with the absolute deadline. */
-        readonly timeoutMs?: never;
+    | (Pick<CommandPollSource<unknown, O, N>, 'command' | 'output' | 'commandOptions' | 'live'> & {
+        /** Decide one check's outcome from the command's output, as {@link CommandPollSource.done}. */
+        readonly done: NoInfer<
+          (
+            output: O,
+            previous: PollContext<N>['previous'],
+          ) =>
+            | PollResult<T, N>
+            | PollCapturedResult<T, N, R>
+            | Promise<PollResult<T, N> | PollCapturedResult<T, N, R>>
+        > &
+          (() => R | Promise<R>) &
+          (() => C | Promise<C>);
+        /** Only an observer poll has `observe`. */
+        readonly observe?: never;
+      })
+  ) &
+  // `R` keeps its constraint only when it has no inference (or a mismatched one): the callback has
+  // parameters and no annotations, so the call's first pass skipped it. A member no options object
+  // has rejects this overload before the callback is typed against it. `observe` or `done` cannot
+  // carry it: while `R` is still being inferred they are the callback's contextual type, and
+  // `never` there would widen a zero-parameter callback's literals.
+  ([PollResult<PollReadonly<T>, PollReadonly<N>>] extends [R]
+    ? {
+        /** Never present: a callback with parameters resolves to the explicit overloads. */
+        readonly zeroParameterCallback: never;
       }
-  );
+    : unknown) &
+  // A conditional type applies the weak-type check that the callback's own check skips.
+  ([C] extends [PollResult<PollReadonly<T>, PollReadonly<N>>]
+    ? unknown
+    : {
+        /** No observer satisfies a mismatched result. */
+        readonly observe: never;
+        /** No `done` satisfies a mismatched result. */
+        readonly done: never;
+      });
+
+/**
+ * The result `R` a zero-parameter {@link PollCallOptions} callback returned, or `never` while `R`
+ * has no inference, as for a callback with parameters. `ctx.poll` would otherwise fall back to
+ * `R`'s constraint, whose {@link PollReadonly} views would then reach such a callback's
+ * contextual return type, for example through the type argument of `Promise.reject()`.
+ */
+export type PollCapturedResult<T, N extends JsonInput, R> = [
+  PollResult<PollReadonly<T>, PollReadonly<N>>,
+] extends [R]
+  ? never
+  : R;
 
 /** Validated, serializable polling identity. */
 export interface PollRequest {

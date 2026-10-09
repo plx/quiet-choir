@@ -30,6 +30,9 @@ import type {
   WaitOutcome,
   PollOptions,
   CommandPollOptions,
+  PollCallOptions,
+  PollReadonly,
+  PollResult,
   PollOutcome,
   DeadlineOutcome,
 } from './wait-model.js';
@@ -684,19 +687,43 @@ export interface WorkflowContext<
   /** Wait until a fixed epoch timestamp, suspending when quiescent unless due shortly. */
   sleepUntil(id: string, epochMs: number): Promise<null>;
   /**
-   * Poll changing state with a pinned finite deadline and one bounded progress record. This form
-   * runs one command per check through the run's process runner: its JSON stdout is validated with
-   * `output` and `done(output, previous)` decides the outcome. `noteSchema` types and validates
-   * the notes it saves.
+   * Poll changing state with a pinned finite deadline and one bounded progress record, with either
+   * a read-only `observe(context)` callback or a `command` run once per check through the run's
+   * process runner, whose JSON stdout is validated with `output` before `done(output, previous)`
+   * decides the outcome. `T` is inferred only from `schema`, `N` only from `noteSchema` (which
+   * types and validates `previous.note` and the notes a check returns) and `O` only from `output`.
+   * A callback's parameter annotations cannot supply `N` or `O`. A callback without parameters
+   * has its result captured as `R` and checked against them, so a literal terminal value such as
+   * `{ done: true, value: 'green' }` from a conditional expression or a statement return
+   * type-checks against an enum or literal schema without `as const`. `R` is checked against
+   * {@link PollReadonly} views of them, because `const` makes an array literal a readonly tuple.
+   * `C` captures the same result without a constraint, so that a result failing `R`'s constraint
+   * (such as a string for an all-optional object schema) is still rejected; see
+   * {@link PollCallOptions}. A callback with parameters is typed exactly as in the overloads below,
+   * which already keep its literals, and the call resolves to one of them.
+   */
+  poll<
+    T,
+    const R extends PollResult<NoInfer<PollReadonly<T>>, NoInfer<PollReadonly<N>>>,
+    O,
+    N extends JsonInput = JsonValue,
+    const C = R,
+  >(
+    id: string,
+    options: PollCallOptions<T, O, N, R, C>,
+  ): Promise<PollOutcome<T> | DeadlineOutcome>;
+  /**
+   * A command poll with explicit type arguments, `ctx.poll<T, O, N>(…)`; see the inferred form
+   * above. Prefer `noteSchema` and `output` to explicit type arguments: in this form a callback
+   * without parameters can widen a literal terminal value.
    */
   poll<T, O, N extends JsonInput = JsonValue>(
     id: string,
     options: CommandPollOptions<T, O, N>,
   ): Promise<PollOutcome<T> | DeadlineOutcome>;
   /**
-   * Poll with a read-only observer callback. Pass `noteSchema` to type and validate
-   * `previous.note` and the notes the observer returns. Declared last, so a mistake in an observer poll is
-   * reported against this form.
+   * An observer poll with explicit type arguments, `ctx.poll<T, N>(…)`; see the inferred form
+   * above. Declared last, so a call that matches no form is reported against the observer form.
    */
   poll<T, N extends JsonInput = JsonValue>(
     id: string,

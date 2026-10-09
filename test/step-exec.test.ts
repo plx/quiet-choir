@@ -19,6 +19,7 @@ import {
   type JsonValue,
   type PollCommandExecOptions,
   type PollErrorPolicy,
+  type PollOptions,
   type PollOutcome,
   type PollSource,
   type ProcessRunner,
@@ -160,9 +161,9 @@ describe('command poll types', () => {
           expectTypeOf(output).toEqualTypeOf<Checks>();
           expectTypeOf(previous.note).toEqualTypeOf<JsonValue | null>();
           expectTypeOf(previous.checks).toEqualTypeOf<number>();
+          // A literal value keeps its type against an enum schema without `as const`.
           return output.every((entry) => entry.state === 'SUCCESS')
-            ? // As with an observer, a literal value needs `as const` against an enum schema.
-              { done: true, value: 'green' as const }
+            ? { done: true, value: 'green' }
             : { done: false, note: { pending: output.length } };
         },
       });
@@ -241,6 +242,143 @@ describe('command poll types', () => {
       commandOptions: { timeoutMs: 1 };
       done: () => { done: false };
     }>().not.toExtend<CommandPollOptions<null, null>>();
+  });
+
+  it('keeps literal terminal values in poll callbacks and infers T only from schema', () => {
+    type Color = PollOutcome<'green' | 'red'> | DeadlineOutcome;
+    const check = async (ctx: WorkflowContext, ready: boolean) => {
+      const color = z.enum(['green', 'red']);
+      const output = z.object({ ok: z.boolean() });
+      // Callbacks without parameters, with conditional and statement returns, in both forms.
+      expectTypeOf(
+        await ctx.poll('observe-zero-conditional', {
+          input: null,
+          schema: color,
+          every: 1,
+          timeoutMs: 1,
+          // eslint-disable-next-line @typescript-eslint/require-await -- the shape under test.
+          observe: async () => (ready ? { done: true, value: 'green' } : { done: false }),
+        }),
+      ).toEqualTypeOf<Color>();
+      expectTypeOf(
+        await ctx.poll('observe-zero-statements', {
+          input: null,
+          schema: color,
+          every: 1,
+          timeoutMs: 1,
+          // eslint-disable-next-line @typescript-eslint/require-await -- the shape under test.
+          observe: async () => {
+            if (ready) return { done: true, value: 'red' };
+            return { done: false, note: 'waiting' };
+          },
+        }),
+      ).toEqualTypeOf<Color>();
+      expectTypeOf(
+        await ctx.poll('done-zero-conditional', {
+          input: null,
+          schema: color,
+          every: 1,
+          deadline: 1,
+          command: ['gh', 'pr', 'checks'],
+          output,
+          done: () => (ready ? { done: true, value: 'green' } : { done: false }),
+        }),
+      ).toEqualTypeOf<Color>();
+      expectTypeOf(
+        await ctx.poll('done-zero-statements', {
+          input: null,
+          schema: color,
+          every: 1,
+          deadline: 1,
+          command: ['gh', 'pr', 'checks'],
+          output,
+          done: () => {
+            if (ready) return { done: true, value: 'red' };
+            return { done: false };
+          },
+        }),
+      ).toEqualTypeOf<Color>();
+      // T comes from the schema, never from a callback's literal.
+      expectTypeOf(
+        await ctx.poll('observe-string', {
+          input: null,
+          schema: z.string(),
+          every: 1,
+          timeoutMs: 1,
+          // eslint-disable-next-line @typescript-eslint/require-await -- the shape under test.
+          observe: async () => ({ done: true, value: 'green' }),
+        }),
+      ).toEqualTypeOf<PollOutcome<string> | DeadlineOutcome>();
+      expectTypeOf(
+        await ctx.poll('done-string', {
+          input: null,
+          schema: z.string(),
+          every: 1,
+          timeoutMs: 1,
+          command: ['gh'],
+          output,
+          done: () => ({ done: true, value: 'green' }),
+        }),
+      ).toEqualTypeOf<PollOutcome<string> | DeadlineOutcome>();
+      // N still comes from noteSchema and O from output.
+      await ctx.poll('observe-noted', {
+        input: null,
+        schema: color,
+        every: 1,
+        timeoutMs: 1,
+        noteSchema: z.object({ seen: z.number() }),
+        // eslint-disable-next-line @typescript-eslint/require-await -- the shape under test.
+        observe: async ({ previous }) => {
+          expectTypeOf(previous.note).toEqualTypeOf<{ seen: number } | null>();
+          return previous.note ? { done: true, value: 'red' } : { done: false, note: { seen: 1 } };
+        },
+      });
+      await ctx.poll('done-noted', {
+        input: null,
+        schema: color,
+        every: 1,
+        timeoutMs: 1,
+        command: ['gh'],
+        output,
+        noteSchema: z.object({ seen: z.number() }),
+        done: (result, previous) => {
+          expectTypeOf(result).toEqualTypeOf<{ ok: boolean }>();
+          expectTypeOf(previous.note).toEqualTypeOf<{ seen: number } | null>();
+          return result.ok ? { done: true, value: 'green' } : { done: false, note: { seen: 1 } };
+        },
+      });
+      // An array literal is accepted against an array schema, and T stays the schema's own type.
+      expectTypeOf(
+        await ctx.poll('observe-array', {
+          input: null,
+          schema: z.array(z.number()),
+          every: 1,
+          timeoutMs: 1,
+          // eslint-disable-next-line @typescript-eslint/require-await -- the shape under test.
+          observe: async () => (ready ? { done: true, value: [1, 2] } : { done: false }),
+        }),
+      ).toEqualTypeOf<PollOutcome<number[]> | DeadlineOutcome>();
+      // A prebuilt source is still accepted.
+      const prebuilt: PollOptions<'green' | 'red'> = {
+        input: null,
+        schema: color,
+        every: 1,
+        timeoutMs: 1,
+        observe: () => Promise.resolve({ done: true, value: 'green' }),
+      };
+      expectTypeOf(await ctx.poll('prebuilt', prebuilt)).toEqualTypeOf<Color>();
+      await ctx.poll('empty-command', {
+        input: null,
+        schema: color,
+        every: 1,
+        timeoutMs: 1,
+        // @ts-expect-error a command poll's argv cannot be empty.
+        command: [],
+        output,
+        done: () => ({ done: false }),
+      });
+    };
+    expect(check).toBeTypeOf('function');
   });
 });
 

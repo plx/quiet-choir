@@ -90,8 +90,9 @@ report fields, and free native protocol tests.
 Workflows default-export `defineWorkflow(...)`. Input, final output, and structured agent responses
 use [Zod](https://zod.dev/) schemas for TypeScript inference and runtime validation. Schemas alone
 infer input/output types; callbacks cannot widen their contracts. Never cast the output schema:
-write the actual shape, or use `z.json()` without a cast. Zero-parameter callbacks returning enum
-literals may need `as const` (especially async local steps).
+write the actual shape, or use `z.json()` without a cast. Zero-parameter workflow and local-step
+callbacks returning enum literals may need `as const` (especially async local steps); `ctx.poll`
+callbacks keep literals without it.
 
 ```ts
 import { defineWorkflow, z } from 'quiet-choir';

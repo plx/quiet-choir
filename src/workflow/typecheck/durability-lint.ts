@@ -30,6 +30,13 @@ const zoneProperties: Readonly<Record<string, ReadonlySet<string>>> = {
   PollSource: new Set(['observe']),
   CommandPollSource: new Set(['done']),
   PollErrorPolicy: new Set(['classify', 'retryAfterMs']),
+  // The inferred ctx.poll overload's options declare their own observe and done members.
+  PollCallOptions: new Set(['observe', 'done']),
+};
+/** Zones reported under the source type their members mirror. */
+const zoneAliases: Readonly<Record<string, string>> = {
+  'PollCallOptions.observe': 'PollSource.observe',
+  'PollCallOptions.done': 'CommandPollSource.done',
 };
 const iterationMethods = new Set([
   'map',
@@ -425,7 +432,7 @@ class DurabilityLinter {
             zoneProperties[owner]?.has(name.text) === true &&
             isRuntimeFile(declaration.getSourceFile().fileName)
           )
-            return `${owner}.${name.text}`;
+            return zoneAliases[`${owner}.${name.text}`] ?? `${owner}.${name.text}`;
         }
       }
     } catch {
