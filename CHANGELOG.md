@@ -2,6 +2,10 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- QC005 no longer treats a `return` or `throw` inside a nested function (a closure, a function
+  declaration or a scope callback) as making later code in the outer function exclusive (#330).
+  `workflow validate` can therefore fail (exit 4) on workflows that passed before but can hit
+  `Duplicate step ID` at run time.
 - QC005 now checks literal IDs per literal `ctx.scope`/`ctx.within` prefix and reports literal
   prefixes reused in loops (#327,
   [ADR 0041](docs/decisions/0041-static-durability-lint.md#amendment-literal-prefixes-and-within-receivers-327)).

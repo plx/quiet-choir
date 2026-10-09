@@ -215,17 +215,24 @@ function exclusive(first: ts.Node, second: ts.Node): boolean {
     const last = left.statements.at(-1);
     return last !== undefined && terminates(last, true);
   }
-  // An if branch that ends in return or throw versus code after that if.
+  // An if branch that ends in return or throw, in the same function as the later code, is
+  // exclusive with that code. A return inside a nested function only leaves that function, so
+  // crossing a function boundary discards the terminating ifs seen below it.
+  let ends = false;
   for (let node: ts.Node = first; node !== common; node = node.parent) {
+    if (ts.isFunctionLike(node)) {
+      ends = false;
+      continue;
+    }
     const parent = node.parent;
     if (
       ts.isIfStatement(parent) &&
       (node === parent.thenStatement || node === parent.elseStatement) &&
       terminates(node as ts.Statement)
     )
-      return true;
+      ends = true;
   }
-  return false;
+  return ends;
 }
 
 interface CallInfo {
