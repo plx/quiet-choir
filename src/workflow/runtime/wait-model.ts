@@ -183,6 +183,14 @@ export interface PollSource<T, N extends JsonInput = JsonValue> {
    * warning. The signal also aborts when a body failure starts draining the run; that observation
    * records nothing and reruns on resume. `context.previous` carries the persisted note and check
    * count from earlier checks.
+   *
+   * Its source text is part of the wait's identity, hashed as the loader that imported it prints it
+   * (`tsx` under the CLI, Vitest or another transform in tests and embedders, a compiled build), so
+   * a changed printing is a change even when the code is the same. Resuming a waiting poll under a
+   * different loader, or after a loader or compiler upgrade, therefore fails with "wait changed";
+   * the message then says only the callback text differs. Resume under the loader that started the
+   * run, fork the run to wait afresh, or use a new wait ID. See
+   * [Callback source and loaders](../../../docs/waits.md#callback-source-and-loaders).
    */
   readonly observe: NoInfer<(context: PollContext<N>) => Promise<PollResult<T, N>>>;
   /** Only a {@link CommandPollSource} runs a command; an observer poll has none. */
@@ -230,8 +238,15 @@ export interface CommandPollSource<T, O = unknown, N extends JsonInput = JsonVal
   /**
    * Decide the outcome of one check from the validated output and the wait's persisted progress
    * before it. It must be pure: it gets no context, cannot call context operations, and keeps
-   * cross-check state (such as a debounce flag) in the note. Its source text is part of the wait's
-   * identity. A throw is a rejected observation, so the poll's `onError` applies to it.
+   * cross-check state (such as a debounce flag) in the note. A throw is a rejected observation, so
+   * the poll's `onError` applies to it.
+   *
+   * Its source text is part of the wait's identity, hashed as the loader that imported it prints it
+   * (`tsx` under the CLI, Vitest or another transform in tests and embedders, a compiled build), so
+   * resuming a waiting poll under a different loader, or after a loader or compiler upgrade, fails
+   * with "wait changed" even without an edit; the message then says only the callback text
+   * differs. Resume under the loader that started the run, fork the run to wait afresh, or use a
+   * new wait ID. See [Callback source and loaders](../../../docs/waits.md#callback-source-and-loaders).
    *
    * `O` is inferred from `output`, never from `done`. In a `ctx.wait` poll source `output` is
    * `unknown`: narrow it, or use `ctx.poll` for an inferred type.

@@ -380,6 +380,106 @@ describe('internal helper poll identity', () => {
   });
 });
 
+describe('poll callback source in wait identity', () => {
+  // new Function fixes the text, so these are two printings of the same callback, as two loaders
+  // would print it.
+  const printing = (source: string): PollSource<number>['observe'] =>
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval -- fixed source, see above
+    (new Function(source) as () => PollSource<number>['observe'])();
+  const minified = printing('return async () => ({ done: false })');
+  const unminified = printing('return async () => {\n  return { done: false };\n}');
+  const edited = printing('return async () => ({ done: false, note: "edited" })');
+  const sentence =
+    'Step ready: wait changed; use a new ID for a different decision, dependency, or deadline.';
+  const hint = "Only the poll's observe (a command poll's done) source text differs";
+  const sources = (
+    observe: PollSource<number>['observe'],
+    input: JsonValue = null,
+  ): WaitSources => ({
+    timeoutMs: 600_000,
+    poll: { input, schema: z.number(), every: 30_000, observe },
+  });
+  const definition = (
+    observe: PollSource<number>['observe'],
+    input: JsonValue = null,
+    deadline?: number,
+  ) =>
+    defineWorkflow({
+      name: 'callback-source',
+      version: '1',
+      input: z.null(),
+      output: z.unknown(),
+      run: (ctx) =>
+        deadline === undefined
+          ? ctx.wait('ready', sources(observe, input))
+          : ctx.wait('ready', { deadline }),
+    });
+  const messageOf = async (promise: Promise<unknown>): Promise<string> => {
+    try {
+      await promise;
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+    throw new Error('Expected the resume to be refused.');
+  };
+
+  it('digests two printings of one callback differently, which is the documented limitation', () => {
+    const digestOf = (observe: PollSource<number>['observe']): string | undefined =>
+      waitRequest(sources(observe)).request.poll?.observe;
+    expect(digestOf(minified)).toBe(digest(Function.prototype.toString.call(minified)));
+    expect(digestOf(minified)).not.toBe(digestOf(unminified));
+    expect(digestOf(minified)).toBe(digestOf(printing('return async () => ({ done: false })')));
+  });
+
+  it('names the printed source text when it is the only change', async () => {
+    const clock = new Clock();
+    const options = { stateDir, runId: 'printing', input: null, clock };
+    expect((await runWorkflow(definition(minified), options)).status).toBe('suspended');
+    const message = await messageOf(
+      runWorkflow(definition(unminified), { ...options, resume: true }),
+    );
+    // The original sentence is untouched, and the hint follows it.
+    expect(message).toContain(sentence);
+    expect(message).toContain(hint);
+    expect(message).toContain(`${sentence} ${hint}`);
+    expect(message).toContain('Resume under the loader that started the run, fork the run');
+    expect(message).not.toContain('--');
+  });
+
+  it('gives no hint when a real edit or another field changed too', async () => {
+    const clock = new Clock();
+    const options = { stateDir, runId: 'edit', input: null, clock };
+    expect((await runWorkflow(definition(minified), options)).status).toBe('suspended');
+    const resume = (observe: PollSource<number>['observe'], input?: JsonValue) =>
+      messageOf(runWorkflow(definition(observe, input), { ...options, resume: true }));
+    // The input and the callback text both changed, so the callback is not the only cause.
+    for (const message of [
+      await resume(unminified, { pr: 8 }),
+      await resume(minified, { pr: 8 }),
+    ]) {
+      expect(message).toContain(sentence);
+      expect(message).not.toContain(hint);
+    }
+    // A real edit is still refused. Identity cannot tell an edit from a reprint, so the hint says
+    // only that the callback text is the difference.
+    expect(await resume(edited)).toContain(sentence);
+  });
+
+  it('keeps the plain message for a changed deadline on a plain wait', async () => {
+    const clock = new Clock();
+    const options = { stateDir, runId: 'deadline', input: null, clock };
+    const deadline = clock.time + 60_000;
+    expect((await runWorkflow(definition(minified, null, deadline), options)).status).toBe(
+      'suspended',
+    );
+    const message = await messageOf(
+      runWorkflow(definition(minified, null, deadline + 1), { ...options, resume: true }),
+    );
+    expect(message).toContain(sentence);
+    expect(message).not.toContain(hint);
+  });
+});
+
 it('drains active siblings after body failure even with a blocked wait inside a map', async () => {
   const clock = new Clock();
   let finished = false;
@@ -2902,6 +3002,54 @@ describe('command polls', () => {
         'Step ci: wait changed; use a new ID for a different decision, dependency, or deadline.',
       );
     expect(await readFile(file, 'utf8')).toBe('1');
+  });
+
+  it('names a changed done text, and only that, in the refusal', async () => {
+    const clock = new Clock();
+    const file = join(stateDir, 'count');
+    const base = {
+      every: 30_000,
+      timeoutMs: 600_000,
+      command: counter(file, 99),
+      output: counted,
+    };
+    // Two printings of one done callback, as two loaders would print it.
+    const printing = (source: string): Settings['done'] =>
+      // eslint-disable-next-line @typescript-eslint/no-implied-eval -- fixed source, see above
+      (new Function(source) as () => Settings['done'])();
+    const minified = printing('return () => ({ done: false })');
+    const unminified = printing('return () => {\n  return { done: false };\n}');
+    const options = run('command-hint', { clock });
+    expect(
+      (await runWorkflow(commandPoll('hint', { ...base, done: minified }), options)).status,
+    ).toBe('suspended');
+    const resume = async (changes: Record<string, unknown>): Promise<string> => {
+      try {
+        await runWorkflow(commandPoll('hint', { ...base, done: minified, ...changes }), {
+          ...options,
+          resume: true,
+        });
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+      throw new Error('Expected the resume to be refused.');
+    };
+    const sentence =
+      'Step ci: wait changed; use a new ID for a different decision, dependency, or deadline.';
+    const hint = "Only the poll's observe (a command poll's done) source text differs";
+    const hinted = await resume({ done: unminified });
+    expect(hinted).toContain(`${sentence} ${hint}`);
+    // Any other identity change keeps the original message.
+    for (const changed of [
+      { command: counter(file, 98) },
+      { output: counted.extend({ extra: z.string().optional() }) },
+      { input: { other: true } },
+      { command: counter(file, 98), done: unminified },
+    ]) {
+      const message = await resume(changed);
+      expect(message).toContain(sentence);
+      expect(message).not.toContain(hint);
+    }
   });
 
   it('rejects a malformed command poll when the wait opens', async () => {
