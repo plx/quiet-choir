@@ -18,9 +18,9 @@
  * run ends, so a preview's commit exists only during the rehearsal. A configured custom merge
  * driver, or a configured clean, smudge or process filter while `merge.renormalize` is set, refuses
  * the preview before any `merge-tree`, since Git would run it outside the quarantine. Previews into
- * a `branch` or `checkout` target leave an in-memory tip that later previews start from, as they
- * would after the real merge moved the target. Everything else that touches Git (`ctx.worktree`,
- * isolation on a handle) stays refused by the replay decision.
+ * a `branch` or `checkout` target leave an in-memory tip that later previews and fresh isolation
+ * bases start from, as they would after the real merge moved the target. Everything else that
+ * touches Git (`ctx.worktree`, isolation on a handle) stays refused by the replay decision.
  *
  * The accepted-replay preflight's probe (#217) constructs this class with `synthesizeAll` and no
  * process runner, so it never resolves a repository and issues no Git command at all. It also
@@ -235,13 +235,49 @@ export class WorktreeRehearsal {
     return previewed ?? this.revision(repo, 'HEAD', invocation);
   }
 
+  /**
+   * The commit a named base resolves to, counting earlier `branch` and `checkout` previews of this
+   * rehearsal: a name for a previewed branch (one only a preview created included), or for a
+   * detached `HEAD`, resolves to the previewed tip, as it would after the real merges moved or
+   * created it. Anything else resolves in the repository.
+   */
+  private async named(
+    repo: string,
+    revision: string,
+    invocation: HarnessInvocation,
+  ): Promise<string | null> {
+    const git = this.git;
+    if (!git || this.tips.size === 0) return this.revision(repo, revision, invocation);
+    const shared = { ...invocation, signal: this.runSignal ?? invocation.signal };
+    const result = await git.run(
+      repo,
+      ['rev-parse', '--verify', '--quiet', '--symbolic-full-name', '--end-of-options', revision],
+      shared,
+      { codes: [0, 1, 128] },
+    );
+    // A branch only a preview created does not resolve in the repository; its name still does.
+    const ref =
+      result.code === 0
+        ? result.stdout.trim()
+        : revision.startsWith('refs/')
+          ? revision
+          : `refs/heads/${revision}`;
+    if (ref === 'HEAD') return this.headTip(repo, invocation);
+    return this.tips.get(ref) ?? this.revision(repo, revision, invocation);
+  }
+
+  /** A fresh isolation's base, from the rehearsal's view of the repository (see {@link named}). */
   private async base(
     repo: string,
     base: WorktreeBase | undefined,
     invocation: HarnessInvocation,
   ): Promise<string> {
-    const revision = base === undefined ? 'HEAD' : typeof base === 'string' ? base : base.commit;
-    const commit = await this.revision(repo, revision, invocation);
+    const commit =
+      base === undefined
+        ? await this.headTip(repo, invocation)
+        : typeof base === 'string'
+          ? await this.named(repo, base, invocation)
+          : await this.revision(repo, base.commit, invocation);
     if (commit === null) throw new ConfigurationError(unresolvedBaseMessage(base));
     return commit;
   }
@@ -466,7 +502,8 @@ export class WorktreeRehearsal {
    * merged, no conflicts, and the target's current commit (an existing branch target, otherwise
    * HEAD). A `branch` or `checkout` target's current commit is the last preview into it in this
    * rehearsal, if any, and a resolved preview into one (a no-op included, which creates a missing
-   * branch) becomes its tip for later previews, as the real merge would move it; a `ref` target moves nothing, so it reads but never sets a tip. Previews run one at a
+   * branch) becomes its tip for later previews and fresh isolation bases, as the real merge would
+   * move it; a `ref` target moves nothing, so it reads but never sets a tip. Previews run one at a
    * time in call order, as real merges do under the run's integration lock. Captured commits and
    * handles (resolved from the copied ledger as a real merge does) are previewed with the real
    * integration in the run's quarantine, dated `date` (the attempt's start, as in a real run), so

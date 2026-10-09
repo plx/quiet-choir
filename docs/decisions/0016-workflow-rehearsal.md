@@ -227,8 +227,12 @@ computation, in a quarantined object store:
   when detached, for `checkout`; a branch target naming the checked-out branch shares its key). A
   later merge into the same target starts from that tip, and one into `ref` or a missing branch,
   which starts from `HEAD`, starts from the checked-out branch's tip, so sequential previews
-  conflict where the real merges would. A `ref` target moves no ref and records no tip. No ref is
-  written.
+  conflict where the real merges would. A no-op into a missing branch records `HEAD`'s tip for it,
+  since the real merge creates the branch there. Previews run one at a time in call order, as real
+  merges do under the run's integration lock, so concurrent previews into one target chain too. A
+  later fresh isolation based on `HEAD` (the default) or on a name for a previewed branch starts
+  from the previewed tip, as it would after the real merge; a `{ commit }` base is unaffected. A
+  `ref` target moves no ref and records no tip. No ref is written.
 - Nothing else of a real merge happens: no `step.merge` preparation, no pinned or published ref, no
   checkout update and no integration or handle locks, since the repository does not change. The
   target-specific preflight checks (`check-ref-format`, a branch checked out elsewhere, a dirty

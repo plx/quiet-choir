@@ -2206,6 +2206,27 @@ it('chains concurrent previews into one branch in call order, as the real merges
   expect(real).toEqual(dry);
 }, 20_000);
 
+it.each([
+  ['HEAD after a checkout preview', 'checkout', true],
+  ['a branch after a preview into it', { branch: 'feature' }, { base: 'feature' }],
+] as const)(
+  'bases a fresh isolation on %s, as the real run does',
+  async (_name, target, worktree) => {
+    const gate = { stop: true };
+    const workflow = previewParity('isolation-base', gate, async (ctx, [one]) => {
+      const merged = await ctx.merge('integrate', [one], { target });
+      const after = await ctx.codex.text('after', { prompt: 'after', worktree });
+      return { merged, base: after.worktree?.base };
+    });
+    const { dry, real, one } = await dryAndReal('isolation-base', workflow, gate);
+    const preview = dry as { merged: MergeResult; base: string };
+    expect(preview.merged).toMatchObject({ merged: [one], conflicts: [] });
+    expect(preview.base).toBe(preview.merged.commit);
+    expect(real).toEqual(dry);
+  },
+  20_000,
+);
+
 it('records a no-op preview into a missing branch as its tip, as the real merge creates it', async () => {
   const gate = { stop: true };
   const workflow = previewParity('noop-branch', gate, async (ctx, [one, two]) => {

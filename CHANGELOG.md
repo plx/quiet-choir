@@ -10,13 +10,13 @@
   the rehearsal ends. The preview commit is dated at the rehearsal attempt's start and exists only
   during the rehearsal; nothing is pinned, published or locked, and target checks such as a branch
   checked out elsewhere are not rehearsed yet. Previews into a `branch` or `checkout` target build
-  on earlier previews into it in the same rehearsal. A foreign handle fails with the real
-  configuration error, an unavailable input commit with the real `Merge input commit is unavailable`
-  error, and a preview without a resolvable repository, while a custom merge driver
-  (`merge.<name>.driver`) is configured, or while `merge.renormalize` is set and a clean, smudge or
-  process filter is configured, with a configuration error. The rehearsal report's `merges` entries
-  and the `onWorktree` merge event gain `merged` and `conflicts`, and the `rehearsal-git` refusal no
-  longer lists merges.
+  on earlier previews into it in the same rehearsal, and so do fresh isolations based on it. A
+  foreign handle fails with the real configuration error, an unavailable input commit with the real
+  `Merge input commit is unavailable` error, and a preview without a resolvable repository, while a
+  custom merge driver (`merge.<name>.driver`) is configured, or while `merge.renormalize` is set and
+  a clean, smudge or process filter is configured, with a configuration error. The rehearsal
+  report's `merges` entries and the `onWorktree` merge event gain `merged` and `conflicts`, and the
+  `rehearsal-git` refusal no longer lists merges.
 - Exec fixture rules accept `error` and an optional `kind` to simulate a command that fails without
   a result, such as a missing binary or a timeout (#307). The command rejects immediately with an
   `ExecError` whose message is the `error` text and whose kind defaults to `process` (the kind the
