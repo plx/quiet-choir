@@ -414,3 +414,36 @@ An observer's `live: true` command is recorded and exported like any other: unde
 stays real and uncounted, so its rule shows as stale, but a non-dry fixture replay needs it. If it
 shared filters with another exported command of the same observation, the uncounted live command
 would shift that command's call number under `--dry-run`; this is unlikely and left as is.
+
+## Amendment: rehearsed repeated poll checks (#323)
+
+Rehearsal skips timers, and `skipTimers` made `shouldSuspend` true for any pending wait. A dry run
+therefore suspended at a poll's first nonterminal check, and whether the pump managed a second check
+before quiescence was a race: a poll whose `done` turned terminal on its second check completed in
+some runs and suspended in others. Choices:
+
+- Under rehearsal, keep checking a poll inside the scan that made its first check, until a check is
+  terminal or the poll reaches five checks. The whole loop holds the scan's activity span, so
+  quiescence cannot resolve between checks; `shouldSuspend` keeps its rehearsal rule, and the race
+  is gone rather than narrowed.
+- Advance a virtual clock instead of sleeping. Each rehearsed check takes the time a live pump would
+  wake at, the next check or the deadline when that comes first, and that time drives the outcome's
+  `at`, the deadline test, `nextCheckAt` and an `onError` retry. A deadline that falls within the
+  checks resolves by deadline after the checks a live run would make. Step timestamps and
+  `lastError.at` keep real time, and `observeTimeoutMs` stays real because the observer really runs.
+- Bound the checks at a fixed five per wait, counted in this process only (not `progress.checks`),
+  so a resumed preview of a run that already polled gets five more. A poll still waiting at the
+  limit is never observed again: it counts as parked for the operation drain, wakes no pump, and
+  makes `shouldSuspend` true even in block mode, which would otherwise wait forever. The rehearsal
+  then suspends with its usual note. A flag to configure the limit is not offered; exec rules with
+  `call` can make the poll terminal within five checks.
+- Report the limit through an optional `RunOptions.rehearsal.onPollLimit({ waitId, checks })` hook,
+  once per wait, as `onWorktree` reports synthesized worktree effects, rather than deriving it from
+  the record afterwards; the CLI's dry run turns it into a per-wait warning. Embedded rehearsals get
+  the same signal.
+
+Everything is gated on rehearsal, so live poll scheduling, the pump and `shouldSuspend` outside
+rehearsal are unchanged. Signals keep their precedence on each check (under rehearsal the inbox is
+empty), `--stub-steps` still completes a poll on its first check, and each check still records one
+`commands` entry per command it runs. A poll that never turns terminal now makes five observations
+in a dry run, so a local observer's read-only work runs five times.

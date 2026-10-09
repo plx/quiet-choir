@@ -31,8 +31,9 @@ never spawn: they are synthesized from their schema unless the fixture file has 
 observer runs through `context.exec`, and for each check of a
 [command poll](waits.md#command-polls), whose output is synthesized from its `output` schema, except
 that an observer or a command poll may pass `live: true` to keep a read-only check real, such as the
-initial observation of a wait. `live` is refused in a step callback. Durable sleeps complete
-immediately. Rehearsal preserves capability/profile validation and still requires declared grants.
+CI status read in each check of a wait. `live` is refused in a step callback. Durable sleeps
+complete immediately. Rehearsal preserves capability/profile validation and still requires declared
+grants.
 
 ## Fixtures
 
@@ -210,8 +211,8 @@ exactly one command per attempt, so its call is always 1: `call: 1` matches it, 
 occurrences, calls count only in this process: concurrent commands count in the order they reach the
 process runner, a `live: true` command kept real under `--dry-run` is not counted, and a poll that
 suspends and is checked again in a new process (`tick`, `resume`) starts again at call 1. A dry run
-performs a poll's first observation only, so to rehearse several checks of one poll in one process
-use `--harness fixture:FILE` with `--wait-mode block`:
+checks a poll several times in one process (see [repeated poll checks](#repeated-poll-checks)), so
+such rules answer its successive checks under plain `--dry-run`:
 
 ```json
 {
@@ -292,6 +293,34 @@ is the `execRunner`, and the real runner serves only the read-only Git described
 `commands: "fixture"` they need rules (for example a `**/baseline` step glob). Commands are not
 per-harness: a named `--harness name=fixture:FILE` file with `exec` or `commands` is refused; put
 them in the global `--harness fixture:FILE`.
+
+## Repeated poll checks
+
+A dry run checks each poll, observer or command form, back to back in one process until a check is
+terminal or the poll has had five rehearsed checks. No real interval is slept: each check runs on a
+virtual clock at the moment a live run would wake for it, which is its next check time, or the
+wait's deadline when that comes first. A deadline that falls within those checks therefore resolves
+the wait `{ by: 'deadline' }` after the checks a live run would make: `every: 30_000` with
+`timeoutMs: 45_000` checks at 0 s, 30 s and 45 s, then resolves by deadline. The virtual clock moves
+only the wait's progress (the outcome's `at`, `nextCheckAt`, `lastError.at`, the deadline test and
+an `onError` retry), and the time an observation really takes counts on it: a check that starts at
+30 s and observes for 20 s completes at 50 s and schedules the next check from there. A deadline
+reached during a check's observation cuts it short and resolves the wait by deadline, as in a live
+run. Step timestamps keep real time, and `observeTimeoutMs` still bounds each observation in real
+time, because the observer really runs.
+
+Every check runs the observer again and synthesizes or answers its commands again. A poll that never
+turns terminal makes five observations and lists five `commands` entries for each command it runs
+per check, a local observer's side-effect-free reads run five times, and a `live: true` command runs
+for real on every check. A poll still nonterminal after its fifth check stops there: `warnings`
+names the wait and the limit, followed by the usual note that the rehearsal stopped at an unresolved
+external wait, and the rehearsal suspends. This also holds under `--wait-mode block`, which used to
+keep polling in real time. The limit is fixed and counts only the checks made in this process, so a
+resume preview of a run that already polled gets five more. To rehearse a longer path, answer the
+checks with exec rules (`call`, as in [command fixtures](#command-fixtures)) so the poll turns
+terminal within five, stub the wait with `--stub-steps`, or start a real run. Signals are never
+fabricated, so the inbox stays empty for every check. An embedder observes the limit through
+`RunOptions.rehearsal.onPollLimit`.
 
 ## Worktree isolation
 
@@ -504,14 +533,15 @@ commands, pass your own `ProcessRunner` as `RunOptions.execRunner`, which `ctx.e
 `RunOptions.rehearsal` an observer's or command poll's `live: true` command goes to `processRunner`.
 With `RunOptions.rehearsal`, the runtime uses `processRunner` only for read-only Git (the
 `git rev-parse` of synthesized isolation, the ledger and merge target checks) and merge previews,
-and `rehearsal.onWorktree` observes each synthesized isolated call and merge; a `processRunner` that
-spawns nothing yields placeholder bases. `HarnessRequest.call` carries `runId`, `stepId`, cumulative
-`attempt`, and stable `idempotencyKey: runId/stepId`; it is attached inside the effect after
-fingerprinting. `HarnessRequestInput` is the identity-free input accepted by `CliHarness.plan()` and
-direct adapter calls. Planning image calls requires `imageAttachments` containing the already
-captured bytes; normal runtime/direct execution captures them before planning. A plan is JSON data
-and creates no files or processes. Actual invocation materializes only its indexed artifact
-references, then cleans them up.
+and `rehearsal.onWorktree` observes each synthesized isolated call and merge.
+`rehearsal.onPollLimit` reports, once per wait, a poll still nonterminal after its five rehearsed
+checks. A `processRunner` that spawns nothing yields placeholder bases. `HarnessRequest.call`
+carries `runId`, `stepId`, cumulative `attempt`, and stable `idempotencyKey: runId/stepId`; it is
+attached inside the effect after fingerprinting. `HarnessRequestInput` is the identity-free input
+accepted by `CliHarness.plan()` and direct adapter calls. Planning image calls requires
+`imageAttachments` containing the already captured bytes; normal runtime/direct execution captures
+them before planning. A plan is JSON data and creates no files or processes. Actual invocation
+materializes only its indexed artifact references, then cleans them up.
 
 Native CLI attempts receive `QUIET_CHOIR_RUN_ID`, `QUIET_CHOIR_STEP_ID`, `QUIET_CHOIR_ATTEMPT`, and
 `QUIET_CHOIR_IDEMPOTENCY_KEY` environment variables. These are routing/diagnostic metadata, not
@@ -547,9 +577,10 @@ and Responses APIs. It checks real envelopes, exit codes, reconnection, and pars
 claim that a fake server validates provider schemas or prices. Review refreshed sanitized captures
 before committing them. Ordinary tests replay the corpus and never need native authentication.
 
-General timing-only waits also skip delays. Polls perform their initial read-only observation;
-unresolved external waits suspend, and signal values are never fabricated. Notification hooks are
-disabled in rehearsal. `skippedSleeps` includes timing-only wait records.
+General timing-only waits also skip delays. Polls get up to five checks on a virtual clock (see
+[repeated poll checks](#repeated-poll-checks)); unresolved external waits suspend, and signal values
+are never fabricated. Notification hooks are disabled in rehearsal. `skippedSleeps` includes
+timing-only wait records.
 
 The opt-in `npm run test:contract:isolation` uses installed native CLIs with fresh temporary homes,
 dummy keys, and local fake APIs to verify restricted configuration behavior without upstream

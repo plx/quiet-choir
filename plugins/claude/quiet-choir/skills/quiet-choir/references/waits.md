@@ -69,8 +69,10 @@ can read `error.diagnostics.code`. Identity adds `poll.command` (the prepared co
 cwd, env and stdin digests and exit codes, plus the `output` JSON Schema), and `poll.observe`
 digests `done`; `live`, `observeTimeoutMs`, `onError` and `maxOutputBytes` are policy. The command
 is validated when the wait opens. Under `--dry-run` each check is synthesized from `output` and
-listed in `commands` under the wait ID; `live: true` runs it for real. `workflow pending` shows the
-command. In `ctx.wait`, `done`'s output is `unknown`; `ctx.poll` infers it.
+listed in `commands` under the wait ID; `live: true` runs it for real. A dry run makes up to five
+checks per poll on a virtual clock; see [repeated poll checks](rehearsal.md#repeated-poll-checks).
+`workflow pending` shows the command. In `ctx.wait`, `done`'s output is `unknown`; `ctx.poll` infers
+it.
 
 ```ts
 import { defineWorkflow, z } from 'quiet-choir';

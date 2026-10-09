@@ -83,6 +83,11 @@ const outcomeSchema: z.ZodType<Outcome> = z.discriminatedUnion('by', [
 const observerSettleMs = 2000;
 /** Extra real time close() allows beyond the observer grace before it abandons a stalled scan. */
 const closeMarginMs = 250;
+/**
+ * Under rehearsal, the most checks one poll gets in this process. They run back to back in one
+ * scan on a virtual clock; a poll still nonterminal after them parks and the rehearsal suspends.
+ */
+const REHEARSAL_POLL_CHECKS = 5;
 /** Why an in-flight observation's signal was aborted. */
 type Interruption =
   'deadline' | 'observeTimeoutMs' | 'run cancelled' | 'run closing' | 'run failing';
@@ -204,6 +209,11 @@ interface QuestionDependencies {
    * caller's next save, and return the callback that notifies it live once that save resolves.
    */
   readonly tolerated: (id: string, step: StepRecord, details: ToleratedError) => () => void;
+  /**
+   * Under rehearsal, report once per wait that its poll was still nonterminal after `checks`
+   * rehearsed checks, the limit, so it parks without further checks.
+   */
+  readonly rehearsalLimit?: (id: string, checks: number) => void;
   readonly emit: (
     type: 'step.waiting' | 'step.completed' | 'step.replayed' | 'wait.opened',
     id: string,
@@ -253,6 +263,10 @@ export class RunQuestions {
   /** Set once close() returns; an abandoned scan must not touch the record after that. */
   #released = false;
   #draining = false;
+  /** Under rehearsal, the poll checks each wait started in this process (not `progress.checks`). */
+  readonly #rehearsedChecks = new Map<string, number>();
+  /** Waits whose rehearsal limit was already reported. */
+  readonly #limitReported = new Set<string>();
 
   public constructor(deps: QuestionDependencies) {
     this.#deps = deps;
@@ -262,7 +276,11 @@ export class RunQuestions {
     return this.#waiters.size > 0;
   }
   public get nextWakeAt(): number | null {
-    const times = [...this.#waiters.keys()].flatMap((id) => {
+    return this.#wakeAt(() => true);
+  }
+  /** The earliest deadline or next check among the waiting waiters that `include` selects. */
+  #wakeAt(include: (id: string) => boolean): number | null {
+    const times = [...this.#waiters.keys()].filter(include).flatMap((id) => {
       const step = this.#deps.record.steps[id];
       return step?.status === 'waiting' && step.wait
         ? [step.wait.deadline, step.wait.nextCheckAt].filter(
@@ -275,6 +293,8 @@ export class RunQuestions {
   public get shouldSuspend(): boolean {
     if (!this.pending) return false;
     if (this.#draining) return true;
+    // An exhausted rehearsed poll is never checked again, so even block mode would wait forever.
+    if ([...this.#waiters.keys()].some((id) => this.#exhausted(id))) return true;
     if (this.#deps.waitMode === 'block') return false;
     if (this.#deps.skipTimers) return true;
     const next = this.nextWakeAt;
@@ -285,6 +305,7 @@ export class RunQuestions {
     if (this.#closed) return true;
     if (!this.#waiters.has(id)) return false;
     if (this.#draining) return true;
+    if (this.#exhausted(id)) return true;
     // A short timer remains owned through immediate continuations, even after the body returns.
     // Only externally parked work can be excluded from the normal operation drain.
     const progress = this.#deps.record.steps[id]?.wait;
@@ -292,6 +313,27 @@ export class RunQuestions {
       (at): at is number => at != null,
     );
     return !due.some((at) => at - clockNow(this.#clock) <= SHORT_WAIT_MS);
+  }
+  /** Whether the waiter is a poll under rehearsal, whose checks run on a virtual clock. */
+  #rehearsed(waiter: Waiter): boolean {
+    return this.#deps.skipTimers === true && waiter.sources.poll !== undefined;
+  }
+  /** Rehearsed checks the wait `id` started in this process. */
+  #rehearsedCount(id: string): number {
+    return this.#rehearsedChecks.get(id) ?? 0;
+  }
+  /** Whether `id` is a rehearsed poll that reached the limit; it is never observed again. */
+  #exhausted(id: string): boolean {
+    const waiter = this.#waiters.get(id);
+    return (
+      waiter !== undefined &&
+      this.#rehearsed(waiter) &&
+      this.#rehearsedCount(id) >= REHEARSAL_POLL_CHECKS
+    );
+  }
+  /** Whether any waiter can still be checked; an exhausted rehearsed poll needs no pump. */
+  #checkable(): boolean {
+    return [...this.#waiters.keys()].some((id) => !this.#exhausted(id));
   }
   /** Preserve existing question IDs, fingerprints, and raw answer values. */
   public register<T>(
@@ -484,7 +526,8 @@ export class RunQuestions {
     this.#deps.record.nextWakeAt = this.nextWakeAt;
   }
   #startPump(): void {
-    if (this.#closed || this.#draining || this.#pump || !this.pending) return;
+    // Under rehearsal an exhausted poll is parked: the pump would only rescan it without a check.
+    if (this.#closed || this.#draining || this.#pump || !this.pending || !this.#checkable()) return;
     const pumping = this.#runPump();
     this.#pump = pumping;
     void pumping
@@ -497,8 +540,9 @@ export class RunQuestions {
       });
   }
   async #runPump(): Promise<void> {
-    while (!this.#closed && !this.#draining && this.pending) {
-      const wake = this.nextWakeAt;
+    while (!this.#closed && !this.#draining && this.pending && this.#checkable()) {
+      // A parked exhausted rehearsed poll is never checked again, so it never wakes the pump.
+      const wake = this.#wakeAt((id) => !this.#exhausted(id));
       const milliseconds =
         wake === null ? 200 : Math.max(1, Math.min(200, wake - clockNow(this.#clock)));
       await this.#clock.sleep(milliseconds, this.#timer.signal);
@@ -523,6 +567,7 @@ export class RunQuestions {
         if (!step?.wait || step.status !== 'waiting') continue;
         try {
           await this.#check(id, step, waiter);
+          if (this.#rehearsed(waiter)) await this.#rehearse(id, step, waiter);
         } catch (error) {
           if (this.#released) return;
           this.#waiters.delete(id);
@@ -536,6 +581,36 @@ export class RunQuestions {
     } finally {
       finish();
     }
+  }
+  /**
+   * Under rehearsal, keep checking a poll back to back, on the virtual clock, until it completes or
+   * reaches the limit, all inside the caller's activity span so quiescence cannot suspend the run
+   * between checks. A poll still waiting at the limit is reported once and then parks.
+   */
+  async #rehearse(id: string, step: StepRecord, waiter: Waiter): Promise<void> {
+    while (this.#stillWaiting(id, step, waiter) && !this.#exhausted(id)) {
+      const before = this.#rehearsedCount(id);
+      await this.#check(id, step, waiter);
+      // Every pass must start an observation; otherwise the poll cannot advance here.
+      if (this.#rehearsedCount(id) === before) break;
+    }
+    if (
+      this.#stillWaiting(id, step, waiter) &&
+      this.#exhausted(id) &&
+      !this.#limitReported.has(id)
+    ) {
+      this.#limitReported.add(id);
+      this.#deps.rehearsalLimit?.(id, this.#rehearsedCount(id));
+    }
+  }
+  /** Whether the wait is still registered and waiting, with the run neither draining nor closed. */
+  #stillWaiting(id: string, step: StepRecord, waiter: Waiter): boolean {
+    return (
+      !this.#draining &&
+      !this.#closed &&
+      this.#waiters.get(id) === waiter &&
+      step.status === 'waiting'
+    );
   }
   async #signal(
     id: string,
@@ -614,12 +689,28 @@ export class RunQuestions {
       await this.#complete(id, step, waiter, signal.outcome, signal);
       return;
     }
-    const now = clockNow(this.#clock);
+    const poll = waiter.sources.poll;
+    // A rehearsed poll that reached the limit parks: no later scan observes it again.
+    if (poll && this.#exhausted(id)) return;
+    const rehearsed = this.#rehearsed(waiter);
+    const clocked = clockNow(this.#clock);
+    // Under rehearsal a check runs on a virtual clock, at the moment a live pump would wake for it:
+    // the next check, or the deadline when that comes first. No real interval is slept.
+    const now = rehearsed
+      ? Math.max(
+          clocked,
+          Math.min(progress.nextCheckAt ?? clocked, progress.deadline ?? Number.POSITIVE_INFINITY),
+        )
+      : clocked;
+    // Under rehearsal the workflow clock is shifted by this offset, so the observation's elapsed
+    // time still counts after the check's virtual start.
+    const offset = rehearsed ? now - clocked : 0;
+    /** The time after an await, on the same shifted clock the observation's deadline uses. */
+    const later = (): number => clockNow(this.#clock) + offset;
     const expired =
       progress.deadline !== null &&
       (now >= progress.deadline ||
         (this.#deps.skipTimers === true && !waiter.sources.poll && !waiter.sources.signal));
-    const poll = waiter.sources.poll;
     if (poll && (expired || progress.nextCheckAt === null || now >= progress.nextCheckAt)) {
       // A failure drain stops new observations; this one stays due and runs again on resume.
       if (this.#draining) return;
@@ -634,7 +725,9 @@ export class RunQuestions {
         openedAt: progress.openedAt,
       });
       progress.checks++;
-      const observed = await this.#observe(id, poll, progress.deadline, waiter, previous);
+      if (rehearsed) this.#rehearsedChecks.set(id, this.#rehearsedCount(id) + 1);
+      // Under rehearsal the observation's deadline is measured on the check's virtual clock.
+      const observed = await this.#observe(id, poll, progress.deadline, waiter, previous, offset);
       // A drain-aborted observation records nothing, like a closed one: no check result, error or
       // lastError, and nextCheckAt stays due, so it reruns on resume. It never reaches #tolerate.
       if (this.#isClosed() || observed.kind === 'closed' || observed.kind === 'drained') return;
@@ -644,7 +737,7 @@ export class RunQuestions {
           : new CancelledError(null, waiter.signal.reason);
       if (observed.kind === 'deadline') {
         // The deadline passed during the observation: the same result as between checks.
-        const at = clockNow(this.#clock);
+        const at = later();
         await this.#complete(id, step, waiter, { by: 'deadline', at, note: progress.note });
         return;
       }
@@ -655,7 +748,7 @@ export class RunQuestions {
         if (observed.kind === 'observeTimeoutMs') throw this.#observeTimeout(id, poll);
         ({ result, commit } = await observed.observation);
       } catch (error) {
-        await this.#tolerate(id, step, waiter, poll, progress, error);
+        await this.#tolerate(id, step, waiter, poll, progress, error, offset);
         return;
       }
       if (this.#isClosed()) return;
@@ -675,7 +768,7 @@ export class RunQuestions {
         await this.#complete(id, step, waiter, signal.outcome, signal);
         return;
       }
-      const at = clockNow(this.#clock);
+      const at = later();
       if (result.done) {
         const value = jsonValue(poll.schema.parse(result.value), `Wait ${id} terminal result`, {
           canonical: false,
@@ -717,7 +810,9 @@ export class RunQuestions {
    * context-operation violations are never tolerated. The note is left untouched. Each tolerated
    * error appends one `wait.tolerated` run event together with `lastError`, so both commit in the
    * same save, and notifies it only after that save; every throwing path runs before the append,
-   * so an error that fails the wait records no event.
+   * so an error that fails the wait records no event. Under rehearsal `offset` shifts the workflow
+   * clock to the check's virtual time, so `lastError.at`, the deadline test and the next check keep
+   * the observation's elapsed time on that clock.
    */
   async #tolerate(
     id: string,
@@ -726,6 +821,7 @@ export class RunQuestions {
     poll: AnyPollSource,
     progress: WaitRecord,
     error: unknown,
+    offset: number,
   ): Promise<void> {
     const policy = poll.onError;
     if (
@@ -750,7 +846,7 @@ export class RunQuestions {
     const lastError = {
       message: (error instanceof Error ? error.message : String(error)).slice(0, 4096),
       consecutive,
-      at: clockNow(this.#clock),
+      at: clockNow(this.#clock) + offset,
     };
     const code = errorCode(error);
     // Record the error and its run event in one synchronous step; the caller's save commits both.
@@ -771,7 +867,8 @@ export class RunQuestions {
       await this.#complete(id, step, waiter, signal.outcome, signal, record());
       return;
     }
-    const at = clockNow(this.#clock);
+    // Under rehearsal the offset puts the deadline test and the retry on the check's virtual clock.
+    const at = clockNow(this.#clock) + offset;
     if (progress.deadline !== null && at >= progress.deadline) {
       const announce = record();
       await this.#complete(
@@ -806,7 +903,8 @@ export class RunQuestions {
    * time limit passes (the wait deadline, or observeTimeoutMs), when a body failure starts draining
    * the run, or when the run closes. After an abort the observer gets a bounded real-time grace to
    * settle; one that ignores its signal is abandoned with a run warning, and its promise keeps a
-   * handler so it never surfaces unhandled.
+   * handler so it never surfaces unhandled. Under rehearsal `offset` shifts the workflow clock to
+   * the check's virtual time for the deadline; observeTimeoutMs still counts real elapsed time.
    */
   async #observe(
     id: string,
@@ -814,6 +912,7 @@ export class RunQuestions {
     deadline: number | null,
     waiter: Waiter,
     previous: PollContext['previous'],
+    offset: number,
   ): Promise<Observed> {
     const controller = new AbortController();
     const timer = new AbortController();
@@ -842,7 +941,7 @@ export class RunQuestions {
       },
     };
     waiter.signal.addEventListener('abort', forward, { once: true });
-    const started = clockNow(this.#clock);
+    const started = clockNow(this.#clock) + offset;
     const limitMs = poll.observeTimeoutMs ?? defaultObserveTimeoutMs;
     const context: PollContext = {
       reportUsage: () => {
@@ -865,7 +964,7 @@ export class RunQuestions {
       () => 'settled' as const,
       () => 'settled' as const,
     );
-    const limit = this.#limit(started, deadline, limitMs, timer.signal).then(
+    const limit = this.#limit(started, deadline, limitMs, offset, timer.signal).then(
       () => 'limit' as const,
       // An aborted limit timer never decides the race.
       () => new Promise<never>(() => undefined),
@@ -876,7 +975,7 @@ export class RunQuestions {
       timer.abort();
       if (winner === 'limit') {
         // Once the clock reaches the deadline the deadline wins, even over observeTimeoutMs.
-        const late = deadline !== null && clockNow(this.#clock) >= deadline;
+        const late = deadline !== null && clockNow(this.#clock) + offset >= deadline;
         interrupt(
           late ? 'deadline' : 'observeTimeoutMs',
           late
@@ -905,11 +1004,14 @@ export class RunQuestions {
   /**
    * Resolve when the observation's time limit passes, measured with the workflow clock: the earlier
    * of the deadline (when still ahead) and observeTimeoutMs from the start of the observation.
+   * `started` and the deadline are on the workflow clock shifted by `offset` (a rehearsed check's
+   * virtual time); the shift cancels out of the elapsed time, which stays real.
    */
   async #limit(
     started: number,
     deadline: number | null,
     limitMs: number,
+    offset: number,
     signal: AbortSignal,
   ): Promise<void> {
     // Arm the clock timer only after one real macrotask: an observation that settles promptly never
@@ -918,7 +1020,7 @@ export class RunQuestions {
     const bound = deadline !== null && deadline > started ? deadline : null;
     for (;;) {
       signal.throwIfAborted();
-      const now = clockNow(this.#clock);
+      const now = clockNow(this.#clock) + offset;
       if (bound !== null && now >= bound) return;
       if (now - started >= limitMs) return;
       // Loop rather than trust one sleep: a timer may fire marginally before the clock agrees.
