@@ -229,6 +229,22 @@ export interface EventsWorkflowPlan extends ExecutionPlan {
   readonly waitCreatedMs?: number;
 }
 
+/**
+ * Decode one agent attempt's private transcript without importing workflow code (`workflow
+ * transcript`). The decoded native bytes of `stream` go to the executor's `onTranscriptChunk`
+ * writer; `attempt` defaults to the step's latest recorded attempt.
+ */
+export interface TranscriptWorkflowPlan extends ExecutionPlan {
+  readonly kind: 'workflow.transcript';
+  readonly runId: string;
+  readonly stateDir: string;
+  /** Full durable step ID of an agent step. */
+  readonly stepId: string;
+  /** Attempt number from 1; omitted selects the latest recorded attempt. */
+  readonly attempt?: number;
+  readonly stream: 'stdout' | 'stderr';
+}
+
 /** Enumerate checkpoints without loading workflow modules. */
 export interface ListWorkflowsPlan extends ExecutionPlan {
   readonly kind: 'workflow.list';
@@ -392,6 +408,24 @@ export type WorkflowCommandResult = ExecutionResult &
         readonly kind: 'workflow.answer.result';
         readonly ok: true;
         readonly delivery: AnswerDelivery;
+      }
+    | {
+        /** A decoded transcript; its bytes went to the executor's `onTranscriptChunk` writer. */
+        readonly kind: 'workflow.transcript.result';
+        readonly ok: true;
+        readonly runId: string;
+        readonly stepId: string;
+        /** The decoded attempt number. */
+        readonly attempt: number;
+        /** The attempt's harness, as recorded on the step. */
+        readonly harness: string;
+        readonly stream: 'stdout' | 'stderr';
+        /** The transcript file that was read. */
+        readonly path: string;
+        /** Decoded bytes written for the selected stream. */
+        readonly bytes: number;
+        /** Whether the transcript stopped at its `maxTranscriptBytes` cap. */
+        readonly truncated: boolean;
       }
     | {
         readonly kind: 'workflow.fixtures.result';

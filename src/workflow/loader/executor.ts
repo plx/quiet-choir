@@ -23,6 +23,7 @@ import { eventMessage } from './event-line.js';
 import { WorkflowEventLog, type EventLogTarget } from './events.js';
 import { recordEventLines, type EventFollowCursor } from './event-follow.js';
 import { fixturesFromRun } from './fixtures.js';
+import { decodeStepTranscript } from './transcript.js';
 import {
   harnessConfigDigest,
   inheritHarnessSelection,
@@ -103,6 +104,7 @@ import type {
   InspectWorkflowPlan,
   WatchWorkflowPlan,
   EventsWorkflowPlan,
+  TranscriptWorkflowPlan,
   ListWorkflowsPlan,
   ValidateWorkflowPlan,
   WorkflowCommandResult,
@@ -183,6 +185,12 @@ export interface WorkflowExecutorOptions {
   /** Receives each line of a `workflow.events` plan, without its newline, as soon as it is derived. */
   readonly onEventLine?: (line: string) => void;
   /**
+   * Receives the decoded bytes of a `workflow.transcript` plan in order and is awaited, so it can
+   * apply backpressure. The CLI writes them to its saved stdout; the executor never writes to
+   * `process.stdout` itself. Without it the bytes are decoded and dropped.
+   */
+  readonly onTranscriptChunk?: (chunk: Uint8Array) => void | Promise<void>;
+  /**
    * Deliver a signal to one process ID (never a group) for a `workflow.cancel` plan; defaults to
    * `process.kill`. Tests stub it.
    */
@@ -204,6 +212,7 @@ export type WorkflowExecutorPlan =
   | CheckResumePlan
   | WatchWorkflowPlan
   | EventsWorkflowPlan
+  | TranscriptWorkflowPlan
   | ListWorkflowsPlan
   | ResumeWorkflowPlan
   | AnswerWorkflowPlan
@@ -549,6 +558,17 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         stage = 'run.unreadable';
         const run = await readRequiredRun({ runId: plan.runId, stateDir: plan.stateDir });
         return { kind: 'workflow.fixtures.result', ok: true, fixtures: fixturesFromRun(run) };
+      }
+      if (plan.kind === 'workflow.transcript') {
+        stage = 'run.unreadable';
+        const run = await readRequiredRun({ runId: plan.runId, stateDir: plan.stateDir });
+        return await decodeStepTranscript(
+          plan,
+          run,
+          resolveStateDir({ stateDir: plan.stateDir }),
+          (chunk) => this.#options.onTranscriptChunk?.(chunk),
+          this.#options.signal,
+        );
       }
       if (plan.kind === 'workflow.list') {
         stage = 'run.unreadable';
