@@ -1,10 +1,11 @@
 import { fork, spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, open, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, expect, it } from 'vitest';
+import { isErrno } from '../src/workflow/runtime/lock.js';
 import { lockRun } from '../src/workflow/runtime/store.js';
 import { processIdentity } from '../src/processes/identity.js';
 import { OrphanProcessesError } from '../src/workflow/runtime/process-registry.js';
@@ -26,34 +27,48 @@ const cycles = 50;
 type Observation = 'absent' | 'owned' | { readonly violation: string };
 
 /**
- * One look at a lock path. A missing or unparseable owner.json counts only when the same directory
- * (inode and ctime) was there before and after the read, so a lock retired mid-look is not blamed.
+ * One look at a lock path. A missing or unparseable owner.json counts only when the directory that
+ * was opened is still at the path after the read, so a lock retired mid-look is not blamed.
+ *
+ * The open handle pins the directory's inode for the whole look. Without it, a lock retired and
+ * deleted between two `lstat` calls frees its inode, the next lock published at the path can reuse
+ * that number (ext4 does), and coarse ctimes cannot tell the two apart, so the probe would blame a
+ * lock that was absent when owner.json was read. Opening a directory read-only is POSIX behavior;
+ * a Windows leg would need another identity check.
  */
 async function observe(path: string): Promise<Observation> {
-  let before;
+  let handle;
   try {
-    before = await lstat(path, { bigint: true });
-  } catch {
-    return 'absent';
-  }
-  let names: string[] = [];
-  try {
-    names = await readdir(path);
-  } catch {
-    // Retired between the lstat and the listing; judged by the second lstat below.
-  }
-  try {
-    JSON.parse(await readFile(join(path, 'owner.json'), 'utf8'));
-    return 'owned';
+    handle = await open(path, 'r');
   } catch (error) {
-    let after;
+    if (isErrno(error, 'ENOENT') || isErrno(error, 'ENOTDIR')) return 'absent';
+    throw error;
+  }
+  try {
+    const pinned = await handle.stat({ bigint: true });
+    let names: string[] = [];
     try {
-      after = await lstat(path, { bigint: true });
+      names = await readdir(path);
     } catch {
-      return 'absent';
+      // Retired after the open; judged by the lstat below.
     }
-    if (after.ino !== before.ino || after.ctimeNs !== before.ctimeNs) return 'absent';
-    return { violation: `${path} [${names.join(', ')}]: ${String(error)}` };
+    try {
+      JSON.parse(await readFile(join(path, 'owner.json'), 'utf8'));
+      return 'owned';
+    } catch (error) {
+      let current;
+      try {
+        current = await lstat(path, { bigint: true });
+      } catch {
+        return 'absent';
+      }
+      if (current.dev !== pinned.dev || current.ino !== pinned.ino) return 'absent';
+      return {
+        violation: `${path} (ino ${String(pinned.ino)}) [${names.join(', ')}]: ${String(error)}`,
+      };
+    }
+  } finally {
+    await handle.close();
   }
 }
 
