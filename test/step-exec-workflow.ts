@@ -25,8 +25,10 @@ export const lifecycle = defineWorkflow({
     }),
 });
 
-// done's source text is wait identity, and tsx (the forked runner) and vitest (the resume) print
-// a callback's source differently, so build it from fixed text that both see the same way.
+// A waiting poll's done source text is its identity, hashed as the loader prints it, and tsx (the
+// forked runner) and vitest (the resume) print a callback differently, which would refuse this
+// deliberately cross-loader resume. Build it from fixed text that both see the same way; see
+// "Callback source and loaders" in docs/waits.md and ADR 0059.
 // eslint-disable-next-line @typescript-eslint/no-implied-eval -- fixed source, see above
 const done = new Function('output', 'return { done: true, value: output };') as (
   output: string,

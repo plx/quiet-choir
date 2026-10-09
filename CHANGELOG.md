@@ -2,6 +2,17 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- A poll callback's wait identity is documented as the callback's source text as the loader printed
+  it, and a "wait changed" refusal caused only by a different `observe` (or command poll `done`)
+  text now says so (#321,
+  [ADR 0059](docs/decisions/0059-keep-poll-callback-identity-as-loaded-source.md)). A waiting poll
+  resumed under another loader (the CLI's `tsx`, Vitest, an embedder), or after a loader upgrade,
+  fails without an edit; the refusal keeps its sentence and appends that the text is the only
+  difference and that the ways out are resuming under the loader that started the run, forking the
+  run, or a new wait ID. The poll's identity and digests are unchanged, so recorded waits keep
+  resuming, and any other change gets the original message. The TSDoc of `PollSource.observe` and
+  `CommandPollSource.done`, [the waits guide](docs/waits.md#callback-source-and-loaders) and both
+  skill copies describe it.
 - `ctx.poll` callbacks keep literal terminal values without `as const` (#320). Only callbacks
   without parameters widened: `observe: async () => (ok ? { done: true, value: 'green' } : …)` or a
   `done: () => …` with conditional or statement returns failed against `z.enum(['green', 'red'])`,
