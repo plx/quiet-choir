@@ -9,6 +9,12 @@ import type { DurabilityFinding, DurabilityRule } from './model.js';
  * zones are also resolved within one file (#326): a zone property bound to an identifier applies to
  * the same-file `const` or function declaration it names, and a direct call from a zone walks the
  * same-file helper it names in that zone.
+ *
+ * QC005 keys literal effect IDs by ID namespace the way the runtime composes names (#327): a tree of
+ * literal prefix paths ('', 'a/', 'a/b/') that `ctx.scope('a', ...)` and `ctx.within('a')` both
+ * extend, so effects on a `const` within view are checked too. A non-literal prefix starts a fresh
+ * tree that is never compared with anything outside it. A literal prefix created deeper in a loop
+ * than its receiver is reported at the prefix when a literal-ID effect runs under it.
  */
 
 const contextEffects = new Set([
@@ -228,14 +234,65 @@ interface CallInfo {
   readonly declaration: ts.Declaration;
 }
 
+/** A literal scope or within prefix created inside a loop relative to its receiver's space. */
+interface Origin {
+  readonly call: ts.CallExpression;
+  readonly prefix: string;
+  /** The prefix call's callee text for messages, such as `ctx.within`. */
+  readonly label: string;
+}
+
 interface Occurrence {
   readonly id: string;
   readonly call: ts.CallExpression;
+  /** Inside a loop of its own namespace: deeper than the depth its space was entered at. */
   readonly inLoop: boolean;
+  /** The loop-created literal prefixes the effect's ID runs under. */
+  readonly origins: readonly Origin[];
 }
 
+/** The literal-ID effects recorded under one literal prefix path of a tree. */
 interface Namespace {
   readonly occurrences: Occurrence[];
+}
+
+/**
+ * The ID namespaces reachable from one unknown base, keyed by literal prefix path ('', 'a/',
+ * 'a/b/'). A workflow function, a named-map item callback and a non-literal prefix each start one.
+ */
+type Tree = Map<string, Namespace>;
+
+/** A view on one namespace of a tree, entered at a loop depth. */
+interface Space {
+  readonly tree: Tree;
+  readonly path: string;
+  /** The loop depth the space was entered at; deeper effects are inside a loop of it. */
+  readonly baseDepth: number;
+  /** Literal prefixes on the path that were created inside a loop, inherited by descendants. */
+  readonly origins: readonly Origin[];
+}
+
+/** A resolved receiver: its space and the within views whose callbacks make it ambient. */
+interface Receiver {
+  readonly space: Space;
+  /**
+   * The `const` within views bound in the frame its calls run under, ending with the view that owns
+   * that frame; empty for a root receiver. An inline `X.within(...)` carries X's chain, since its
+   * fresh runtime token matches no view.
+   */
+  readonly chain: readonly ts.Symbol[];
+}
+
+/** One visit of a function with a WorkflowContext parameter; a zone walk revisits with another. */
+interface Entry {
+  readonly fn: ts.FunctionLikeDeclaration;
+}
+
+/** A `const` bound to a `within(...)` result: its fixed space outside its own callbacks. */
+interface View {
+  readonly space: Space;
+  readonly chain: readonly ts.Symbol[];
+  readonly entry: Entry;
 }
 
 interface State {
@@ -243,11 +300,32 @@ interface State {
   readonly workflow: boolean;
   /** The callback zone (StepDefinition.run, PollSource.observe, ...) the node is inside. */
   readonly zone: string | undefined;
-  readonly namespace: Namespace | undefined;
-  /** Inside a loop of the current ID namespace. */
-  readonly loop: boolean;
+  /**
+   * The space root receivers name here, which follows the runtime's ambient scope path: the
+   * workflow function's, or that of the innermost scope or named-map item callback.
+   */
+  readonly ambient: Space | undefined;
+  /**
+   * Lexical loop depth. It only grows: loop bodies, standard-library iteration callbacks and
+   * named-map item callbacks each add one.
+   */
+  readonly loopDepth: number;
   /** WorkflowContext parameters visible here: the root receivers of QC005. */
   readonly roots: ReadonlySet<ts.Symbol>;
+  /**
+   * Within views bound to the runtime frame here: their own calls use the ambient path, as the
+   * runtime's bound context does. A callback entered through a view that is not bound here switches
+   * to that view's frame and replaces them.
+   */
+  readonly active: ReadonlySet<ts.Symbol>;
+  /**
+   * Inside a scope, phase or named-map callback whose receiver did not resolve: which views the
+   * runtime binds here is unknown, so registered views resolve to nothing and none are registered.
+   * Root receivers still use the ambient path.
+   */
+  readonly frameUnknown: boolean;
+  /** The visit of the function that established the current roots. */
+  readonly entry: Entry | undefined;
   /**
    * How a zone reached a function written outside it: a binding (`bound as run at line 12`) or the
    * first followed helper call (`reached through record() from line 21`). Undefined for a lexical
@@ -331,6 +409,8 @@ class DurabilityLinter {
   readonly #calls = new Map<ts.Node, CallInfo | undefined>();
   readonly #durable = new Map<ts.Node, boolean>();
   readonly #namespaces: Namespace[] = [];
+  /** Per file: `const` within views, registered at their first visit outside a zone. */
+  readonly #views = new Map<ts.Symbol, View>();
   readonly #findings: RawFinding[] = [];
   /** Per file: zone properties bound to a same-file function, keyed by the property node. */
   readonly #bindings = new Map<ts.Node, Binding>();
@@ -346,19 +426,24 @@ class DurabilityLinter {
 
   public lint(file: ts.SourceFile): RawFinding[] {
     this.#namespaces.length = 0;
+    this.#views.clear();
     this.#findings.length = 0;
     this.#prepare(file);
     const state: State = {
       workflow: false,
       zone: undefined,
-      namespace: undefined,
-      loop: false,
+      ambient: undefined,
+      loopDepth: 0,
       roots: new Set(),
+      active: new Set(),
+      frameUnknown: false,
+      entry: undefined,
     };
     ts.forEachChild(file, (child) => {
       this.#visit(child, state);
     });
     for (const namespace of this.#namespaces) this.#reportIds(namespace);
+    this.#reportOrigins();
     return [...this.#findings];
   }
 
@@ -683,7 +768,17 @@ class DurabilityLinter {
         const symbol = this.#checker.getSymbolAtLocation(parameter.name);
         if (symbol) roots.add(symbol);
       }
-      return this.#namespace({ workflow: true, zone: undefined, via: undefined, roots }, state);
+      return {
+        ...state,
+        workflow: true,
+        zone: undefined,
+        via: undefined,
+        roots,
+        ambient: fresh(state.loopDepth),
+        active: new Set(),
+        frameUnknown: false,
+        entry: { fn },
+      };
     }
     const zone = this.#zone(fn);
     if (zone !== undefined) return { ...state, zone, via: undefined };
@@ -695,9 +790,12 @@ class DurabilityLinter {
     if (ts.isCallExpression(parent)) {
       const index = parent.arguments.indexOf(wrapper as ts.Expression);
       if (index >= 0) {
-        if (index === 1 && this.#contextMember(parent, 'scope')) return this.#namespace({}, state);
+        if (index === 1 && this.#contextMember(parent, 'scope'))
+          return this.#enterScope(parent, state);
+        if (index === 1 && this.#contextMember(parent, 'phase'))
+          return this.#enterPhase(parent, state);
         if (this.#contextMember(parent, 'map'))
-          return index === 3 ? this.#namespace({}, state) : state;
+          return index === 3 ? this.#enterMapItem(parent, state) : state;
         if (this.#quietChoir(parent)) return state;
         // Only a standard-library iteration method or Array.from repeats its callback: a custom
         // method of the same name, or an unresolved (any-typed) receiver, is not a loop.
@@ -705,19 +803,164 @@ class DurabilityLinter {
         if (info && this.#isDefaultLibrary(info.declaration)) {
           // Every iteration method takes its per-item callback first; reduce's initial value and
           // map/forEach's thisArg are not repeated.
-          if (iterationMethods.has(info.member) && index === 0) return { ...state, loop: true };
+          if (iterationMethods.has(info.member) && index === 0) return looped(state);
           if (info.owner === 'ArrayConstructor' && info.member === 'from' && index === 1)
-            return { ...state, loop: true };
+            return looped(state);
         }
       }
     }
     return state;
   }
 
-  #namespace(changes: Partial<State>, state: State): State {
-    const namespace: Namespace = { occurrences: [] };
-    this.#namespaces.push(namespace);
-    return { ...state, ...changes, namespace, loop: false };
+  /**
+   * A scope callback runs under its receiver's space extended by the prefix, and under its
+   * receiver's frame (see {@link enterFrame}). An unresolved receiver gives a fresh tree and an
+   * unknown frame.
+   */
+  #enterScope(call: ts.CallExpression, state: State): State {
+    const receiver = this.#calleeReceiver(call, state);
+    return {
+      ...state,
+      ambient: receiver ? this.#derive(receiver.space, call, state) : fresh(state.loopDepth),
+      ...enterFrame(state, receiver),
+    };
+  }
+
+  /**
+   * A phase body runs under its receiver's frame, as every bound-view callback does: root calls in
+   * `a.phase(title, body)` use a's path, and a's own calls stay there. An unresolved receiver gives
+   * a fresh tree and an unknown frame.
+   */
+  #enterPhase(call: ts.CallExpression, state: State): State {
+    const receiver = this.#calleeReceiver(call, state);
+    return {
+      ...state,
+      ambient: receiver ? receiver.space : fresh(state.loopDepth),
+      ...enterFrame(state, receiver),
+    };
+  }
+
+  /**
+   * A named-map item callback repeats per item under an item prefix: a fresh tree one loop level
+   * deeper, so a fixed-path view used in it is inside a loop. It runs under the map receiver's frame
+   * (see {@link enterFrame}).
+   */
+  #enterMapItem(call: ts.CallExpression, state: State): State {
+    const receiver = this.#calleeReceiver(call, state);
+    const loopDepth = state.loopDepth + 1;
+    return {
+      ...state,
+      loopDepth,
+      ambient: fresh(loopDepth),
+      ...enterFrame(state, receiver),
+    };
+  }
+
+  /** The receiver of a method call such as `a.scope(...)`, when it resolves to a space. */
+  #calleeReceiver(call: ts.CallExpression, state: State): Receiver | undefined {
+    const callee = skipParentheses(call.expression);
+    return ts.isPropertyAccessExpression(callee)
+      ? this.#space(callee.expression, state)
+      : undefined;
+  }
+
+  /**
+   * Resolve a context expression to its space: a root parameter, a registered `const` within view
+   * of the same workflow function visit, or an inline `X.within(prefix)`. Anything else is unknown.
+   */
+  #space(expression: ts.Expression, state: State): Receiver | undefined {
+    const node = skipParentheses(expression);
+    if (ts.isIdentifier(node)) {
+      const symbol = this.#symbolAt(node);
+      if (!symbol) return undefined;
+      if (state.roots.has(symbol)) return state.ambient && { space: state.ambient, chain: [] };
+      const view = this.#views.get(symbol);
+      if (!view || view.entry !== state.entry || state.frameUnknown) return undefined;
+      // Inside its own scope or map callback, a bound view keeps the ambient descendant path.
+      if (state.active.has(symbol))
+        return state.ambient && { space: state.ambient, chain: view.chain };
+      return { space: view.space, chain: view.chain };
+    }
+    if (ts.isCallExpression(node) && this.#contextMember(node, 'within')) {
+      const base = this.#calleeReceiver(node, state);
+      return base && { space: this.#derive(base.space, node, state), chain: base.chain };
+    }
+    return undefined;
+  }
+
+  /**
+   * The space a scope or within call's prefix (its first argument) opens under a base space. A
+   * literal prefix extends the base path and records the call as an origin when it is created deeper
+   * in a loop than the base; any other prefix is unknown and starts a fresh tree.
+   */
+  #derive(base: Space, call: ts.CallExpression, state: State): Space {
+    const prefix = call.arguments[0];
+    if (!prefix || !(ts.isStringLiteral(prefix) || ts.isNoSubstitutionTemplateLiteral(prefix)))
+      return fresh(state.loopDepth);
+    const info = this.#quietChoir(call);
+    const origins =
+      state.loopDepth > base.baseDepth
+        ? [
+            ...base.origins,
+            {
+              call,
+              prefix: prefix.text,
+              label: info ? this.#label(call, info) : '.within',
+            },
+          ]
+        : base.origins;
+    return {
+      tree: base.tree,
+      path: `${base.path}${prefix.text}/`,
+      baseDepth: state.loopDepth,
+      origins,
+    };
+  }
+
+  /**
+   * Register `const name = <within call>` as a view. Only the first visit outside a zone counts,
+   * because zone walks revisit bodies; `let`, `var`, destructuring and parameters stay unknown. Its
+   * chain is the frame the within call runs under plus itself, as `NameScopes.bind` appends a token
+   * to the current bindings.
+   */
+  #registerView(declaration: ts.VariableDeclaration, state: State): void {
+    if (
+      !state.entry ||
+      state.frameUnknown ||
+      !ts.isIdentifier(declaration.name) ||
+      !declaration.initializer ||
+      !ts.isVariableDeclarationList(declaration.parent) ||
+      (declaration.parent.flags & ts.NodeFlags.Const) === 0 ||
+      (declaration.parent.flags & ts.NodeFlags.Using) !== 0
+    )
+      return;
+    const initializer = skipParentheses(declaration.initializer);
+    if (!ts.isCallExpression(initializer) || !this.#contextMember(initializer, 'within')) return;
+    const symbol = this.#symbolAt(declaration.name);
+    if (!symbol || this.#views.has(symbol)) return;
+    const resolved = this.#space(initializer, state);
+    if (resolved)
+      this.#views.set(symbol, {
+        space: resolved.space,
+        chain: [...enterFrame(state, resolved).active, symbol],
+        entry: state.entry,
+      });
+  }
+
+  /** Record a literal-ID effect in its space's namespace. */
+  #record(space: Space, id: string, call: ts.CallExpression, state: State): void {
+    let namespace = space.tree.get(space.path);
+    if (!namespace) {
+      namespace = { occurrences: [] };
+      space.tree.set(space.path, namespace);
+      this.#namespaces.push(namespace);
+    }
+    namespace.occurrences.push({
+      id,
+      call,
+      inLoop: state.loopDepth > space.baseDepth,
+      origins: space.origins,
+    });
   }
 
   #visit(node: ts.Node, state: State): void {
@@ -730,25 +973,26 @@ class DurabilityLinter {
     }
     if (ts.isForStatement(node)) {
       if (node.initializer) this.#visit(node.initializer, state);
-      const looped = { ...state, loop: true };
-      if (node.condition) this.#visit(node.condition, looped);
-      if (node.incrementor) this.#visit(node.incrementor, looped);
-      this.#visit(node.statement, looped);
+      const inner = looped(state);
+      if (node.condition) this.#visit(node.condition, inner);
+      if (node.incrementor) this.#visit(node.incrementor, inner);
+      this.#visit(node.statement, inner);
       return;
     }
     if (ts.isForOfStatement(node) || ts.isForInStatement(node)) {
       this.#visit(node.initializer, state);
       this.#visit(node.expression, state);
-      this.#visit(node.statement, { ...state, loop: true });
+      this.#visit(node.statement, looped(state));
       return;
     }
     if (ts.isWhileStatement(node) || ts.isDoStatement(node)) {
-      const looped = { ...state, loop: true };
+      const inner = looped(state);
       ts.forEachChild(node, (child) => {
-        this.#visit(child, looped);
+        this.#visit(child, inner);
       });
       return;
     }
+    if (ts.isVariableDeclaration(node) && state.zone === undefined) this.#registerView(node, state);
     const binding = this.#bindings.get(node);
     if (binding) this.#walkInZone(binding.fn, { ...state, zone: binding.zone, via: binding.via });
     try {
@@ -795,14 +1039,12 @@ class DurabilityLinter {
         node,
         `${label}(...) inside a ${state.zone} callback${state.via === undefined ? '' : ` (${state.via})`} is a nested durable call, which the runtime rejects; use the callback's context.exec or move the call into the workflow body.`,
       );
-    if (effect && state.namespace && state.zone === undefined) {
+    if (effect && state.zone === undefined) {
       const first = node.arguments[0];
-      if (
-        first &&
-        (ts.isStringLiteral(first) || ts.isNoSubstitutionTemplateLiteral(first)) &&
-        this.#isRootReceiver(node, info, state)
-      )
-        state.namespace.occurrences.push({ id: first.text, call: node, inLoop: state.loop });
+      if (first && (ts.isStringLiteral(first) || ts.isNoSubstitutionTemplateLiteral(first))) {
+        const space = this.#receiverSpace(node, info, state);
+        if (space) this.#record(space, first.text, node, state);
+      }
     }
   }
 
@@ -819,9 +1061,13 @@ class DurabilityLinter {
     });
   }
 
-  #isRootReceiver(node: ts.CallExpression, info: CallInfo, state: State): boolean {
+  /**
+   * The space an effect call's context receiver resolves to, through `.exec`, `.exec.json`,
+   * `.claude`, `.codex` and `.agent(x)`.
+   */
+  #receiverSpace(node: ts.CallExpression, info: CallInfo, state: State): Space | undefined {
     const callee = skipParentheses(node.expression);
-    if (!ts.isPropertyAccessExpression(callee)) return false;
+    if (!ts.isPropertyAccessExpression(callee)) return undefined;
     let receiver: ts.Expression | undefined = skipParentheses(callee.expression);
     if (info.owner === 'ExecFunction') {
       if (info.member === '()') {
@@ -846,9 +1092,7 @@ class DurabilityLinter {
         receiver = skipParentheses(receiver.expression.expression);
       else receiver = undefined;
     }
-    if (!receiver || !ts.isIdentifier(receiver)) return false;
-    const symbol = this.#checker.getSymbolAtLocation(receiver);
-    return symbol !== undefined && state.roots.has(symbol);
+    return receiver ? this.#space(receiver, state)?.space : undefined;
   }
 
   #reportIds(namespace: Namespace): void {
@@ -858,7 +1102,7 @@ class DurabilityLinter {
         this.#report(
           'QC005',
           occurrence.call,
-          `Literal ID '${occurrence.id}' is inside a loop on the root context, so every iteration reuses it; derive it per item with ctx.id(...), or use ctx.within, ctx.scope or a named ctx.map.`,
+          `Literal ID '${occurrence.id}' is inside a loop of its ID namespace, so every iteration reuses it; derive it per item with ctx.id(...), or use ctx.within, ctx.scope or a named ctx.map.`,
         );
         return;
       }
@@ -879,6 +1123,24 @@ class DurabilityLinter {
         );
       }
     });
+  }
+
+  /** Report each loop-created literal prefix once, at the prefix, if a literal-ID effect runs under it. */
+  #reportOrigins(): void {
+    const hits = new Map<ts.CallExpression, { origin: Origin; occurrence: Occurrence }>();
+    for (const namespace of this.#namespaces)
+      for (const occurrence of namespace.occurrences)
+        for (const origin of occurrence.origins) {
+          const hit = hits.get(origin.call);
+          if (!hit || occurrence.call.getStart() < hit.occurrence.call.getStart())
+            hits.set(origin.call, { origin, occurrence });
+        }
+    for (const { origin, occurrence } of hits.values())
+      this.#report(
+        'QC005',
+        origin.call,
+        `Literal prefix '${origin.prefix}' in ${origin.label}(...) is inside a loop, so every iteration reuses the literal IDs under it (such as '${occurrence.id}' at line ${String(lineOf(occurrence.call))}); derive the prefix per item with ctx.id(...), or use a named ctx.map.`,
+      );
   }
 
   #new(node: ts.NewExpression, state: State): void {
@@ -981,6 +1243,34 @@ class DurabilityLinter {
     this.#durable.set(node, found);
     return found;
   }
+}
+
+/** A space that starts a fresh tree at a loop depth. */
+function fresh(depth: number): Space {
+  return { tree: new Map(), path: '', baseDepth: depth, origins: [] };
+}
+
+/** One loop level deeper. */
+function looped(state: State): State {
+  return { ...state, loopDepth: state.loopDepth + 1 };
+}
+
+/**
+ * The frame after a call through this receiver, following `NameScopes.bound`: a root receiver, or a
+ * view already bound here, keeps the current frame; any other view switches to its own frame, whose
+ * bindings are exactly its chain. An inline `X.within(...)` mints a fresh token that no view names,
+ * so X's chain gives the same result. An unresolved receiver may be any view, so the frame becomes
+ * unknown.
+ */
+function enterFrame(
+  state: State,
+  receiver: Receiver | undefined,
+): Pick<State, 'active' | 'frameUnknown'> {
+  if (!receiver) return { active: state.active, frameUnknown: true };
+  const view = receiver.chain.at(-1);
+  return view === undefined || state.active.has(view)
+    ? { active: state.active, frameUnknown: state.frameUnknown }
+    : { active: new Set(receiver.chain), frameUnknown: false };
 }
 
 function hasBody(info: CallInfo): boolean {

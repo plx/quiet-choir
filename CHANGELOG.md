@@ -2,6 +2,18 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- QC005 now checks literal IDs per literal `ctx.scope`/`ctx.within` prefix and reports literal
+  prefixes reused in loops (#327,
+  [ADR 0041](docs/decisions/0041-static-durability-lint.md#amendment-literal-prefixes-and-within-receivers-327)).
+  Effects on a `const a = ctx.within('a')` view or an inline `ctx.within('a')` are checked for
+  reuse; `ctx.scope('a', ...)` and `ctx.within('a')` share the namespace `a/`, so two sibling
+  `ctx.scope('s', ...)` blocks running `ctx.step('inner')` now report, while `a/x` and `b/x` do not.
+  A literal `ctx.scope('x', ...)` or `ctx.within('x')` created inside a loop is reported at the
+  prefix when a literal-ID effect runs under it, and a view created before a loop and used inside
+  it, or used in a root named-map callback, reports the effect. Non-literal prefixes such as
+  `ctx.within(ctx.id('item', item))` stay silent. `workflow validate` can therefore fail (exit 4) on
+  workflows that passed before but would hit `Duplicate step ID` at run time. The in-loop message
+  now says "inside a loop of its ID namespace" instead of "on the root context".
 - The durability lint resolves callback zones through names within one file (#326,
   [ADR 0041](docs/decisions/0041-static-durability-lint.md#amendment-identifier-bound-zones-and-same-file-helpers-326)).
   A step `run`, poll `observe`/`done` or `onError` callback passed by name (`{ run }`,
