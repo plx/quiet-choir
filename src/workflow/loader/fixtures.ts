@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { stepHarness } from '../runtime/harness-registry.js';
 import { z } from 'zod';
+import { filtersMatch } from '../../harnesses/fixture-exec.js';
 import {
   parseHarnessFixtures,
   type FixtureExecCall,
@@ -16,7 +17,7 @@ import { EXEC_TAIL_LIMIT } from '../runtime/exec-error.js';
 import type { ExecSummary } from '../runtime/exec-model.js';
 import { execResultSchema, execSummarySchema } from '../runtime/exec-schema.js';
 import { RunRefusedError } from '../runtime/run-errors.js';
-import type { RunRecord } from '../runtime/store.js';
+import type { InnerCommand, RunRecord, StepRecord } from '../runtime/store.js';
 import { stepErrorKind } from './failure-kind.js';
 
 /**
@@ -28,7 +29,11 @@ import { stepErrorKind } from './failure-kind.js';
  * tails when the result path can reproduce it (an exit code outside `okExitCodes`, or an `exec.json`
  * schema failure); spawn failures, timeouts, signal kills and output-limit failures get no rule
  * (exec error rules can describe them by hand, but export does not produce them yet), but still set
- * `commands: 'fixture'`. No rule pins an attempt. @internal
+ * `commands: 'fixture'`. Commands a step callback or a poll observer ran through `context.exec`
+ * become exec rules keyed by the parent's ID, from the raw results recorded on the parent (a
+ * step's latest settled attempt, a poll-completed wait's terminal observation), with `call` only
+ * where the parent ran more than one command that meets the same filters. No rule pins an attempt.
+ * @internal
  */
 export function fixturesFromRun(run: RunRecord): HarnessFixtures {
   if (run.status !== 'completed')
@@ -115,10 +120,12 @@ function exportedKind(kind: ErrorKind | null | undefined): { readonly kind?: Err
 }
 
 /**
- * Exec rules for completed commands and for command failures the run settled or absorbed, in
- * execution order, keyed by full step ID, full argv and the recorded environment and stdin digests.
- * Environment values and stdin are never read. `considered` is whether the run has any such step,
- * including a failure that produced no rule: export then still sets `commands: 'fixture'`, so a
+ * Exec rules for completed commands, for command failures the run settled or absorbed, and for the
+ * inner commands a step callback or poll observer ran through `context.exec`, in execution order
+ * (a parent's inner rules sit at its position), keyed by full step ID (the parent's for an inner
+ * command), full argv and the recorded environment and stdin digests. Environment values and stdin
+ * are never read. `considered` is whether the run has any such step or parent, including a failure
+ * or inner command that produced no rule: export then still sets `commands: 'fixture'`, so a
  * replay fails at that step instead of running the real command or synthesizing a success.
  */
 function execFixtures(run: RunRecord): {
@@ -134,46 +141,122 @@ function execFixtures(run: RunRecord): {
           step.status === 'settled-failed' ||
           step.status === 'failed'),
     )
-    .sort((a, b) => (a[1].seq ?? 0) - (b[1].seq ?? 0));
-  const rules = steps.flatMap(([stepId, step]): FixtureExecCall[] => {
-    const summary = execSummarySchema.parse(step.exec);
+    .map(([stepId, step]) => ({ seq: step.seq ?? 0, rules: topLevelExecRules(stepId, step) }));
+  const parents = Object.entries(run.steps)
+    .filter(([, step]) => innerCommandsExported(step))
+    .map(([stepId, step]) => ({
+      seq: step.seq ?? 0,
+      rules: innerExecRules(stepId, step.innerCommands?.commands ?? []),
+    }));
+  const rules = [...steps, ...parents]
+    .sort((a, b) => a.seq - b.seq)
+    .flatMap((entry) => entry.rules);
+  return { rules, considered: steps.length > 0 || parents.length > 0 };
+}
+
+/** The exec rule of one recorded `ctx.exec` step, or none when its failure cannot be reproduced. */
+function topLevelExecRules(stepId: string, step: StepRecord): FixtureExecCall[] {
+  const summary = execSummarySchema.parse(step.exec);
+  const key = {
+    step: stepId,
+    ...(Array.isArray(summary.command)
+      ? { argvPrefix: summary.command as readonly [string, ...string[]] }
+      : {}),
+    envSha256: summary.envSha256,
+    inputSha256: summary.inputSha256,
+  };
+  if (step.status === 'settled-failed') {
+    const error = step.settledError;
+    const rule =
+      error && execFailureRule(key, summary, { ...error, truncated: step.execError?.truncated });
+    return rule ? [rule] : [];
+  }
+  // A failure the workflow absorbed (try/catch, or a settled map item) leaves the step `failed`
+  // in a completed run. The runner records its message in `error`, its kind in the last attempt
+  // and its process fields in `execError`; a thrown ExecError keeps no `parsed` there.
+  if (step.status === 'failed') {
+    const kind = stepErrorKind(step);
+    const rule =
+      step.execError && kind !== null && step.error !== null
+        ? execFailureRule(key, summary, { ...step.execError, kind, message: step.error })
+        : undefined;
+    return rule ? [rule] : [];
+  }
+  if (summary.structured) return [{ ...key, json: z.json().parse(step.output) }];
+  const result = execResultSchema.parse(step.output);
+  return [
+    {
+      ...key,
+      stdout: result.stdout,
+      ...(result.stderr === '' ? {} : { stderr: result.stderr }),
+      ...(result.code === null || result.code === 0 ? {} : { code: result.code }),
+    },
+  ];
+}
+
+/**
+ * Whether a step's recorded inner commands are exported: a step that completed, settled a failure
+ * or failed (a failure the workflow absorbed, in a completed run), or a wait a poll completed.
+ * The record of a wait holds only its terminal observation's commands, so a wait that ended by
+ * deadline or signal, a failed wait and an ask export nothing.
+ */
+function innerCommandsExported(step: StepRecord): boolean {
+  const inner = step.innerCommands;
+  if (!inner || (inner.commands.length === 0 && (inner.omitted ?? 0) === 0)) return false;
+  if (step.kind === 'wait')
+    return step.status === 'completed' && pollCompletion.safeParse(step.output).success;
+  return (
+    step.status === 'completed' || step.status === 'settled-failed' || step.status === 'failed'
+  );
+}
+const pollCompletion = z.object({ by: z.literal('poll') });
+
+/**
+ * One exec rule per recorded inner command of `parentId` that a replay can reproduce, in recorded
+ * order. A rule carries the raw result, so the replayed command goes through the same `okExitCodes`
+ * and `exec.json` schema checks and succeeds or fails as it did. A command whose runner gave no
+ * result (spawn failure, timeout, cancellation), or whose result had a signal, no exit code or
+ * truncated output, gets no rule, because a replayed rule can carry none of those.
+ *
+ * A rule gets `call` only when another recorded command of the parent also meets its filters (the
+ * same argv prefix, or any command for a `{ shell }` rule, with equal digests): it is then 1 plus
+ * the number of earlier recorded commands that meet them, which is the call number exec fixture
+ * rules count for it. A unique rule stays free of `call`, so it is robust to call counters that
+ * restart in a new process.
+ */
+function innerExecRules(parentId: string, commands: readonly InnerCommand[]): FixtureExecCall[] {
+  return commands.flatMap((entry, index): FixtureExecCall[] => {
+    const { result } = entry;
+    if (
+      result?.signal !== null ||
+      result.code === null ||
+      result.truncated ||
+      result.code < 0 ||
+      result.code > 255
+    )
+      return [];
     const key = {
-      step: stepId,
-      ...(Array.isArray(summary.command)
-        ? { argvPrefix: summary.command as readonly [string, ...string[]] }
+      step: parentId,
+      ...(Array.isArray(entry.command)
+        ? { argvPrefix: entry.command as readonly [string, ...string[]] }
         : {}),
-      envSha256: summary.envSha256,
-      inputSha256: summary.inputSha256,
+      envSha256: entry.envSha256,
+      inputSha256: entry.inputSha256,
     };
-    if (step.status === 'settled-failed') {
-      const error = step.settledError;
-      const rule =
-        error && execFailureRule(key, summary, { ...error, truncated: step.execError?.truncated });
-      return rule ? [rule] : [];
-    }
-    // A failure the workflow absorbed (try/catch, or a settled map item) leaves the step `failed`
-    // in a completed run. The runner records its message in `error`, its kind in the last attempt
-    // and its process fields in `execError`; a thrown ExecError keeps no `parsed` there.
-    if (step.status === 'failed') {
-      const kind = stepErrorKind(step);
-      const rule =
-        step.execError && kind !== null && step.error !== null
-          ? execFailureRule(key, summary, { ...step.execError, kind, message: step.error })
-          : undefined;
-      return rule ? [rule] : [];
-    }
-    if (summary.structured) return [{ ...key, json: z.json().parse(step.output) }];
-    const result = execResultSchema.parse(step.output);
+    const meets = (other: InnerCommand): boolean =>
+      filtersMatch(key, other.command, parentId, other.envSha256, other.inputSha256);
+    const earlier = commands.slice(0, index).filter(meets).length;
+    const shared = commands.some((other, position) => position !== index && meets(other));
     return [
       {
         ...key,
+        ...(shared ? { call: earlier + 1 } : {}),
         stdout: result.stdout,
         ...(result.stderr === '' ? {} : { stderr: result.stderr }),
-        ...(result.code === null || result.code === 0 ? {} : { code: result.code }),
+        ...(result.code === 0 ? {} : { code: result.code }),
       },
     ];
   });
-  return { rules, considered: steps.length > 0 };
 }
 
 /** The recorded fields of a command failure that an exec rule can reproduce. */

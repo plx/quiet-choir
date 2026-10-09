@@ -851,7 +851,7 @@ describe('inner command records (#317)', () => {
     // Three 400 KiB outputs pass 1 MiB at the third; a small fourth is still omitted.
     const big = 'b'.repeat(400 * 1024);
     const large = recorder((request) =>
-      reply((request.command as string[])[1] === 'small' ? 's' : big),
+      reply((request.command as readonly string[])[1] === 'small' ? 's' : big),
     );
     await runWorkflow(
       definition((ctx) =>
