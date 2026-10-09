@@ -724,7 +724,15 @@ export class RunQuestions {
       });
       progress.checks++;
       if (rehearsed) this.#rehearsedChecks.set(id, this.#rehearsedCount(id) + 1);
-      const observed = await this.#observe(id, poll, progress.deadline, waiter, previous);
+      // Under rehearsal the observation's deadline is measured on the check's virtual clock.
+      const observed = await this.#observe(
+        id,
+        poll,
+        progress.deadline,
+        waiter,
+        previous,
+        rehearsed ? now - clocked : 0,
+      );
       // A drain-aborted observation records nothing, like a closed one: no check result, error or
       // lastError, and nextCheckAt stays due, so it reruns on resume. It never reaches #tolerate.
       if (this.#isClosed() || observed.kind === 'closed' || observed.kind === 'drained') return;
@@ -899,7 +907,8 @@ export class RunQuestions {
    * time limit passes (the wait deadline, or observeTimeoutMs), when a body failure starts draining
    * the run, or when the run closes. After an abort the observer gets a bounded real-time grace to
    * settle; one that ignores its signal is abandoned with a run warning, and its promise keeps a
-   * handler so it never surfaces unhandled.
+   * handler so it never surfaces unhandled. Under rehearsal `offset` shifts the workflow clock to
+   * the check's virtual time for the deadline; observeTimeoutMs still counts real elapsed time.
    */
   async #observe(
     id: string,
@@ -907,6 +916,7 @@ export class RunQuestions {
     deadline: number | null,
     waiter: Waiter,
     previous: PollContext['previous'],
+    offset: number,
   ): Promise<Observed> {
     const controller = new AbortController();
     const timer = new AbortController();
@@ -935,7 +945,7 @@ export class RunQuestions {
       },
     };
     waiter.signal.addEventListener('abort', forward, { once: true });
-    const started = clockNow(this.#clock);
+    const started = clockNow(this.#clock) + offset;
     const limitMs = poll.observeTimeoutMs ?? defaultObserveTimeoutMs;
     const context: PollContext = {
       reportUsage: () => {
@@ -958,7 +968,7 @@ export class RunQuestions {
       () => 'settled' as const,
       () => 'settled' as const,
     );
-    const limit = this.#limit(started, deadline, limitMs, timer.signal).then(
+    const limit = this.#limit(started, deadline, limitMs, offset, timer.signal).then(
       () => 'limit' as const,
       // An aborted limit timer never decides the race.
       () => new Promise<never>(() => undefined),
@@ -969,7 +979,7 @@ export class RunQuestions {
       timer.abort();
       if (winner === 'limit') {
         // Once the clock reaches the deadline the deadline wins, even over observeTimeoutMs.
-        const late = deadline !== null && clockNow(this.#clock) >= deadline;
+        const late = deadline !== null && clockNow(this.#clock) + offset >= deadline;
         interrupt(
           late ? 'deadline' : 'observeTimeoutMs',
           late
@@ -998,11 +1008,14 @@ export class RunQuestions {
   /**
    * Resolve when the observation's time limit passes, measured with the workflow clock: the earlier
    * of the deadline (when still ahead) and observeTimeoutMs from the start of the observation.
+   * `started` and the deadline are on the workflow clock shifted by `offset` (a rehearsed check's
+   * virtual time); the shift cancels out of the elapsed time, which stays real.
    */
   async #limit(
     started: number,
     deadline: number | null,
     limitMs: number,
+    offset: number,
     signal: AbortSignal,
   ): Promise<void> {
     // Arm the clock timer only after one real macrotask: an observation that settles promptly never
@@ -1011,7 +1024,7 @@ export class RunQuestions {
     const bound = deadline !== null && deadline > started ? deadline : null;
     for (;;) {
       signal.throwIfAborted();
-      const now = clockNow(this.#clock);
+      const now = clockNow(this.#clock) + offset;
       if (bound !== null && now >= bound) return;
       if (now - started >= limitMs) return;
       // Loop rather than trust one sleep: a timer may fire marginally before the clock agrees.

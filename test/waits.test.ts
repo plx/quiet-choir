@@ -763,7 +763,12 @@ describe('rehearsed poll checks', () => {
   /** A workflow whose only effect is the poll `ci`, observed by `observe`. */
   function pollWorkflow(
     observe: PollSource<string>['observe'],
-    options: { every: number; timeoutMs: number; onError?: PollErrorPolicy },
+    options: {
+      every: number;
+      timeoutMs: number;
+      onError?: PollErrorPolicy;
+      observeTimeoutMs?: number;
+    },
   ) {
     return defineWorkflow({
       name: 'rehearsed-poll',
@@ -924,6 +929,48 @@ describe('rehearsed poll checks', () => {
     expect(calls).toBe(3);
     expect(limits).toEqual([]);
   });
+
+  it.for(['rehearsal', 'live'] as const)(
+    'resolves a hanging final check by deadline, not observeTimeoutMs (%s)',
+    async (mode) => {
+      // The second check falls at the deadline; its observer hangs until aborted. A live run
+      // reaches that check in real time, so the deadline has passed when observeTimeoutMs fires; a
+      // rehearsal reaches it at once and must measure the deadline on its virtual clock.
+      let calls = 0;
+      let captured: AbortSignal | undefined;
+      const definition = pollWorkflow(
+        ({ signal }) => {
+          calls++;
+          if (calls === 1) return Promise.resolve({ done: false as const, note: { calls } });
+          captured = signal;
+          return new Promise<never>((_resolve, reject) => {
+            signal.addEventListener(
+              'abort',
+              () => {
+                reject(signal.reason instanceof Error ? signal.reason : new Error('aborted'));
+              },
+              { once: true },
+            );
+          });
+        },
+        { every: 500, timeoutMs: 500, observeTimeoutMs: 30 },
+      );
+      const started = Date.now();
+      const run = await runWorkflow(definition, {
+        stateDir,
+        runId: `hanging-final-${mode}`,
+        input: null,
+        ...(mode === 'rehearsal' ? { harness: dryRun, rehearsal: {} } : {}),
+      });
+      expect(run.status).toBe('completed');
+      expect(run.output).toMatchObject({ by: 'deadline', note: { calls: 1 } });
+      expect(run.steps['ci']?.wait?.checks).toBe(2);
+      expect(calls).toBe(2);
+      expect(captured?.aborted).toBe(true);
+      // The rehearsal sleeps no interval: only the observation's real observeTimeoutMs passes.
+      if (mode === 'rehearsal') expect(Date.now() - started).toBeLessThan(450);
+    },
+  );
 
   it('tolerates an observer error and completes on the next rehearsed check', async () => {
     const clock = new Clock();
