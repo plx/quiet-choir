@@ -44,7 +44,7 @@ export default class WorkflowTranscript extends WorkflowCommand {
   public static override readonly summary =
     "Print an agent attempt's decoded private transcript without importing workflow code";
   public static override readonly description =
-    'Decodes the base64 transcript entries of one agent attempt and writes the native bytes of the selected stream to stdout unchanged: Claude stream-json or Codex JSONL on stdout, which jq can read. A transcript cut at maxTranscriptBytes prints a warning on stderr.';
+    'Decodes the base64 transcript entries of one agent attempt and writes the native bytes of the selected stream to stdout unchanged: Claude stream-json or Codex JSONL on stdout, which jq can read. A transcript cut at maxTranscriptBytes, or of an attempt still recorded as running, prints a warning on stderr.';
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(WorkflowTranscript);
@@ -79,9 +79,14 @@ export default class WorkflowTranscript extends WorkflowCommand {
     // instead of waiting on oclif's flush() for a stdout that will never drain.
     if (closed.signal.aborted && !this.signal.aborted) this.exit(0);
     if (!result.ok) this.failResult(result, wroteOutput);
-    if (result.kind === 'workflow.transcript.result' && result.truncated)
+    if (result.kind !== 'workflow.transcript.result') return;
+    if (result.truncated)
       this.logToStderr(
         `Warning: the transcript of attempt ${String(result.attempt)} of ${result.stepId} was cut at its maxTranscriptBytes cap; the output ends early.`,
+      );
+    if (result.inProgress)
+      this.logToStderr(
+        `Warning: attempt ${String(result.attempt)} of ${result.stepId} is still running or was interrupted; the output may end early.`,
       );
   }
 

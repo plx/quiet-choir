@@ -27,9 +27,10 @@ function agentStep(step: StepRecord): boolean {
  * `usage.flag` failure with `details.reason`. The receipt's path counts only through its
  * `<runId>/attempts/<step hash>/<attempt>.<harness>.jsonl` tail, re-rooted under `stateDir`. A
  * receipt without that tail for this run and step, or whose file is missing, resolves outside the
- * run's `attempts/` directory, is a symlink or is malformed, throws `run.unreadable`. Decoded bytes
- * go to `onChunk` in order; an aborted `signal` stops the read before it opens the file, between
- * blocks and chunks, and before it reports success, throwing its reason. @internal
+ * run's `attempts/` directory, is a symlink or is malformed, throws `run.unreadable`, except that a
+ * running or interrupted attempt's torn final line is dropped; a running one reports `inProgress`.
+ * Decoded bytes go to `onChunk` in order; an aborted `signal` stops the read before it opens the
+ * file, between blocks and chunks, and before it reports success, throwing its reason. @internal
  */
 export async function decodeStepTranscript(
   plan: TranscriptWorkflowPlan,
@@ -153,6 +154,10 @@ export async function decodeStepTranscript(
       error,
     );
   }
+  // A running attempt's writer may still be appending, or its process died mid-line; resume marks
+  // such a dead attempt interrupted. Either way a torn final line is not damage.
+  const inProgress = attempt.status === 'running';
+  const tolerateTornTail = inProgress || attempt.status === 'interrupted';
   let decoded: Awaited<ReturnType<typeof readAttemptTranscript>>;
   // A failing writer or an abort is not a damaged transcript; only read errors are.
   const writing = { now: false };
@@ -168,6 +173,7 @@ export async function decodeStepTranscript(
       },
       undefined,
       signal,
+      { tolerateTornTail },
     );
   } catch (error) {
     if (writing.now || signal?.aborted) throw error;
@@ -189,5 +195,6 @@ export async function decodeStepTranscript(
     path: receipt.path,
     bytes: decoded.bytes,
     truncated: decoded.truncated,
+    inProgress,
   };
 }

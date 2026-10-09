@@ -78,6 +78,26 @@ async function transcript(
   return { result, output: Buffer.concat(chunks).toString('utf8') };
 }
 
+/** One stdout transcript entry carrying `text`. */
+function entry(text: string): string {
+  return `${JSON.stringify({ stream: 'stdout', base64: Buffer.from(text).toString('base64') })}\n`;
+}
+
+/** The receipt path of `source`'s `task` attempt, after setting that attempt's recorded status. */
+async function attemptPath(stateDir: string, status?: 'running' | 'interrupted'): Promise<string> {
+  const recordPath = join(runDirectory(stateDir, 'source'), 'run.json');
+  const record = JSON.parse(await readFile(recordPath, 'utf8')) as {
+    steps: Record<string, { attemptHistory: { status: string; transcript: { path: string } }[] }>;
+  };
+  const attempt = record.steps['task']?.attemptHistory[0];
+  if (!attempt) throw new Error('expected an attempt');
+  if (status !== undefined) {
+    attempt.status = status;
+    await writeFile(recordPath, JSON.stringify(record));
+  }
+  return attempt.transcript.path;
+}
+
 describe('workflow.transcript', () => {
   it('streams the decoded native bytes and reports the attempt', async ({ stateDir, runs }) => {
     await seed(runs, stateDir);
@@ -101,6 +121,7 @@ describe('workflow.transcript', () => {
       path: run.steps['task']?.attemptHistory?.[0]?.transcript?.path,
       bytes: Buffer.byteLength(native.join('')),
       truncated: false,
+      inProgress: false,
     });
     const stderr = await transcript(stateDir, { stepId: 'task', attempt: 1, stream: 'stderr' });
     expect(stderr.output).toBe('native warning\n');
@@ -309,5 +330,44 @@ describe('workflow.transcript', () => {
       ok: false,
       code: 'run.unreadable',
     });
+  });
+
+  it('decodes a running or interrupted attempt up to a torn final line', async ({
+    stateDir,
+    runs,
+  }) => {
+    await seed(runs, stateDir);
+    const torn = `${entry('one\n')}${entry('two\n')}${entry('three\n').slice(0, 20)}`;
+    let path = await attemptPath(stateDir, 'running');
+    await writeFile(path, torn);
+    expect(await transcript(stateDir, { stepId: 'task' })).toMatchObject({
+      output: 'one\ntwo\n',
+      result: { ok: true, bytes: 8, truncated: false, inProgress: true },
+    });
+    // Complete lines of a running attempt are still checked.
+    await writeFile(path, `${entry('one\n')}not json\n${entry('two\n').slice(0, 20)}`);
+    expect((await transcript(stateDir, { stepId: 'task' })).result).toMatchObject({
+      ok: false,
+      code: 'run.unreadable',
+    });
+    // Resume marks the dead attempt interrupted; its torn tail is still not damage.
+    path = await attemptPath(stateDir, 'interrupted');
+    await writeFile(path, torn);
+    expect(await transcript(stateDir, { stepId: 'task' })).toMatchObject({
+      output: 'one\ntwo\n',
+      result: { ok: true, inProgress: false },
+    });
+  });
+
+  it('fails run.unreadable for a settled attempt with a torn final line', async ({
+    stateDir,
+    runs,
+  }) => {
+    await seed(runs, stateDir);
+    await writeFile(await attemptPath(stateDir), `${entry('one\n')}${entry('two\n').slice(0, 20)}`);
+    const result = (await transcript(stateDir, { stepId: 'task' })).result;
+    expect(result).toMatchObject({ ok: false, code: 'run.unreadable' });
+    if (result.ok) throw new Error('expected a failure');
+    expect(result.message).toContain('line 2');
   });
 });

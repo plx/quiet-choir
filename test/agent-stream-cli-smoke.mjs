@@ -230,6 +230,14 @@ send({type:'turn.completed',usage:{input_tokens:2,output_tokens:1}});
         attempt.sessionId,
         deriveAgentSessionId(checkpoint.sessionSalt, 'scope/../../answer', attempt.attempt),
       );
+    // A running attempt decodes what is written so far, with a warning that it may end early.
+    const live = transcript(id, 'scope/../../answer');
+    assert.equal(live.status, 0, live.stderr);
+    assert.match(live.stdout, provider === 'claude' ? /"subtype":"init"/ : /"thread\.started"/);
+    assert.match(
+      live.stderr,
+      /attempt 1 of scope\/\.\.\/\.\.\/answer is still running or was interrupted/,
+    );
     child.kill('SIGINT');
     assert.equal(await done, 130, stderr);
     assert.equal(JSON.parse(stdout).error.code, 'workflow.interrupted');
@@ -239,7 +247,7 @@ send({type:'turn.completed',usage:{input_tokens:2,output_tokens:1}});
     );
   }
   console.log(
-    'PASS CLI live streaming, early checkpoint IDs, SIGINT evidence, capped private transcripts, transcript decoding, sticky caps, and clean JSON stdout',
+    'PASS CLI live streaming, early checkpoint IDs, SIGINT evidence, capped private transcripts, transcript decoding (closed pipes, partial output, live attempts), sticky caps, and clean JSON stdout',
   );
 } finally {
   for (const child of runners) child.kill('SIGINT');

@@ -699,6 +699,11 @@ record without importing the workflow. `STEP` is the full step ID, as `inspect` 
   stderr instead. Exit 0. A transcript cut at `maxTranscriptBytes` still exits 0 and prints a
   one-line warning on stderr. A reader that closes the pipe stops the decode, and the command exits
   0 without a message.
+- An attempt still recorded as `running` (its agent is still writing, or its process died before a
+  resume settled it) is decoded as far as it goes: exit 0 with a one-line stderr warning that the
+  output may end early. Its final line, when it lacks a newline, is skipped as a write in progress
+  rather than reported as malformed, and so is an `interrupted` attempt's; complete lines are still
+  checked.
 - `--json` only turns a failure into a `workflow.error` document on stdout (with the compact
   `summary`, never the whole record), and only while no transcript bytes have been written: once
   output has begun (a malformed entry after valid ones), the failure message goes to stderr with the
@@ -717,9 +722,10 @@ record without importing the workflow. `STEP` is the full step ID, as `inspect` 
   failure's `details.path` still names the recorded path.
 - A retained receipt whose path lacks that tail for this run and step (a step reused in a fork
   points into its source run), or whose file is missing or unreadable, resolves outside the run's
-  `attempts/` directory, is a symlink, or holds a malformed entry is `run.unreadable` (exit 3, with
-  `details: {runId, stepId, attempt, path}`). The containment check runs before any read, so a
-  hand-edited record cannot make the command print another file.
+  `attempts/` directory, is a symlink, or holds a malformed entry (a settled attempt's torn final
+  line included) is `run.unreadable` (exit 3, with `details: {runId, stepId, attempt, path}`). The
+  containment check runs before any read, so a hand-edited record cannot make the command print
+  another file.
 
 ## Next commands
 

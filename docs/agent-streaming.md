@@ -73,7 +73,8 @@ truncation does not fail a valid call.
 `workflow transcript RUN STEP [--attempt N] [--stream stderr]` does that decoding: it reads the run
 record without importing workflow code, selects the agent step's latest (or `--attempt N`) attempt,
 and writes the selected stream's native bytes to stdout unchanged, so Claude stream-json or Codex
-JSONL can go straight into `jq`. A truncated transcript prints a warning on stderr. It reads only a
+JSONL can go straight into `jq`. A truncated transcript prints a warning on stderr, and so does a
+still-running (or crashed, not yet resumed) attempt, whose output may end early. It reads only a
 retained receipt's `<runId>/attempts/<hash>/<file>` tail, re-rooted under the current state
 directory (so a moved or symlinked state directory still works), whose file resolves inside the
 run's `attempts/` directory, opened without following symlinks. See

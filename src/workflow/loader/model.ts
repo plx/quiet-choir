@@ -426,6 +426,11 @@ export type WorkflowCommandResult = ExecutionResult &
         readonly bytes: number;
         /** Whether the transcript stopped at its `maxTranscriptBytes` cap. */
         readonly truncated: boolean;
+        /**
+         * Whether the attempt is recorded as running: still in progress, or interrupted before a
+         * resume settled it. Its transcript may end early, and a torn final line was skipped.
+         */
+        readonly inProgress: boolean;
       }
     | {
         readonly kind: 'workflow.fixtures.result';

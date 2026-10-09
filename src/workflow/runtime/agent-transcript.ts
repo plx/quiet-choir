@@ -152,7 +152,8 @@ export interface TranscriptReadResult {
  * `{stream, base64}` nor the final truncation marker, or anything after that marker throws an
  * Error naming the line. An aborted `signal` stops the read before it opens the file and before each
  * block read from it, even when no entry of the selected stream reaches `onChunk`, throwing its
- * reason. @internal
+ * reason. With `tolerateTornTail`, for a file whose writer may still be appending, a final line
+ * without its newline is dropped instead of decoded; complete lines are still checked. @internal
  */
 export async function readAttemptTranscript(
   path: string,
@@ -160,6 +161,7 @@ export async function readAttemptTranscript(
   onChunk: (chunk: Uint8Array) => void | Promise<void>,
   maxLineBytes = maxTranscriptLineBytes,
   signal?: AbortSignal,
+  options: { readonly tolerateTornTail?: boolean } = {},
 ): Promise<TranscriptReadResult> {
   signal?.throwIfAborted();
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -228,8 +230,10 @@ export async function readAttemptTranscript(
         );
       if (chunk.length > 0) pending.push(chunk);
     }
-    // A final line without a newline is still an entry; a torn one fails as malformed.
-    if (pendingBytes > 0) await consume(Buffer.concat(pending));
+    // A final line without a newline is still an entry; a torn one fails as malformed, unless the
+    // writer may still be appending it.
+    if (pendingBytes > 0 && options.tolerateTornTail !== true)
+      await consume(Buffer.concat(pending));
     signal?.throwIfAborted();
     return { bytes, truncated };
   } finally {
