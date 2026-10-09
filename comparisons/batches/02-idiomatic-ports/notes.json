@@ -14,11 +14,11 @@
     "preserved": "Detect, plan, human approval, per-concern setup and verification retain their order and purpose.",
     "changes": [
       "Primitives #55/#58/#59/#45: canonical plan hashing survives checkpoint key ordering; setters receive the complete approved plan.",
-      "Each setter has explicit file ownership and a fresh worktree. Only setters receive Write/Edit. Code runs the approved argv commands and records their exit codes.",
+      "Each setter has explicit file ownership and a fresh worktree. Only setters receive Write/Edit. Code runs the approved argv commands with onError: 'return', so a nonzero exit, timeout or signal is saved as a settled failure, replays on resume, and appears in the verification row as its exit code and failure kind.",
       "Successful verification publishes integrated snapshots to the checkout; failed verification retains the isolated candidate and returns verification-failed. No automatic repair edits bypass approval.",
       "The crash matrix exposed an empty Git commondir left during a sibling setter’s worktree creation. The runtime now repairs only that planned registration on resume after checking both ownership links; mismatched owners are refused and the interrupted writer still receives a fresh attempt directory."
     ],
-    "evaluation": "Fixtures compare the approved subject to setter prompts, require identical approved/applied digests, inspect independent worktrees and reject a real exit 7. Commands are approved operator-privileged programs; argv is not a security sandbox. Worktrees isolate repository edits, not external side effects."
+    "evaluation": "Fixtures compare the approved subject to setter prompts, require identical approved/applied digests, inspect independent worktrees, reject a real exit 7 and a self-SIGKILLed verify command as verification-failed with a settled-failed step, and check that resume pays nothing again. Commands are approved operator-privileged programs; argv is not a security sandbox. Worktrees isolate repository edits, not external side effects."
   },
   "test-gap-filler": {
     "summary": "Find and rank high-risk test gaps in an operator-selected source file, then propose tests and mutants; code owns guarded writes, command verdicts and interrupted-attempt restoration.",
@@ -28,7 +28,7 @@
       "The interface makes the source file, behavior, new test path and test argv required. Read-only finders inspect existing tests/coverage artifacts; the ranking schema is constrained to discovered gap keys. Repository-wide file selection and running a coverage-report generator remain caller responsibilities.",
       "Only pristine or this effect’s exact mutant can be reconciled. Unknown edits fail without overwriting them. The original requirement to restore in a prompt is replaced with an executable contract."
     ],
-    "evaluation": "F3 actually kills the owner while a child test is running against mutated bytes, then resumes with recorded orphan cleanup and verifies byte-identical pristine content. A baseline failure is explicit; surviving mutants yield gaps-remain. Test effectiveness beyond the fixture and edits by unrelated concurrent writers are not established."
+    "evaluation": "F3 actually kills the owner while a child test is running against mutated bytes, then resumes with recorded orphan cleanup and verifies byte-identical pristine content. A baseline failure of any kind (nonzero exit, timeout or signal) is settled with onError: 'return' and returns baseline-failed; separate fixtures cover a self-SIGKILLed and a timed-out baseline, each with a settled-failed step and a resume that pays nothing again. Surviving mutants yield gaps-remain. Test effectiveness beyond the fixture and edits by unrelated concurrent writers are not established."
   },
   "incident-investigation": {
     "summary": "Pin the Git window in code, collect evidence with read-only Codex roles, challenge hypotheses and report uncertainty.",
@@ -44,10 +44,10 @@
     "preserved": "Tailored stages, artifacts passed forward and stage-bound human choices drive the lifecycle. Bootstrap still requires its own plan approval.",
     "changes": [
       "Primitives #55/#63/#44: typed ctx.workflow children replace handoffs and manual returned-state round trips. Only the requesting stage receives a redo answer.",
-      "Compact document children draft/review and commit artifacts through code-owned worktrees; implementation uses an isolated writer and code verification; QA/release gates use real command exits. The rewritten children are intentionally smaller than the native specialist conductors.",
+      "Compact document children draft/review and commit artifacts through code-owned worktrees; implementation uses an isolated writer and code verification; the implementation and QA/release gates settle command failures (exit, timeout or signal) with onError: 'return' and block the stage instead of failing the run. The rewritten children are intentionally smaller than the native specialist conductors.",
       "The release gate must pass before release notes. Every stage has a human gate; prior attempt results remain in the output and the latest result determines unresolved status."
     ],
-    "evaluation": "Fixtures check one run ID, recorded frames after redo, answer placement and CLI exit 75 followed by inbox answer/resume. A separate ten-stage fixture covers every stage, including approved bootstrap, implementation, QA, release publication and subsequent feedback on a clean checkout. The paired count uses only the requirements/spec path. No content-quality equivalence or exhaustive stage combinations are claimed."
+    "evaluation": "Fixtures check one run ID, recorded frames after redo, answer placement and CLI exit 75 followed by inbox answer/resume. A fixture runs the QA verification child with a short exec timeout and requires a blocked gate over a settled-failed step. A separate ten-stage fixture covers every stage, including approved bootstrap, implementation, QA, release publication and subsequent feedback on a clean checkout. The paired count uses only the requirements/spec path. No content-quality equivalence or exhaustive stage combinations are claimed."
   },
   "bug-hunt": {
     "summary": "Rotate read-only finder panels, deduplicate candidates, settle independent skeptics and preserve undecided outcomes.",

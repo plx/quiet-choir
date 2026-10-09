@@ -3,7 +3,7 @@
   "sharedFormattedLines": {
     "01-direct-ports": { "children.ts": 14, "sdlc-support.ts": 66, "support.ts": 141 },
     "02-idiomatic-ports": {
-      "lifecycle-stages.ts": 107,
+      "lifecycle-stages.ts": 112,
       "mutation-worker.ts": 45,
       "support.ts": 130
     }
@@ -183,7 +183,7 @@
           }
         },
         "2": {
-          "formattedLines": 145,
+          "formattedLines": 160,
           "agentCalls": 4,
           "writeToolCalls": 2,
           "strictErrors": 0,
