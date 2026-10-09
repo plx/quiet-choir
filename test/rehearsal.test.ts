@@ -1606,7 +1606,7 @@ export default defineWorkflow({
   });
 });
 
-// Same loader compile as the suite above; measured: 4.9 s alone for the four cases.
+// Same loader compile as the suite above; measured: 6.4 s alone for the nine cases (2.1 s the slowest).
 describe('dry-run commands from callbacks and observers', { timeout: 40_000 }, () => {
   const innerRun = `async run(ctx, input) {
     const snapshot = await ctx.exec.json('snapshot', ['gh', 'pr', 'view', '1', '--json', 'headRefOid'], {
@@ -1665,7 +1665,7 @@ export default defineWorkflow({
     return { root, marker, file };
   }
 
-  async function rehearse(live: boolean, run = innerRun) {
+  async function rehearse(live: boolean, run = innerRun, harness?: HarnessSelection) {
     const { root, marker, file } = await project(run);
     vi.stubEnv('PATH', `${join(root, 'bin')}:${process.env['PATH'] ?? ''}`);
     const analysis = analyzeTypecheckEntrypoint(file, root);
@@ -1691,7 +1691,7 @@ export default defineWorkflow({
         cwd: root,
         input: { live },
         resume: false,
-        harness: { kind: 'cli', config: {} },
+        harness: harness ?? { kind: 'cli', config: {} },
         dryRun: true,
       });
       if (result.kind !== 'workflow.run.result' || !result.rehearsal)
@@ -1780,5 +1780,114 @@ export default defineWorkflow({
       expect.objectContaining({ stepId: 'ci', parentStepId: 'ci', outputSource: 'live' }),
     ]);
     expect(result.run.output).toMatchObject({ by: 'poll', value: 'LIVE', checks: 1 });
+  });
+
+  /** A command poll that is terminal only when `terminal` holds for its output and previous checks. */
+  const checksPollRun = (terminal: string) => `run: (ctx, input) => ctx.poll('ci', {
+    input: null, schema: z.string(), every: 1, timeoutMs: 60_000,
+    command: ['gh', 'pr', 'checks', '1', '--json', 'state'],
+    output: state,
+    live: input.live,
+    done: (output, previous) => (${terminal}) ? { done: true, value: output.state } : { done: false },
+  }),`;
+  const ciEntry = (outputSource: string): unknown =>
+    expect.objectContaining({
+      stepId: 'ci',
+      parentStepId: 'ci',
+      outputSource,
+      command: ['gh', 'pr', 'checks', '1', '--json', 'state'],
+    });
+
+  it('rehearses a command poll that turns terminal on its second check, the same every run', async () => {
+    const outcomes: unknown[] = [];
+    for (let run = 0; run < 3; run++) {
+      const { result, rehearsal, spawned } = await rehearse(
+        false,
+        checksPollRun('previous.checks > 0'),
+      );
+      expect(spawned).toBeNull();
+      expect(result.run.status).toBe('completed');
+      expect(rehearsal.commands).toEqual([ciEntry('synthesized'), ciEntry('synthesized')]);
+      // `at` is the real clock's; the rest of the outcome must agree across runs.
+      outcomes.push({ ...(result.run.output as object), at: null });
+    }
+    expect(outcomes[0]).toMatchObject({ by: 'poll', checks: 2 });
+    expect(outcomes[1]).toEqual(outcomes[0]);
+    expect(outcomes[2]).toEqual(outcomes[0]);
+  });
+
+  it('runs both checks of a live: true command poll for real', async () => {
+    const { result, rehearsal, commands, spawned } = await rehearse(
+      true,
+      checksPollRun('previous.checks > 0'),
+    );
+    expect(spawned).toBe('pr checks 1 --json state\npr checks 1 --json state\n');
+    expect(commands.filter((argv) => argv[0] !== 'git')).toHaveLength(2);
+    expect(rehearsal.commands).toEqual([ciEntry('live'), ciEntry('live')]);
+    expect(result.run.output).toMatchObject({ by: 'poll', value: 'LIVE', checks: 2 });
+  });
+
+  it('answers each rehearsed check of a command poll from exec fixture rules by call', async () => {
+    const rule = (call: number, value: string) => ({
+      step: 'ci',
+      argvPrefix: ['gh', 'pr', 'checks'],
+      call,
+      json: { state: value },
+    });
+    const { result, rehearsal } = await rehearse(
+      false,
+      checksPollRun("output.state !== 'pending'"),
+      {
+        kind: 'fixture',
+        config: {},
+        fixtures: parseHarnessFixtures({
+          version: 1,
+          calls: [],
+          exec: [rule(1, 'pending'), rule(2, 'success')],
+        }),
+      },
+    );
+    expect(result.run.output).toMatchObject({ by: 'poll', value: 'success', checks: 2 });
+    expect(rehearsal.commands.map((entry) => [entry.outputSource, entry.fixtureIndex])).toEqual([
+      ['fixture', 0],
+      ['fixture', 1],
+    ]);
+    expect(rehearsal.staleExecFixtures).toEqual([]);
+  });
+
+  it('rehearses an observer poll with one context.exec per check', async () => {
+    const observerRun = `run: (ctx) => ctx.poll('ci', {
+      input: null, schema: z.string(), every: 1, timeoutMs: 60_000,
+      async observe(context) {
+        const view = await context.exec.json(['gh', 'pr', 'checks', '1', '--json', 'state'], { schema: state });
+        return context.previous.checks === 0 ? { done: false } : { done: true, value: view.state };
+      },
+    }),`;
+    const outcomes: unknown[] = [];
+    for (let run = 0; run < 3; run++) {
+      const { result, rehearsal } = await rehearse(false, observerRun);
+      expect(rehearsal.commands).toEqual([ciEntry('synthesized'), ciEntry('synthesized')]);
+      // `at` is the real clock's; the rest of the outcome must agree across runs.
+      outcomes.push({ ...(result.run.output as object), at: null });
+    }
+    expect(outcomes[0]).toMatchObject({ by: 'poll', checks: 2 });
+    expect(outcomes[1]).toEqual(outcomes[0]);
+    expect(outcomes[2]).toEqual(outcomes[0]);
+  });
+
+  it('stops a never-terminal poll at the rehearsal limit with a note', async () => {
+    const { result, rehearsal } = await rehearse(false, checksPollRun('false'));
+    expect(result.run.status).toBe('suspended');
+    expect(result.run.steps['ci']?.wait?.checks).toBe(5);
+    expect(rehearsal.commands).toEqual(Array.from({ length: 5 }, () => ciEntry('synthesized')));
+    const limit = rehearsal.warnings.findIndex((warning) =>
+      warning.startsWith('Wait ci: its poll was still nonterminal after 5 rehearsed checks'),
+    );
+    expect(limit).toBeGreaterThanOrEqual(0);
+    expect(
+      rehearsal.warnings.indexOf(
+        'Rehearsal stopped at an unresolved external wait. Temporary state is removed; start a real run to keep polling or resume later.',
+      ),
+    ).toBeGreaterThan(limit);
   });
 });

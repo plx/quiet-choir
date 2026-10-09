@@ -577,6 +577,18 @@ export interface RunOptions extends WorkflowCodeOptions {
             }[];
           },
     ) => void;
+    /**
+     * Observe a poll that the rehearsal stopped checking. A rehearsal checks each poll back to back
+     * on a virtual clock, without sleeping its interval, up to five checks per wait in this process;
+     * a poll still nonterminal after the fifth is reported here once, parks, and the rehearsal then
+     * suspends at it, even under `waitMode: 'block'`.
+     */
+    readonly onPollLimit?: (event: {
+      /** The wait's fully qualified step ID. */
+      readonly waitId: string;
+      /** Rehearsed checks made in this process: the limit, five. */
+      readonly checks: number;
+    }) => void;
   };
   /** Cancellation signal, forwarded to all active effects. */
   readonly signal?: AbortSignal;
@@ -3382,6 +3394,13 @@ export async function runWorkflow<
               }
             : {},
         );
+      },
+      rehearsalLimit: (id, checks) => {
+        try {
+          options.rehearsal?.onPollLimit?.({ waitId: id, checks });
+        } catch {
+          /* An observer cannot change the rehearsal. */
+        }
       },
       tolerated: (id, step, { consecutive, tolerate, message, at, code }) => {
         // Committed by the caller's save with lastError; outside eventCounts, so it never replays.

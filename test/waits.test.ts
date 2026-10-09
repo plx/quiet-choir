@@ -758,6 +758,225 @@ it('lets a rehearsal stub replace a poll observer with a schema-checked terminal
   expect(observed).toBe(1);
 });
 
+describe('rehearsed poll checks', () => {
+  const dryRun = { kind: 'dry-run', invoke: () => Promise.reject(new Error('no agents')) } as const;
+  /** A workflow whose only effect is the poll `ci`, observed by `observe`. */
+  function pollWorkflow(
+    observe: PollSource<string>['observe'],
+    options: { every: number; timeoutMs: number; onError?: PollErrorPolicy },
+  ) {
+    return defineWorkflow({
+      name: 'rehearsed-poll',
+      version: '1',
+      input: z.null(),
+      output: z.unknown(),
+      run: (ctx) => ctx.poll('ci', { input: null, schema: z.string(), observe, ...options }),
+    });
+  }
+
+  it('completes a nonterminal-then-terminal poll in one rehearsal, deterministically', async () => {
+    // The manual clock's sleep never resolves, so no pump wake or real interval can help.
+    for (let index = 0; index < 20; index++) {
+      const clock = new Clock();
+      const started = clock.time;
+      let calls = 0;
+      const definition = pollWorkflow(
+        (context) => {
+          calls++;
+          return Promise.resolve(
+            context.previous.checks === 0
+              ? { done: false as const, note: { pending: true } }
+              : { done: true as const, value: 'green' },
+          );
+        },
+        { every: 1, timeoutMs: 60_000 },
+      );
+      const run = await runWorkflow(definition, {
+        stateDir,
+        runId: `rehearsed-${String(index)}`,
+        input: null,
+        clock,
+        harness: dryRun,
+        rehearsal: {},
+      });
+      expect(run.status).toBe('completed');
+      // The second check falls one interval after the first, on the virtual clock.
+      expect(run.output).toEqual({ by: 'poll', value: 'green', at: started + 1, checks: 2 });
+      expect(calls).toBe(2);
+    }
+  });
+
+  it.for(['suspend', 'block'] as const)(
+    'stops a never-terminal poll after five checks with one limit report (%s mode)',
+    async (waitMode) => {
+      const clock = new Clock();
+      let calls = 0;
+      const limits: { waitId: string; checks: number }[] = [];
+      const definition = pollWorkflow(
+        () => {
+          calls++;
+          return Promise.resolve({ done: false as const });
+        },
+        { every: 1, timeoutMs: 60_000 },
+      );
+      const run = await runWorkflow(definition, {
+        stateDir,
+        runId: `limit-${waitMode}`,
+        input: null,
+        clock,
+        waitMode,
+        harness: dryRun,
+        rehearsal: {
+          onPollLimit: (event) => {
+            limits.push(event);
+          },
+        },
+      });
+      expect(run.status).toBe('suspended');
+      expect(run.steps['ci']?.status).toBe('waiting');
+      expect(run.steps['ci']?.wait?.checks).toBe(5);
+      expect(calls).toBe(5);
+      expect(limits).toEqual([{ waitId: 'ci', checks: 5 }]);
+    },
+  );
+
+  it.for([
+    ['system', undefined],
+    ['automatic', true],
+  ] as const)(
+    'neither races nor spins at the limit with the %s clock',
+    async ([name, automatic]) => {
+      const clock = automatic === undefined ? {} : { clock: new Clock(automatic) };
+      for (let index = 0; index < 10; index++) {
+        let calls = 0;
+        const twice = await runWorkflow(
+          pollWorkflow(
+            (context) =>
+              Promise.resolve(
+                context.previous.checks === 0
+                  ? { done: false as const }
+                  : { done: true as const, value: 'green' },
+              ),
+            { every: 1, timeoutMs: 60_000 },
+          ),
+          {
+            stateDir,
+            runId: `${name}-twice-${String(index)}`,
+            input: null,
+            harness: dryRun,
+            rehearsal: {},
+            ...clock,
+          },
+        );
+        expect(twice.output).toMatchObject({ by: 'poll', value: 'green', checks: 2 });
+        // A parked exhausted poll leaves no pump rescanning it, so the run suspends promptly.
+        const never = await runWorkflow(
+          pollWorkflow(
+            () => {
+              calls++;
+              return Promise.resolve({ done: false as const });
+            },
+            { every: 1, timeoutMs: 60_000 },
+          ),
+          {
+            stateDir,
+            runId: `${name}-never-${String(index)}`,
+            input: null,
+            harness: dryRun,
+            rehearsal: {},
+            ...clock,
+          },
+        );
+        expect(never.status).toBe('suspended');
+        expect(calls).toBe(5);
+      }
+    },
+  );
+
+  it('resolves by deadline when the deadline falls within the rehearsed checks', async () => {
+    const clock = new Clock();
+    const started = clock.time;
+    let calls = 0;
+    const limits: unknown[] = [];
+    const definition = pollWorkflow(
+      () => {
+        calls++;
+        return Promise.resolve({ done: false as const, note: { calls } });
+      },
+      { every: 30_000, timeoutMs: 45_000 },
+    );
+    const run = await runWorkflow(definition, {
+      stateDir,
+      runId: 'rehearsed-deadline',
+      input: null,
+      clock,
+      harness: dryRun,
+      rehearsal: {
+        onPollLimit: (event) => {
+          limits.push(event);
+        },
+      },
+    });
+    // Checks at t0 and t0+30s, then the final check at the deadline, t0+45s, as a live run would.
+    expect(run.status).toBe('completed');
+    expect(run.output).toEqual({ by: 'deadline', at: started + 45_000, note: { calls: 3 } });
+    expect(run.steps['ci']?.wait?.checks).toBe(3);
+    expect(calls).toBe(3);
+    expect(limits).toEqual([]);
+  });
+
+  it('tolerates an observer error and completes on the next rehearsed check', async () => {
+    const clock = new Clock();
+    let calls = 0;
+    const definition = pollWorkflow(
+      () => {
+        calls++;
+        return calls === 1
+          ? Promise.reject(new Error('HTTP 502'))
+          : Promise.resolve({ done: true as const, value: 'green' });
+      },
+      { every: 1, timeoutMs: 60_000, onError: { tolerate: 1 } },
+    );
+    const run = await runWorkflow(definition, {
+      stateDir,
+      runId: 'rehearsed-tolerate',
+      input: null,
+      clock,
+      harness: dryRun,
+      rehearsal: {},
+    });
+    expect(run.status).toBe('completed');
+    expect(run.output).toMatchObject({ by: 'poll', value: 'green', checks: 2 });
+    expect(tolerated(run)).toEqual([
+      expect.objectContaining({ type: 'wait.tolerated', stepId: 'ci', message: 'HTTP 502' }),
+    ]);
+  });
+
+  it('keeps live timing: without rehearsal a nonterminal first check suspends after one check', async () => {
+    const clock = new Clock();
+    const started = clock.time;
+    let calls = 0;
+    const definition = pollWorkflow(
+      () => {
+        calls++;
+        return Promise.resolve({ done: false as const });
+      },
+      { every: 60_000, timeoutMs: 600_000 },
+    );
+    const run = await runWorkflow(definition, {
+      stateDir,
+      runId: 'live-timing',
+      input: null,
+      clock,
+    });
+    expect(run.status).toBe('suspended');
+    expect(calls).toBe(1);
+    expect(run.steps['ci']?.wait?.checks).toBe(1);
+    expect(run.steps['ci']?.wait?.nextCheckAt).toBe(started + 60_000);
+    expect(run.nextWakeAt).toBe(started + 60_000);
+  });
+});
+
 /** Collect unhandled rejections for the duration of `action`, after one more macrotask. */
 async function unhandledDuring(action: () => Promise<void>): Promise<unknown[]> {
   const unhandled: unknown[] = [];

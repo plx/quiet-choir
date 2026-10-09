@@ -340,6 +340,11 @@ export class RehearsalHarness extends FixtureHarness {
           conflicts: event.conflicts,
         });
     },
+    onPollLimit: ({ waitId, checks }) => {
+      this.warnings.add(
+        `Wait ${waitId}: its poll was still nonterminal after ${String(checks)} rehearsed checks, the dry-run limit, so the rehearsal stopped there. Answer later checks with exec fixture rules (call), stub the wait with --stub-steps, or start a real run.`,
+      );
+    },
   };
   public observe(event: WorkflowEvent): void {
     if (event.type === 'step.replayed' || event.type === 'step.reused')
