@@ -96,11 +96,11 @@ export default defineWorkflow({
         throw new Error(`Invalid mutation anchor: ${mutant.id}`);
     }
     const test = await ctx.writeFile('test', input.testFile, plan.test, { ifMatch: null });
-    const baseline = await ctx.exec('baseline', input.testCommand, { okExitCodes: 'any' });
-    if (baseline.code !== 0 || baseline.truncated)
+    const baseline = await ctx.exec('baseline', input.testCommand, { onError: 'return' });
+    if (!baseline.ok || baseline.value.truncated)
       return {
         status: 'baseline-failed',
-        baselineCode: baseline.code,
+        baselineCode: baseline.ok ? baseline.value.code : (baseline.error.code ?? null),
         pristineSha256: pristine.sha256,
         test,
         selected,
@@ -129,7 +129,7 @@ export default defineWorkflow({
       .map((mutation) => mutation.id);
     return {
       status: surviving.length ? 'gaps-remain' : 'covered',
-      baselineCode: baseline.code,
+      baselineCode: baseline.value.code,
       pristineSha256: pristine.sha256,
       test,
       selected,

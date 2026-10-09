@@ -27,7 +27,7 @@ export default defineWorkflow({
   name: 'project-bootstrap',
   version: 'idiomatic-02',
   description:
-    'Approve one saved plan, isolate each setter, and verify its integration with real exit codes.',
+    'Approve one saved plan, isolate each setter, and verify its integration, settling command failures.',
   profiles,
   input: z.object({
     spec: z
@@ -47,7 +47,12 @@ export default defineWorkflow({
     appliedDigest: Digest.nullable(),
     commit: Sha.nullable(),
     verification: z.array(
-      z.object({ argv: Argv, code: z.number().int().nullable(), truncated: z.boolean() }),
+      z.object({
+        argv: Argv,
+        code: z.number().int().nullable(),
+        truncated: z.boolean(),
+        failure: z.string().nullable(),
+      }),
     ),
   }),
   async run(ctx, input) {
@@ -115,11 +120,21 @@ export default defineWorkflow({
     for (const [index, argv] of plan.verifyCommands.entries()) {
       const result = await ctx.exec(ctx.id('verify', index), argv, {
         worktree: tree,
-        okExitCodes: 'any',
+        onError: 'return',
       });
-      verification.push({ argv, code: result.code, truncated: result.truncated });
+      // A settled failure carries no truncation flag; `failure` names its kind instead.
+      verification.push(
+        result.ok
+          ? { argv, code: result.value.code, truncated: result.value.truncated, failure: null }
+          : {
+              argv,
+              code: result.error.code ?? null,
+              truncated: false,
+              failure: result.error.kind,
+            },
+      );
     }
-    if (verification.some((check) => check.code !== 0 || check.truncated))
+    if (verification.some((check) => check.failure !== null || check.truncated))
       return {
         status: 'verification-failed',
         plan,

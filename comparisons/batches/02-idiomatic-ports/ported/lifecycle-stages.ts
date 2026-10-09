@@ -1,4 +1,4 @@
-import { defineWorkflow, z } from 'quiet-choir';
+import { defineWorkflow, z, type ExecResult, type ExecStepError, type Settled } from 'quiet-choir';
 import { Argv, Path, json, profiles, writeCommittedArtifact } from './support.js';
 
 export const DocumentStage = z.enum(['requirements', 'spec', 'roadmap', 'backlog', 'feedback']);
@@ -16,6 +16,11 @@ export const StageResult = z.object({
   gate: z.enum(['pass', 'concerns', 'blocked']),
   details: z.array(z.string()),
 });
+// A settled failure has no truncation flag, so its kind, exit code and signal stand in for it.
+const commandDetails = (result: Settled<ExecResult, ExecStepError>) =>
+  result.ok
+    ? `exit=${result.value.code}; truncated=${result.value.truncated}`
+    : `failure=${result.error.kind}; exit=${result.error.code ?? null}; signal=${result.error.signal ?? null}`;
 const context = {
   goal: z.string().min(1).describe('Lifecycle goal'),
   artifacts: z.record(z.string(), z.string()),
@@ -67,14 +72,14 @@ export const implementationStage = defineWorkflow({
     });
     const test = await ctx.exec('verify', input.testCommand, {
       worktree: tree,
-      okExitCodes: 'any',
+      onError: 'return',
     });
-    if (test.code !== 0 || test.truncated)
+    if (!test.ok || test.value.truncated)
       return {
         summary: 'Implementation verification failed',
         artifact: null,
         gate: 'blocked',
-        details: [`exit=${test.code}; truncated=${test.truncated}`],
+        details: [commandDetails(test)],
       };
     const merged = await ctx.merge('integrate', [tree], { target: 'checkout', onConflict: 'fail' });
     return {
@@ -95,13 +100,13 @@ export const verificationStage = defineWorkflow({
   }),
   output: StageResult,
   async run(ctx, input) {
-    const result = await ctx.exec('test', input.testCommand, { okExitCodes: 'any' });
-    const passed = result.code === 0 && !result.truncated;
+    const result = await ctx.exec('test', input.testCommand, { onError: 'return' });
+    const passed = result.ok && !result.value.truncated;
     return {
       summary: `${input.stage}: ${passed ? 'passed' : 'failed'}`,
       artifact: null,
       gate: passed ? 'pass' : 'blocked',
-      details: [`exit=${result.code}; truncated=${result.truncated}`],
+      details: [commandDetails(result)],
     };
   },
 });
