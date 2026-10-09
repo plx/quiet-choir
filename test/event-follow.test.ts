@@ -8,7 +8,11 @@ import { EVENT_LINE_MAX_BYTES, type EventLine } from '../src/workflow/loader/eve
 import type { AttemptRecord, RunRecord, StepRecord } from '../src/workflow/runtime/record.js';
 import { rootCauseSummary } from '../src/workflow/loader/failure-kind.js';
 import type { ErrorKind } from '../src/workflow/runtime/model.js';
-import type { ExecutionRecord, RunEvent } from '../src/workflow/runtime/observability-model.js';
+import type {
+  ExecutionRecord,
+  RequestSummary,
+  RunEvent,
+} from '../src/workflow/runtime/observability-model.js';
 
 /** Fields a test may set, including to undefined to model an older record that lacks them. */
 type Loose<T> = { [K in keyof T]?: T[K] | undefined };
@@ -224,7 +228,7 @@ describe('recordEventLines derivation', () => {
   });
 
   it('carries toolUses per attempt and warnings only for the latest completed attempt', () => {
-    const agentCall = { request: { harness: 'claude' } };
+    const agentCall = { request: { harness: 'claude' } as RequestSummary };
     const warning = 'no-tool-use: Profile readonly expects tool use, but it ran none.';
     const run = record({
       steps: {
@@ -296,12 +300,12 @@ describe('recordEventLines derivation', () => {
         redefined: step(
           [
             attempt(1, 'failed', 10, {
-              request: { harness: 'claude' },
+              request: { harness: 'claude' } as RequestSummary,
               diagnostics: { toolUses: 3 },
             }),
             attempt(2, 'completed', 20, { diagnostics: { toolUses: 5 } }),
           ],
-          { kind: 'local' },
+          { kind: 'step' },
         ),
       },
     });
