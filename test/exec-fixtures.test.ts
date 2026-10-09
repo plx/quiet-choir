@@ -1541,6 +1541,52 @@ describe('fixture export of inner context.exec commands (#317)', () => {
     ).rejects.toThrow('No exec fixture matches step diff: ["gh","pr","diff"]');
   });
 
+  it(
+    'keeps the commands of the observation that completed the wait, not those of a later-resolving abandoned one',
+    // measured: about 2.1 s alone (the fixed 2 s observer grace before the first is abandoned)
+    { timeout: 10_000 },
+    async () => {
+      let observations = 0;
+      let release!: () => void;
+      const released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const workflow = definition(z.json(), async (ctx) => {
+        const outcome = await ctx.wait('ci', {
+          deadline: Date.now() + 60_000,
+          // A signal source makes each check scan the inbox, so the abandoned observation settles
+          // between the accepted one's result and the wait's completion save.
+          signal: { prompt: 'Override?', schema: z.null() },
+          poll: {
+            input: null,
+            schema: z.string(),
+            every: 1,
+            observeTimeoutMs: 50,
+            onError: { tolerate: 1, retryAfterMs: () => 0 },
+            observe: async (context) => {
+              const own = ++observations;
+              const { stdout } = await context.exec(['gh', 'pr', 'checks']);
+              // The first ignores its aborted signal, so it is abandoned and the timeout tolerated;
+              // it resolves done only after the second check has returned its own result.
+              if (own === 1) await released;
+              else setImmediate(release);
+              return { done: true as const, value: stdout };
+            },
+          },
+        });
+        return outcome.by === 'poll' ? outcome.value : null;
+      });
+      const { source, fixtures } = await exportSource(
+        workflow,
+        scripted({ 'gh pr checks': [reply('stale'), reply('fresh')] }),
+        { waitMode: 'block' },
+      );
+      expect(source.output).toBe('fresh');
+      expect(source.steps['ci']?.output).toMatchObject({ by: 'poll', checks: 2 });
+      expect(fixtures.exec).toEqual([{ ...key('ci', ['gh', 'pr', 'checks']), stdout: 'fresh' }]);
+    },
+  );
+
   it('exports nothing for a wait that ended by deadline, and no commands key without commands', async () => {
     const workflow = definition(z.json(), async (ctx) => {
       await ctx.step('quiet', { input: null, schema: z.null(), run: () => Promise.resolve(null) });

@@ -3326,7 +3326,8 @@ export async function runWorkflow<
         // terminal value, still parsed by the poll schema, and its observer never runs.
         options.rehearsal?.onSchema?.(id, source.schema);
         const stub = options.rehearsal?.localStep?.(id, schemaJson(source.schema));
-        if (stub !== undefined) return Promise.resolve({ done: true, value: stub.output });
+        if (stub !== undefined)
+          return Promise.resolve({ result: { done: true, value: stub.output } });
         // Inner commands stop with the observation's own signal (deadline, observeTimeoutMs,
         // cancellation) and when the observation settles.
         const innerExec = stepExec({
@@ -3347,22 +3348,20 @@ export async function runWorkflow<
               new Error(`Wait ${id}: its observation settled; inner command terminated.`),
             );
           }
-          // Export-only, like a step's: only a terminal observation replaces it, and the wait's
-          // completion save persists it. A late result of an abandoned observation, or one after
-          // close, leaves the record alone; no identity, replay or reuse path reads it.
-          const step = record.steps[id];
-          if (
-            typeof result === 'object' &&
-            (result as unknown) !== null &&
-            result.done &&
-            !closed &&
-            step?.status === 'waiting'
-          ) {
-            const inner = innerExec.records();
-            if (inner) step.innerCommands = inner;
-            else delete step.innerCommands;
-          }
-          return result;
+          // Export-only, like a step's: RunQuestions commits it only for the observation whose
+          // `done: true` completes the wait, right before the completion save that persists it, so
+          // a discarded, abandoned, timed-out, drained or closed observation never writes. No
+          // identity, replay or reuse path reads it.
+          return {
+            result,
+            commit: () => {
+              const step = record.steps[id];
+              if (!step) return;
+              const inner = innerExec.records();
+              if (inner) step.innerCommands = inner;
+              else delete step.innerCommands;
+            },
+          };
         });
       },
       isFatal: (error) => origins.isFatal(error),

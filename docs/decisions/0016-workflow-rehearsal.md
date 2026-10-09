@@ -380,10 +380,12 @@ schema revision 15) and export turns them into exec rules. Choices:
 - Store only `envSha256` and `inputSha256`, the digests the rules filter on; environment values and
   stdin are never stored.
 - A step's record is replaced when an attempt's callback settles (after its inner commands are
-  drained) and removed when the attempt ran none; a wait's only when an observation resolves with
-  `done: true`. It rides on the save that already records the attempt's outcome or the wait's
-  completion: no new save point, and no identity, fingerprint, replay, resume or fork-reuse input
-  reads it, so checkpointing and at-least-once behavior are unchanged.
+  drained) and removed when the attempt ran none; a wait's only for the observation whose
+  `done: true` result completes the wait, right before the completion save (a discarded, abandoned,
+  timed-out, drained or closed observation never writes it, even when it resolves later). It rides
+  on the save that already records the attempt's outcome or the wait's completion: no new save
+  point, and no identity, fingerprint, replay, resume or fork-reuse input reads it, so checkpointing
+  and at-least-once behavior are unchanged.
 - Slots are reserved in the order commands reach the process runner, the order exec rules count
   calls in.
 - Bound the record per parent attempt to 256 commands and 1 MiB of stdout plus stderr, keeping a
