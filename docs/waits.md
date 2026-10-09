@@ -121,10 +121,16 @@ result is checked against a readonly view of the schema's type (`PollReadonly<T>
 `noteSchema`, while a wrong element type is still rejected. The outcome keeps the schema's own type,
 such as `number[]`, because the runtime parses the value with `schema`.
 
-Two shapes can still widen a literal. A callback that is not `async` and wraps its result in
-`Promise.resolve(…)` without taking a parameter loses it inside the nested call: write it `async`. A
-call with explicit type arguments (`ctx.poll<T, N>(…)`) uses the older overloads, where a callback
-without parameters can widen; prefer `noteSchema` to explicit type arguments.
+A callback with parameters is typed exactly as with explicit type arguments, against the schema's
+type, so a literal it builds through a nested generic call such as `Promise.resolve(…)` or `.map(…)`
+is kept too. A parameter annotation never supplies the note type: without `noteSchema`,
+`previous.note` is `JsonValue`.
+
+Two shapes can still widen a literal. A callback without parameters loses one created inside a
+nested callback, such as `items.map(() => ({ state: 'green' }))`: give the outer callback its
+parameter (`async (context) => …`, `(output) => …`). A call with explicit type arguments
+(`ctx.poll<T, N>(…)`) uses the older overloads, where a callback without parameters can widen;
+prefer `noteSchema` to explicit type arguments.
 
 `every` is a positive integer interval, or `{ initialMs, maxMs, factor? }` with factor defaulting to
 two. Spacing grows after nonterminal checks up to `maxMs`, measured from check completion. It is a

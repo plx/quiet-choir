@@ -119,9 +119,12 @@ avoid non-idempotent transforms; to migrate a changed shape accept the old one (
 conditional or from `if`/`return` statements without `as const`: against `z.enum(['green', 'red'])`,
 `observe: async () => (ok() ? { done: true, value: 'green' } : { done: false })` type-checks. Array
 literals are checked against a readonly view of the schema (`[1, 2]` matches `z.array(z.number())`);
-the outcome keeps the schema's type. A non-`async` callback without parameters that returns
-`Promise.resolve(…)` can still widen it (write it `async`), and so can a call with explicit type
-arguments; prefer `noteSchema` to type arguments.
+the outcome keeps the schema's type. A callback with parameters is typed as with explicit type
+arguments, so literals built through `Promise.resolve(…)` or `.map(…)` are kept too. A callback
+without parameters can still widen a literal created in a nested callback
+(`.map(() => ({ state: 'green' }))`; give it its parameter), and so can a call with explicit type
+arguments; prefer `noteSchema` to type arguments. A parameter annotation never supplies the note
+type.
 
 `onError: { tolerate, classify?, retryAfterMs? }` tolerates transient observation errors. Candidates
 are a rejected observation and an `observeTimeoutMs` expiry (code

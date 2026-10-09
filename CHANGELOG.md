@@ -7,16 +7,20 @@
   `done: () => …` with conditional or statement returns failed against `z.enum(['green', 'red'])`,
   because the command overload, tried first, gave such a callback no contextual type, while
   callbacks that take a parameter already kept literals. A new first overload accepts both forms,
-  captures the callback's result in a `const` type parameter and checks it against the schema's
-  type, so `T` still comes only from `schema`, the note type from `noteSchema` and the output type
-  from `output`; the explicit-type-argument overloads are unchanged and come after it. The capture
-  makes array literals readonly tuples, so the result is checked against `PollReadonly<T>` and
-  `PollReadonly<N>`: `[1, 2]` matches `z.array(z.number())`, a tuple schema or an array
-  `noteSchema`, and the outcome keeps the schema's type. New exported types: `PollResult<T, N>` (one
-  check's result), `PollCallOptions<T, O, N, R>` (the inferred options), `PollTimeBound`
+  captures the result of a callback without parameters in a `const` type parameter and checks it
+  against the schema's type, so `T` still comes only from `schema`, the note type from `noteSchema`
+  and the output type from `output`; the explicit-type-argument overloads are unchanged and come
+  after it. A callback with parameters is typed exactly as before (literals built through
+  `Promise.resolve(…)` or `.map(…)` included) and resolves to those overloads, and its parameter
+  annotations cannot supply the note type. The capture makes array literals readonly tuples, so the
+  result is checked against `PollReadonly<T>` and `PollReadonly<N>`: `[1, 2]` matches
+  `z.array(z.number())`, a tuple schema or an array `noteSchema`, and the outcome keeps the schema's
+  type. New exported types: `PollResult<T, N>` (one check's result), `PollCallOptions<T, O, N, R>`
+  (the inferred options), `PollCapturedResult<T, N, R>` (the captured result), `PollTimeBound`
   (`timeoutMs` or `deadline`), and `PollReadonly<X>` and `PollReadonlyArray<E>` (the readonly view).
-  A non-`async` callback without parameters that returns `Promise.resolve(…)`, and a call with
-  explicit type arguments, can still widen a literal. Runtime behavior is unchanged.
+  A callback without parameters that creates a literal in a nested callback
+  (`.map(() => ({ state: 'green' }))`), and a call with explicit type arguments, can still widen it.
+  Runtime behavior is unchanged.
 - `workflow fixtures` exports commands that step callbacks and poll observers run through
   `context.exec` (#317). The runtime records them on the parent step (`innerCommands`, schema
   revision 15: the raw result and only env and stdin digests, at most 256 commands and 1 MiB of
