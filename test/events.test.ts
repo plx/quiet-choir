@@ -265,8 +265,12 @@ describe('formatEventLine', () => {
   describe('toolUses and warnings', () => {
     const finished = (
       stepId: string,
-      fields: Partial<WorkflowEvent> = {},
-    ): Partial<WorkflowEvent> & Pick<WorkflowEvent, 'type'> => ({
+      fields: {
+        diagnostics?: NonNullable<WorkflowEvent['diagnostics']>;
+        warnings?: string[];
+        outcome?: 'cancelled';
+      } = {},
+    ): Parameters<typeof event>[0] => ({
       type: 'agent.finished',
       stepId,
       harness: 'claude',
@@ -342,7 +346,11 @@ describe('formatEventLine', () => {
     ])('omits toolUses when the count is %s', (_name, value) => {
       const memory = new EventLineMemory();
       memory.observe(
-        event(finished('a', { diagnostics: { toolUses: value } as WorkflowEvent['diagnostics'] })),
+        event(
+          finished('a', {
+            diagnostics: { toolUses: value } as NonNullable<WorkflowEvent['diagnostics']>,
+          }),
+        ),
       );
       expect(line(event({ type: 'step.completed', stepId: 'a' }), memory)).not.toHaveProperty(
         'toolUses',
@@ -632,7 +640,7 @@ describe('shared formatter', () => {
             errorKind: 'rate-limit',
             execution: 1,
             diagnostics: { toolUses: 3 },
-          } as AttemptRecord,
+          } as unknown as AttemptRecord,
         ],
       },
       b: {
@@ -657,7 +665,7 @@ describe('shared formatter', () => {
             execution: 1,
             usage: { inputTokens: 1, outputTokens: 1, costUsd: 0.5 },
             diagnostics: { toolUses: 0 },
-          } as AttemptRecord,
+          } as unknown as AttemptRecord,
         ],
       },
     },
