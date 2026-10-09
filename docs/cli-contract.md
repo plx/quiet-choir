@@ -399,7 +399,10 @@ completed command results as `exec` rules with environment and stdin digests onl
 absorbed command failures that a command result reproduces (an exit code outside `okExitCodes` or an
 `exec.json` schema failure) become `exec` rules with their exit `code` and recorded output tails;
 other command failures get no exported rule yet (an `exec` rule with `error` can describe one by
-hand). `"commands": "fixture"` is set when the run has at least one completed or failed command. See
+hand). Commands that step callbacks and poll observers ran through `context.exec` become `exec`
+rules keyed by the parent's ID, from a step's latest attempt or a poll's terminal check, with `call`
+only when the parent ran more than one matching command. `"commands": "fixture"` is set when the run
+has at least one completed or failed command, or any recorded inner command. See
 [workflow rehearsal](rehearsal.md).
 
 Failures have these fields:

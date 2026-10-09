@@ -116,6 +116,25 @@ drift, or that reaches such a failure, fails at that step instead of running the
 shorten `argvPrefix` or drop a digest by hand when a value legitimately changes per run. A run
 without commands exports exactly as before. It does not modify the source checkpoint.
 
+Commands a step callback or poll observer ran through `context.exec` (and each command-poll check)
+are exported too, from the parent's `innerCommands` record: a step's latest settled attempt, or the
+observation that completed a wait. Each rule's `step` is the parent's ID, with the full argv as
+`argvPrefix` (none for a `{ shell }` command) and the recorded digests; environment values and stdin
+are never stored. The rule carries the raw result (`stdout`, plus `stderr` and `code` when not empty
+or zero), so a replay runs the same `okExitCodes` and `exec.json` schema checks and inner failures,
+thrown, caught or returned, replay the same way. A rule gets `call` only when another recorded
+command of the parent meets its filters (the same argv prefix, or any command for a shell rule, with
+equal digests), so two identical `gh pr checks` get calls 1 and 2 and a unique command gets none. No
+rule pins an attempt. A poll exports only its terminal check, so a replay completes on its first
+check (`checks: 1`) under `--dry-run`, suspend mode or `--wait-mode block`; an observer whose
+terminal argv depends on `previous` can fail as unmatched and needs a hand-written rule. Waits that
+ended by deadline or signal, failed waits and asks export no inner rules, and neither does a command
+whose runner gave no result (spawn failure, timeout, cancellation) or a result with a signal, no
+exit code or truncated output. Recording keeps at most 256 commands and 1 MiB of stdout plus stderr
+per parent attempt, as a contiguous prefix with the rest counted as `omitted`; export emits rules
+for the prefix. A parent with any recorded inner command sets `"commands": "fixture"`. Runs recorded
+before schema revision 15 have no inner command records.
+
 ## Command fixtures
 
 The same file can answer `ctx.exec` and `ctx.exec.json` with an optional `exec` array, so a workflow
