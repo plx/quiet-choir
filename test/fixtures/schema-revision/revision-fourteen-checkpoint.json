@@ -115,15 +115,15 @@
     "requiredGrants": [],
     "strictProfiles": true
   },
-  "createdAt": "2026-10-09T08:20:36.195Z",
+  "createdAt": "2026-10-09T08:26:12.599Z",
   "cwd": "/",
   "engine": { "node": "v26.10.0", "quietChoir": "0.0.0", "tsx": "4.23.11", "zod": "4.5.4" },
   "error": "fixture tail",
-  "errorStack": "Error: fixture tail\n    at run (/fixture/gen.ts:18:15)\n    at async <anonymous> (/fixture/src/workflow/runtime/runner.ts:2200:26)\n    at async effect (/fixture/src/workflow/runtime/runner.ts:2124:30)\n    at async <anonymous> (/fixture/src/workflow/runtime/runner.ts:1447:20)",
+  "errorStack": "Error: fixture tail\n    at run (/fixture/gen.ts:19:15)\n    at async <anonymous> (/fixture/src/workflow/runtime/runner.ts:2200:26)\n    at async effect (/fixture/src/workflow/runtime/runner.ts:2124:30)\n    at async <anonymous> (/fixture/src/workflow/runtime/runner.ts:1447:20)",
   "eventCounts": {},
   "events": [
     {
-      "at": "2026-10-09T08:20:36.197Z",
+      "at": "2026-10-09T08:26:12.601Z",
       "data": null,
       "execution": 1,
       "message": null,
@@ -133,7 +133,7 @@
       "type": "run.started"
     },
     {
-      "at": "2026-10-09T08:20:36.243Z",
+      "at": "2026-10-09T08:26:12.647Z",
       "data": null,
       "execution": 1,
       "message": "fixture tail",
@@ -145,13 +145,13 @@
   ],
   "executions": [
     {
-      "endedAt": "2026-10-09T08:20:36.243Z",
+      "endedAt": "2026-10-09T08:26:12.647Z",
       "error": "fixture tail",
-      "errorStack": "Error: fixture tail\n    at run (/fixture/gen.ts:18:15)\n    at async <anonymous> (/fixture/src/workflow/runtime/runner.ts:2200:26)\n    at async effect (/fixture/src/workflow/runtime/runner.ts:2124:30)\n    at async <anonymous> (/fixture/src/workflow/runtime/runner.ts:1447:20)",
+      "errorStack": "Error: fixture tail\n    at run (/fixture/gen.ts:19:15)\n    at async <anonymous> (/fixture/src/workflow/runtime/runner.ts:2200:26)\n    at async effect (/fixture/src/workflow/runtime/runner.ts:2124:30)\n    at async <anonymous> (/fixture/src/workflow/runtime/runner.ts:1447:20)",
       "n": 1,
       "outcome": "failed",
-      "pid": 64013,
-      "startedAt": "2026-10-09T08:20:36.197Z"
+      "pid": 65036,
+      "startedAt": "2026-10-09T08:26:12.600Z"
     }
   ],
   "formatVersion": 7,
@@ -180,7 +180,7 @@
   "runBudget": { "maxRunAgentAttempts": null, "maxRunCostUsd": null, "maxWindowUtilization": null },
   "schemaRevision": 14,
   "seq": 5,
-  "sessionSalt": "d58909e9-cf8e-4040-b7a1-d7edcb6465ac",
+  "sessionSalt": "4392f1d9-05f0-4d4e-a8b2-d9faa7715e31",
   "status": "failed",
   "steps": {
     "prepare": {
@@ -193,12 +193,12 @@
           "errorStack": null,
           "execution": 1,
           "fingerprint": "dc5dfe8f6cc3a702a19c34ad8722dd72c8ae1e808163fb818161ebbd31b94b3f",
-          "finishedAt": "2026-10-09T08:20:36.226Z",
+          "finishedAt": "2026-10-09T08:26:12.629Z",
           "policy": { "retry": { "delayMs": 100, "maxAttempts": 1 } },
           "request": null,
           "requestedModel": null,
           "sources": { "retry.delayMs": "runtime", "retry.maxAttempts": "runtime" },
-          "startedAt": "2026-10-09T08:20:36.222Z",
+          "startedAt": "2026-10-09T08:26:12.625Z",
           "status": "completed",
           "usage": null
         }
@@ -208,7 +208,7 @@
       "error": null,
       "errorStack": null,
       "fingerprint": "dc5dfe8f6cc3a702a19c34ad8722dd72c8ae1e808163fb818161ebbd31b94b3f",
-      "finishedAt": "2026-10-09T08:20:36.226Z",
+      "finishedAt": "2026-10-09T08:26:12.629Z",
       "identity": {
         "cwd": "df7e940f72aa93cbcb6d70cc35124b0767c7a0e353043c7c24b660ea9be7b952",
         "input": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
@@ -219,12 +219,12 @@
       },
       "kind": "step",
       "launchStamp": 0,
-      "output": 1791534036226,
+      "output": 1791534372629,
       "phase": null,
       "request": null,
       "seq": 1,
       "settleStamp": 1,
-      "startedAt": "2026-10-09T08:20:36.222Z",
+      "startedAt": "2026-10-09T08:26:12.625Z",
       "status": "completed",
       "wakeAt": null
     },
@@ -236,15 +236,15 @@
           "effort": null,
           "error": "fixture tail",
           "errorKind": "unknown",
-          "errorStack": "Error: fixture tail\n    at run (/fixture/gen.ts:18:15)\n    at async <anonymous> (/fixture/src/workflow/runtime/runner.ts:2200:26)\n    at async effect (/fixture/src/workflow/runtime/runner.ts:2124:30)\n    at async <anonymous> (/fixture/src/workflow/runtime/runner.ts:1447:20)",
+          "errorStack": "Error: fixture tail\n    at run (/fixture/gen.ts:19:15)\n    at async <anonymous> (/fixture/src/workflow/runtime/runner.ts:2200:26)\n    at async effect (/fixture/src/workflow/runtime/runner.ts:2124:30)\n    at async <anonymous> (/fixture/src/workflow/runtime/runner.ts:1447:20)",
           "execution": 1,
           "fingerprint": "96d1e015ac91b65b04b84ede598c81b9ae3c6797e6775c0f0adf0b32905e8b39",
-          "finishedAt": "2026-10-09T08:20:36.237Z",
+          "finishedAt": "2026-10-09T08:26:12.640Z",
           "policy": { "retry": { "delayMs": 100, "maxAttempts": 1 } },
           "request": null,
           "requestedModel": null,
           "sources": { "retry.delayMs": "runtime", "retry.maxAttempts": "runtime" },
-          "startedAt": "2026-10-09T08:20:36.231Z",
+          "startedAt": "2026-10-09T08:26:12.634Z",
           "status": "failed",
           "usage": null
         }
@@ -252,11 +252,11 @@
       "attempts": 1,
       "durationMs": 6,
       "error": "fixture tail",
-      "errorStack": "Error: fixture tail\n    at run (/fixture/gen.ts:18:15)\n    at async <anonymous> (/fixture/src/workflow/runtime/runner.ts:2200:26)\n    at async effect (/fixture/src/workflow/runtime/runner.ts:2124:30)\n    at async <anonymous> (/fixture/src/workflow/runtime/runner.ts:1447:20)",
+      "errorStack": "Error: fixture tail\n    at run (/fixture/gen.ts:19:15)\n    at async <anonymous> (/fixture/src/workflow/runtime/runner.ts:2200:26)\n    at async effect (/fixture/src/workflow/runtime/runner.ts:2124:30)\n    at async <anonymous> (/fixture/src/workflow/runtime/runner.ts:1447:20)",
       "failureHistory": [{ "failureStamp": 2, "launchStamp": 1 }],
       "failureStamp": 2,
       "fingerprint": "96d1e015ac91b65b04b84ede598c81b9ae3c6797e6775c0f0adf0b32905e8b39",
-      "finishedAt": "2026-10-09T08:20:36.237Z",
+      "finishedAt": "2026-10-09T08:26:12.640Z",
       "identity": {
         "callback": "090b16c85f67b416399933dab15a6d90d635ba20d622fc98af4e9aa964027421",
         "cwd": "df7e940f72aa93cbcb6d70cc35124b0767c7a0e353043c7c24b660ea9be7b952",
@@ -273,16 +273,16 @@
       "request": null,
       "seq": 2,
       "settleStamp": 2,
-      "startedAt": "2026-10-09T08:20:36.231Z",
+      "startedAt": "2026-10-09T08:26:12.634Z",
       "status": "failed",
       "wakeAt": null
     }
   },
-  "updatedAt": "2026-10-09T08:20:36.243Z",
+  "updatedAt": "2026-10-09T08:26:12.647Z",
   "workflow": {
-    "fingerprint": "1229e5ea621ac11ceb1703df6828b46ce6a97f810fec9a4b7d27b56ebabd1fc3",
+    "fingerprint": "fbd16d6260602af37e4f87392b8a896e7059d0ac8694532f2cd0e55d76565838",
     "identity": {
-      "code": null,
+      "code": "schema-revision",
       "engine": { "formatVersion": 6, "version": "0.0.0" },
       "files": {},
       "inputSchema": "199490fad0bd9dd1925ebbce2ed02f949ef0396fcbabcd41baa5ffa3b1ea49b2",
