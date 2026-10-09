@@ -156,6 +156,21 @@ export abstract class WorkflowCommand extends BaseCommand {
   }
 
   /**
+   * Write raw bytes to the real stdout, the writer `init` saved when `--json` redirected
+   * `process.stdout`, resolving once the stream has taken them so a large output keeps
+   * backpressure. A write error, such as `EPIPE` from a reader that went away, rejects. @internal
+   */
+  protected writeStdout(chunk: Uint8Array): Promise<void> {
+    const write = this.#stdoutWrite ?? process.stdout.write.bind(process.stdout);
+    return new Promise((resolve, reject) => {
+      write.call(process.stdout, chunk, undefined, (error?: Error | null) => {
+        if (error) reject(error);
+        else resolve();
+      });
+    });
+  }
+
+  /**
    * Whether failure and suspension documents carry a compact `summary` instead of the whole `run`.
    * The run commands turn this on unless `--full` was requested. @internal
    */

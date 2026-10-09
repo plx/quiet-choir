@@ -30,6 +30,7 @@ const expectedCommands = [
   'workflow:rm',
   'workflow:start',
   'workflow:tick',
+  'workflow:transcript',
   'workflow:typecheck',
   'workflow:unlock',
   'workflow:validate',

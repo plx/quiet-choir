@@ -117,6 +117,39 @@ send({type:'turn.completed',usage:{input_tokens:2,output_tokens:1}});
   assert.match(denied.stderr, /1 permission denials \(Read\)/);
   assert.equal(JSON.parse(denied.stdout).output, 'ok');
 
+  const transcript = (...extra) =>
+    spawnSync(
+      process.execPath,
+      [join(root, 'bin/run.js'), 'workflow', 'transcript', ...extra, '--state-dir', state],
+      { cwd: directory, encoding: 'utf8', timeout: 30_000 },
+    );
+  const decoded = transcript('denied', 'scope/../../answer');
+  assert.equal(decoded.status, 0, decoded.stderr);
+  const nativeLines = decoded.stdout
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  assert.deepEqual(
+    nativeLines.map((line) => line.type),
+    ['system', 'result'],
+  );
+  assert.equal(nativeLines[1].permission_denials[0].tool_name, 'Read');
+  assert.doesNotMatch(decoded.stderr, /maxTranscriptBytes/);
+  const cut = transcript('large', 'scope/../../answer', '--attempt', '1');
+  assert.equal(cut.status, 0, cut.stderr);
+  assert.match(cut.stdout, /^\{"type":"thread\.started"/);
+  assert.match(cut.stderr, /cut at its maxTranscriptBytes cap/);
+  const unknownStep = transcript('denied', 'answer', '--json');
+  assert.equal(unknownStep.status, 2, unknownStep.stderr);
+  const unknownStepError = JSON.parse(unknownStep.stdout).error;
+  assert.equal(unknownStepError.code, 'usage.flag');
+  assert.equal(unknownStepError.details.reason, 'unknown-step');
+  assert.deepEqual(unknownStepError.details.agentSteps, ['scope/../../answer']);
+  const unknownRun = transcript('missing-run', 'scope/../../answer');
+  assert.equal(unknownRun.status, 3, unknownRun.stderr);
+  assert.equal(unknownRun.stdout, '');
+  assert.match(unknownRun.stderr, /missing-run/);
+
   for (const provider of ['claude', 'codex']) {
     const id = `hang-${provider}`;
     let stdout = '',
@@ -161,7 +194,7 @@ send({type:'turn.completed',usage:{input_tokens:2,output_tokens:1}});
     );
   }
   console.log(
-    'PASS CLI live streaming, early checkpoint IDs, SIGINT evidence, capped private transcripts, sticky caps, and clean JSON stdout',
+    'PASS CLI live streaming, early checkpoint IDs, SIGINT evidence, capped private transcripts, transcript decoding, sticky caps, and clean JSON stdout',
   );
 } finally {
   for (const child of runners) child.kill('SIGINT');
