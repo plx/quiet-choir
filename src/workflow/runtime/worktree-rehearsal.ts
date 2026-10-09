@@ -15,7 +15,8 @@
  * through a quarantined {@link WorktreeGit} that writes objects only there, reads the repository's
  * objects as an alternate, runs only `rev-parse`, `merge-tree`, `commit-tree` and `var`, and makes
  * Git itself refuse ref updates. {@link WorktreeRehearsal.dispose} removes the directory when the
- * run ends, so a preview's commit exists only during the rehearsal. Everything else that touches
+ * run ends, so a preview's commit exists only during the rehearsal. A configured custom merge
+ * driver refuses the preview before any `merge-tree`, since Git would run it outside the quarantine. Everything else that touches
  * Git (`ctx.worktree`, isolation on a handle) stays refused by the replay decision.
  *
  * The accepted-replay preflight's probe (#217) constructs this class with `synthesizeAll` and no
@@ -76,6 +77,14 @@ export function canSynthesizeIsolation(isolation: ResolvedWorktree): boolean {
 /** The refusal of a merge preview over captured commits without a repository. @internal */
 export const previewNeedsRepositoryMessage =
   'Dry-run needs the Git repository to preview a merge of captured commits or a worktree handle; the workflow cwd is not in a Git working tree, or no process runner resolved it.';
+
+/**
+ * The refusal of a merge preview while custom merge drivers are configured: `merge-tree` would run
+ * them, and a driver is an arbitrary command that can write outside the quarantine. @internal
+ */
+export function customMergeDriversMessage(names: readonly string[]): string {
+  return `Dry-run cannot preview a merge of captured commits while custom merge drivers are configured (${names.join(', ')}): Git would run them, and they can write outside the preview's quarantine.`;
+}
 
 /** Read-only base resolution and synthesis for one rehearsal run. @internal */
 export class WorktreeRehearsal {
@@ -329,6 +338,16 @@ export class WorktreeRehearsal {
     if (this.disposed) throw new Error('Dry-run merge preview ran after the rehearsal ended.');
     const shared = { ...invocation, signal: this.runSignal ?? invocation.signal };
     this.quarantine ??= (async () => {
+      // Read-only and before any merge-tree: Git would run a configured driver during the preview.
+      const drivers = await git.run(
+        repo,
+        ['config', '--name-only', '--get-regexp', '^merge\\..*\\.driver$'],
+        shared,
+        { codes: [0, 1] },
+      );
+      const names = drivers.stdout.split('\n').filter((name) => name !== '');
+      if (drivers.code === 0 && names.length)
+        throw new ConfigurationError(customMergeDriversMessage(names));
       const alternate = await git.text(
         repo,
         ['rev-parse', '--path-format=absolute', '--git-path', 'objects'],

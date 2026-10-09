@@ -210,6 +210,12 @@ computation, in a quarantined object store:
 - Unchanged inputs keep the no-op path and create no store. A captured commit or handle without a
   resolvable repository (no process runner, outside a Git working tree, or a runner that answers
   nothing) fails with a `ConfigurationError`: placeholders cannot represent `merged` or `conflicts`.
+- A custom merge driver (`merge.<name>.driver`) is an arbitrary command that `merge-tree` runs, and
+  the object quarantine cannot stop it writing to the checkout or anywhere else. Before creating the
+  store, the preview lists the configured drivers with `git config --name-only --get-regexp`, the
+  one command besides `rev-parse` the read-only driver runs, and refuses with a `ConfigurationError`
+  if there is any. It does not override them: a text merge would report conflicts the real merge
+  would not, which is worse than no preview.
 - Nothing else of a real merge happens: no `step.merge` preparation, no pinned or published ref, no
   checkout update and no integration or handle locks, since the repository does not change. The
   target-specific preflight checks (`check-ref-format`, a branch checked out elsewhere, a dirty

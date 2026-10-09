@@ -20,6 +20,20 @@ export interface GitQuarantine {
 const quarantinedCommands = new Set(['rev-parse', 'merge-tree', 'commit-tree', 'var']);
 
 /**
+ * Whether a read-only driver runs `args`: `rev-parse`, or exactly `config --name-only --get-regexp
+ * <pattern>`, which lists configuration names and cannot write.
+ */
+function readOnlyCommand(args: readonly string[]): boolean {
+  return (
+    args[0] === 'rev-parse' ||
+    (args.length === 4 &&
+      args[0] === 'config' &&
+      args[1] === '--name-only' &&
+      args[2] === '--get-regexp')
+  );
+}
+
+/**
  * Quote one `GIT_ALTERNATE_OBJECT_DIRECTORIES` entry as a C-style string when Git would otherwise
  * split it at the platform path delimiter or read it as quoted. @internal
  */
@@ -43,8 +57,9 @@ export class WorktreeGit {
   private readonly quarantine: Readonly<Record<string, string>> | undefined;
 
   /**
-   * @param mode - `true` refuses every command except `rev-parse` before it reaches the runner. Dry-run
-   * rehearsal resolves bases through this mode, so it can never create refs, worktrees or objects.
+   * @param mode - `true` refuses every command except `rev-parse` and a `config --name-only
+   * --get-regexp` listing before it reaches the runner. Dry-run rehearsal resolves bases (and lists
+   * custom merge drivers) through this mode, so it can never create refs, worktrees or objects.
    * `{ quarantine }` runs only `rev-parse`, `merge-tree`, `commit-tree` and `var`, and points every
    * command at the quarantine's object directory, after the caller's `GIT_*` variables are removed
    * and the per-call environment applied, so new objects land there and Git refuses ref updates.
@@ -77,9 +92,9 @@ export class WorktreeGit {
       readonly timeoutMs?: number;
     } = {},
   ): Promise<ExecResult> {
-    if (this.mode === true && args[0] !== 'rev-parse')
+    if (this.mode === true && !readOnlyCommand(args))
       throw new Error(
-        `Read-only Git refuses ${args[0] ?? 'an empty command'}; only rev-parse runs.`,
+        `Read-only Git refuses ${args[0] ?? 'an empty command'}; only rev-parse and config --name-only --get-regexp run.`,
       );
     if (this.quarantine && !quarantinedCommands.has(args[0] ?? ''))
       throw new Error(

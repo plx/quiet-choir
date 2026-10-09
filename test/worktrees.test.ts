@@ -1715,14 +1715,23 @@ it('previews a merge of a captured commit in a dry-run resume like the real resu
       baseSource: 'resolved',
     }),
   ]);
-  // Only the four quarantined commands ran, and every object computation used the quarantine.
+  // Only the merge-driver listing and the quarantined commands ran, and every object computation
+  // used the quarantine.
   expect([...new Set(spy.commands.map(({ args }) => args[0]))].sort()).toEqual([
     'commit-tree',
+    'config',
     'merge-tree',
     'rev-parse',
   ]);
+  expect(spy.commands.filter(({ args }) => args[0] === 'config')).toEqual([
+    {
+      args: ['config', '--name-only', '--get-regexp', '^merge\\..*\\.driver$'],
+      objects: undefined,
+    },
+  ]);
   for (const { args, objects } of spy.commands)
-    if (args[0] !== 'rev-parse') expect(objects?.includes(quarantinePrefix)).toBe(true);
+    if (args[0] !== 'rev-parse' && args[0] !== 'config')
+      expect(objects?.includes(quarantinePrefix)).toBe(true);
   expect(await repositoryState()).toEqual(before);
   expect(await quarantines()).toEqual([]);
   expect(await command('cat-file', '-t', edit)).toBe('commit');
@@ -1937,6 +1946,37 @@ it.each(['rebase', 'merge', 'squash'] as const)(
   // Five runs over real Git. measured: 1.6-1.9 s alone (dominated by Git processes).
   20_000,
 );
+
+it('refuses to preview a merge while a custom merge driver is configured, before Git runs it', async () => {
+  const gate: PreviewGate = { stop: true, options: {} };
+  const workflow = capturedMerge('driver', ['edit'], gate);
+  await expect(
+    runWorkflow(workflow, { ...options('driver'), harness: editingHarness(), input: null }),
+  ).rejects.toThrow('stopped before the merge');
+  const copy = await copyRun('driver');
+  // A driver that leaves a sentinel wherever merge-tree would run it, selected for every path.
+  const sentinel = join(directory, 'driver-ran');
+  await command('config', 'merge.sentinel.driver', `touch '${sentinel}'; false`);
+  await writeFile(join(repo, '.git', 'info', 'attributes'), '* merge=sentinel\n');
+  const before = await repositoryState();
+  const quarantines = await temporaryParent();
+  const spy = objectSpy();
+  gate.stop = false;
+  const failure: unknown = await runWorkflow(workflow, {
+    ...dryRun('driver', copy, [], spy.runner),
+    resume: true,
+  }).catch((error: unknown) => error);
+  expect((failure as Error).message).toContain(
+    'Dry-run cannot preview a merge of captured commits while custom merge drivers are configured (merge.sentinel.driver)',
+  );
+  expect((failure as Error).cause).toBeInstanceOf(ConfigurationError);
+  expect(spy.commands.map(({ args }) => args[0]).filter((name) => name !== 'rev-parse')).toEqual([
+    'config',
+  ]);
+  expect(await exists(sentinel)).toBe(false);
+  expect(await repositoryState()).toEqual(before);
+  expect(await quarantines()).toEqual([]);
+});
 
 it('fails a preview over a commit missing from the repository like the real merge', async () => {
   const head = await command('rev-parse', 'HEAD');

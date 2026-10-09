@@ -214,10 +214,21 @@ it('runs a quarantined driver only for object computations, after the GIT_* scru
       'Quarantined Git refuses',
     );
   expect(run).not.toHaveBeenCalled();
-  // The rev-parse-only mode is unchanged.
-  await expect(new WorktreeGit({ run }, true).run(directory, ['var'], invocation)).rejects.toThrow(
-    'Read-only Git refuses var; only rev-parse runs.',
-  );
+  // The read-only mode runs rev-parse and one config listing, and nothing that could write.
+  const readOnly = new WorktreeGit({ run }, true);
+  for (const args of [
+    ['var'],
+    ['config', 'merge.x.driver', 'touch y'],
+    ['config', '--name-only', '--get-regexp'],
+    ['config', '--name-only', '--get-regexp', 'merge', 'value'],
+    ['config', '--get-regexp', '--name-only', 'merge'],
+  ])
+    await expect(readOnly.run(directory, args, invocation)).rejects.toThrow(
+      `Read-only Git refuses ${args[0] ?? ''}; only rev-parse and config --name-only --get-regexp run.`,
+    );
+  expect(run).not.toHaveBeenCalled();
+  await readOnly.run(directory, ['config', '--name-only', '--get-regexp', '^merge\\.'], invocation);
+  expect(run).toHaveBeenCalledTimes(1);
 });
 
 it('quotes an alternate object directory Git would split or unquote', () => {
