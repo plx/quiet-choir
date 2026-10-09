@@ -45,7 +45,15 @@ export interface InnerCommand {
   /** The raw process result, when the process runner returned one. */
   readonly result?: InnerCommandResult;
   /** Why the process runner returned no result: a spawn failure, timeout or cancellation. */
-  readonly error?: { readonly kind: ErrorKind; readonly message: string };
+  readonly error?: InnerCommandError;
+}
+
+/** Why an inner command got no process result, in {@link InnerCommand.error}. */
+export interface InnerCommandError {
+  /** The failure's category, such as `process` for a spawn failure or `timeout`. */
+  readonly kind: ErrorKind;
+  /** The runner's error message, at most 4096 characters. */
+  readonly message: string;
 }
 
 /**

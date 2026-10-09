@@ -19,7 +19,12 @@ import {
   MAX_INNER_COMMANDS,
   type InnerCommands,
 } from './inner-commands.js';
-export type { InnerCommand, InnerCommandResult, InnerCommands } from './inner-commands.js';
+export type {
+  InnerCommand,
+  InnerCommandError,
+  InnerCommandResult,
+  InnerCommands,
+} from './inner-commands.js';
 import { z } from 'zod';
 import { questionRecordSchema, workflowLaunchSchema } from './question-schema.js';
 import { waitRecordSchema } from './wait-schema.js';

@@ -112,6 +112,7 @@ export type {
   FailureEntry,
   StepMapItem,
   InnerCommand,
+  InnerCommandError,
   InnerCommandResult,
   InnerCommands,
   FailedAttempt,
