@@ -229,15 +229,18 @@ on older Git before it looks up any input commit.
 
 The base is resolved once per revision with `git rev-parse` through the real process runner. The
 runtime refuses every other Git command under rehearsal before it reaches the runner, apart from an
-exact list of reads (`git --version`; `git status --porcelain --untracked-files=normal`, run with
-`GIT_OPTIONAL_LOCKS=0` so it never refreshes the index; a merge target's `git check-ref-format`,
-`git worktree list --porcelain -z` and `git symbolic-ref -q`; and a merge preview's partial-clone,
-merge-driver and filter configuration reads) and a merge preview's quarantined commands, so a
-dry-run never creates refs, worktrees, cache directories, repository objects or lock files. An
-unresolvable base, a repository with no committed `HEAD`, or an isolated `cwd` outside the
-repository fails with the configuration error a real run reports. Outside a Git working tree, or
-when Git cannot run, a placeholder of forty zeros stands in for the base, with a warning that the
-real run fails. A dry-run resume of an interrupted real attempt reuses its recorded base.
+exact list of reads (`git --version`;
+`git status --porcelain --untracked-files=normal --no-renames`, run with `GIT_OPTIONAL_LOCKS=0` so
+it never refreshes the index, and without rename detection so it reads no blob contents to pair
+renames, which Git older than 2.44 could otherwise fetch in a partial clone; a merge target's
+`git check-ref-format`, `git worktree list --porcelain -z` and `git symbolic-ref -q`; and a merge
+preview's partial-clone, merge-driver and filter configuration reads) and a merge preview's
+quarantined commands, so a dry-run never creates refs, worktrees, cache directories, repository
+objects or lock files. An unresolvable base, a repository with no committed `HEAD`, or an isolated
+`cwd` outside the repository fails with the configuration error a real run reports. Outside a Git
+working tree, or when Git cannot run, a placeholder of forty zeros stands in for the base, with a
+warning that the real run fails. A dry-run resume of an interrupted real attempt reuses its recorded
+base.
 
 Before the run has a worktree ledger, the first isolated call or merge makes the checks a real run
 makes when it creates one: Git older than 2.38 and a cache root inside the checkout fail with the

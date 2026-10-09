@@ -241,7 +241,7 @@ export class WorktreeRehearsal {
       if (within(repo, this.root(repo))) throw new ConfigurationError(rootInsideCheckoutMessage);
       const status = await git.text(
         repo,
-        ['status', '--porcelain', '--untracked-files=normal'],
+        ['status', '--porcelain', '--untracked-files=normal', '--no-renames'],
         shared,
       );
       if (status) {

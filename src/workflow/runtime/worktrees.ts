@@ -357,7 +357,7 @@ export class RunWorktrees {
       if (within(repo, root)) throw new ConfigurationError(rootInsideCheckoutMessage);
       const status = await git.text(
         repo,
-        ['status', '--porcelain', '--untracked-files=normal'],
+        ['status', '--porcelain', '--untracked-files=normal', '--no-renames'],
         sharedInvocation,
       );
       if (status) this.warn(uncommittedSourceWarning);

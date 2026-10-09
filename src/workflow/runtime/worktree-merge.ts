@@ -197,7 +197,7 @@ async function cleanCheckout(
   if (
     await runtime.git.text(
       runtime.repo,
-      ['status', '--porcelain', '--untracked-files=normal'],
+      ['status', '--porcelain', '--untracked-files=normal', '--no-renames'],
       invocation,
     )
   )

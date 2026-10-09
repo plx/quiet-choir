@@ -244,7 +244,7 @@ it('runs a quarantined driver only for object computations, after the GIT_* scru
 });
 
 const readOnlyForms =
-  'rev-parse, --version, check-ref-format <ref>, symbolic-ref -q <ref>, worktree list --porcelain -z, status --porcelain --untracked-files=normal, config --name-only --get-regexp and config --type=bool --get';
+  'rev-parse, --version, check-ref-format <ref>, symbolic-ref -q <ref>, worktree list --porcelain -z, status --porcelain --untracked-files=normal --no-renames, config --name-only --get-regexp and config --type=bool --get';
 
 it('runs exactly the merge target checks through a read-only driver, and no close variant', async () => {
   const run = vi.fn<ProcessRunner['run']>(() =>
@@ -270,6 +270,10 @@ it('runs exactly the merge target checks through a read-only driver, and no clos
     ['status', '--porcelain'],
     ['status', '--porcelain', '--untracked-files=all'],
     ['status', '--porcelain', '--untracked-files=normal', '-z'],
+    // Rename detection reads blob contents, which older Git could lazy-fetch in a partial clone.
+    ['status', '--porcelain', '--untracked-files=normal'],
+    ['status', '--porcelain', '--untracked-files=normal', '--find-renames'],
+    ['status', '--porcelain', '--untracked-files=normal', '--no-renames', '-z'],
     ['status', '--short', '--untracked-files=normal'],
     ['worktree', 'add', 'x'],
     ['worktree', 'list'],
@@ -289,7 +293,7 @@ it('runs exactly the merge target checks through a read-only driver, and no clos
     ['check-ref-format', 'refs/heads/feature'],
     ['symbolic-ref', '-q', 'refs/heads/feature'],
     ['worktree', 'list', '--porcelain', '-z'],
-    ['status', '--porcelain', '--untracked-files=normal'],
+    ['status', '--porcelain', '--untracked-files=normal', '--no-renames'],
   ];
   for (const args of accepted) await readOnly.run(directory, args, invocation);
   expect(
@@ -335,7 +339,7 @@ it('keeps a read-only status from refreshing the index, whatever the caller sets
   );
   await new WorktreeGit({ run }, true).run(
     directory,
-    ['status', '--porcelain', '--untracked-files=normal'],
+    ['status', '--porcelain', '--untracked-files=normal', '--no-renames'],
     invocation,
     { env: { GIT_OPTIONAL_LOCKS: '1' } },
   );

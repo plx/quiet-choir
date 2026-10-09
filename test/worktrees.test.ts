@@ -1305,7 +1305,10 @@ type WorktreeEvent = Parameters<NonNullable<NonNullable<RunOptions['rehearsal']>
  * The reads besides rev-parse that a dry-run without a ledger makes first, as the real ledger's
  * initialization does: the Git version and the source checkout's status (#312).
  */
-const ledgerReads = [['--version'], ['status', '--porcelain', '--untracked-files=normal']];
+const ledgerReads = [
+  ['--version'],
+  ['status', '--porcelain', '--untracked-files=normal', '--no-renames'],
+];
 async function exists(path: string): Promise<boolean> {
   return lstat(path).then(
     () => true,
@@ -2459,7 +2462,7 @@ function freshDryRun(runId: string, runner: ProcessRunner) {
 }
 const checkRef = (ref: string) => ['check-ref-format', ref];
 const listWorktrees = ['worktree', 'list', '--porcelain', '-z'];
-const status = ['status', '--porcelain', '--untracked-files=normal'];
+const status = ['status', '--porcelain', '--untracked-files=normal', '--no-renames'];
 
 it.each([
   {
@@ -2713,6 +2716,37 @@ it.each([
     expect(real.worktreeWarnings).toEqual(dry.worktreeWarnings);
   },
 );
+
+it('runs the dry-run status checks without rename detection, which reads blob contents', async () => {
+  // A staged rename is a change either way; with rename detection Git would compare the blobs,
+  // which Git older than 2.44 could lazy-fetch from a partial clone's promisor remote.
+  await command('mv', 'file.txt', 'renamed.txt');
+  const workflow = defineWorkflow({
+    name: 'renamed-source',
+    version: '1',
+    input: z.null(),
+    output: z.unknown(),
+    async run(ctx) {
+      await ctx.codex.text('edit', { prompt: 'edit', worktree: true });
+      return ctx.merge('publish', [], { target: 'checkout' });
+    },
+  });
+  const spy = spyRunner();
+  const dry = await failureOf(runWorkflow(workflow, freshDryRun('renamed-source', spy.runner)));
+  const statuses = spy.commands.filter((args) => args[0] === 'status');
+  // The ledger's dirty-source check and the checkout target's check.
+  expect(statuses).toEqual([status, status]);
+  expect(statuses.every((args) => args.includes('--no-renames'))).toBe(true);
+  const real = await failureOf(
+    runWorkflow(workflow, {
+      ...options('renamed-source'),
+      input: null,
+      harness: { invoke: () => Promise.resolve(response) },
+    }),
+  );
+  expect(dry).toEqual(real);
+  expect(dry.message).toContain('Merge target checkout is dirty');
+});
 
 /** Every checkpoint file of a run, by name, so a refusal can prove it wrote nothing. */
 async function runFiles(runId: string): Promise<Record<string, string>> {

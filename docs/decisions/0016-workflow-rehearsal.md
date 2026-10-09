@@ -258,9 +258,10 @@ the real code and messages:
   the rehearsal's merge preview both call before anything else of the merge: for a `branch` target,
   `git check-ref-format refs/heads/<branch>` (an `ExecError`), then the worktree listing (a branch
   checked out in any worktree, the current checkout included) and `git symbolic-ref -q` (a
-  symbolic-ref branch); for a `checkout` target, `git status --porcelain --untracked-files=normal`.
-  Messages and error classes are shared by construction, and no-op merges are checked too, as the
-  real merge checks them. The real run's publish-time rechecks call the same helpers.
+  symbolic-ref branch); for a `checkout` target,
+  `git status --porcelain --untracked-files=normal --no-renames`. Messages and error classes are
+  shared by construction, and no-op merges are checked too, as the real merge checks them. The real
+  run's publish-time rechecks call the same helpers.
 - The checks the real `RunWorktrees.ledger()` makes when it creates a ledger are shared too: the
   version refusal (`gitVersionRefusal`) and the dirty-source warning text. The rehearsal makes them,
   with the cache-root check, once, at the first isolation or merge that resolves a repository, and
@@ -269,9 +270,13 @@ the real code and messages:
   placeholder path in charge (the #148 decision); outside a working tree no version check runs.
 - The read-only driver gains four exact argument vectors and nothing else: `check-ref-format <ref>`,
   `symbolic-ref -q <ref>` (one operand that is not an option; a second operand, or `-d`, would write
-  the ref), `worktree list --porcelain -z` and `status --porcelain --untracked-files=normal`. It
-  also fixes `GIT_OPTIONAL_LOCKS=0`, because `git status` otherwise refreshes stat data in the
-  index. Close variants are refused before they reach the runner.
+  the ref), `worktree list --porcelain -z` and
+  `status --porcelain --untracked-files=normal --no-renames`. It also fixes `GIT_OPTIONAL_LOCKS=0`,
+  because `git status` otherwise refreshes stat data in the index. The shared status check (the real
+  ledger's, the real `checkout` target check and the rehearsal's) runs without rename detection:
+  whether its output is empty does not depend on renames, and rename detection reads blob contents,
+  which Git older than 2.44 (it ignores `GIT_NO_LAZY_FETCH`) could fetch from a partial clone's
+  promisor remote. Close variants are refused before they reach the runner.
 - The checks run through a read-only driver the rehearsal never replaces, so they still run after a
   merge preview has switched rehearsal Git to the quarantined driver, which refuses them.
 - `git worktree list` is ordered against a concurrent `worktree add` only by the in-process

@@ -27,8 +27,10 @@ const quarantinedCommands = new Set(['rev-parse', 'merge-tree', 'commit-tree', '
  * - The merge target checks a rehearsal shares with the real merge (#312): `check-ref-format <ref>`
  *   and `symbolic-ref -q <ref>`, each with exactly one operand that is not an option (a second
  *   `symbolic-ref` operand would write the ref, as would `-d`), `worktree list --porcelain -z`, and
- *   `status --porcelain --untracked-files=normal`, which the driver's `GIT_OPTIONAL_LOCKS=0` keeps
- *   from refreshing the index.
+ *   `status --porcelain --untracked-files=normal --no-renames`, which the driver's
+ *   `GIT_OPTIONAL_LOCKS=0` keeps from refreshing the index. Without rename detection, `status`
+ *   reads no blob contents to pair renames, so on Git older than 2.44, which ignores
+ *   `GIT_NO_LAZY_FETCH`, it does not fetch them from a partial clone's promisor remote.
  *
  * None of them can write to the repository.
  */
@@ -45,7 +47,12 @@ function readOnlyCommand(args: readonly string[]): boolean {
     case 'symbolic-ref':
       return args.length === 3 && first === '-q' && operand(second);
     case 'status':
-      return args.length === 3 && first === '--porcelain' && second === '--untracked-files=normal';
+      return (
+        args.length === 4 &&
+        first === '--porcelain' &&
+        second === '--untracked-files=normal' &&
+        third === '--no-renames'
+      );
     case 'worktree':
       return args.length === 4 && first === 'list' && second === '--porcelain' && third === '-z';
     case 'config':
@@ -61,7 +68,7 @@ function readOnlyCommand(args: readonly string[]): boolean {
 
 /** The forms {@link readOnlyCommand} accepts, as its refusal names them. */
 const readOnlyForms =
-  'rev-parse, --version, check-ref-format <ref>, symbolic-ref -q <ref>, worktree list --porcelain -z, status --porcelain --untracked-files=normal, config --name-only --get-regexp and config --type=bool --get';
+  'rev-parse, --version, check-ref-format <ref>, symbolic-ref -q <ref>, worktree list --porcelain -z, status --porcelain --untracked-files=normal --no-renames, config --name-only --get-regexp and config --type=bool --get';
 
 /**
  * Quote one `GIT_ALTERNATE_OBJECT_DIRECTORIES` entry as a C-style string when Git would otherwise
@@ -91,13 +98,14 @@ export class WorktreeGit {
    * @param mode - `true` refuses, before it reaches the runner, every command except `rev-parse`,
    * `--version`, a `config --name-only --get-regexp` listing, a `config --type=bool --get` read and
    * the exact merge target checks (`check-ref-format <ref>`, `symbolic-ref -q <ref>`, `worktree list
-   * --porcelain -z` and `status --porcelain --untracked-files=normal`).
+   * --porcelain -z` and `status --porcelain --untracked-files=normal --no-renames`).
    * Dry-run rehearsal resolves bases, checks the Git version, merge targets and the source
    * checkout, and checks for custom merge drivers and renormalizing filters through this mode, so
    * it can never create refs, worktrees or objects. `GIT_OPTIONAL_LOCKS=0` keeps `status` from
    * refreshing the index, and it never fetches a missing object from a partial clone's promisor
    * remote (`GIT_NO_LAZY_FETCH`, which Git honors from 2.44; the rehearsal refuses merge previews
-   * in a partial clone on older Git). Both are fixed whatever the caller's environment sets.
+   * in a partial clone on older Git, and `status` runs without rename detection, so it reads no
+   * blob contents to pair renames). Both are fixed whatever the caller's environment sets.
    * `{ quarantine }` runs only `rev-parse`, `merge-tree`, `commit-tree` and `var`, and points every
    * command at the quarantine's object directory, after the caller's `GIT_*` variables are removed
    * and the per-call environment applied, so new objects land there, Git refuses ref updates and

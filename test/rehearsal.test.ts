@@ -1509,7 +1509,7 @@ export default defineWorkflow({
     });
     expect(reads.filter((args) => args[0] !== 'rev-parse')).toEqual([
       ['--version'],
-      ['status', '--porcelain', '--untracked-files=normal'],
+      ['status', '--porcelain', '--untracked-files=normal', '--no-renames'],
     ]);
   }
 
