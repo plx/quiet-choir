@@ -192,7 +192,9 @@ export async function reply(batch, name, request, env, mode = 'normal') {
             '-e',
             mode === 'red-verify'
               ? 'process.exit(7)'
-              : "const fs=require('node:fs');if(fs.readFileSync('setup.txt','utf8')!=='foundation\\n'||fs.readFileSync('checks.txt','utf8')!=='tests\\n')process.exit(3)",
+              : mode === 'signal-verify'
+                ? "process.kill(process.pid, 'SIGKILL')"
+                : "const fs=require('node:fs');if(fs.readFileSync('setup.txt','utf8')!=='foundation\\n'||fs.readFileSync('checks.txt','utf8')!=='tests\\n')process.exit(3)",
           ],
         ],
       };

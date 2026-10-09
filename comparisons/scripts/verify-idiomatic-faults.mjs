@@ -19,6 +19,7 @@ import {
   snapshot,
   pristine,
 } from './idiomatic-fixtures.mjs';
+import { verificationStage } from '../batches/02-idiomatic-ports/ported/lifecycle-stages.ts';
 
 export async function killCase(root, batch, name) {
   const env = await fixture(root),
@@ -143,12 +144,21 @@ export async function killCase(root, batch, name) {
   }
 }
 
+const killSelf = "process.kill(process.pid, 'SIGKILL')";
+const settledSteps = (run, pattern) =>
+  Object.entries(run.steps)
+    .filter(([id, step]) => pattern.test(id) && step.status === 'settled-failed')
+    .map(([, step]) => step);
+
 export async function extraContracts(root) {
   const results = [];
   for (const [name, mode] of [
     ['release-notes', 'missing-coverage'],
     ['test-gap-filler', 'no-gaps'],
     ['project-bootstrap', 'red-verify'],
+    ['project-bootstrap', 'signal-verify'],
+    ['test-gap-filler', 'baseline-signal'],
+    ['test-gap-filler', 'baseline-timeout'],
     ['incident-investigation', 'dirty'],
     ['bug-hunt', 'failed-skeptic'],
     ['bug-hunt', 'failed-finders'],
@@ -165,6 +175,12 @@ export async function extraContracts(root) {
       opts.input.since = env.since;
     }
     if (mode === 'call-cap') opts.input.maxCalls = 3;
+    if (mode === 'baseline-signal') opts.input.testCommand = [process.execPath, '-e', killSelf];
+    if (mode === 'baseline-timeout') {
+      opts.input.testCommand = [process.execPath, '-e', 'setTimeout(() => {}, 60000)'];
+      // Scoped to the baseline so git helper commands keep their default deadline.
+      opts.policy = [{ kind: 'exec', match: 'baseline', timeoutMs: 1000 }];
+    }
     if (mode === 'dirty') {
       await assert.rejects(drive(definition, opts), /Expected a clean repository/u);
       const failed = await readRun(opts);
@@ -204,7 +220,29 @@ export async function extraContracts(root) {
     if (mode === 'red-verify') {
       assert.equal(result.output.status, 'verification-failed');
       assert.equal(result.output.verification[0].code, 7);
+      assert.equal(result.output.verification[0].failure, 'process');
       assert.equal(existsSync(join(env.cwd, 'setup.txt')), false);
+    }
+    if (mode === 'signal-verify') {
+      assert.equal(result.status, 'completed');
+      assert.equal(result.output.status, 'verification-failed');
+      assert.equal(result.output.verification[0].code, null);
+      assert.equal(typeof result.output.verification[0].failure, 'string');
+      assert.equal(existsSync(join(env.cwd, 'setup.txt')), false);
+      const settled = settledSteps(await readRun(opts), /^verify/u);
+      assert.equal(settled.length, 1);
+      assert.equal(settled[0].settledError.kind, result.output.verification[0].failure);
+      assert.equal(settled[0].settledError.signal, 'SIGKILL');
+    }
+    if (mode === 'baseline-signal' || mode === 'baseline-timeout') {
+      assert.equal(result.status, 'completed');
+      assert.equal(result.output.status, 'baseline-failed');
+      assert.equal(result.output.baselineCode, null);
+      assert.deepEqual(result.output.mutations, []);
+      const baseline = (await readRun(opts)).steps['baseline'];
+      assert.equal(baseline.status, 'settled-failed');
+      if (mode === 'baseline-timeout') assert.equal(baseline.settledError.kind, 'timeout');
+      else assert.equal(baseline.settledError.signal, 'SIGKILL');
     }
     if (mode === 'failed-skeptic') {
       assert.equal(result.output.undecided, 1);
@@ -243,6 +281,35 @@ export async function extraContracts(root) {
       completedCallsPaidAgain: 0,
     });
   }
+  const qa = await fixture(join(root, 'lifecycle-verify-timeout')),
+    verifyStage = verificationStage;
+  const qaOptions = {
+    ...runOptions(qa, 'lifecycle-verify-timeout', undefined, {
+      stage: 'qa',
+      testCommand: [process.execPath, '-e', 'setTimeout(() => {}, 60000)'],
+    }),
+    policy: [{ kind: 'exec', match: 'test', timeoutMs: 1000 }],
+  };
+  delete qaOptions.harness;
+  const verified = await drive(verifyStage, qaOptions);
+  assert.equal(verified.result.status, 'completed');
+  assert.equal(verified.result.output.gate, 'blocked');
+  assert.match(verified.result.output.details.join('\n'), /timeout/u);
+  const qaStep = (await readRun(qaOptions)).steps['test'];
+  assert.equal(qaStep.status, 'settled-failed');
+  assert.equal(qaStep.settledError.kind, 'timeout');
+  await drive(verifyStage, { ...qaOptions, resume: true });
+  assert.equal(
+    (await readRun(qaOptions)).steps['test'].attemptHistory?.length,
+    qaStep.attemptHistory?.length,
+  );
+  results.push({
+    workflow: 'sdlc-orchestrator',
+    fixture: 'lifecycle-verification-timeout-blocks-gate',
+    status: 'passed',
+    gate: 'blocked',
+    completedCallsPaidAgain: 0,
+  });
   const env = await fixture(join(root, 'spend-gate')),
     definition = await load(2, 'bug-hunt');
   const { harness, calls } = harnessFor(2, 'bug-hunt', env);
