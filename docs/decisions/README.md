@@ -120,3 +120,5 @@ part of the documentation.
 - [0057: End an unowned unfinished run as cancelled under the run lock](0057-end-an-unowned-run-as-cancelled.md)
 
 - [0058: Honour a forced cancel in tick's stale recovery](0058-honour-a-forced-cancel-in-stale-recovery.md)
+
+- [0059: Keep poll callback identity as loaded source text](0059-keep-poll-callback-identity-as-loaded-source.md)

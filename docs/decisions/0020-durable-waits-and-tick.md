@@ -7,7 +7,9 @@ ownership. Supersedes the in-process-only sleep behavior in
 [ADR 0002](0002-durable-external-workflows.md). Storage format 7 and replay contract 6 remain.
 Amended by #223: each poll error that `onError` tolerates appends a `wait.tolerated` run event in
 the same save as `lastError`, outside the replay ledger and the wait's identity, announced after
-that save.
+that save. Amended by #321 ([ADR 0059](0059-keep-poll-callback-identity-as-loaded-source.md)): a
+poll's `observe` or `done` identity stays its source text as the loader printed it, and the "wait
+changed" refusal says when that text is the only difference.
 
 ## Context
 

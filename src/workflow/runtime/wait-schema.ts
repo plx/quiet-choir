@@ -72,6 +72,8 @@ export function waitRequest(
 ): {
   request: WaitRequest;
   question: QuestionRequest | undefined;
+  /** Whether the observe digest is a built-in helper's identity. Never persisted. */
+  observeFromHelper: boolean;
 } {
   if ((sources as unknown) === null || typeof sources !== 'object' || Array.isArray(sources))
     throw new Error('Wait sources must be an object.');
@@ -169,6 +171,7 @@ export function waitRequest(
   return {
     request,
     question: sources.signal === undefined ? undefined : questionRequest(sources.signal),
+    observeFromHelper: helper !== undefined,
   };
 }
 

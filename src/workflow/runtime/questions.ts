@@ -24,6 +24,38 @@ import {
 } from './poll-command.js';
 import type { PollContext, WaitRecord, WaitSources, WorkflowClock } from './wait-model.js';
 
+/**
+ * Appended to a "wait changed" refusal when the poll's callback source is its only difference. The
+ * digest covers the source text as the loader printed it, so another loader changes it without an
+ * edit; see docs/waits.md and ADR 0059.
+ */
+const CALLBACK_SOURCE_HINT =
+  " Only the poll's observe (a command poll's done) source text differs; it is hashed as the loader printed it, so resuming under a different loader or transform changes it without an edit. Resume under the loader that started the run, fork the run, or use a new wait ID.";
+
+/**
+ * Whether restoring the prior wait's recorded `observe` digest into the new request reproduces the
+ * prior fingerprint, so the callback's printed source is the only difference. It rebuilds the
+ * identity exactly as the live check does and compares whole fingerprints, so no field is listed.
+ * A built-in helper's poll never gets the hint: its digest is a versioned identity, not printed
+ * source text, so a difference there is not a loader effect.
+ */
+function onlyCallbackSourceChanged(
+  prior: StepRecord,
+  request: ReturnType<typeof waitRequest>['request'],
+  question: ReturnType<typeof waitRequest>['question'],
+  observeFromHelper: boolean,
+): boolean {
+  if (observeFromHelper) return false;
+  const priorPoll = prior.kind === 'wait' ? prior.wait?.request.poll : undefined;
+  if (!priorPoll || !request.poll || priorPoll.observe === request.poll.observe) return false;
+  const restored = stepIdentity({
+    kind: 'wait',
+    request: jsonValue({ ...request, poll: { ...request.poll, observe: priorPoll.observe } }),
+    signal: question ? jsonValue(question) : null,
+  });
+  return digest(restored) === prior.fingerprint;
+}
+
 type Outcome =
   | { by: 'signal'; value: JsonValue; at: number; actor: string | null }
   | { by: 'poll'; value: JsonValue; at: number; checks: number }
@@ -300,7 +332,7 @@ export class RunQuestions {
         sources.poll !== undefined && isCommandPoll(sources.poll)
           ? await commandPollIdentity(sources.poll, record.cwd)
           : undefined;
-      const { request, question } = waitRequest(sources, command);
+      const { request, question, observeFromHelper } = waitRequest(sources, command);
       const identity = stepIdentity(
         kind === 'ask'
           ? { kind: 'ask', ...(jsonValue(question) as Record<string, JsonValue>) }
@@ -314,7 +346,11 @@ export class RunQuestions {
       const prior = Object.hasOwn(record.steps, id) ? record.steps[id] : undefined;
       if (prior && (prior.kind !== kind || prior.fingerprint !== fingerprint))
         throw new Error(
-          `Step ${id}: ${kind === 'ask' ? 'question' : 'wait'} changed; use a new ID for a different decision, dependency, or deadline.`,
+          `Step ${id}: ${kind === 'ask' ? 'question' : 'wait'} changed; use a new ID for a different decision, dependency, or deadline.` +
+            (kind === 'wait' &&
+            onlyCallbackSourceChanged(prior, request, question, observeFromHelper)
+              ? CALLBACK_SOURCE_HINT
+              : ''),
         );
       if (prior?.status === 'completed') {
         const answer = this.#replay(sources, prior);
