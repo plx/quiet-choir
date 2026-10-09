@@ -1604,6 +1604,13 @@ async function repositoryState(): Promise<Record<string, unknown>> {
   return { ...(await gitState()), objects: await objectCounts() };
 }
 const quarantinePrefix = 'quiet-choir-rehearsal-objects-';
+/** The read-only listing a merge preview over captured commits runs first to detect a partial clone. */
+const partialCloneListing = [
+  'config',
+  '--name-only',
+  '--get-regexp',
+  '^(extensions\\.partialclone|remote\\..*\\.promisor)$',
+];
 /** Point os.tmpdir() at a fresh directory, so a test sees the rehearsal's quarantine directories. */
 async function temporaryParent(): Promise<() => Promise<string[]>> {
   const parent = join(directory, 'tmp');
@@ -1611,16 +1618,26 @@ async function temporaryParent(): Promise<() => Promise<string[]>> {
   vi.stubEnv('TMPDIR', parent);
   return async () => (await readdir(parent)).filter((name) => name.startsWith(quarantinePrefix));
 }
-/** A runner that records each Git subcommand and the object directory it was pointed at. */
-function objectSpy() {
+/**
+ * A runner that records each Git subcommand and the object directory it was pointed at; `version`,
+ * when given, answers `git --version` in place of the installed Git.
+ */
+function objectSpy(version?: string) {
   const commands: { args: string[]; objects: string | undefined }[] = [];
   const runner: ProcessRunner = {
     run: (request, invocation) => {
       const argv = Array.isArray(request.command) ? [...(request.command as string[])] : [];
-      commands.push({
-        args: argv.slice(argv.indexOf('-C') + 2),
-        objects: request.env['GIT_OBJECT_DIRECTORY'],
-      });
+      const args = argv.slice(argv.indexOf('-C') + 2);
+      commands.push({ args, objects: request.env['GIT_OBJECT_DIRECTORY'] });
+      if (version !== undefined && args.length === 1 && args[0] === '--version')
+        return Promise.resolve({
+          code: 0,
+          signal: null,
+          stdout: `${version}\n`,
+          stderr: '',
+          truncated: false,
+          durationMs: 0,
+        });
       return processRunner.run(request, invocation);
     },
   };
@@ -1716,8 +1733,9 @@ it('previews a merge of a captured commit in a dry-run resume like the real resu
       baseSource: 'resolved',
     }),
   ]);
-  // Only the merge-driver listing, the merge.renormalize read and the quarantined commands ran, and
-  // every object computation used the quarantine.
+  // Only the partial-clone and merge-driver listings, the merge.renormalize read and the quarantined
+  // commands ran (no --version outside a partial clone), and every object computation used the
+  // quarantine.
   expect([...new Set(spy.commands.map(({ args }) => args[0]))].sort()).toEqual([
     'commit-tree',
     'config',
@@ -1725,6 +1743,7 @@ it('previews a merge of a captured commit in a dry-run resume like the real resu
     'rev-parse',
   ]);
   expect(spy.commands.filter(({ args }) => args[0] === 'config')).toEqual([
+    { args: partialCloneListing, objects: undefined },
     {
       args: ['config', '--name-only', '--get-regexp', '^merge\\..*\\.driver$'],
       objects: undefined,
@@ -1974,6 +1993,7 @@ it('refuses to preview a merge while a custom merge driver is configured, before
   expect((failure as Error).cause).toBeInstanceOf(ConfigurationError);
   expect(spy.commands.map(({ args }) => args[0]).filter((name) => name !== 'rev-parse')).toEqual([
     'config',
+    'config',
   ]);
   expect(await exists(sentinel)).toBe(false);
   expect(await repositoryState()).toEqual(before);
@@ -2014,8 +2034,51 @@ it('refuses to preview a merge while merge.renormalize would run a configured fi
     'config',
     'config',
     'config',
+    'config',
   ]);
   expect(await exists(sentinel)).toBe(false);
+  expect(await repositoryState()).toEqual(before);
+  expect(await quarantines()).toEqual([]);
+});
+
+it('refuses to preview a merge in a partial clone on Git older than 2.44, before any lookup', async () => {
+  const gate: PreviewGate = { stop: true, options: {} };
+  const workflow = capturedMerge('partial', ['edit'], gate);
+  await expect(
+    runWorkflow(workflow, { ...options('partial'), harness: editingHarness(), input: null }),
+  ).rejects.toThrow('stopped before the merge');
+  const edit = (await readRun({ stateDir, runId: 'partial' })).steps['edit']?.worktree?.commit;
+  assert(edit);
+  // A promisor remote makes the repository a partial clone; GIT_NO_LAZY_FETCH keeps 2.44+ from it.
+  await command('config', 'remote.origin.promisor', 'true');
+  const before = await repositoryState();
+  const quarantines = await temporaryParent();
+  const old = objectSpy('git version 2.43.0 (Apple Git-146)');
+  gate.stop = false;
+  const failure: unknown = await runWorkflow(workflow, {
+    ...dryRun('partial', await copyRun('partial'), [], old.runner),
+    resume: true,
+  }).catch((error: unknown) => error);
+  expect((failure as Error).message).toContain(
+    'Dry-run cannot preview a merge of captured commits in a partial clone with git version 2.43.0 (Apple Git-146): merge previews in a partial clone need Git 2.44 or later',
+  );
+  expect((failure as Error).cause).toBeInstanceOf(ConfigurationError);
+  // Only the partial-clone listing and the version read ran, before anything looked up the commit.
+  expect(old.commands.map(({ args }) => args).filter((args) => args[0] !== 'rev-parse')).toEqual([
+    partialCloneListing,
+    ['--version'],
+  ]);
+  expect(old.commands.some(({ args }) => args.includes(`${edit}^{commit}`))).toBe(false);
+  expect(await repositoryState()).toEqual(before);
+  expect(await quarantines()).toEqual([]);
+  // Git 2.44 honors GIT_NO_LAZY_FETCH, so the same partial clone previews the merge.
+  const current = objectSpy('git version 2.44.0');
+  const dry = await runWorkflow(workflow, {
+    ...dryRun('partial', await copyRun('partial'), [], current.runner),
+    resume: true,
+  });
+  expect(JSON.parse(dry.output ?? 'null')).toMatchObject({ merged: [edit], conflicts: [] });
+  expect(current.commands.filter(({ args }) => args[0] === '--version')).toHaveLength(1);
   expect(await repositoryState()).toEqual(before);
   expect(await quarantines()).toEqual([]);
 });
@@ -2272,7 +2335,7 @@ it('fails a preview over a commit missing from the repository like the real merg
       processRunner: spy.runner,
     }),
   ).rejects.toThrow('Merge input commit is unavailable in this repository.');
-  expect(spy.commands.every((args) => args[0] === 'rev-parse')).toBe(true);
+  expect(spy.commands.filter((args) => args[0] !== 'rev-parse')).toEqual([partialCloneListing]);
   expect(await quarantines()).toEqual([]);
 });
 

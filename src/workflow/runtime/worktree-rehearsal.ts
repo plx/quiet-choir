@@ -17,7 +17,9 @@
  * Git itself refuse ref updates. {@link WorktreeRehearsal.dispose} removes the directory when the
  * run ends, so a preview's commit exists only during the rehearsal. A configured custom merge
  * driver, or a configured clean, smudge or process filter while `merge.renormalize` is set, refuses
- * the preview before any `merge-tree`, since Git would run it outside the quarantine. Previews into
+ * the preview before any `merge-tree`, since Git would run it outside the quarantine. So does a
+ * partial clone on Git older than 2.44, which ignores `GIT_NO_LAZY_FETCH` and could fetch missing
+ * objects from the promisor remote into the repository. Previews into
  * a `branch` or `checkout` target leave an in-memory tip that later previews and fresh isolation
  * bases start from, as they would after the real merge moved the target. Everything else that
  * touches Git (`ctx.worktree`, isolation on a handle) stays refused by the replay decision.
@@ -98,6 +100,23 @@ export function customMergeFiltersMessage(names: readonly string[]): string {
   return `Dry-run cannot preview a merge of captured commits while merge.renormalize is set and filters are configured (${names.join(', ')}): Git would run them, and they can write outside the preview's quarantine.`;
 }
 
+/**
+ * The refusal of a merge preview in a partial clone on Git older than 2.44: it ignores
+ * `GIT_NO_LAZY_FETCH`, so a missing object would be fetched from the promisor remote into the
+ * repository. @internal
+ */
+export function partialCloneGitMessage(version: string): string {
+  return `Dry-run cannot preview a merge of captured commits in a partial clone with ${version}: merge previews in a partial clone need Git 2.44 or later, the first to honor GIT_NO_LAZY_FETCH, so the preview cannot fetch missing objects from the promisor remote into the repository.`;
+}
+
+/** Whether `git --version` output names Git 2.44 or later, the first to honor `GIT_NO_LAZY_FETCH`. */
+function honorsNoLazyFetch(version: string): boolean {
+  const match = /^git version (\d+)\.(\d+)/u.exec(version);
+  if (!match) return false;
+  const major = Number(match[1]);
+  return major > 2 || (major === 2 && Number(match[2]) >= 44);
+}
+
 /** Read-only base resolution and synthesis for one rehearsal run. @internal */
 export class WorktreeRehearsal {
   /** The read-only driver, replaced by the quarantined one once a merge preview creates it. */
@@ -106,6 +125,8 @@ export class WorktreeRehearsal {
   private readonly revisions = new Map<string, Promise<string | null>>();
   /** The run's quarantined driver, created by the first merge preview that needs one. */
   private quarantine: Promise<WorktreeGit> | undefined;
+  /** The run's partial-clone check (see {@link refuseLazyFetch}), memoized once it passes. */
+  private lazyFetch: Promise<void> | undefined;
   /** The quarantine's temporary object directory, removed by {@link dispose}. */
   private objects: string | undefined;
   private disposed = false;
@@ -425,6 +446,40 @@ export class WorktreeRehearsal {
   }
 
   /**
+   * Refuse a merge preview in a partial clone (`extensions.partialClone` or a `remote.<name>.promisor`
+   * is configured) when Git is older than 2.44: older Git ignores `GIT_NO_LAZY_FETCH`, so a missing
+   * object would be fetched from the promisor remote into the repository. Both reads go through the
+   * read-only driver before the preview runs any other command; `--version` runs only in a partial
+   * clone. Memoized per run once it passes.
+   */
+  private refuseLazyFetch(repo: string, invocation: HarnessInvocation): Promise<void> {
+    const git = this.git;
+    if (!git) return Promise.resolve();
+    const shared = { ...invocation, signal: this.runSignal ?? invocation.signal };
+    this.lazyFetch ??= (async () => {
+      const promisors = await git.run(
+        repo,
+        [
+          'config',
+          '--name-only',
+          '--get-regexp',
+          '^(extensions\\.partialclone|remote\\..*\\.promisor)$',
+        ],
+        shared,
+        { codes: [0, 1] },
+      );
+      if (promisors.code !== 0 || promisors.stdout.trim() === '') return;
+      const version = await git.text(repo, ['--version'], shared);
+      if (!honorsNoLazyFetch(version))
+        throw new ConfigurationError(partialCloneGitMessage(version || 'an unknown Git version'));
+    })().catch((error: unknown) => {
+      this.lazyFetch = undefined;
+      throw error;
+    });
+    return this.lazyFetch;
+  }
+
+  /**
    * The run's quarantined driver: a fresh `0700` temporary object directory with the repository's
    * object directory (read through the read-only driver first) as its alternate. Created once and
    * shared by every later rehearsal Git command, so a preview's commit stays resolvable by later
@@ -582,6 +637,9 @@ export class WorktreeRehearsal {
         throw new ConfigurationError(previewNeedsRepositoryMessage);
       return [{ commit: placeholderCommit, merged: [], conflicts: [] }, 'placeholder'];
     }
+    // Before the preview resolves anything: older Git could lazy-fetch a captured commit.
+    if (changes.some((change) => change.commit !== null))
+      await this.refuseLazyFetch(repo, invocation);
     // The ref a real merge would move. A checkout target and a branch target naming the checked-out
     // branch share one key, so each sees the other's previews.
     const moved =
