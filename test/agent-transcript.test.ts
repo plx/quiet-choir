@@ -1,7 +1,7 @@
 import { appendFile, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { describe, expect } from 'vitest';
+import { describe, expect, vi } from 'vitest';
 
 import {
   AttemptTranscript,
@@ -110,6 +110,32 @@ describe('readAttemptTranscript', () => {
     const result = await decode(transcript.snapshot().path, 'stdout');
     expect(result).toMatchObject({ bytes: large.length + 6, truncated: false, chunks: 4 });
     expect(result.text.equals(Buffer.concat([large, Buffer.from('aababc')]))).toBe(true);
+  });
+
+  it('stops on an aborted signal even when no entry of the stream is passed on', async ({
+    stateDir,
+  }) => {
+    const path = join(stateDir, 'stdout-only.jsonl');
+    const line = `${JSON.stringify({ stream: 'stdout', base64: Buffer.from('out').toString('base64') })}\n`;
+    await writeFile(path, line.repeat(1000));
+    const onChunk = vi.fn();
+    const signal = AbortSignal.abort(new Error('stop reading'));
+    await expect(readAttemptTranscript(path, 'stderr', onChunk, undefined, signal)).rejects.toThrow(
+      'stop reading',
+    );
+    // Aborted mid-read by a callback that does not throw: the read still rejects.
+    const controller = new AbortController();
+    const stopping = readAttemptTranscript(
+      path,
+      'stdout',
+      () => {
+        controller.abort(new Error('stop after one'));
+      },
+      undefined,
+      controller.signal,
+    );
+    await expect(stopping).rejects.toThrow('stop after one');
+    expect(onChunk).not.toHaveBeenCalled();
   });
 
   it('refuses a symlinked transcript file', async ({ stateDir }) => {

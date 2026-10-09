@@ -150,14 +150,18 @@ export interface TranscriptReadResult {
  * UTF-8 character split across two chunks arrives intact. The file is opened without following a
  * symlink and read line by line; a line longer than `maxLineBytes`, an entry that is neither
  * `{stream, base64}` nor the final truncation marker, or anything after that marker throws an
- * Error naming the line. @internal
+ * Error naming the line. An aborted `signal` stops the read before it opens the file and before each
+ * block read from it, even when no entry of the selected stream reaches `onChunk`, throwing its
+ * reason. @internal
  */
 export async function readAttemptTranscript(
   path: string,
   stream: 'stdout' | 'stderr',
   onChunk: (chunk: Uint8Array) => void | Promise<void>,
   maxLineBytes = maxTranscriptLineBytes,
+  signal?: AbortSignal,
 ): Promise<TranscriptReadResult> {
+  signal?.throwIfAborted();
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   let bytes = 0;
   let truncated = false;
@@ -204,6 +208,7 @@ export async function readAttemptTranscript(
     let pending: Buffer[] = [];
     let pendingBytes = 0;
     for await (const data of file.createReadStream({ autoClose: false, start: 0 })) {
+      signal?.throwIfAborted();
       let chunk = data as Buffer;
       for (let end = chunk.indexOf(10); end !== -1; end = chunk.indexOf(10)) {
         if (pendingBytes + end > maxLineBytes)
@@ -225,6 +230,7 @@ export async function readAttemptTranscript(
     }
     // A final line without a newline is still an entry; a torn one fails as malformed.
     if (pendingBytes > 0) await consume(Buffer.concat(pending));
+    signal?.throwIfAborted();
     return { bytes, truncated };
   } finally {
     await file.close();

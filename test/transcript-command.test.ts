@@ -58,10 +58,12 @@ async function seed(
 async function transcript(
   stateDir: string,
   plan: { stepId: string; attempt?: number; stream?: 'stdout' | 'stderr'; runId?: string },
+  signal?: AbortSignal,
 ): Promise<{ result: WorkflowCommandResult; output: string }> {
   const chunks: Uint8Array[] = [];
   const result = await new WorkflowExecutor({
     logger: { log: () => undefined },
+    ...(signal === undefined ? {} : { signal }),
     onTranscriptChunk: (chunk) => {
       chunks.push(chunk);
     },
@@ -167,6 +169,31 @@ describe('workflow.transcript', () => {
     expect(removed).toMatchObject({ ok: false, details: { reason: 'no-transcript' } });
     if (removed.ok) throw new Error('expected a failure');
     expect(removed.message).toContain('on-failure');
+  });
+
+  it('stops on an abort even when the selected stream has no chunk', async ({ stateDir, runs }) => {
+    await seed(runs, stateDir);
+    const run = await readRun({ runId: 'source', stateDir });
+    const path = run.steps['task']?.attemptHistory?.[0]?.transcript?.path;
+    if (path === undefined) throw new Error('expected a transcript receipt');
+    // Only stdout entries: the stderr decode passes nothing on.
+    await writeFile(
+      path,
+      `${JSON.stringify({ stream: 'stdout', base64: Buffer.from('out\n').toString('base64') })}\n`,
+    );
+    expect(await transcript(stateDir, { stepId: 'task', stream: 'stderr' })).toMatchObject({
+      output: '',
+      result: { ok: true, bytes: 0 },
+    });
+    const aborted = await transcript(
+      stateDir,
+      { stepId: 'task', stream: 'stderr' },
+      AbortSignal.abort(new Error('stop reading')),
+    );
+    expect(aborted).toMatchObject({
+      output: '',
+      result: { ok: false, code: 'workflow.interrupted', message: 'stop reading' },
+    });
   });
 
   it('re-roots the receipt under the current state directory', async ({ stateDir, runs }) => {

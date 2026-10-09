@@ -28,7 +28,8 @@ function agentStep(step: StepRecord): boolean {
  * `<runId>/attempts/<step hash>/<attempt>.<harness>.jsonl` tail, re-rooted under `stateDir`. A
  * receipt without that tail for this run and step, or whose file is missing, resolves outside the
  * run's `attempts/` directory, is a symlink or is malformed, throws `run.unreadable`. Decoded bytes
- * go to `onChunk` in order, and `signal` stops the read between chunks. @internal
+ * go to `onChunk` in order; an aborted `signal` stops the read before it opens the file, between
+ * blocks and chunks, and before it reports success, throwing its reason. @internal
  */
 export async function decodeStepTranscript(
   plan: TranscriptWorkflowPlan,
@@ -135,6 +136,7 @@ export async function decodeStepTranscript(
   };
   let path: string;
   try {
+    signal?.throwIfAborted();
     const [root, parent] = await Promise.all([
       realpath(attempts),
       realpath(join(attempts, hashDir)),
@@ -145,7 +147,7 @@ export async function decodeStepTranscript(
         `The transcript of attempt ${String(attempt.attempt)} of step ${plan.stepId} resolves outside ${attempts}; refusing to read it.`,
       );
   } catch (error) {
-    if (error instanceof RunRefusedError) throw error;
+    if (error instanceof RunRefusedError || signal?.aborted) throw error;
     throw unreadable(
       `Could not read the transcript of attempt ${String(attempt.attempt)} of step ${plan.stepId}: ${error instanceof Error ? error.message : String(error)}`,
       error,
@@ -155,12 +157,18 @@ export async function decodeStepTranscript(
   // A failing writer or an abort is not a damaged transcript; only read errors are.
   const writing = { now: false };
   try {
-    decoded = await readAttemptTranscript(path, plan.stream, async (chunk) => {
-      writing.now = true;
-      signal?.throwIfAborted();
-      await onChunk(chunk);
-      writing.now = false;
-    });
+    decoded = await readAttemptTranscript(
+      path,
+      plan.stream,
+      async (chunk) => {
+        writing.now = true;
+        signal?.throwIfAborted();
+        await onChunk(chunk);
+        writing.now = false;
+      },
+      undefined,
+      signal,
+    );
   } catch (error) {
     if (writing.now || signal?.aborted) throw error;
     throw unreadable(
@@ -168,6 +176,8 @@ export async function decodeStepTranscript(
       error,
     );
   }
+  // An abort while no chunk of the selected stream was found must not read as a complete decode.
+  signal?.throwIfAborted();
   return {
     kind: 'workflow.transcript.result',
     ok: true,
