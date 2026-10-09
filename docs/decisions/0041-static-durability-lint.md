@@ -41,9 +41,10 @@ check with no errors and before import.
   interface or class extending it), an intersection with it or a type parameter constrained to one
   of those, whatever it is called. Its nested functions belong to its body except callback zones:
   functions whose owning property, from the contextual type of the enclosing object literal, is
-  declared on `StepDefinition.run`, `PollSource.observe`, `CommandPollSource.done` or
-  `PollErrorPolicy.classify`/`retryAfterMs`. Nondeterministic APIs are resolved by their lib or
-  `@types/node` declarations, never by text.
+  declared on `StepDefinition.run`, `PollSource.observe`, `CommandPollSource.done` (or the matching
+  members of `PollCallOptions`, the inferred `ctx.poll` overload's options, reported under those
+  names) or `PollErrorPolicy.classify`/`retryAfterMs`. Nondeterministic APIs are resolved by their
+  lib or `@types/node` declarations, never by text.
 - **Rules.**
   - QC001: an effect, `ctx.scope` or `ctx.phase(title, body)` promise that is `void`ed or left as an
     expression statement, also through `.then`/`.catch`/`.finally`. The message says what the
