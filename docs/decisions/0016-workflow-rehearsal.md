@@ -333,3 +333,31 @@ rule's own file (`harness` is the name of a `--harness NAME=fixture:FILE` file, 
 global file), not the combined index that `calls[].fixtureIndex` uses, because a combined index
 means nothing to the author of named files. Tracking is rehearsal-only, and rules for steps replayed
 from a checkpoint are always stale.
+
+## Amendment: a call selector for inner commands (#318)
+
+`occurrence` counts distinct step IDs, and a command a callback or observer runs through
+`context.exec` carries its parent's ID, so every command of one parent, and every check of a poll,
+shared one occurrence. Identical commands, such as a poll's repeated `gh pr checks`, could not get
+different answers.
+
+Exec rules gain an optional positive-integer `call`: the nth command of one parent. Choices:
+
+- A new filter, not a redefinition of `occurrence`. Occurrence keeps choosing the parent, so no
+  existing fixture changes meaning and the two compose (the second parent's first command).
+- Counted per rule, like occurrence: every rule whose step, argv and digest filters hold counts the
+  command, whichever rule wins, so a rule's call never depends on earlier rules, and with
+  `argvPrefix` it counts only the matching commands.
+- Counted per parent ID and attempt. A retry reruns the callback from the start, so its first
+  command is call 1 again, and `attempt` gives the retry its own answers. A poll observation always
+  runs as attempt 1, so a wait's count keeps growing across its checks.
+- A `ctx.exec` effect (a request that is not `nested`) runs one command per attempt, so its call is
+  always 1: no counter is kept, `call: 1` matches it and `call: 2` never does.
+- Counters live in the process, as occurrence's do. Replayed steps never count, concurrent commands
+  count in arrival order, an observer's `live: true` command that bypasses the rules under
+  `--dry-run` is not counted, and a poll that suspends and resumes in a new process starts again at
+  call 1; `--wait-mode block` rehearses several checks in one process. A durable selector, for
+  example one derived from the poll's recorded `previous.checks`, is possible future work.
+
+The stale-rule warning names `call`. Agent rules, the rehearsal `commands` entries and
+`workflow fixtures` export are unchanged.

@@ -177,11 +177,13 @@ callbacks, and top-level workflow code still run for real unless selected by `--
 Commands a callback or observer runs through `context.exec` are rehearsed the same way: synthesized
 or answered by an `exec` rule, and listed in `commands` with `parentStepId` set to the step or wait
 (null for `ctx.exec`). A rule's `step` matches the parent's ID. `occurrence` counts distinct step
-IDs, so all of one parent's commands share an occurrence; tell them apart with `argvPrefix`. A poll
-observer may pass `live: true` to run a read-only command for real under `--dry-run`; it is listed
-with `outputSource: 'live'`. Each check of a command poll is rehearsed the same way, with `stepId`
-and `parentStepId` set to the wait ID, and a command poll's own `live: true` keeps it real. `live`
-is refused in a step callback, and outside `--dry-run` it changes nothing. `workflow fixtures`
-cannot export these commands, because they have no records. See
+IDs, so all of one parent's commands share an occurrence. `call` tells them apart: it selects the
+nth command of that parent, counted per attempt, so two identical `gh pr checks` commands in one
+callback can get different answers (`argvPrefix` also works when their argv differs). Each check of
+a command poll counts as a call. A poll observer may pass `live: true` to run a read-only command
+for real under `--dry-run`; it is listed with `outputSource: 'live'`. Each check of a command poll
+is rehearsed the same way, with `stepId` and `parentStepId` set to the wait ID, and a command poll's
+own `live: true` keeps it real. `live` is refused in a step callback, and outside `--dry-run` it
+changes nothing. `workflow fixtures` cannot export these commands, because they have no records. See
 [command fixtures](rehearsal.md#command-fixtures) and the
 [verified cookbook](../plugins/agents/quiet-choir/skills/quiet-choir/references/patterns.md#commands-and-test-verdicts).

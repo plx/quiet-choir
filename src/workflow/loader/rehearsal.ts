@@ -375,7 +375,7 @@ export class RehearsalHarness extends FixtureHarness {
     const staleExecFixtures = this.execRules.stale();
     if (staleExecFixtures.length)
       this.warnings.add(
-        `Exec fixture rules ${staleExecFixtures.join(', ')} matched no command; check their step, argvPrefix, digests and occurrence. Rules for steps replayed from a checkpoint are always stale.`,
+        `Exec fixture rules ${staleExecFixtures.join(', ')} matched no command; check their step, argvPrefix, digests, occurrence and call. Rules for steps replayed from a checkpoint are always stale.`,
       );
     const staleCallFixtures = this.callSources.filter((_, index) => !this.usedCalls.has(index));
     if (staleCallFixtures.length)
