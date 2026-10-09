@@ -132,8 +132,9 @@ ended by deadline or signal, failed waits and asks export no inner rules, and ne
 whose runner gave no result (spawn failure, timeout, cancellation) or a result with a signal, no
 exit code or truncated output. Recording keeps at most 256 commands and 1 MiB of stdout plus stderr
 per parent attempt, as a contiguous prefix with the rest counted as `omitted`; export emits rules
-for the prefix. A parent with any recorded inner command sets `"commands": "fixture"`. Runs recorded
-before schema revision 15 have no inner command records.
+for the prefix, each with `call` when the record is incomplete, so an omitted command matching a
+retained rule's filters fails as unmatched. A parent with any recorded inner command sets
+`"commands": "fixture"`. Runs recorded before schema revision 15 have no inner command records.
 
 ## Command fixtures
 

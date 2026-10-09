@@ -150,9 +150,11 @@ export no inner rules. A command whose runner gave no result (a spawn failure, t
 cancellation), or whose result had a signal, no exit code or truncated output, gets no rule.
 Recording is bounded per parent attempt to 256 commands and 1 MiB of stdout plus stderr: past either
 bound the record keeps a contiguous prefix and counts the rest as `omitted`, and export emits rules
-for the prefix only. A parent with any recorded inner command sets `"commands": "fixture"`, even
-when no rule came from it, so a replay that drifts or reaches an unexported command fails at its
-parent. Runs recorded before schema revision 15 have no inner command records.
+for the prefix only. Every rule from such an incomplete record carries `call`, unique or not, so an
+omitted command that meets a retained rule's filters fails as unmatched at its parent instead of
+reusing that rule's answer. A parent with any recorded inner command sets `"commands": "fixture"`,
+even when no rule came from it, so a replay that drifts or reaches an unexported command fails at
+its parent. Runs recorded before schema revision 15 have no inner command records.
 
 ## Command fixtures
 

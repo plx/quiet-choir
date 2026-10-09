@@ -387,8 +387,9 @@ schema revision 15) and export turns them into exec rules. Choices:
 - Slots are reserved in the order commands reach the process runner, the order exec rules count
   calls in.
 - Bound the record per parent attempt to 256 commands and 1 MiB of stdout plus stderr, keeping a
-  contiguous prefix and counting the rest as `omitted`; export emits rules for the prefix, so a
-  replay fails at the first omitted command rather than answering it wrongly. Without a bound a
+  contiguous prefix and counting the rest as `omitted`; export emits rules for the prefix, each
+  pinned with `call` when the record is incomplete, so a replay fails at the first omitted command
+  rather than answering it wrongly, even when it repeats a retained command. Without a bound a
   looping callback would grow a record that every save rewrites.
 - A poll exports only its terminal observation, and only when a poll completed the wait. Its first
   replayed check then gets the terminal answers and completes, which also works under `--dry-run`

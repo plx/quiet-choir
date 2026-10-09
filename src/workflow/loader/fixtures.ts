@@ -32,7 +32,8 @@ import { stepErrorKind } from './failure-kind.js';
  * `commands: 'fixture'`. Commands a step callback or a poll observer ran through `context.exec`
  * become exec rules keyed by the parent's ID, from the raw results recorded on the parent (a
  * step's latest settled attempt, a poll-completed wait's terminal observation), with `call` only
- * where the parent ran more than one command that meets the same filters. No rule pins an attempt.
+ * where the parent ran more than one command that meets the same filters or its recording omitted
+ * later commands. No rule pins an attempt.
  * @internal
  */
 export function fixturesFromRun(run: RunRecord): HarnessFixtures {
@@ -146,7 +147,11 @@ function execFixtures(run: RunRecord): {
     .filter(([, step]) => innerCommandsExported(step))
     .map(([stepId, step]) => ({
       seq: step.seq ?? 0,
-      rules: innerExecRules(stepId, step.innerCommands?.commands ?? []),
+      rules: innerExecRules(
+        stepId,
+        step.innerCommands?.commands ?? [],
+        (step.innerCommands?.omitted ?? 0) > 0,
+      ),
     }));
   const rules = [...steps, ...parents]
     .sort((a, b) => a.seq - b.seq)
@@ -222,9 +227,15 @@ const pollCompletion = z.object({ by: z.literal('poll') });
  * same argv prefix, or any command for a `{ shell }` rule, with equal digests): it is then 1 plus
  * the number of earlier recorded commands that meet them, which is the call number exec fixture
  * rules count for it. A unique rule stays free of `call`, so it is robust to call counters that
- * restart in a new process.
+ * restart in a new process. When the recording is incomplete (`incomplete`: the parent's later
+ * commands were omitted by a bound), every rule carries `call`, since an omitted command may meet
+ * the same filters: pinned, it then fails as unmatched instead of reusing a retained answer.
  */
-function innerExecRules(parentId: string, commands: readonly InnerCommand[]): FixtureExecCall[] {
+function innerExecRules(
+  parentId: string,
+  commands: readonly InnerCommand[],
+  incomplete: boolean,
+): FixtureExecCall[] {
   return commands.flatMap((entry, index): FixtureExecCall[] => {
     const { result } = entry;
     if (
@@ -246,7 +257,8 @@ function innerExecRules(parentId: string, commands: readonly InnerCommand[]): Fi
     const meets = (other: InnerCommand): boolean =>
       filtersMatch(key, other.command, parentId, other.envSha256, other.inputSha256);
     const earlier = commands.slice(0, index).filter(meets).length;
-    const shared = commands.some((other, position) => position !== index && meets(other));
+    const shared =
+      incomplete || commands.some((other, position) => position !== index && meets(other));
     return [
       {
         ...key,

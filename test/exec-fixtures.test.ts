@@ -1504,7 +1504,41 @@ describe('fixture export of inner context.exec commands (#317)', () => {
     expect(source.steps['loop']?.innerCommands?.omitted).toBe(1);
     expect(fixtures.commands).toBe('fixture');
     expect(fixtures.exec).toHaveLength(256);
-    expect(fixtures.exec?.at(-1)).toEqual({ ...key('loop', ['gh', '255']), stdout: 'x' });
+    // An incomplete record pins every rule with call, unique or not.
+    expect(fixtures.exec?.at(-1)).toEqual({ ...key('loop', ['gh', '255']), call: 1, stdout: 'x' });
+  });
+
+  it('pins a retained command with call when the byte bound omitted an identical later one, so the replay fails at the parent', async () => {
+    const workflow = definition(z.json(), (ctx) =>
+      ctx.step('diff', {
+        input: null,
+        schema: z.json(),
+        run: async (context) => [
+          (await context.exec(['gh', 'pr', 'diff'])).stdout.length,
+          (await context.exec(['gh', 'pr', 'diff'])).stdout.length,
+        ],
+      }),
+    );
+    const big = 'x'.repeat(1_048_577);
+    const { source, fixtures } = await exportSource(
+      workflow,
+      scripted({ 'gh pr diff': [reply('small'), reply(big)] }),
+    );
+    expect(source.output).toEqual([5, big.length]);
+    expect(source.steps['diff']?.innerCommands?.omitted).toBe(1);
+    expect(fixtures.commands).toBe('fixture');
+    expect(fixtures.exec).toEqual([
+      { ...key('diff', ['gh', 'pr', 'diff']), call: 1, stdout: 'small' },
+    ]);
+    const refuse = { run: () => Promise.reject(new Error('spawned a real command')) };
+    await expect(
+      runWorkflow(workflow, {
+        ...options('fixture'),
+        harness: new FixtureHarness(fixtures),
+        processRunner: refuse,
+        execRunner: new FixtureProcessRunner(fixtures, refuse),
+      }),
+    ).rejects.toThrow('No exec fixture matches step diff: ["gh","pr","diff"]');
   });
 
   it('exports nothing for a wait that ended by deadline, and no commands key without commands', async () => {
