@@ -18,19 +18,21 @@ node "$QC_CHECKOUT/bin/run.js" workflow execute examples/duet.workflow.ts \
 ```
 
 `--dry-run` invokes no Claude/Codex executable, version discovery, or OS owner-identity probe. The
-only processes it may start are a read-only `git rev-parse` that resolves the base of an isolated
-call or merge (see [worktree isolation](#worktree-isolation)) and a `live: true` command of a poll
-observer or command poll. Checkpoint files live in a private temporary directory removed when the
-executor finishes. The normal/default state directory is not created. Typechecking/importing still
-run normally. **Local callbacks and top-level workflow code execute for real.** Temporary
-checkpoints do not undo their filesystem, subprocess, network, or external effects. Stub named local
-effects when needed: `--stub-steps 'publish/**' --stub-steps 'notify/*'`. These patterns match fully
-qualified IDs; `*` stays within a segment and `**` crosses segments. Matched callbacks, file
-reads/writes and poll observers receive synthesized results through their original Zod validation (a
-matched poll completes without calling its observer); unmatched callbacks run normally. Commands
-(`ctx.exec`) never spawn: they are synthesized from their schema unless the fixture file has a
-matching exec rule (see [command fixtures](#command-fixtures)). The same holds for commands a local
-callback or poll observer runs through `context.exec`, and for each check of a
+only processes it may start are read-only Git commands for isolated calls and merges
+(`git rev-parse` resolving a base, `git --version`, `git status`, a merge target's checks and
+configuration reads; see [worktree isolation](#worktree-isolation)), a merge preview's quarantined
+commands, and a `live: true` command of a poll observer or command poll. Checkpoint files live in a
+private temporary directory removed when the executor finishes. The normal/default state directory
+is not created. Typechecking/importing still run normally. **Local callbacks and top-level workflow
+code execute for real.** Temporary checkpoints do not undo their filesystem, subprocess, network, or
+external effects. Stub named local effects when needed:
+`--stub-steps 'publish/**' --stub-steps 'notify/*'`. These patterns match fully qualified IDs; `*`
+stays within a segment and `**` crosses segments. Matched callbacks, file reads/writes and poll
+observers receive synthesized results through their original Zod validation (a matched poll
+completes without calling its observer); unmatched callbacks run normally. Commands (`ctx.exec`)
+never spawn: they are synthesized from their schema unless the fixture file has a matching exec rule
+(see [command fixtures](#command-fixtures)). The same holds for commands a local callback or poll
+observer runs through `context.exec`, and for each check of a
 [command poll](waits.md#command-polls), whose output is synthesized from its `output` schema, except
 that an observer or a command poll may pass `live: true` to keep a read-only check real, such as the
 initial observation of a wait. `live` is refused in a step callback. Durable sleeps complete
@@ -190,11 +192,11 @@ them in the global `--harness fixture:FILE`.
 
 Dry-run synthesizes fresh worktree isolation instead of refusing it. An isolated Claude or Codex
 call is planned and recorded in `calls` like any other, with `cwd` set to an absolute placeholder
-directory under the worktree cache root that is never created, and returns an unchanged change
-`{ base, commit: null, ref: null, files: [] }`; `worktrees.setup` does not run. `ctx.merge` over
-unchanged changes returns the no-op integration a real run would compute,
-`{ commit, merged: [], conflicts: [] }`, with `commit` the existing target branch or `HEAD`. Step
-IDs and fingerprints are those of the real run.
+directory under the worktree cache root (on a resume, the root the copied ledger pinned) that is
+never created, and returns an unchanged change `{ base, commit: null, ref: null, files: [] }`;
+`worktrees.setup` does not run. `ctx.merge` over unchanged changes returns the no-op integration a
+real run would compute, `{ commit, merged: [], conflicts: [] }`, with `commit` the existing target
+branch or `HEAD`. Step IDs and fingerprints are those of the real run.
 
 A dry-run resume or fork reaches `ctx.merge` with real inputs when it replays or reuses a completed
 isolated step that captured a commit, or replays a `ctx.worktree` handle (resolved from the copied
@@ -212,28 +214,53 @@ time in call order, as real merges do; and a later fresh isolation based on `HEA
 branch starts from its previewed tip. The directory is removed when the rehearsal ends (a killed
 process can leave it behind), so the preview `commit` no longer exists afterwards; it is dated at
 the rehearsal attempt's start, so it also differs from a later real run's commit. A preview records
-no merge preparation and pins, publishes or locks nothing; target checks such as a branch checked
-out elsewhere are not rehearsed. Without a resolvable repository, a preview fails with a
-configuration error. So does a preview while any custom merge driver (`merge.<name>.driver`) is
-configured, or while `merge.renormalize` is set and any clean, smudge or process filter
-(`filter.<name>.clean`, `.smudge` or `.process`) is configured: `merge-tree` would run that command,
-and it could write outside the quarantine, so the first preview reads this configuration with
-read-only `git config` before any merge and refuses instead of merging differently from the real
-run. Rehearsal Git runs with `GIT_NO_LAZY_FETCH`, so it never fetches a missing object from a
-partial clone's promisor remote, but only Git 2.44 or later honors it: merge previews of captured
-commits in a partial clone (`extensions.partialClone` or a `remote.<name>.promisor` is configured)
-need Git 2.44 or later. The first such preview lists that configuration and, in a partial clone,
-reads `git --version`, and refuses with a configuration error on older Git before it looks up any
-input commit.
+no merge preparation and pins, publishes or locks nothing. Without a resolvable repository, a
+preview fails with a configuration error. So does a preview while any custom merge driver
+(`merge.<name>.driver`) is configured, or while `merge.renormalize` is set and any clean, smudge or
+process filter (`filter.<name>.clean`, `.smudge` or `.process`) is configured: `merge-tree` would
+run that command, and it could write outside the quarantine, so the first preview reads this
+configuration with read-only `git config` before any merge and refuses instead of merging
+differently from the real run. Rehearsal Git runs with `GIT_NO_LAZY_FETCH`, so it never fetches a
+missing object from a partial clone's promisor remote, but only Git 2.44 or later honors it: merge
+previews of captured commits in a partial clone (`extensions.partialClone` or a
+`remote.<name>.promisor` is configured) need Git 2.44 or later. So does any `git status` read (the
+dirty-source check or a `checkout` target's check), and since `git status` recurses into submodules,
+any of which can be a partial clone, so does that read whenever a submodule is populated (the index
+has a gitlink whose `<path>/.git` exists, whatever the submodule's configuration says), whether or
+not the submodule is a partial clone; a merge preview is not refused for submodules, since
+`merge-tree` does not recurse into them. The rehearsal lists that configuration (or, for submodules,
+the index with `git ls-files --stage -z`) once and, when it finds one, reads `git --version`, before
+the first `git status` read and before the first such preview looks up any input commit; on older
+Git, the read or preview fails with a configuration error and never runs.
 
 The base is resolved once per revision with `git rev-parse` through the real process runner. The
-runtime refuses every other Git command under rehearsal before it reaches the runner, apart from a
-merge preview's `git --version`, partial-clone, merge-driver and filter configuration reads and
-quarantined commands, so a dry-run never creates refs, worktrees, cache directories or repository
-objects. An unresolvable base, a repository with no committed `HEAD`, or an isolated `cwd` outside
-the repository fails with the configuration error a real run reports. Outside a Git working tree, or
-when Git cannot run, a placeholder of forty zeros stands in for the base, with a warning that the
-real run fails. A dry-run resume of an interrupted real attempt reuses its recorded base.
+runtime refuses every other Git command under rehearsal before it reaches the runner, apart from an
+exact list of reads (`git --version`;
+`git status --porcelain --untracked-files=normal --no-renames`, run with `GIT_OPTIONAL_LOCKS=0` so
+it never refreshes the index, and never in a partial clone or with a populated submodule on Git
+older than 2.44; a merge target's `git check-ref-format`, `git worktree list --porcelain -z` and
+`git symbolic-ref -q`; the partial-clone configuration read and the `git ls-files --stage -z` index
+listing that finds submodules; and a merge preview's merge-driver and filter configuration reads)
+and a merge preview's quarantined commands, so a dry-run never creates refs, worktrees, cache
+directories, repository objects or lock files. An unresolvable base, a repository with no committed
+`HEAD`, or an isolated `cwd` outside the repository fails with the configuration error a real run
+reports. Outside a Git working tree, or when Git cannot run, a placeholder of forty zeros stands in
+for the base, with a warning that the real run fails. A dry-run resume of an interrupted real
+attempt reuses its recorded base.
+
+Before the run has a worktree ledger, the first isolated call or merge makes the checks a real run
+makes when it creates one: Git older than 2.38 and a cache root inside the checkout (after existing
+symlinks are resolved, as a real run resolves them) fail with the real configuration error, and a
+source checkout with uncommitted or untracked changes records the real warning in
+`worktreeWarnings`. A dry-run resume of a run that already has a ledger skips them and keeps the
+cache root the ledger pinned, whatever `worktrees.root` now says, as the real resume does. Every
+merge, a no-op included, first makes the real merge's target checks: a `branch` target with an
+invalid name, one checked out in any worktree (the current checkout included; use
+`target: 'checkout'` for it) or a symbolic ref, and a `checkout` target with uncommitted or
+untracked changes fail with the real run's error. The worktree listing waits only for other runs in
+the same process, not for the repository's lock file, so a `git worktree add` in another process can
+rarely make it fail. Like the real check, `git status` may run a configured clean filter, such as
+git-lfs, on a file whose timestamps changed.
 
 `ctx.worktree`, `ctx.exec` or `ctx.step` on a worktree handle, and an agent call isolated on a
 handle still fail before Git or agent invocation with a configuration error. Rehearse those with a
@@ -362,15 +389,16 @@ commands, pass your own `ProcessRunner` as `RunOptions.execRunner`, which `ctx.e
 `context.exec` use instead of `processRunner` while worktree Git keeps `processRunner`. A
 `context.exec` request, including a command poll's check, has `nested: true`; under
 `RunOptions.rehearsal` an observer's or command poll's `live: true` command goes to `processRunner`.
-With `RunOptions.rehearsal`, the runtime uses `processRunner` only for the read-only `git rev-parse`
-of synthesized isolation, and `rehearsal.onWorktree` observes each synthesized isolated call and
-merge; a `processRunner` that spawns nothing yields placeholder bases. `HarnessRequest.call` carries
-`runId`, `stepId`, cumulative `attempt`, and stable `idempotencyKey: runId/stepId`; it is attached
-inside the effect after fingerprinting. `HarnessRequestInput` is the identity-free input accepted by
-`CliHarness.plan()` and direct adapter calls. Planning image calls requires `imageAttachments`
-containing the already captured bytes; normal runtime/direct execution captures them before
-planning. A plan is JSON data and creates no files or processes. Actual invocation materializes only
-its indexed artifact references, then cleans them up.
+With `RunOptions.rehearsal`, the runtime uses `processRunner` only for read-only Git (the
+`git rev-parse` of synthesized isolation, the ledger and merge target checks) and merge previews,
+and `rehearsal.onWorktree` observes each synthesized isolated call and merge; a `processRunner` that
+spawns nothing yields placeholder bases. `HarnessRequest.call` carries `runId`, `stepId`, cumulative
+`attempt`, and stable `idempotencyKey: runId/stepId`; it is attached inside the effect after
+fingerprinting. `HarnessRequestInput` is the identity-free input accepted by `CliHarness.plan()` and
+direct adapter calls. Planning image calls requires `imageAttachments` containing the already
+captured bytes; normal runtime/direct execution captures them before planning. A plan is JSON data
+and creates no files or processes. Actual invocation materializes only its indexed artifact
+references, then cleans them up.
 
 Native CLI attempts receive `QUIET_CHOIR_RUN_ID`, `QUIET_CHOIR_STEP_ID`, `QUIET_CHOIR_ATTEMPT`, and
 `QUIET_CHOIR_IDEMPOTENCY_KEY` environment variables. These are routing/diagnostic metadata, not

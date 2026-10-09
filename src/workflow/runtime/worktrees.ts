@@ -49,6 +49,25 @@ export const isolatedCwdOutsideMessage = 'Isolated cwd must be inside the source
 /** The configuration error message for a cache root inside the source checkout. @internal */
 export const rootInsideCheckoutMessage = 'worktrees.root must be outside the source checkout.';
 
+/**
+ * The warning a run records when the source checkout has uncommitted or untracked changes as its
+ * worktree ledger is created. Shared with dry-run rehearsal, which records the same text. @internal
+ */
+export const uncommittedSourceWarning =
+  'Worktree isolation sees committed files only; the source checkout has uncommitted changes.';
+
+/**
+ * The configuration error message for `git --version` output older than Git 2.38 (or output that
+ * names no version), or null when the version is supported. Pure; shared with dry-run rehearsal so
+ * a rehearsal refuses old Git exactly as the real run does. @internal
+ */
+export function gitVersionRefusal(version: string): string | null {
+  const match = /git version (\d+)\.(\d+)/u.exec(version);
+  return !match || Number(match[1]) < 2 || (Number(match[1]) === 2 && Number(match[2]) < 38)
+    ? `Worktree isolation requires Git 2.38 or newer; found ${version}.`
+    : null;
+}
+
 /** The default cache container for a repository, outside the checkout. @internal */
 export function defaultWorktreeRoot(repo: string): string {
   return join(dirname(defaultStateDir(repo)), 'worktrees');
@@ -99,7 +118,8 @@ class HandleLocks {
  * layers. This in-process queue orders the calls of every run in this process without polling.
  * Inside it, the repository lock at `<common Git dir>/quiet-choir/worktree-admin.lock` excludes
  * other processes, including `workflow clean` alongside a live run, and recovers a dead owner's
- * lock automatically (ADR 0032). Git commands run outside quiet-choir, such as a manual
+ * lock automatically (ADR 0032). A dry-run's merge target check takes only this queue (see
+ * {@link queueAdministration}). Git commands run outside quiet-choir, such as a manual
  * `git worktree add`, are not serialized.
  */
 const administration = new HandleLocks();
@@ -128,6 +148,27 @@ export async function administer<T>(
     }
     await unlock();
     return result;
+  } finally {
+    release();
+  }
+}
+
+/**
+ * Run `work` while holding only the repository's in-process administration queue entry, without
+ * the interprocess lock. Dry-run rehearsal lists worktrees this way (#312): taking the lock would
+ * create `<common Git dir>/quiet-choir/worktree-admin.lock`, a write into the repository, while the
+ * queue writes nothing and still orders the listing against every run in this process. A concurrent
+ * `worktree add` in another process is not excluded, so the listing can rarely fail while one is
+ * half written. @internal
+ */
+export async function queueAdministration<T>(
+  commonGitDir: string,
+  signal: AbortSignal,
+  work: () => Promise<T>,
+): Promise<T> {
+  const release = await administration.acquire(commonGitDir, signal);
+  try {
+    return await work();
   } finally {
     release();
   }
@@ -290,11 +331,8 @@ export class RunWorktrees {
           { cause },
         );
       }
-      const match = /git version (\d+)\.(\d+)/u.exec(version);
-      if (!match || Number(match[1]) < 2 || (Number(match[1]) === 2 && Number(match[2]) < 38))
-        throw new ConfigurationError(
-          `Worktree isolation requires Git 2.38 or newer; found ${version}.`,
-        );
+      const refusal = gitVersionRefusal(version);
+      if (refusal !== null) throw new ConfigurationError(refusal);
       let repo: string;
       try {
         repo = await realpath(
@@ -319,13 +357,10 @@ export class RunWorktrees {
       if (within(repo, root)) throw new ConfigurationError(rootInsideCheckoutMessage);
       const status = await git.text(
         repo,
-        ['status', '--porcelain', '--untracked-files=normal'],
+        ['status', '--porcelain', '--untracked-files=normal', '--no-renames'],
         sharedInvocation,
       );
-      if (status)
-        this.warn(
-          'Worktree isolation sees committed files only; the source checkout has uncommitted changes.',
-        );
+      if (status) this.warn(uncommittedSourceWarning);
       const ledger: WorktreeLedger = {
         namespace: randomUUID(),
         repo,

@@ -214,8 +214,8 @@ it('runs a quarantined driver only for object computations, after the GIT_* scru
       'Quarantined Git refuses',
     );
   expect(run).not.toHaveBeenCalled();
-  // The read-only mode runs rev-parse, --version, one config listing and one boolean read, and
-  // nothing that could write.
+  // The read-only mode runs rev-parse, --version, one config listing, one boolean read and the exact
+  // merge target checks and index listing (tested below), and nothing that could write.
   const readOnly = new WorktreeGit({ run }, true);
   for (const args of [
     ['var'],
@@ -230,7 +230,7 @@ it('runs a quarantined driver only for object computations, after the GIT_* scru
     ['--exec-path=/tmp', '--version'],
   ])
     await expect(readOnly.run(directory, args, invocation)).rejects.toThrow(
-      `Read-only Git refuses ${args[0] ?? ''}; only rev-parse, --version, config --name-only --get-regexp and config --type=bool --get run.`,
+      `Read-only Git refuses ${args[0] ?? ''}; only ${readOnlyForms} run.`,
     );
   expect(run).not.toHaveBeenCalled();
   await readOnly.run(directory, ['config', '--name-only', '--get-regexp', '^merge\\.'], invocation);
@@ -241,6 +241,73 @@ it('runs a quarantined driver only for object computations, after the GIT_* scru
   );
   await readOnly.run(directory, ['--version'], invocation);
   expect(run).toHaveBeenCalledTimes(3);
+});
+
+const readOnlyForms =
+  'rev-parse, --version, check-ref-format <ref>, symbolic-ref -q <ref>, worktree list --porcelain -z, status --porcelain --untracked-files=normal --no-renames, ls-files --stage -z, config --name-only --get-regexp and config --type=bool --get';
+
+it('runs exactly the merge target checks and the index listing through a read-only driver, and no close variant', async () => {
+  const run = vi.fn<ProcessRunner['run']>(() =>
+    Promise.resolve({
+      code: 0,
+      signal: null,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      durationMs: 0,
+    }),
+  );
+  const readOnly = new WorktreeGit({ run }, true);
+  for (const args of [
+    // A second operand, or -d, makes symbolic-ref write the ref.
+    ['symbolic-ref', '-q', 'HEAD', 'refs/heads/x'],
+    ['symbolic-ref', '-q', '-d'],
+    ['symbolic-ref', '-q', '--delete'],
+    ['symbolic-ref', 'refs/heads/x'],
+    ['symbolic-ref', '-d', 'refs/heads/x'],
+    ['symbolic-ref', '-q'],
+    ['status'],
+    ['status', '--porcelain'],
+    ['status', '--porcelain', '--untracked-files=all'],
+    ['status', '--porcelain', '--untracked-files=normal', '-z'],
+    // Rename detection reads blob contents, which older Git could lazy-fetch in a partial clone.
+    ['status', '--porcelain', '--untracked-files=normal'],
+    ['status', '--porcelain', '--untracked-files=normal', '--find-renames'],
+    ['status', '--porcelain', '--untracked-files=normal', '--no-renames', '-z'],
+    ['status', '--short', '--untracked-files=normal'],
+    ['worktree', 'add', 'x'],
+    ['worktree', 'list'],
+    ['worktree', 'list', '--porcelain'],
+    ['worktree', 'prune', '--porcelain', '-z'],
+    ['worktree', 'list', '--porcelain', '-z', '--expire=now'],
+    ['check-ref-format', '--normalize', 'x', 'y'],
+    ['check-ref-format', '--normalize'],
+    ['check-ref-format'],
+    ['check-ref-format', 'refs/heads/x', 'y'],
+    ['ls-files'],
+    ['ls-files', '--stage'],
+    ['ls-files', '-z', '--stage'],
+    ['ls-files', '--stage', '-z', '--with-tree=HEAD'],
+    ['ls-files', '--stage', '-z', 'lib'],
+  ])
+    await expect(readOnly.run(directory, args, invocation)).rejects.toThrow(
+      `Read-only Git refuses ${args[0] ?? ''}; only ${readOnlyForms} run.`,
+    );
+  expect(run).not.toHaveBeenCalled();
+  const accepted = [
+    ['check-ref-format', 'refs/heads/feature'],
+    ['symbolic-ref', '-q', 'refs/heads/feature'],
+    ['worktree', 'list', '--porcelain', '-z'],
+    ['status', '--porcelain', '--untracked-files=normal', '--no-renames'],
+    ['ls-files', '--stage', '-z'],
+  ];
+  for (const args of accepted) await readOnly.run(directory, args, invocation);
+  expect(
+    run.mock.calls.map(([request]) => {
+      const argv: readonly string[] = 'shell' in request.command ? [] : request.command;
+      return argv.slice(argv.indexOf('-C') + 2);
+    }),
+  ).toEqual(accepted);
 });
 
 it('never lazy-fetches through a read-only driver, whatever the caller sets', async () => {
@@ -262,6 +329,30 @@ it('never lazy-fetches through a read-only driver, whatever the caller sets', as
     GIT_NO_LAZY_FETCH: '1',
     GIT_AUTHOR_NAME: 'kept',
   });
+});
+
+it('keeps a read-only status from refreshing the index, whatever the caller sets', async () => {
+  vi.stubEnv('GIT_OPTIONAL_LOCKS', '1');
+  const run = vi.fn<ProcessRunner['run']>(() =>
+    Promise.resolve({
+      code: 0,
+      signal: null,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      durationMs: 0,
+    }),
+  );
+  await new WorktreeGit({ run }, true).run(
+    directory,
+    ['status', '--porcelain', '--untracked-files=normal', '--no-renames'],
+    invocation,
+    { env: { GIT_OPTIONAL_LOCKS: '1' } },
+  );
+  expect(run.mock.calls[0]?.[0].env).toMatchObject({ GIT_OPTIONAL_LOCKS: '0' });
+  // A read-write driver leaves optional locks to Git.
+  await new WorktreeGit({ run }).run(directory, ['status'], invocation);
+  expect(run.mock.calls[1]?.[0].env).not.toHaveProperty('GIT_OPTIONAL_LOCKS');
 });
 
 it('quotes an alternate object directory Git would split or unquote', () => {

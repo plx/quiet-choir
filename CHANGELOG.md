@@ -2,6 +2,26 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- A dry-run now fails where the real run would on the merge target checks, the Git version and the
+  cache root, and records the real dirty-source warning (behavior change, #312). Every `ctx.merge`
+  under rehearsal, a no-op included, runs the real target checks first, so a `branch` target with an
+  invalid name, one checked out in any worktree or one that is a symbolic ref, and a dirty
+  `checkout` target fail with the real run's error. A `branch` target naming the checked-out branch
+  therefore now fails (use `target: 'checkout'`) instead of sharing the checkout's preview. Before a
+  run has a worktree ledger, the first isolated call or merge also refuses Git older than 2.38 and a
+  cache root inside the checkout with the real configuration error, and a checkout with uncommitted
+  or untracked changes adds the real warning to `worktreeWarnings`; a dry-run resume of a run with a
+  ledger skips these and keeps the cache root the ledger pinned, as the real resume does. The
+  rehearsal's read-only Git additionally runs exactly `git --version`,
+  `git status --porcelain --untracked-files=normal --no-renames` (with `GIT_OPTIONAL_LOCKS=0`, so it
+  never refreshes the index; in a partial clone, or with a populated submodule (which `status`
+  recurses into and which can itself be a partial clone), on Git older than 2.44, which ignores
+  `GIT_NO_LAZY_FETCH`, the rehearsal refuses with a configuration error instead of running it),
+  `git check-ref-format <ref>`, `git worktree list --porcelain -z`, `git symbolic-ref -q <ref>` and
+  `git ls-files --stage -z` (to find populated submodules), and still writes nothing to the
+  repository; its worktree listing is ordered only against runs in the same process, since taking
+  the repository's administration lock file would be a write. Real-run checks and messages are
+  unchanged.
 - A configuration refusal raised before an effect's attempt, such as a dry-run refusing a
   `ctx.worktree` effect or a call missing its grant, now reports the error kind `configuration`
   instead of `unknown` (behavior change, #311). `ErrorKind` gains the public member `configuration`,
@@ -18,16 +38,15 @@
   but writes its objects to a temporary object directory (`quiet-choir-rehearsal-objects-*`, with
   the repository's objects as a read-only alternate and ref updates refused) that is removed when
   the rehearsal ends. The preview commit is dated at the rehearsal attempt's start and exists only
-  during the rehearsal; nothing is pinned, published or locked, and target checks such as a branch
-  checked out elsewhere are not rehearsed yet. Previews into a `branch` or `checkout` target build
-  on earlier previews into it in the same rehearsal, and so do fresh isolations based on it. A
-  foreign handle fails with the real configuration error, an unavailable input commit with the real
-  `Merge input commit is unavailable` error, and a preview without a resolvable repository, while a
-  custom merge driver (`merge.<name>.driver`) is configured, or while `merge.renormalize` is set and
-  a clean, smudge or process filter is configured, with a configuration error, as does a preview in
-  a partial clone on Git older than 2.44, which ignores `GIT_NO_LAZY_FETCH`. The rehearsal report's
-  `merges` entries and the `onWorktree` merge event gain `merged` and `conflicts`, and the
-  `rehearsal-git` refusal no longer lists merges.
+  during the rehearsal; nothing is pinned, published or locked. Previews into a `branch` or
+  `checkout` target build on earlier previews into it in the same rehearsal, and so do fresh
+  isolations based on it. A foreign handle fails with the real configuration error, an unavailable
+  input commit with the real `Merge input commit is unavailable` error, and a preview without a
+  resolvable repository, while a custom merge driver (`merge.<name>.driver`) is configured, or while
+  `merge.renormalize` is set and a clean, smudge or process filter is configured, with a
+  configuration error, as does a preview in a partial clone on Git older than 2.44, which ignores
+  `GIT_NO_LAZY_FETCH`. The rehearsal report's `merges` entries and the `onWorktree` merge event gain
+  `merged` and `conflicts`, and the `rehearsal-git` refusal no longer lists merges.
 - Exec fixture rules accept `error` and an optional `kind` to simulate a command that fails without
   a result, such as a missing binary or a timeout (#307). The command rejects immediately with an
   `ExecError` whose message is the `error` text and whose kind defaults to `process` (the kind the

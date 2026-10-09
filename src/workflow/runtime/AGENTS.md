@@ -150,13 +150,19 @@ abort still gets captured. Forks may reuse immutable changes, never another runâ
 Git merge computations leave checkouts alone; only an explicit clean checkout target may update its
 tree. Cleanup touches only ledger-owned caches/refs, and failed cleanup cannot repeat valid work.
 Rehearsal never mutates the repository: `worktree-rehearsal.ts` synthesizes fresh isolation and
-unchanged merges through a read-only `rev-parse` driver, and previews merges of captured commits
+unchanged merges through a read-only driver (an exact allowlist of reads, with
+`GIT_OPTIONAL_LOCKS=0`), makes the real ledger and merge target checks through that never-replaced
+driver with the shared `checkMergeTarget`/`gitVersionRefusal` code (its worktree listing takes only
+the in-process administration queue, never the lock file), and previews merges of captured commits
 with the real `computeIntegration` through a quarantined driver (a temporary object directory, the
 repository's objects as an alternate, no ref updates) that the runner removes after the run drains;
 neither driver lazy-fetches missing objects from a partial clone's promisor remote, and since only
 Git 2.44+ honors `GIT_NO_LAZY_FETCH`, a merge preview in a partial clone on older Git is refused
-before any input lookup; `RunWorktrees` refuses every command under rehearsal. Only the
-accepted-replay probe synthesizes every worktree effect, with no process runner at all. See
+before any input lookup, and so is a rehearsal `status` read (the ledger's dirty-source check or a
+`checkout` target's check) instead of running it, which is also refused on older Git with an
+populated submodule (an index gitlink whose `<path>/.git` exists), since `status` (unlike
+`merge-tree`) recurses into submodules; `RunWorktrees` refuses every command under rehearsal. Only
+the accepted-replay probe synthesizes every worktree effect, with no process runner at all. See
 [ADR 0022](../../../docs/decisions/0022-runtime-owned-worktree-isolation.md).
 
 Resolve restricted/inherit mode before agent identity and preserve it through checkout preparation.

@@ -1,12 +1,22 @@
 /**
- * Dry-run synthesis of worktree isolation and integration (ADR 0016, #148, #310).
+ * Dry-run synthesis of worktree isolation and integration (ADR 0016, #148, #310, #312).
  *
  * A rehearsal never creates refs, worktrees or cache directories, and writes no object into the
  * repository. It resolves the repository and the base commit a real run would pin with `rev-parse`,
- * through a read-only {@link WorktreeGit} that refuses every other command before it reaches the
- * process runner. A fresh isolated agent call is planned in an absolute placeholder directory that
- * is never created and returns an unchanged change; a merge whose inputs are all unchanged changes
- * returns the real no-op integration (`commit` is the target's current commit).
+ * through a read-only {@link WorktreeGit} that refuses every command outside a short exact allowlist
+ * before it reaches the process runner. Before a run has a worktree ledger, the first isolation or
+ * merge also makes the real ledger's checks through it, with the real messages: Git older than 2.38
+ * fails, a cache root inside the checkout (once existing symlinks are resolved) fails, and a
+ * checkout with uncommitted changes records the real warning. Every merge first makes the real
+ * merge's target checks (`checkMergeTarget`): an invalid branch name, a branch checked out in a
+ * worktree or a symbolic-ref branch, and a dirty `checkout` target fail as in a real run. The
+ * worktree listing they need waits only for the in-process administration queue, never the
+ * repository's lock file. Neither `status` read (the source checkout's, or a `checkout` target's)
+ * runs in a partial clone, or with a populated submodule (which `status` recurses into and
+ * which can itself be a partial clone), on Git older than 2.44, which ignores `GIT_NO_LAZY_FETCH`:
+ * the rehearsal refuses instead. A fresh isolated agent call is planned in an absolute placeholder
+ * directory that is never created and returns an unchanged change; a merge whose inputs are all
+ * unchanged changes returns the real no-op integration (`commit` is the target's current commit).
  *
  * A merge over captured commits (a completed isolated step replayed by a dry-run resume or reused
  * by a dry-run fork, or a replayed `ctx.worktree` handle from the copied ledger) is previewed with
@@ -33,16 +43,22 @@
  * values, so low-fidelity placeholders (the forty-zero commit, uncreated paths) suffice; they can
  * still steer the copy onto a branch the real run would not take (ADR 0006's path-parity caveat).
  */
-import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { lstat, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { WorktreeGit, commitId } from '../../worktrees/git.js';
 import { CheckpointError } from './checkpoint.js';
 import { ConfigurationError } from './configuration-error.js';
+import { filePath } from './files.js';
 import type { ProcessRunner } from './exec-model.js';
 import { digest } from './json.js';
 import type { HarnessInvocation, StepContext } from './model.js';
-import { commitTree, computeIntegration, resolveCommit } from './worktree-merge.js';
+import {
+  checkMergeTarget,
+  commitTree,
+  computeIntegration,
+  resolveCommit,
+} from './worktree-merge.js';
 import type { AttemptRecord, RunRecord, StepRecord } from './record.js';
 import type { RunOptions } from './runner.js';
 import type {
@@ -57,10 +73,13 @@ import type { ResolvedWorktree, WorktreeStep } from './worktree-schema.js';
 import { resolveWorktree } from './worktree-schema.js';
 import {
   defaultWorktreeRoot,
+  gitVersionRefusal,
   handleChange,
   isolatedCwdOutsideMessage,
   ownedHandle,
+  queueAdministration,
   rootInsideCheckoutMessage,
+  uncommittedSourceWarning,
   unresolvedBaseMessage,
   within,
   type WorktreeLease,
@@ -101,12 +120,47 @@ export function customMergeFiltersMessage(names: readonly string[]): string {
 }
 
 /**
- * The refusal of a merge preview in a partial clone on Git older than 2.44: it ignores
- * `GIT_NO_LAZY_FETCH`, so a missing object would be fetched from the promisor remote into the
- * repository. @internal
+ * The refusal of a merge preview, or of a `git status` read of the source checkout (the ledger's
+ * dirty-source check or a `checkout` target's check), in a partial clone on Git older than 2.44: it
+ * ignores `GIT_NO_LAZY_FETCH`, so a missing object would be fetched from the promisor remote into
+ * the repository. @internal
  */
-export function partialCloneGitMessage(version: string): string {
-  return `Dry-run cannot preview a merge of captured commits in a partial clone with ${version}: merge previews in a partial clone need Git 2.44 or later, the first to honor GIT_NO_LAZY_FETCH, so the preview cannot fetch missing objects from the promisor remote into the repository.`;
+export function partialCloneGitMessage(version: string, read: 'preview' | 'status'): string {
+  return read === 'preview'
+    ? `Dry-run cannot preview a merge of captured commits in a partial clone with ${version}: merge previews in a partial clone need Git 2.44 or later, the first to honor GIT_NO_LAZY_FETCH, so the preview cannot fetch missing objects from the promisor remote into the repository.`
+    : `Dry-run cannot read the source checkout's status in a partial clone with ${version}: git status in a partial clone needs Git 2.44 or later, the first to honor GIT_NO_LAZY_FETCH, so the read cannot fetch missing objects from the promisor remote into the repository.`;
+}
+
+/**
+ * The refusal of a `git status` read of the source checkout (the ledger's dirty-source check or a
+ * `checkout` target's check) with a populated submodule on Git older than 2.44: `status`
+ * recurses into submodules, any of which can be a partial clone, and older Git ignores
+ * `GIT_NO_LAZY_FETCH`, so a missing object would be fetched from a promisor remote into the
+ * submodule's repository. @internal
+ */
+export function submodulesGitMessage(version: string): string {
+  return `Dry-run cannot read the source checkout's status, which has populated submodules, with ${version}: git status recurses into submodules, which can be partial clones, so it needs Git 2.44 or later, the first to honor GIT_NO_LAZY_FETCH, to keep the read from fetching missing objects from a promisor remote into a submodule's repository.`;
+}
+
+/**
+ * Whether `ls-files --stage -z` output lists a gitlink (mode 160000) whose `<path>/.git` exists in
+ * the checkout at `repo`, as it does for a populated submodule, which `git status` recurses into.
+ */
+async function populatedSubmodule(repo: string, entries: string): Promise<boolean> {
+  const paths = new Set<string>();
+  for (const entry of entries.split('\0')) {
+    const tab = entry.indexOf('\t');
+    if (tab !== -1 && entry.startsWith('160000 ')) paths.add(entry.slice(tab + 1));
+  }
+  for (const path of paths)
+    if (
+      await lstat(join(repo, path, '.git')).then(
+        () => true,
+        () => false,
+      )
+    )
+      return true;
+  return false;
 }
 
 /** Whether `git --version` output names Git 2.44 or later, the first to honor `GIT_NO_LAZY_FETCH`. */
@@ -119,14 +173,27 @@ function honorsNoLazyFetch(version: string): boolean {
 
 /** Read-only base resolution and synthesis for one rehearsal run. @internal */
 export class WorktreeRehearsal {
+  /**
+   * The read-only driver, never replaced: the ledger and merge target checks run through it even
+   * after a merge preview has swapped {@link git} for the quarantined driver, which refuses them.
+   */
+  private readonly readOnly: WorktreeGit | undefined;
   /** The read-only driver, replaced by the quarantined one once a merge preview creates it. */
   private git: WorktreeGit | undefined;
   private repository: Promise<string | null> | undefined;
+  /** The real ledger's initialization checks (see {@link initialize}), memoized once they pass. */
+  private initialization: Promise<void> | undefined;
+  /** The canonical cache root (see {@link canonicalRoot}). */
+  private canonical: Promise<string> | undefined;
+  /** The canonical common Git directory, which keys the in-process administration queue. */
+  private commonDir: Promise<string> | undefined;
   private readonly revisions = new Map<string, Promise<string | null>>();
   /** The run's quarantined driver, created by the first merge preview that needs one. */
   private quarantine: Promise<WorktreeGit> | undefined;
-  /** The run's partial-clone check (see {@link refuseLazyFetch}), memoized once it passes. */
-  private lazyFetch: Promise<void> | undefined;
+  /** The run's partial-clone check (see {@link lazyFetches}), memoized once it answers. */
+  private lazyFetch: Promise<string | null> | undefined;
+  /** The run's populated-submodule check (see {@link submoduleLazyFetches}), memoized likewise. */
+  private submoduleLazyFetch: Promise<string | null> | undefined;
   /** The quarantine's temporary object directory, removed by {@link dispose}. */
   private objects: string | undefined;
   private disposed = false;
@@ -163,7 +230,8 @@ export class WorktreeRehearsal {
     private readonly synthesizeAll = false,
   ) {
     this.runner = runner;
-    this.git = runner === undefined ? undefined : new WorktreeGit(runner, true);
+    this.readOnly = runner === undefined ? undefined : new WorktreeGit(runner, true);
+    this.git = this.readOnly;
   }
 
   /**
@@ -189,6 +257,106 @@ export class WorktreeRehearsal {
       throw error;
     });
     return this.repository;
+  }
+
+  /**
+   * The checks the real `RunWorktrees.ledger()` makes when it creates a run's ledger, in its order:
+   * the Git version (with the shared {@link gitVersionRefusal}), the cache root (outside the
+   * checkout) and the source checkout's status (any output records the shared
+   * {@link uncommittedSourceWarning}). Only a run without a ledger makes them, since a real run with
+   * one recovers it instead. An empty `--version` answer (a synthesizing runner) skips the version
+   * check, and a failure to run it is left to the placeholder path that a missing Git already
+   * takes. The status read is refused instead in a partial clone or with a populated submodule
+   * on Git older than 2.44 (see {@link refuseLazyFetch}). Memoized once it passes, so concurrent
+   * effects share one check.
+   */
+  private initialize(repo: string, invocation: HarnessInvocation): Promise<void> {
+    const git = this.readOnly;
+    if (!git || this.record.worktrees !== undefined) return Promise.resolve();
+    const shared = { ...invocation, signal: this.runSignal ?? invocation.signal };
+    this.initialization ??= (async () => {
+      let version = '';
+      try {
+        version = await git.text(this.record.cwd, ['--version'], shared);
+      } catch (cause) {
+        if (cause instanceof CheckpointError || shared.signal.aborted) throw cause;
+      }
+      const refusal = version === '' ? null : gitVersionRefusal(version);
+      if (refusal !== null) throw new ConfigurationError(refusal);
+      if (within(repo, await this.canonicalRoot(repo)))
+        throw new ConfigurationError(rootInsideCheckoutMessage);
+      await this.refuseLazyFetch(repo, shared, 'status');
+      const status = await git.text(
+        repo,
+        ['status', '--porcelain', '--untracked-files=normal', '--no-renames'],
+        shared,
+      );
+      if (status) {
+        this.record.worktreeWarnings = [
+          ...new Set([...(this.record.worktreeWarnings ?? []), uncommittedSourceWarning]),
+        ];
+        await this.save();
+      }
+    })().catch((error: unknown) => {
+      this.initialization = undefined;
+      throw error;
+    });
+    return this.initialization;
+  }
+
+  /**
+   * The canonical common Git directory, resolved as the real run resolves the key of its
+   * administration lock, so the rehearsal's listing queues behind the same in-process entry.
+   * Memoized per run, cleared on failure.
+   */
+  private commonGitDir(repo: string, invocation: HarnessInvocation): Promise<string> {
+    const git = this.readOnly;
+    if (!git) return Promise.reject(new Error('Dry-run merge check requires a process runner.'));
+    this.commonDir ??= (async () =>
+      realpath(
+        await git.text(
+          repo,
+          ['rev-parse', '--path-format=absolute', '--git-common-dir'],
+          invocation,
+        ),
+      ))().catch((error: unknown) => {
+      this.commonDir = undefined;
+      throw error;
+    });
+    return this.commonDir;
+  }
+
+  /**
+   * The real merge's target checks (`checkMergeTarget`), through the read-only driver. The worktree
+   * listing waits for the in-process administration queue only: the repository's lock file would
+   * be a write, so a `worktree add` in another process can still race it. A `checkout` target's
+   * status read is refused instead in a partial clone or with a populated submodule on Git older
+   * than 2.44 (see {@link refuseLazyFetch}); a `branch` target's checks read no objects.
+   */
+  private async checkTarget(
+    repo: string,
+    target: NonNullable<MergeOptions['target']>,
+    invocation: HarnessInvocation,
+  ): Promise<void> {
+    const git = this.readOnly;
+    if (!git) return;
+    // The memoized common directory is shared by every merge, so it runs on the run's signal; the
+    // checks themselves follow the merge's scope signal, as the real merge's do.
+    const shared = { ...invocation, signal: this.runSignal ?? invocation.signal };
+    const kind = typeof target === 'object' ? 'branch' : target;
+    const ref = typeof target === 'object' ? `refs/heads/${target.branch}` : 'HEAD';
+    if (kind === 'checkout') await this.refuseLazyFetch(repo, invocation, 'status');
+    await checkMergeTarget(
+      {
+        git,
+        repo,
+        administer: async (work) =>
+          queueAdministration(await this.commonGitDir(repo, shared), invocation.signal, work),
+      },
+      kind,
+      ref,
+      invocation,
+    );
   }
 
   /** The commit `revision` names, or null when it does not resolve. Memoized per revision. */
@@ -303,11 +471,34 @@ export class WorktreeRehearsal {
     return commit;
   }
 
-  /** The cache root a real run would use, by path arithmetic only: nothing is created or resolved. */
+  /**
+   * The cache root a real run would use: the copied ledger's pinned root, which a real resume keeps
+   * whatever `worktrees.root` says, otherwise the policy's by path arithmetic only (nothing is
+   * created or resolved).
+   */
   private root(repo: string | null): string {
+    if (this.record.worktrees !== undefined) return this.record.worktrees.root;
     return this.policy.root === undefined
       ? defaultWorktreeRoot(repo ?? this.record.cwd)
       : resolve(this.record.cwd, this.policy.root);
+  }
+
+  /**
+   * The cache root with existing symlinks resolved, as the real ledger canonicalizes it before its
+   * containment check (`filePath`, which only reads with `realpath` and `lstat` and creates
+   * nothing), so a root that reaches the checkout through a symlink fails and one that leaves it
+   * through a symlink passes, as in a real run. Memoized per run, cleared on failure.
+   */
+  private canonicalRoot(repo: string): Promise<string> {
+    this.canonical ??= filePath(
+      this.record.cwd,
+      this.policy.root ?? defaultWorktreeRoot(repo),
+      true,
+    ).catch((error: unknown) => {
+      this.canonical = undefined;
+      throw error;
+    });
+    return this.canonical;
   }
 
   /**
@@ -360,9 +551,8 @@ export class WorktreeRehearsal {
     }
     const invocation = this.invocation(id, context);
     const repo = await this.repo(invocation);
-    const root = this.root(repo);
-    if (repo !== null && within(repo, root))
-      throw new ConfigurationError(rootInsideCheckoutMessage);
+    // Checks the cache root only without a ledger: a real resume keeps the root its ledger pinned.
+    if (repo !== null) await this.initialize(repo, invocation);
     let base: string;
     let baseSource: 'resolved' | 'recorded' | 'placeholder';
     if (step.worktree?.base !== undefined) {
@@ -382,7 +572,7 @@ export class WorktreeRehearsal {
       inside = relative(repo, canonical);
     }
     const path = join(
-      root,
+      this.root(repo),
       `${this.record.id}-dry-run`,
       digest(`attempt:${id}:${String(context.attempt)}`),
     );
@@ -446,37 +636,98 @@ export class WorktreeRehearsal {
   }
 
   /**
-   * Refuse a merge preview in a partial clone (`extensions.partialClone` or a `remote.<name>.promisor`
-   * is configured) when Git is older than 2.44: older Git ignores `GIT_NO_LAZY_FETCH`, so a missing
-   * object would be fetched from the promisor remote into the repository. Both reads go through the
-   * read-only driver before the preview runs any other command; `--version` runs only in a partial
-   * clone. Memoized per run once it passes.
+   * Refuse a merge preview or a `status` read in a partial clone when Git is older than 2.44 (see
+   * {@link lazyFetches}), with the message for `read`; a `status` read is also refused with an
+   * populated submodule (see {@link submoduleLazyFetches}), since `status` recurses into
+   * submodules while `merge-tree` does not. It runs before the preview runs any other command, and
+   * in place of the status read.
    */
-  private refuseLazyFetch(repo: string, invocation: HarnessInvocation): Promise<void> {
-    const git = this.git;
-    if (!git) return Promise.resolve();
-    const shared = { ...invocation, signal: this.runSignal ?? invocation.signal };
-    this.lazyFetch ??= (async () => {
-      const promisors = await git.run(
-        repo,
-        [
-          'config',
-          '--name-only',
-          '--get-regexp',
-          '^(extensions\\.partialclone|remote\\..*\\.promisor)$',
-        ],
-        shared,
-        { codes: [0, 1] },
-      );
-      if (promisors.code !== 0 || promisors.stdout.trim() === '') return;
-      const version = await git.text(repo, ['--version'], shared);
-      if (!honorsNoLazyFetch(version))
-        throw new ConfigurationError(partialCloneGitMessage(version || 'an unknown Git version'));
-    })().catch((error: unknown) => {
+  private async refuseLazyFetch(
+    repo: string,
+    invocation: HarnessInvocation,
+    read: 'preview' | 'status',
+  ): Promise<void> {
+    const version = await this.lazyFetches(repo, invocation);
+    if (version !== null) throw new ConfigurationError(partialCloneGitMessage(version, read));
+    if (read !== 'status') return;
+    const submodules = await this.submoduleLazyFetches(repo, invocation);
+    if (submodules !== null) throw new ConfigurationError(submodulesGitMessage(submodules));
+  }
+
+  /**
+   * The `git --version` output (or a stand-in when it is empty) when the repository is a partial
+   * clone (`extensions.partialClone` or a `remote.<name>.promisor` is configured) and Git is older
+   * than 2.44, otherwise null: older Git ignores `GIT_NO_LAZY_FETCH`, so a missing object would be
+   * fetched from the promisor remote into the repository. Both reads go through the read-only
+   * driver; `--version` runs only in a partial clone. Memoized per run, cleared on failure.
+   */
+  private lazyFetches(repo: string, invocation: HarnessInvocation): Promise<string | null> {
+    this.lazyFetch ??= this.olderGitWith(
+      repo,
+      invocation,
+      '^(extensions\\.partialclone|remote\\..*\\.promisor)$',
+    ).catch((error: unknown) => {
       this.lazyFetch = undefined;
       throw error;
     });
     return this.lazyFetch;
+  }
+
+  /**
+   * The `git --version` output (or a stand-in when it is empty) when a submodule is populated (the
+   * index has a gitlink whose `<path>/.git` exists, whatever the submodule's configuration says)
+   * and Git is older than 2.44, otherwise null: `status` recurses into populated submodules, any of
+   * which can be a partial clone, so this conservatively refuses without reading the submodules'
+   * own configuration. The index listing goes through the read-only driver on the run's signal;
+   * `--version` runs only when a submodule is populated. Memoized per run, cleared on failure.
+   */
+  private submoduleLazyFetches(
+    repo: string,
+    invocation: HarnessInvocation,
+  ): Promise<string | null> {
+    this.submoduleLazyFetch ??= (async () => {
+      const git = this.readOnly;
+      if (!git) return null;
+      const shared = { ...invocation, signal: this.runSignal ?? invocation.signal };
+      const index = await git.run(repo, ['ls-files', '--stage', '-z'], shared);
+      return (await populatedSubmodule(repo, index.stdout))
+        ? this.olderGit(git, repo, shared)
+        : null;
+    })().catch((error: unknown) => {
+      this.submoduleLazyFetch = undefined;
+      throw error;
+    });
+    return this.submoduleLazyFetch;
+  }
+
+  /**
+   * The `git --version` output (or a stand-in when it is empty) when a configuration name matches
+   * `pattern` and Git is older than 2.44, otherwise null. Both reads go through the read-only
+   * driver on the run's signal; `--version` runs only when a name matches.
+   */
+  private async olderGitWith(
+    repo: string,
+    invocation: HarnessInvocation,
+    pattern: string,
+  ): Promise<string | null> {
+    const git = this.readOnly;
+    if (!git) return null;
+    const shared = { ...invocation, signal: this.runSignal ?? invocation.signal };
+    const names = await git.run(repo, ['config', '--name-only', '--get-regexp', pattern], shared, {
+      codes: [0, 1],
+    });
+    if (names.code !== 0 || names.stdout.trim() === '') return null;
+    return this.olderGit(git, repo, shared);
+  }
+
+  /** The `git --version` output (or a stand-in when it is empty) when Git is older than 2.44, otherwise null. */
+  private async olderGit(
+    git: WorktreeGit,
+    repo: string,
+    invocation: HarnessInvocation,
+  ): Promise<string | null> {
+    const version = await git.text(repo, ['--version'], invocation);
+    return honorsNoLazyFetch(version) ? null : version || 'an unknown Git version';
   }
 
   /**
@@ -553,7 +804,10 @@ export class WorktreeRehearsal {
   }
 
   /**
-   * The integration a real merge would compute. Unchanged inputs return the no-op result: nothing
+   * The integration a real merge would compute, after the real merge's checks: the ledger checks
+   * of a run without a ledger (see {@link initialize}) and the target checks (`checkMergeTarget`),
+   * for a no-op merge too, so an invalid, checked-out or symbolic branch target and a dirty
+   * `checkout` target fail with the real error. Unchanged inputs return the no-op result: nothing
    * merged, no conflicts, and the target's current commit (an existing branch target, otherwise
    * HEAD). A `branch` or `checkout` target's current commit is the last preview into it in this
    * rehearsal, if any, and a resolved preview into one (a no-op included, which creates a missing
@@ -563,7 +817,8 @@ export class WorktreeRehearsal {
    * handles (resolved from the copied ledger as a real merge does) are previewed with the real
    * integration in the run's quarantine, dated `date` (the attempt's start, as in a real run), so
    * `merged` and `conflicts` match a real merge while the commit is discarded after the rehearsal.
-   * Nothing is pinned, recorded in `step.merge` or published, and no repository lock is taken.
+   * Nothing is pinned, recorded in `step.merge` or published, and no repository lock is taken: the
+   * target check's worktree listing waits only for this process's administration queue.
    * Under `synthesizeAll`, any inputs merge cleanly onto the placeholder commit: every captured
    * commit is reported merged, in order, and a handle contributes nothing, since its latest commit
    * is unknown without Git.
@@ -637,11 +892,15 @@ export class WorktreeRehearsal {
         throw new ConfigurationError(previewNeedsRepositoryMessage);
       return [{ commit: placeholderCommit, merged: [], conflicts: [] }, 'placeholder'];
     }
+    // The real merge's ledger and target checks come first, in its order, whatever the inputs.
+    await this.initialize(repo, invocation);
+    await this.checkTarget(repo, target, invocation);
     // Before the preview resolves anything: older Git could lazy-fetch a captured commit.
     if (changes.some((change) => change.commit !== null))
-      await this.refuseLazyFetch(repo, invocation);
-    // The ref a real merge would move. A checkout target and a branch target naming the checked-out
-    // branch share one key, so each sees the other's previews.
+      await this.refuseLazyFetch(repo, invocation, 'preview');
+    // The ref a real merge would move. A checkout target on a branch uses the branch's ref, so a
+    // fresh isolation based on that branch's name sees the preview (a branch target naming the
+    // checked-out branch fails the target check above, as in a real run).
     const moved =
       typeof target === 'object'
         ? `refs/heads/${target.branch}`

@@ -222,9 +222,10 @@ The CLI executor selects native or fixture adapters through plain-data plans. Dr
 native pure argument planner, fixture/synthesized outputs, and temporary checkpoint storage; resume
 copies source record data without acquiring its owner lock. Core rehearsal hooks preserve local
 identity while optionally replacing callbacks, skipping durable sleeps, synthesizing fresh worktree
-isolation and unchanged merges with read-only `git rev-parse`, and previewing merges of captured
-commits with the real integration code in a quarantined temporary object directory that is removed
-when the run ends. Call metadata and harness-kind provenance live outside semantic fingerprints. See
+isolation and unchanged merges with read-only Git reads (which also make the real run's Git version,
+dirty-source and merge target checks), and previewing merges of captured commits with the real
+integration code in a quarantined temporary object directory that is removed when the run ends. Call
+metadata and harness-kind provenance live outside semantic fingerprints. See
 [workflow rehearsal](rehearsal.md) and [ADR 0016](decisions/0016-workflow-rehearsal.md). The core
 also owns one small synthesizing probe (a dry-run harness, process runner and stub-everything hooks)
 for the accepted-replay preflight that `runWorkflow` runs before an accepted code change mutates a
