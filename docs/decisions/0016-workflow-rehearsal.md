@@ -216,6 +216,12 @@ computation, in a quarantined object store:
   one command besides `rev-parse` the read-only driver runs, and refuses with a `ConfigurationError`
   if there is any. It does not override them: a text merge would report conflicts the real merge
   would not, which is worse than no preview.
+- The rehearsal keeps the tip each `branch` or `checkout` preview would leave, in memory, keyed by
+  the ref the real merge moves (`refs/heads/<branch>`, or the checked-out branch's ref, or `HEAD`
+  when detached, for `checkout`; a branch target naming the checked-out branch shares its key). A
+  later merge into the same target, or into `ref` or a missing branch (which start from `HEAD`),
+  starts from that tip, so sequential previews conflict where the real merges would. A `ref` target
+  moves no ref and records no tip. No ref is written.
 - Nothing else of a real merge happens: no `step.merge` preparation, no pinned or published ref, no
   checkout update and no integration or handle locks, since the repository does not change. The
   target-specific preflight checks (`check-ref-format`, a branch checked out elsewhere, a dirty

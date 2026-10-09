@@ -238,15 +238,18 @@ report. The first preview creates a temporary object directory (`quiet-choir-reh
 under the system temporary directory) with the repository's objects as a read-only alternate; from
 then on every rehearsal Git command writes objects only there, runs only `rev-parse`, `merge-tree`,
 `commit-tree` and `var`, and cannot update a ref. Later steps of the same rehearsal can use the
-preview commit, for example as an isolation base. The directory is removed when the rehearsal ends
-(a killed process can leave it behind), so the preview `commit` no longer exists afterwards; it is
-dated at the rehearsal attempt's start, so it also differs from a later real run's commit. A preview
-records no merge preparation and pins, publishes or locks nothing; target checks such as a branch
-checked out elsewhere are not rehearsed. Without a resolvable repository, a preview fails with a
-configuration error. So does a preview while any custom merge driver (`merge.<name>.driver`) is
-configured: `merge-tree` would run that command, and it could write outside the quarantine, so the
-first preview lists the drivers with a read-only `git config --get-regexp` before any merge and
-refuses instead of merging differently from the real run.
+preview commit, for example as an isolation base, and a preview into a `branch` or `checkout` target
+builds on earlier previews into the same target in the same rehearsal, as the real merges would
+after moving it (a `ref` target moves nothing, so its previews do not chain). The directory is
+removed when the rehearsal ends (a killed process can leave it behind), so the preview `commit` no
+longer exists afterwards; it is dated at the rehearsal attempt's start, so it also differs from a
+later real run's commit. A preview records no merge preparation and pins, publishes or locks
+nothing; target checks such as a branch checked out elsewhere are not rehearsed. Without a
+resolvable repository, a preview fails with a configuration error. So does a preview while any
+custom merge driver (`merge.<name>.driver`) is configured: `merge-tree` would run that command, and
+it could write outside the quarantine, so the first preview lists the drivers with a read-only
+`git config --get-regexp` before any merge and refuses instead of merging differently from the real
+run.
 
 The base is resolved once per revision with `git rev-parse` through the real process runner. The
 runtime refuses every other Git command under rehearsal before it reaches the runner, apart from a

@@ -98,6 +98,14 @@ export class WorktreeRehearsal {
   private objects: string | undefined;
   private disposed = false;
   private readonly runner: ProcessRunner | undefined;
+  /**
+   * The last previewed commit of each `branch` or `checkout` target, by target ref
+   * (`refs/heads/<branch>`, or `HEAD` for a detached checkout), so later previews into the same
+   * target build on it as the real merges would. In memory only: no ref is ever written.
+   */
+  private readonly tips = new Map<string, string>();
+  /** The checked-out branch's ref, or `HEAD` when detached; resolved once per run. */
+  private checkout: Promise<string> | undefined;
 
   /**
    * @param synthesizeAll - Set only for the accepted-replay probe: also synthesize `ctx.worktree`,
@@ -171,6 +179,43 @@ export class WorktreeRehearsal {
       this.revisions.set(revision, resolved);
     }
     return resolved;
+  }
+
+  /**
+   * The ref a `checkout` target moves: the checked-out branch's full ref, or `HEAD` when it is
+   * detached (or unborn, when no merge can run anyway). Memoized per run.
+   */
+  private checkoutRef(repo: string, invocation: HarnessInvocation): Promise<string> {
+    const git = this.git;
+    if (!git) return Promise.resolve('HEAD');
+    const shared = { ...invocation, signal: this.runSignal ?? invocation.signal };
+    this.checkout ??= (async () => {
+      const result = await git.run(repo, ['rev-parse', '--symbolic-full-name', 'HEAD'], shared, {
+        codes: [0, 128],
+      });
+      const ref = result.stdout.trim();
+      return result.code === 0 && ref.startsWith('refs/heads/') ? ref : 'HEAD';
+    })().catch((error: unknown) => {
+      this.checkout = undefined;
+      throw error;
+    });
+    return this.checkout;
+  }
+
+  /** The commit at `ref`: the last preview into it in this rehearsal, otherwise the repository's. */
+  private async tip(
+    repo: string,
+    ref: string,
+    invocation: HarnessInvocation,
+  ): Promise<string | null> {
+    return this.tips.get(ref) ?? this.revision(repo, ref, invocation);
+  }
+
+  /** The commit HEAD's branch is at, counting earlier `checkout` previews of this rehearsal. */
+  private async headTip(repo: string, invocation: HarnessInvocation): Promise<string | null> {
+    const previewed =
+      this.tips.size === 0 ? undefined : this.tips.get(await this.checkoutRef(repo, invocation));
+    return previewed ?? this.revision(repo, 'HEAD', invocation);
   }
 
   private async base(
@@ -384,7 +429,9 @@ export class WorktreeRehearsal {
   /**
    * The integration a real merge would compute. Unchanged inputs return the no-op result: nothing
    * merged, no conflicts, and the target's current commit (an existing branch target, otherwise
-   * HEAD). Captured commits and handles (resolved from the copied ledger as a real merge does) are
+   * HEAD). A `branch` or `checkout` target's current commit is the last preview into it in this
+   * rehearsal, if any, and a resolved preview into one becomes its tip for later previews, as the
+   * real merge would move it; a `ref` target moves nothing, so it reads but never sets a tip. Captured commits and handles (resolved from the copied ledger as a real merge does) are
    * previewed with the real integration in the run's quarantine, dated `date` (the attempt's start,
    * as in a real run), so `merged` and `conflicts` match a real merge while the commit is discarded
    * after the rehearsal. Nothing is pinned, recorded in `step.merge` or published, and no lock is
@@ -439,11 +486,17 @@ export class WorktreeRehearsal {
         throw new ConfigurationError(previewNeedsRepositoryMessage);
       return event({ commit: placeholderCommit, merged: [], conflicts: [] }, 'placeholder');
     }
-    const branch =
+    // The ref a real merge would move. A checkout target and a branch target naming the checked-out
+    // branch share one key, so each sees the other's previews.
+    const moved =
       typeof target === 'object'
-        ? await this.revision(repo, `refs/heads/${target.branch}`, invocation)
-        : null;
-    const head = branch ?? (await this.revision(repo, 'HEAD', invocation));
+        ? `refs/heads/${target.branch}`
+        : target === 'checkout'
+          ? await this.checkoutRef(repo, invocation)
+          : null;
+    const head =
+      (moved === null ? null : await this.tip(repo, moved, invocation)) ??
+      (await this.headTip(repo, invocation));
     if (head === null)
       throw new Error('Merge requires a committed HEAD or existing target branch.');
     for (const change of changes)
@@ -474,6 +527,7 @@ export class WorktreeRehearsal {
       custom,
       invocation,
     );
+    if (moved !== null) this.tips.set(moved, result.commit);
     return event(result, 'resolved');
   }
 }

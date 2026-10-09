@@ -1978,6 +1978,109 @@ it('refuses to preview a merge while a custom merge driver is configured, before
   expect(await quarantines()).toEqual([]);
 });
 
+it.each([
+  ['a branch', { branch: 'feature' }],
+  ['the checkout', 'checkout'],
+] as const)(
+  'builds a preview into %s on the earlier preview into it, as the real merges do',
+  async (_name, target) => {
+    let stop = true;
+    const workflow = defineWorkflow({
+      name: 'chained',
+      version: '1',
+      input: z.null(),
+      output: z.string(),
+      async run(ctx) {
+        const changes = [];
+        for (const edit of ['one', 'two']) {
+          const result = await ctx.codex.text(edit, { prompt: edit, worktree: true });
+          if (!result.worktree?.commit) throw new Error('missing captured change');
+          changes.push(result.worktree);
+        }
+        if (stop) throw new Error('stopped before the merge');
+        const first = await ctx.merge('first', changes.slice(0, 1), { target });
+        // `two` also appends to file.txt, so it conflicts with `one` once `one` is on the target.
+        const second = await ctx.merge('second', changes.slice(1), { target });
+        return JSON.stringify({ first, second });
+      },
+    });
+    const harness = editingHarness();
+    await expect(
+      runWorkflow(workflow, { ...options('chained'), harness, input: null }),
+    ).rejects.toThrow('stopped before the merge');
+    const steps = (await readRun({ stateDir, runId: 'chained' })).steps;
+    const [one, two] = ['one', 'two'].map((id) => steps[id]?.worktree?.commit);
+    assert(one && two);
+    const copy = await copyRun('chained');
+    const before = await repositoryState();
+    const quarantines = await temporaryParent();
+    stop = false;
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2030-01-02T03:04:05.678Z') });
+    const dry = await runWorkflow(workflow, {
+      ...dryRun('chained', copy, [], processRunner),
+      resume: true,
+    });
+    const preview = JSON.parse(dry.output ?? 'null') as { first: MergeResult; second: MergeResult };
+    expect(preview.first).toMatchObject({ merged: [one], conflicts: [] });
+    expect(preview.second).toEqual({
+      commit: preview.first.commit,
+      merged: [],
+      conflicts: [{ commit: two, files: ['file.txt'] }],
+    });
+    // No ref moved: the previewed tip lived only in the rehearsal.
+    expect(await repositoryState()).toEqual(before);
+    expect(await quarantines()).toEqual([]);
+    const real = await runWorkflow(workflow, { ...options('chained'), harness, resume: true });
+    vi.useRealTimers();
+    expect(JSON.parse(real.output ?? 'null')).toEqual(preview);
+  },
+  // Three runs over real Git, like the conflict cases above.
+  20_000,
+);
+
+it('does not chain previews into ref targets, which move no ref', async () => {
+  let stop = true;
+  const workflow = defineWorkflow({
+    name: 'unchained',
+    version: '1',
+    input: z.null(),
+    output: z.string(),
+    async run(ctx) {
+      const changes = [];
+      for (const edit of ['one', 'two']) {
+        const result = await ctx.codex.text(edit, { prompt: edit, worktree: true });
+        if (!result.worktree?.commit) throw new Error('missing captured change');
+        changes.push(result.worktree);
+      }
+      if (stop) throw new Error('stopped before the merge');
+      const first = await ctx.merge('first', changes.slice(0, 1), { target: 'ref' });
+      const second = await ctx.merge('second', changes.slice(1), { target: 'ref' });
+      return JSON.stringify({ first, second });
+    },
+  });
+  const harness = editingHarness();
+  await expect(
+    runWorkflow(workflow, { ...options('unchained'), harness, input: null }),
+  ).rejects.toThrow('stopped before the merge');
+  const steps = (await readRun({ stateDir, runId: 'unchained' })).steps;
+  const [one, two] = ['one', 'two'].map((id) => steps[id]?.worktree?.commit);
+  assert(one && two);
+  const copy = await copyRun('unchained');
+  stop = false;
+  vi.useFakeTimers({ toFake: ['Date'], now: new Date('2030-01-02T03:04:05.678Z') });
+  const dry = await runWorkflow(workflow, {
+    ...dryRun('unchained', copy, [], processRunner),
+    resume: true,
+  });
+  const preview = JSON.parse(dry.output ?? 'null') as { first: MergeResult; second: MergeResult };
+  // Each ref merge integrates onto HEAD, so neither sees the other.
+  expect(preview.first).toMatchObject({ merged: [one], conflicts: [] });
+  expect(preview.second).toMatchObject({ merged: [two], conflicts: [] });
+  const real = await runWorkflow(workflow, { ...options('unchained'), harness, resume: true });
+  vi.useRealTimers();
+  expect(JSON.parse(real.output ?? 'null')).toEqual(preview);
+});
+
 it('fails a preview over a commit missing from the repository like the real merge', async () => {
   const head = await command('rev-parse', 'HEAD');
   const spy = spyRunner();
