@@ -82,6 +82,33 @@
       "completedCallsPaidAgain": 0
     },
     {
+      "workflow": "project-bootstrap",
+      "fixture": "signal-verify",
+      "status": "passed",
+      "finalStatus": "completed",
+      "outputStatus": "verification-failed",
+      "agentCalls": 4,
+      "completedCallsPaidAgain": 0
+    },
+    {
+      "workflow": "test-gap-filler",
+      "fixture": "baseline-signal",
+      "status": "passed",
+      "finalStatus": "completed",
+      "outputStatus": "baseline-failed",
+      "agentCalls": 4,
+      "completedCallsPaidAgain": 0
+    },
+    {
+      "workflow": "test-gap-filler",
+      "fixture": "baseline-timeout",
+      "status": "passed",
+      "finalStatus": "completed",
+      "outputStatus": "baseline-failed",
+      "agentCalls": 4,
+      "completedCallsPaidAgain": 0
+    },
+    {
       "workflow": "incident-investigation",
       "fixture": "dirty",
       "status": "passed",
@@ -131,6 +158,13 @@
       "finalStatus": "completed",
       "outputStatus": "complete",
       "agentCalls": 19,
+      "completedCallsPaidAgain": 0
+    },
+    {
+      "workflow": "sdlc-orchestrator",
+      "fixture": "lifecycle-verification-timeout-blocks-gate",
+      "status": "passed",
+      "gate": "blocked",
       "completedCallsPaidAgain": 0
     },
     {

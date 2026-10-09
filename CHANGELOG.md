@@ -2,6 +2,11 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Workflow Lab Batch 02: the test-gap-filler, project-bootstrap and lifecycle ports now settle their
+  test and verify commands with `onError: 'return'` instead of `okExitCodes: 'any'`. A timeout or
+  signal therefore takes the `baseline-failed`, `verification-failed` or blocked-gate branch instead
+  of failing the run, as a nonzero exit or truncated output already did. project-bootstrap
+  verification rows gain `failure`, the settled error kind or null (#314).
 - A dry-run now fails where the real run would on the merge target checks, the Git version and the
   cache root, and records the real dirty-source warning (behavior change, #312). Every `ctx.merge`
   under rehearsal, a no-op included, runs the real target checks first, so a `branch` target with an
