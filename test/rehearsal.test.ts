@@ -1499,7 +1499,7 @@ export default defineWorkflow({
 
   /**
    * Every command is Git: rev-parse, plus the real ledger's version and status reads, once (#312),
-   * with the partial-clone listing before the status read. The merge targets a ref, so no merge
+   * with the partial-clone and submodule listings before the status read. The merge targets a ref, so no merge
    * target check runs.
    */
   function expectReadOnlyGit(commands: readonly string[][]): void {
@@ -1516,6 +1516,7 @@ export default defineWorkflow({
         '--get-regexp',
         '^(extensions\\.partialclone|remote\\..*\\.promisor)$',
       ],
+      ['config', '--name-only', '--get-regexp', '^submodule\\..*\\.url$'],
       ['status', '--porcelain', '--untracked-files=normal', '--no-renames'],
     ]);
   }

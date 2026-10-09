@@ -1313,13 +1313,19 @@ const partialCloneListing = [
   '^(extensions\\.partialclone|remote\\..*\\.promisor)$',
 ];
 /**
+ * The read-only listing that detects an initialized submodule, which a dry-run runs once, after the
+ * partial-clone listing, before its first `status` read (but never before a merge preview).
+ */
+const submoduleListing = ['config', '--name-only', '--get-regexp', '^submodule\\..*\\.url$'];
+/**
  * The reads besides rev-parse that a dry-run without a ledger makes first, as the real ledger's
  * initialization does: the Git version and the source checkout's status (#312), which the
- * partial-clone listing precedes.
+ * partial-clone and submodule listings precede.
  */
 const ledgerReads = [
   ['--version'],
   partialCloneListing,
+  submoduleListing,
   ['status', '--porcelain', '--untracked-files=normal', '--no-renames'],
 ];
 async function exists(path: string): Promise<boolean> {
@@ -2999,7 +3005,7 @@ it('refuses the dry-run ledger status read in a partial clone on Git older than 
   expect(dry.status).toBe('completed');
   expect(
     current.commands.map(({ args }) => args).filter((args) => args[0] !== 'rev-parse'),
-  ).toEqual([['--version'], partialCloneListing, ['--version'], status]);
+  ).toEqual([['--version'], partialCloneListing, ['--version'], submoduleListing, status]);
   expect(await repositoryState()).toEqual(before);
 });
 
@@ -3056,8 +3062,140 @@ it("refuses a dry-run 'checkout' target's status read in a partial clone on Git 
   expect(dry.output).toMatchObject({ commit: await command('rev-parse', 'HEAD'), merged: [] });
   expect(
     current.commands.map(({ args }) => args).filter((args) => args[0] !== 'rev-parse'),
-  ).toEqual([partialCloneListing, ['--version'], status]);
+  ).toEqual([partialCloneListing, ['--version'], submoduleListing, status]);
   expect(await repositoryState()).toEqual(before);
+});
+
+it('refuses the dry-run ledger status read with an initialized submodule on Git older than 2.44, without running it', async () => {
+  const workflow = defineWorkflow({
+    name: 'submodule-source',
+    version: '1',
+    input: z.null(),
+    output: z.unknown(),
+    async run(ctx) {
+      return (await ctx.codex.text('edit', { prompt: 'edit', worktree: true })).output;
+    },
+  });
+  // A configured URL marks an initialized submodule, which status recurses into and which can
+  // itself be a partial clone; the parent repository is not one.
+  await command('config', 'submodule.lib.url', 'https://example.invalid/lib.git');
+  const before = await repositoryState();
+  const index = await indexState();
+  const old = objectSpy('git version 2.43.0');
+  const failure = await failureOf(
+    runWorkflow(workflow, freshDryRun('submodule-source', old.runner)),
+  );
+  expect(failure.message).toContain(
+    "Dry-run cannot read the source checkout's status, which has initialized submodules, with git version 2.43.0: git status recurses into submodules",
+  );
+  expect(failure.cause).toBe('ConfigurationError');
+  // The ledger's version read, the two listings and the submodule check's version read; no status.
+  expect(old.commands.map(({ args }) => args).filter((args) => args[0] !== 'rev-parse')).toEqual([
+    ['--version'],
+    partialCloneListing,
+    submoduleListing,
+    ['--version'],
+  ]);
+  expect(await repositoryState()).toEqual(before);
+  expect(await indexState()).toEqual(index);
+  // Git 2.44 honors GIT_NO_LAZY_FETCH, so the same checkout reads the status and proceeds.
+  const current = objectSpy('git version 2.44.0');
+  const dry = await runWorkflow(workflow, freshDryRun('submodule-source-current', current.runner));
+  expect(dry.status).toBe('completed');
+  expect(
+    current.commands.map(({ args }) => args).filter((args) => args[0] !== 'rev-parse'),
+  ).toEqual([['--version'], partialCloneListing, submoduleListing, ['--version'], status]);
+  expect(await repositoryState()).toEqual(before);
+});
+
+it("refuses a dry-run 'checkout' target's status read with an initialized submodule on Git older than 2.44", async () => {
+  let stop = true;
+  const workflow = defineWorkflow({
+    name: 'submodule-checkout',
+    version: '1',
+    input: z.null(),
+    output: z.unknown(),
+    async run(ctx) {
+      const edit = await ctx.codex.text('edit', { prompt: 'edit', worktree: true });
+      if (stop) throw new Error('stopped before the merge');
+      return ctx.merge('publish', edit.worktree ? [edit.worktree] : [], { target: 'checkout' });
+    },
+  });
+  // The real run creates the ledger, so the dry-run resume skips the ledger's own status read.
+  await expect(
+    runWorkflow(workflow, {
+      ...options('submodule-checkout'),
+      input: null,
+      harness: { invoke: () => Promise.resolve(response) },
+    }),
+  ).rejects.toThrow('stopped before the merge');
+  await command('config', 'submodule.lib.url', 'https://example.invalid/lib.git');
+  const before = await repositoryState();
+  const index = await indexState();
+  stop = false;
+  const old = objectSpy('git version 2.43.0');
+  const failure = await failureOf(
+    runWorkflow(workflow, {
+      ...dryRun('submodule-checkout', await copyRun('submodule-checkout'), [], old.runner),
+      resume: true,
+    }),
+  );
+  expect(failure.message).toContain(
+    "Dry-run cannot read the source checkout's status, which has initialized submodules, with git version 2.43.0",
+  );
+  expect(failure.cause).toBe('ConfigurationError');
+  expect(old.commands.map(({ args }) => args).filter((args) => args[0] !== 'rev-parse')).toEqual([
+    partialCloneListing,
+    submoduleListing,
+    ['--version'],
+  ]);
+  expect(await repositoryState()).toEqual(before);
+  expect(await indexState()).toEqual(index);
+  // On Git 2.44 the target's status read runs, and the unchanged merge is the real no-op.
+  const current = objectSpy('git version 2.44.0');
+  const dry = await runWorkflow(workflow, {
+    ...dryRun('submodule-checkout', await copyRun('submodule-checkout'), [], current.runner),
+    resume: true,
+  });
+  expect(dry.status).toBe('completed');
+  expect(dry.output).toMatchObject({ commit: await command('rev-parse', 'HEAD'), merged: [] });
+  expect(
+    current.commands.map(({ args }) => args).filter((args) => args[0] !== 'rev-parse'),
+  ).toEqual([partialCloneListing, submoduleListing, ['--version'], status]);
+  expect(await repositoryState()).toEqual(before);
+});
+
+it('previews a merge into a branch with an initialized submodule on Git older than 2.44', async () => {
+  // merge-tree does not recurse into submodules and a branch target reads no status, so neither
+  // the submodule listing nor a version read runs.
+  const gate: PreviewGate = { stop: true, options: { target: { branch: 'feature' } } };
+  const workflow = capturedMerge('submodule-branch', ['edit'], gate);
+  await expect(
+    runWorkflow(workflow, {
+      ...options('submodule-branch'),
+      harness: editingHarness(),
+      input: null,
+    }),
+  ).rejects.toThrow('stopped before the merge');
+  const edit = (await readRun({ stateDir, runId: 'submodule-branch' })).steps['edit']?.worktree
+    ?.commit;
+  assert(edit);
+  await command('config', 'submodule.lib.url', 'https://example.invalid/lib.git');
+  const before = await repositoryState();
+  const quarantines = await temporaryParent();
+  const old = objectSpy('git version 2.43.0');
+  gate.stop = false;
+  const dry = await runWorkflow(workflow, {
+    ...dryRun('submodule-branch', await copyRun('submodule-branch'), [], old.runner),
+    resume: true,
+  });
+  expect(JSON.parse(dry.output ?? 'null')).toMatchObject({ merged: [edit], conflicts: [] });
+  expect(old.commands.some(({ args }) => args.includes('^submodule\\..*\\.url$'))).toBe(false);
+  expect(old.commands.some(({ args }) => args[0] === '--version' || args[0] === 'status')).toBe(
+    false,
+  );
+  expect(await repositoryState()).toEqual(before);
+  expect(await quarantines()).toEqual([]);
 });
 
 /** Every checkpoint file of a run, by name, so a refusal can prove it wrote nothing. */
