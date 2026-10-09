@@ -465,8 +465,8 @@ export class WorktreeRehearsal {
    * The integration a real merge would compute. Unchanged inputs return the no-op result: nothing
    * merged, no conflicts, and the target's current commit (an existing branch target, otherwise
    * HEAD). A `branch` or `checkout` target's current commit is the last preview into it in this
-   * rehearsal, if any, and a resolved preview into one becomes its tip for later previews, as the
-   * real merge would move it; a `ref` target moves nothing, so it reads but never sets a tip. Previews run one at a
+   * rehearsal, if any, and a resolved preview into one (a no-op included, which creates a missing
+   * branch) becomes its tip for later previews, as the real merge would move it; a `ref` target moves nothing, so it reads but never sets a tip. Previews run one at a
    * time in call order, as real merges do under the run's integration lock. Captured commits and
    * handles (resolved from the copied ledger as a real merge does) are previewed with the real
    * integration in the run's quarantine, dated `date` (the attempt's start, as in a real run), so
@@ -565,8 +565,11 @@ export class WorktreeRehearsal {
           (await this.revision(repo, change.commit, invocation)) !== change.commit)
       )
         throw new Error('Merge input commit is unavailable in this repository.');
-    if (changes.every((change) => change.commit === null))
+    if (changes.every((change) => change.commit === null)) {
+      // The real no-op merge still creates a missing target branch at its base.
+      if (moved !== null) this.tips.set(moved, head);
       return [{ commit: head, merged: [], conflicts: [] }, 'resolved'];
+    }
     const git = await this.quarantined(repo, invocation);
     const custom = options.commit
       ? await resolveCommit(git, repo, options.commit, invocation)

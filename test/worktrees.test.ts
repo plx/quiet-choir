@@ -2206,6 +2206,25 @@ it('chains concurrent previews into one branch in call order, as the real merges
   expect(real).toEqual(dry);
 }, 20_000);
 
+it('records a no-op preview into a missing branch as its tip, as the real merge creates it', async () => {
+  const gate = { stop: true };
+  const workflow = previewParity('noop-branch', gate, async (ctx, [one, two]) => {
+    // The no-op creates feature at the original HEAD, before the checkout merge moves HEAD on.
+    const noop = await ctx.merge('noop', [{ ...one, commit: null, ref: null, files: [] }], {
+      target: { branch: 'feature' },
+    });
+    const checkout = await ctx.merge('checkout', [one], { target: 'checkout' });
+    const feature = await ctx.merge('feature', [two], { target: { branch: 'feature' } });
+    return { noop, checkout, feature };
+  });
+  const { dry, real, one, two } = await dryAndReal('noop-branch', workflow, gate);
+  const preview = dry as Record<'noop' | 'checkout' | 'feature', MergeResult>;
+  expect(preview.checkout).toMatchObject({ merged: [one], conflicts: [] });
+  // feature still holds the original HEAD, so two merges cleanly there.
+  expect(preview.feature).toMatchObject({ merged: [two], conflicts: [] });
+  expect(real).toEqual(dry);
+}, 20_000);
+
 it('fails a preview over a commit missing from the repository like the real merge', async () => {
   const head = await command('rev-parse', 'HEAD');
   const spy = spyRunner();
