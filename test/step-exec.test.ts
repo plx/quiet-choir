@@ -880,7 +880,7 @@ describe('inner command records (#317)', () => {
     const runner: ProcessRunner = {
       run: () => Promise.reject(Object.assign(new Error('spawn gh ENOENT'), { code: 'ENOENT' })),
     };
-    const run = (runId: string, onSettled?: (attempt: number) => void) =>
+    const run = (runId: string, onSettled?: (attempt: number) => Promise<void> | void) =>
       runWorkflow(
         definition((ctx) =>
           ctx.step('parent', {
@@ -889,7 +889,7 @@ describe('inner command records (#317)', () => {
             retry: { maxAttempts: 2, delayMs: 1 },
             run: async (context) => {
               attempts++;
-              onSettled?.(attempts);
+              await onSettled?.(attempts);
               if (attempts === 1) await context.exec(['gh', 'missing']);
               return null;
             },
@@ -899,13 +899,11 @@ describe('inner command records (#317)', () => {
       );
     // Attempt 1 fails on the missing command; attempt 2 runs none.
     let saved: unknown;
-    await run('retry', (attempt) => {
+    await run('retry', async (attempt) => {
       if (attempt === 2)
-        saved = readRun({ stateDir, runId: 'retry' }).then(
-          (record) => record.steps['parent']?.innerCommands,
-        );
+        saved = (await readRun({ stateDir, runId: 'retry' })).steps['parent']?.innerCommands;
     });
-    expect(await saved).toEqual({
+    expect(saved).toEqual({
       attempt: 1,
       commands: [
         expect.objectContaining({
