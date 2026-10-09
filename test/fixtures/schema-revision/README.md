@@ -399,6 +399,41 @@ checked in. Stack paths are scrubbed to `/fixture/...` and the file was formatte
 read-view digest in `test/record-schema-revision.test.ts` was computed on the same unmodified main
 from this file. No harness was invoked.
 
+`revision-fourteen-checkpoint.json` was generated the same way at origin/main `d84b659`, before
+exported inner commands (#317) added the nested step field `innerCommands` to `steps` in
+revision 15. Its run ID is `revision-fourteen`, and it ran this definition once, with an
+`execRunner` whose `run` resolves
+`{ code: 0, signal: null, stdout: 'ok\n', stderr: '', truncated: false }` (so no process was
+spawned):
+
+```ts
+defineWorkflow({
+  name: 'schema-revision',
+  version: '1',
+  input: z.null(),
+  output: z.null(),
+  async run(ctx) {
+    await ctx.now('prepare');
+    await ctx.step('probe', {
+      input: null,
+      schema: z.null(),
+      run: async (context) => {
+        await context.exec(['fixture-tool', 'status']);
+        throw new Error('fixture tail');
+      },
+    });
+    return null;
+  },
+});
+```
+
+It carries `schemaRevision: 14`, the completed `ctx.now` effect `prepare` and the failed step
+`probe`, whose callback ran one inner command before it threw, with no `innerCommands`. A resume
+reruns `probe`, which is unfinished and may be redefined. The journal was empty, so only `run.json`
+is checked in. Stack paths are scrubbed to `/fixture/...` and the file was formatted with Prettier;
+its read-view digest in `test/record-schema-revision.test.ts` was computed on the same unmodified
+main from this file.
+
 `record-keys.json` lists the top-level run-record keys of each schema revision. Adding or changing a
 persisted run-level field adds a revision there and bumps `SUPPORTED_SCHEMA_REVISION`; a revision
 that only changes a nested shape repeats the previous key list. See `docs/storage.md`.
