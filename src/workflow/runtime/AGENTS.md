@@ -153,9 +153,10 @@ Rehearsal never mutates the repository: `worktree-rehearsal.ts` synthesizes fres
 unchanged merges through a read-only `rev-parse` driver, and previews merges of captured commits
 with the real `computeIntegration` through a quarantined driver (a temporary object directory, the
 repository's objects as an alternate, no ref updates) that the runner removes after the run drains;
-neither driver lazy-fetches missing objects from a partial clone's promisor remote; `RunWorktrees`
-refuses every command under rehearsal. Only the accepted-replay probe synthesizes every worktree
-effect, with no process runner at all. See
+neither driver lazy-fetches missing objects from a partial clone's promisor remote, and since only
+Git 2.44+ honors `GIT_NO_LAZY_FETCH`, a merge preview in a partial clone on older Git is refused
+before any input lookup; `RunWorktrees` refuses every command under rehearsal. Only the
+accepted-replay probe synthesizes every worktree effect, with no process runner at all. See
 [ADR 0022](../../../docs/decisions/0022-runtime-owned-worktree-isolation.md).
 
 Resolve restricted/inherit mode before agent identity and preserve it through checkout preparation.

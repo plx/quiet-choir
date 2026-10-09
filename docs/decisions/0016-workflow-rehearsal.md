@@ -188,7 +188,11 @@ computation, in a quarantined object store:
   `GIT_NO_LAZY_FETCH`, all applied after the driver's `GIT_*` scrub and the per-call environment.
   The quarantined driver runs only `rev-parse`, `merge-tree`, `commit-tree` and `var` and refuses
   anything else before it reaches the runner. The read-only `rev-parse` driver gets the same
-  `GIT_NO_LAZY_FETCH`, so neither driver fetches a missing object from a partial clone. One store
+  `GIT_NO_LAZY_FETCH`, so neither driver fetches a missing object from a partial clone. Only Git
+  2.44 or later honors that variable, so merge previews in a partial clone need Git 2.44 or later:
+  before a preview over captured commits looks up any input, it lists `extensions.partialclone` and
+  `remote.<name>.promisor` with `git config --name-only --get-regexp` and, if either is set, reads
+  `git --version` and refuses with a `ConfigurationError` on older (or unrecognized) Git. One store
   per run, not per merge, keeps a preview's commit resolvable by later rehearsal steps, such as an
   isolation with `base: { commit }` or a stacked merge; real commits still resolve through the
   alternate. The runner removes the directory when the execution ends, on every path, after its
@@ -221,8 +225,8 @@ computation, in a quarantined object store:
   arbitrary commands too. The preview reads `merge.renormalize` with `git config --type=bool --get`
   and, when it is true, lists the configured filters the same way and refuses with a
   `ConfigurationError` if there is any. It does not turn renormalization off, which would make the
-  preview diverge from the real merge. These configuration reads are the only commands besides
-  `rev-parse` the read-only driver runs.
+  preview diverge from the real merge. These configuration reads and the partial-clone check's
+  `git --version` are the only commands besides `rev-parse` the read-only driver runs.
 - The rehearsal keeps the tip each `branch` or `checkout` preview would leave, in memory, keyed by
   the ref the real merge moves (`refs/heads/<branch>`, or the checked-out branch's ref, or `HEAD`
   when detached, for `checkout`; a branch target naming the checked-out branch shares its key). A
