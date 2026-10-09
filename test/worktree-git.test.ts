@@ -240,6 +240,27 @@ it('runs a quarantined driver only for object computations, after the GIT_* scru
   expect(run).toHaveBeenCalledTimes(2);
 });
 
+it('never lazy-fetches through a read-only driver, whatever the caller sets', async () => {
+  vi.stubEnv('GIT_NO_LAZY_FETCH', '0');
+  const run = vi.fn<ProcessRunner['run']>(() =>
+    Promise.resolve({
+      code: 0,
+      signal: null,
+      stdout: 'ok\n',
+      stderr: '',
+      truncated: false,
+      durationMs: 0,
+    }),
+  );
+  await new WorktreeGit({ run }, true).run(directory, ['rev-parse', 'HEAD'], invocation, {
+    env: { GIT_NO_LAZY_FETCH: '0', GIT_AUTHOR_NAME: 'kept' },
+  });
+  expect(run.mock.calls[0]?.[0].env).toMatchObject({
+    GIT_NO_LAZY_FETCH: '1',
+    GIT_AUTHOR_NAME: 'kept',
+  });
+});
+
 it('quotes an alternate object directory Git would split or unquote', () => {
   expect(alternateEntry('/plain/objects', ':')).toBe('/plain/objects');
   expect(alternateEntry('/a:b/objects', ':')).toBe('"/a:b/objects"');

@@ -187,11 +187,12 @@ computation, in a quarantined object store:
   the path delimiter), `GIT_QUARANTINE_PATH` (so Git itself refuses any ref update) and
   `GIT_NO_LAZY_FETCH`, all applied after the driver's `GIT_*` scrub and the per-call environment.
   The quarantined driver runs only `rev-parse`, `merge-tree`, `commit-tree` and `var` and refuses
-  anything else before it reaches the runner. One store per run, not per merge, keeps a preview's
-  commit resolvable by later rehearsal steps, such as an isolation with `base: { commit }` or a
-  stacked merge; real commits still resolve through the alternate. The runner removes the directory
-  when the execution ends, on every path, after its operations drain. A killed process leaks it in
-  the temporary directory.
+  anything else before it reaches the runner. The read-only `rev-parse` driver gets the same
+  `GIT_NO_LAZY_FETCH`, so neither driver fetches a missing object from a partial clone. One store
+  per run, not per merge, keeps a preview's commit resolvable by later rehearsal steps, such as an
+  isolation with `base: { commit }` or a stacked merge; real commits still resolve through the
+  alternate. The runner removes the directory when the execution ends, on every path, after its
+  operations drain. A killed process leaks it in the temporary directory.
 - The real merge and the preview share the code, not just the idea: `computeIntegration` (virtual
   merge-base commits, `merge-tree`, conflict collection, the `onConflict: 'fail'` error, squash and
   the custom-message commit), `commitTree` and `resolveCommit`. Inputs are checked the same way

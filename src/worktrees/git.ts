@@ -55,32 +55,37 @@ export function alternateEntry(path: string, separator: string = delimiter): str
 
 /** Command protocol for local Git operations; the caller owns sequencing and checkpoint policy. @internal */
 export class WorktreeGit {
-  private readonly quarantine: Readonly<Record<string, string>> | undefined;
+  /** Fixed environment applied last, so neither the caller's nor the per-call environment overrides it. */
+  private readonly fixedEnv: Readonly<Record<string, string>> | undefined;
 
   /**
    * @param mode - `true` refuses every command except `rev-parse`, a `config --name-only
    * --get-regexp` listing and a `config --type=bool --get` read before it reaches the runner.
    * Dry-run rehearsal resolves bases (and checks for custom merge drivers and renormalizing
-   * filters) through this mode, so it can never create refs, worktrees or objects.
+   * filters) through this mode, so it can never create refs, worktrees or objects, and it never
+   * fetches a missing object from a partial clone's promisor remote (`GIT_NO_LAZY_FETCH`).
    * `{ quarantine }` runs only `rev-parse`, `merge-tree`, `commit-tree` and `var`, and points every
    * command at the quarantine's object directory, after the caller's `GIT_*` variables are removed
-   * and the per-call environment applied, so new objects land there and Git refuses ref updates.
+   * and the per-call environment applied, so new objects land there, Git refuses ref updates and
+   * nothing lazy-fetches.
    */
   public constructor(
     private readonly runner: ProcessRunner,
     private readonly mode: boolean | { readonly quarantine: GitQuarantine } = false,
   ) {
-    this.quarantine =
-      typeof mode === 'object'
-        ? {
-            GIT_OBJECT_DIRECTORY: mode.quarantine.objects,
-            GIT_ALTERNATE_OBJECT_DIRECTORIES: alternateEntry(mode.quarantine.alternate),
-            // Git refuses every ref update while this is set (its receive-pack quarantine).
-            GIT_QUARANTINE_PATH: mode.quarantine.objects,
-            // A partial clone must not fetch missing objects during a preview.
-            GIT_NO_LAZY_FETCH: '1',
-          }
-        : undefined;
+    this.fixedEnv =
+      mode === true
+        ? { GIT_NO_LAZY_FETCH: '1' }
+        : typeof mode === 'object'
+          ? {
+              GIT_OBJECT_DIRECTORY: mode.quarantine.objects,
+              GIT_ALTERNATE_OBJECT_DIRECTORIES: alternateEntry(mode.quarantine.alternate),
+              // Git refuses every ref update while this is set (its receive-pack quarantine).
+              GIT_QUARANTINE_PATH: mode.quarantine.objects,
+              // A partial clone must not fetch missing objects during a preview.
+              GIT_NO_LAZY_FETCH: '1',
+            }
+          : undefined;
   }
 
   public async run(
@@ -98,7 +103,7 @@ export class WorktreeGit {
       throw new Error(
         `Read-only Git refuses ${args[0] ?? 'an empty command'}; only rev-parse, config --name-only --get-regexp and config --type=bool --get run.`,
       );
-    if (this.quarantine && !quarantinedCommands.has(args[0] ?? ''))
+    if (typeof this.mode === 'object' && !quarantinedCommands.has(args[0] ?? ''))
       throw new Error(
         `Quarantined Git refuses ${args[0] ?? 'an empty command'}; only rev-parse, merge-tree, commit-tree and var run.`,
       );
@@ -128,7 +133,7 @@ export class WorktreeGit {
             ...args,
           ],
           cwd,
-          env: { ...env, ...options.env, LC_ALL: 'C', ...this.quarantine },
+          env: { ...env, ...options.env, LC_ALL: 'C', ...this.fixedEnv },
           inheritEnv: false,
           input: options.input ?? '',
           timeoutMs: options.timeoutMs ?? 120_000,

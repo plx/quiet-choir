@@ -153,8 +153,9 @@ Rehearsal never mutates the repository: `worktree-rehearsal.ts` synthesizes fres
 unchanged merges through a read-only `rev-parse` driver, and previews merges of captured commits
 with the real `computeIntegration` through a quarantined driver (a temporary object directory, the
 repository's objects as an alternate, no ref updates) that the runner removes after the run drains;
-`RunWorktrees` refuses every command under rehearsal. Only the accepted-replay probe synthesizes
-every worktree effect, with no process runner at all. See
+neither driver lazy-fetches missing objects from a partial clone's promisor remote; `RunWorktrees`
+refuses every command under rehearsal. Only the accepted-replay probe synthesizes every worktree
+effect, with no process runner at all. See
 [ADR 0022](../../../docs/decisions/0022-runtime-owned-worktree-isolation.md).
 
 Resolve restricted/inherit mode before agent identity and preserve it through checkout preparation.
