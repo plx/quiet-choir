@@ -419,7 +419,16 @@ attempt ([observability](observability.md)). Revision-13 records read and resume
 the `unknown` kind they recorded for such a refusal. A revision-13 build cannot parse a record whose
 root cause holds `configuration` (its kind enum rejects it), so every read of that record is the
 `run.incompatible` upgrade refusal described below; it refuses to rewrite any other revision-14
-record.
+record. Revision 15 (#317) changes only a nested shape: a step in `steps` may carry `innerCommands`,
+`{attempt, commands, omitted?}`, the commands its latest settled callback attempt (or a wait's
+terminal poll observation) ran through `context.exec`. Each entry holds the command, its `envSha256`
+and `inputSha256` digests (never environment values or stdin), whether it was structured or `live`,
+and either the raw process result (`code`, `signal`, `stdout`, `stderr`, `truncated`) or an
+`{kind, message}` error; the list keeps at most 256 commands and 1 MiB of stdout plus stderr, with
+the rest counted in `omitted`. Only `workflow fixtures` reads it ([rehearsal](rehearsal.md)); step
+identity, replay, resume and fork reuse ignore it. Revision-14 records read and resume unchanged. A
+revision-14 build reads a revision-15 record, but its parse strips `innerCommands`, so it refuses to
+rewrite it.
 
 **Refusals.** A build must not rewrite a record it cannot fully read: its parse strips unknown
 top-level fields, and the next compaction would write the record back without them. When a record

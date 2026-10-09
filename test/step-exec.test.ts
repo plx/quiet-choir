@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
@@ -30,6 +30,11 @@ import {
 } from '../src/index.js';
 import { FixtureProcessRunner } from '../src/harnesses/fixture-exec.js';
 import { RehearsalHarness } from '../src/workflow/loader/rehearsal.js';
+import { prepareExec } from '../src/workflow/runtime/exec.js';
+import {
+  MAX_INNER_COMMAND_BYTES,
+  MAX_INNER_COMMANDS,
+} from '../src/workflow/runtime/inner-commands.js';
 
 let cwd: string;
 let stateDir: string;
@@ -762,5 +767,318 @@ describe('poll observers', () => {
         outputSource: 'synthesized',
       }),
     ]);
+  });
+});
+
+describe('inner command records (#317)', () => {
+  /** A deferred answer, so a test can settle commands in any order. */
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((done) => {
+      resolve = done;
+    });
+    return { promise, resolve };
+  }
+
+  it('records commands in the order they reach the runner, whatever order they settle in', async () => {
+    const pending: { command: Command; answer: ReturnType<typeof deferred<ExecResult>> }[] = [];
+    const runner: ProcessRunner = {
+      run: (request) => {
+        const answer = deferred<ExecResult>();
+        pending.push({ command: request.command, answer });
+        // Settle in reverse arrival order once all three have arrived.
+        if (pending.length === 3)
+          for (const [index, entry] of [...pending].reverse().entries())
+            setTimeout(() => {
+              entry.answer.resolve(reply(JSON.stringify(`out-${String(index)}`)));
+            }, index * 5);
+        return answer.promise;
+      },
+    };
+    await runWorkflow(
+      definition((ctx) =>
+        ctx.step('parent', {
+          input: null,
+          schema: z.null(),
+          run: async (context) => {
+            await Promise.all([
+              context.exec(['gh', 'a']),
+              context.exec(['gh', 'b']),
+              context.exec.json(['gh', 'c'], { schema: z.string() }),
+            ]);
+            return null;
+          },
+        }),
+      ),
+      { ...setup(), processRunner: runner },
+    );
+    const inner = (await readRun({ stateDir, runId: 'test' })).steps['parent']?.innerCommands;
+    expect(inner?.attempt).toBe(1);
+    expect(inner?.commands.map((entry) => entry.command)).toEqual(
+      pending.map((entry) => entry.command),
+    );
+    expect(inner?.commands.map((entry) => entry.result?.stdout)).toEqual([
+      '"out-2"',
+      '"out-1"',
+      '"out-0"',
+    ]);
+    const structured = inner?.commands.find((entry) => entry.structured);
+    expect(structured?.command).toEqual(['gh', 'c']);
+    expect(inner).not.toHaveProperty('omitted');
+  });
+
+  it('keeps a contiguous prefix within the command and byte bounds and counts the rest', async () => {
+    const many = recorder(() => reply('x'));
+    await runWorkflow(
+      definition((ctx) =>
+        ctx.step('parent', {
+          input: null,
+          schema: z.null(),
+          run: async (context) => {
+            for (let index = 0; index <= MAX_INNER_COMMANDS; index++)
+              await context.exec(['gh', String(index)]);
+            return null;
+          },
+        }),
+      ),
+      { ...setup('many'), processRunner: many.runner },
+    );
+    const counted = (await readRun({ stateDir, runId: 'many' })).steps['parent']?.innerCommands;
+    expect(counted?.commands).toHaveLength(MAX_INNER_COMMANDS);
+    expect(counted?.commands.at(-1)?.command).toEqual(['gh', String(MAX_INNER_COMMANDS - 1)]);
+    expect(counted?.omitted).toBe(1);
+
+    // Three 400 KiB outputs pass 1 MiB at the third; a small fourth is still omitted.
+    const big = 'b'.repeat(400 * 1024);
+    const large = recorder((request) =>
+      reply((request.command as readonly string[])[1] === 'small' ? 's' : big),
+    );
+    await runWorkflow(
+      definition((ctx) =>
+        ctx.step('parent', {
+          input: null,
+          schema: z.null(),
+          run: async (context) => {
+            for (const name of ['one', 'two', 'three', 'small'])
+              await context.exec(['gh', name], { maxOutputBytes: 2 * MAX_INNER_COMMAND_BYTES });
+            return null;
+          },
+        }),
+      ),
+      { ...setup('large'), processRunner: large.runner },
+    );
+    const bounded = (await readRun({ stateDir, runId: 'large' })).steps['parent']?.innerCommands;
+    expect(bounded?.commands.map((entry) => entry.command)).toEqual([
+      ['gh', 'one'],
+      ['gh', 'two'],
+    ]);
+    expect(bounded?.omitted).toBe(2);
+  });
+
+  it('records a runner rejection as an error and drops the record on an attempt without commands', async () => {
+    let attempts = 0;
+    const runner: ProcessRunner = {
+      run: () => Promise.reject(Object.assign(new Error('spawn gh ENOENT'), { code: 'ENOENT' })),
+    };
+    const run = (runId: string, onSettled?: (attempt: number) => Promise<void> | void) =>
+      runWorkflow(
+        definition((ctx) =>
+          ctx.step('parent', {
+            input: null,
+            schema: z.null(),
+            retry: { maxAttempts: 2, delayMs: 1 },
+            run: async (context) => {
+              attempts++;
+              await onSettled?.(attempts);
+              if (attempts === 1) await context.exec(['gh', 'missing']);
+              return null;
+            },
+          }),
+        ),
+        { ...setup(runId), processRunner: runner },
+      );
+    // Attempt 1 fails on the missing command; attempt 2 runs none.
+    let saved: unknown;
+    await run('retry', async (attempt) => {
+      if (attempt === 2)
+        saved = (await readRun({ stateDir, runId: 'retry' })).steps['parent']?.innerCommands;
+    });
+    expect(saved).toEqual({
+      attempt: 1,
+      commands: [
+        expect.objectContaining({
+          command: ['gh', 'missing'],
+          error: { kind: 'process', message: 'spawn gh ENOENT' },
+        }),
+      ],
+    });
+    const step = (await readRun({ stateDir, runId: 'retry' })).steps['parent'];
+    expect(step?.status).toBe('completed');
+    expect(step).not.toHaveProperty('innerCommands');
+  });
+
+  it('stores only the environment and stdin digests', async () => {
+    const env = { SECRET_TOKEN: 'env-secret-value' };
+    const input = 'stdin-secret-value';
+    const runner = recorder(() => reply('done'));
+    await runWorkflow(
+      definition((ctx) =>
+        ctx.step('parent', {
+          input: null,
+          schema: z.string(),
+          run: async (context) => (await context.exec(['gh', 'auth'], { env, input })).stdout,
+        }),
+      ),
+      { ...setup(), processRunner: runner.runner },
+    );
+    expect(runner.seen[0]?.request.env).toEqual(env);
+    const directory = join(stateDir, 'test');
+    for (const name of await readdir(directory, { recursive: true })) {
+      const text = await readFile(join(directory, name), 'utf8').catch(() => '');
+      expect(text, name).not.toContain('env-secret-value');
+      expect(text, name).not.toContain('stdin-secret-value');
+    }
+    const { summary } = await prepareExec(['gh', 'auth'], { env, input }, cwd, false);
+    const [entry] =
+      (await readRun({ stateDir, runId: 'test' })).steps['parent']?.innerCommands?.commands ?? [];
+    expect(entry?.envSha256).toBe(summary.envSha256);
+    expect(entry?.inputSha256).toBe(summary.inputSha256);
+    expect(Object.keys(entry ?? {}).sort()).toEqual([
+      'command',
+      'envSha256',
+      'inputSha256',
+      'result',
+      'structured',
+    ]);
+  });
+
+  it('leaves the step fingerprint and identity alone', async () => {
+    let issue = true;
+    const workflow = definition((ctx) =>
+      ctx.step('parent', {
+        input: null,
+        schema: z.null(),
+        run: async (context) => {
+          // A closed-over value is not part of the identity, so both runs share one.
+          if (issue) await context.exec(['gh', 'status']);
+          return null;
+        },
+      }),
+    );
+    await runWorkflow(workflow, { ...setup('with'), processRunner: recorder().runner });
+    issue = false;
+    await runWorkflow(workflow, { ...setup('without'), processRunner: recorder().runner });
+    const withInner = (await readRun({ stateDir, runId: 'with' })).steps['parent'];
+    const without = (await readRun({ stateDir, runId: 'without' })).steps['parent'];
+    expect(withInner?.innerCommands?.commands).toHaveLength(1);
+    expect(without).not.toHaveProperty('innerCommands');
+    expect(withInner?.fingerprint).toBe(without?.fingerprint);
+    expect(withInner?.identity).toEqual(without?.identity);
+  });
+
+  it('reruns nothing when a completed run resumes, and replaces the record when an interrupted callback reruns', async () => {
+    const workflow = (command: Command, hang: boolean) =>
+      definition((ctx) =>
+        ctx.step('parent', {
+          input: null,
+          schema: z.null(),
+          run: async (context) => {
+            await context.exec(command);
+            if (hang)
+              await new Promise((_, reject) => {
+                context.signal.addEventListener('abort', () => {
+                  reject(context.signal.reason as Error);
+                });
+              });
+            return null;
+          },
+        }),
+      );
+    await runWorkflow(workflow(['gh', 'once'], false), {
+      ...setup('done'),
+      processRunner: recorder().runner,
+    });
+    const before = (await readRun({ stateDir, runId: 'done' })).steps['parent'];
+    const again = recorder();
+    const resumed = await runWorkflow(workflow(['gh', 'once'], false), {
+      ...setup('done'),
+      resume: true,
+      processRunner: again.runner,
+    });
+    expect(resumed.status).toBe('completed');
+    expect(again.seen).toEqual([]);
+    expect((await readRun({ stateDir, runId: 'done' })).steps['parent']).toEqual(before);
+
+    const controller = new AbortController();
+    const first = recorder();
+    const interrupted = runWorkflow(workflow(['gh', 'first'], true), {
+      ...setup('cut'),
+      processRunner: {
+        run: (request, invocation) => {
+          setTimeout(() => {
+            controller.abort(new Error('interrupted'));
+          }, 5);
+          return first.runner.run(request, invocation);
+        },
+      },
+      signal: controller.signal,
+    });
+    await expect(interrupted).rejects.toThrow();
+    expect(first.seen).toHaveLength(1);
+    const rerun = recorder();
+    const completed = await runWorkflow(workflow(['gh', 'second'], false), {
+      ...setup('cut'),
+      resume: true,
+      processRunner: rerun.runner,
+    });
+    expect(completed.status).toBe('completed');
+    expect(rerun.seen.map(({ request }) => request.command)).toEqual([['gh', 'second']]);
+    const inner = (await readRun({ stateDir, runId: 'cut' })).steps['parent']?.innerCommands;
+    expect(inner?.attempt).toBe(2);
+    expect(inner?.commands.map((entry) => entry.command)).toEqual([['gh', 'second']]);
+  });
+
+  it('keeps only a wait terminal observation, and nothing for a wait that ends by deadline', async () => {
+    let checks = 0;
+    const polled = await runWorkflow(
+      definition((ctx) =>
+        poll(ctx, 'ci', z.literal('green'), async (context) => {
+          checks++;
+          const out = await context.exec(['gh', 'check', String(checks)]);
+          return checks === 3 ? { done: true, value: out.stdout as 'green' } : { done: false };
+        }),
+      ),
+      {
+        ...setup('poll'),
+        processRunner: recorder(() => reply('green')).runner,
+        waitMode: 'block',
+      },
+    );
+    expect(polled.output).toMatchObject({ by: 'poll', value: 'green', checks: 3 });
+    const inner = (await readRun({ stateDir, runId: 'poll' })).steps['ci']?.innerCommands;
+    expect(inner).toEqual({
+      attempt: 1,
+      commands: [expect.objectContaining({ command: ['gh', 'check', '3'] })],
+    });
+
+    const expired = await runWorkflow(
+      definition((ctx) =>
+        ctx.poll('late', {
+          input: null,
+          schema: z.null(),
+          every: 1,
+          timeoutMs: 30,
+          observe: async (context) => {
+            await context.exec(['gh', 'never']);
+            return { done: false };
+          },
+        }),
+      ),
+      { ...setup('late'), processRunner: recorder().runner, waitMode: 'block' },
+    );
+    expect(expired.output).toMatchObject({ by: 'deadline' });
+    expect((await readRun({ stateDir, runId: 'late' })).steps['late']).not.toHaveProperty(
+      'innerCommands',
+    );
   });
 });

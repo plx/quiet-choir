@@ -74,12 +74,14 @@ Non-agent integrations are ordinary helper functions. A helper operation makes e
 `ctx.step`, `ctx.exec` or `ctx.wait` at workflow level. It inherits replay, idempotency and normal
 failure handling; nesting durable operations inside its callback remains invalid. The callback of
 that `ctx.step`, or the observer of that `ctx.wait`, may run commands through `context.exec` and
-`context.exec.json` (#150). Those commands are not durable effects: they write no checkpoint, rerun
+`context.exec.json` (#150). Those commands are not durable effects: they are never replayed, rerun
 whenever the parent reruns and share its idempotency key, but the run's process runner owns and
-reaps them and rehearsal synthesizes them, so a helper never needs a raw `child_process` spawn. This
-deliberately replaces the proposed `ctx.jev`, `ctx.github` and `ctx.linear` core properties.
-Separate packages can still provide convenient discoverable APIs. `quiet-choir/decision` is a
-transport-injected reference, not a JEV SDK implementation and not completion of #20–#22.
+reaps them and rehearsal synthesizes them, so a helper never needs a raw `child_process` spawn.
+(#317 later made the parent's record keep their argv and raw output for fixture export; they are
+still never replayed.) This deliberately replaces the proposed `ctx.jev`, `ctx.github` and
+`ctx.linear` core properties. Separate packages can still provide convenient discoverable APIs.
+`quiet-choir/decision` is a transport-injected reference, not a JEV SDK implementation and not
+completion of #20–#22.
 
 `StepDefinition.meta` and `ExecOptions.meta` supply JSON inspection labels outside identity. Local
 callbacks may replace their cumulative attempt usage through `reportUsage`; that evidence commits

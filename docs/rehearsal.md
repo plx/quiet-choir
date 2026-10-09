@@ -127,6 +127,38 @@ value legitimately changes per run. A run without commands exports exactly as be
 already carries the same step's prefix is exported without it, so export, replay and export again
 give the same file. It does not modify the source checkpoint.
 
+Commands a step callback or poll observer ran through `context.exec` (and each command-poll check)
+are exported too. The runtime records them on the parent's step record (`innerCommands`): for a
+step, the commands of its latest settled attempt, and for a wait, only those of the observation that
+completed it. Each rule's `step` is the parent's full ID, with the full argv as `argvPrefix`
+(omitted for a `{ shell }` command) and the recorded digests; environment values and stdin are never
+stored, only `envSha256` and `inputSha256`. The record does keep the raw stdout and stderr, up to 1
+MiB per attempt, even when an `exec.json` schema parsed only part of it, so output a command prints,
+including secrets, can be stored in the checkpoint and journal and exported into the fixture file;
+keep secrets out of command output. The rule carries the raw result the process runner gave
+(`stdout`, plus `stderr` and `code` when not empty or zero), so a replay sends it through the same
+`okExitCodes` and `exec.json` schema checks: successes, exit-code failures and schema failures,
+thrown, caught or returned with `onError: 'return'`, replay the same way. A rule gets `call` only
+when another recorded command of the same parent also meets its filters (the same argv prefix, or
+any command for a shell rule, with equal digests); it is then that command's position among them, so
+two identical `gh pr checks` get `call: 1` and `call: 2`, and a unique command stays free of `call`
+and robust to call counters that restart in a new process. No rule pins an attempt: a step retried
+after a failing inner command exports the final attempt, which replays on attempt 1. A poll exports
+only its terminal check, which a replay's first check then answers, so the wait completes on that
+check under `--dry-run`, under suspend mode and under `--wait-mode block` (its outcome's `checks`
+count is then 1). An observer whose terminal command depends on `previous` (its note or check count)
+can issue different argv on its first replayed check; such a command fails as unmatched, and the
+remedy is a hand-written rule. A wait that ended by deadline or signal, a failed wait and an ask
+export no inner rules. A command whose runner gave no result (a spawn failure, timeout or
+cancellation), or whose result had a signal, no exit code or truncated output, gets no rule.
+Recording is bounded per parent attempt to 256 commands and 1 MiB of stdout plus stderr: past either
+bound the record keeps a contiguous prefix and counts the rest as `omitted`, and export emits rules
+for the prefix only. Every rule from such an incomplete record carries `call`, unique or not, so an
+omitted command that meets a retained rule's filters fails as unmatched at its parent instead of
+reusing that rule's answer. A parent with any recorded inner command sets `"commands": "fixture"`,
+even when no rule came from it, so a replay that drifts or reaches an unexported command fails at
+its parent. Runs recorded before schema revision 15 have no inner command records.
+
 ## Command fixtures
 
 The same file can answer `ctx.exec` and `ctx.exec.json` with an optional `exec` array, so a workflow

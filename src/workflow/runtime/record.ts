@@ -13,7 +13,18 @@ import {
   type WorktreeLedger,
 } from './worktree-schema.js';
 import type { ExecSummary, ExecDiagnostics } from './exec-model.js';
-import { execSummarySchema, execDiagnosticsSchema } from './exec-schema.js';
+import { commandSchema, execSummarySchema, execDiagnosticsSchema } from './exec-schema.js';
+import {
+  MAX_INNER_COMMAND_MESSAGE,
+  MAX_INNER_COMMANDS,
+  type InnerCommands,
+} from './inner-commands.js';
+export type {
+  InnerCommand,
+  InnerCommandError,
+  InnerCommandResult,
+  InnerCommands,
+} from './inner-commands.js';
 import { z } from 'zod';
 import { questionRecordSchema, workflowLaunchSchema } from './question-schema.js';
 import { waitRecordSchema } from './wait-schema.js';
@@ -298,6 +309,15 @@ export interface StepRecord {
    * step identity.
    */
   mapItems?: StepMapItem[];
+  /**
+   * The commands a step's latest settled callback attempt ran through `context.exec`, or those of
+   * a wait's terminal poll observation, with their raw process results and only the digests of
+   * their environment and stdin. Bounded to 256 commands and 1 MiB of output per attempt; removed
+   * when an attempt ran none. `workflow fixtures` exports it as exec rules; it is never part of
+   * step identity and no replay, resume or fork reads it. Absent in checkpoints saved before
+   * schema revision 15.
+   */
+  innerCommands?: InnerCommands;
   /** Source checkpoint of a reused completed effect. */
   reusedFrom?: ReusedStep;
   /** Total started attempts across resumes. */
@@ -631,6 +651,39 @@ const stepKindSchema = z.enum([
   'worktree',
   'merge',
 ]);
+const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/u);
+const innerCommandsSchema = z.object({
+  attempt: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  commands: z
+    .array(
+      z
+        .object({
+          command: commandSchema,
+          envSha256: sha256Schema,
+          inputSha256: sha256Schema,
+          structured: z.boolean(),
+          live: z.literal(true).optional(),
+          result: z
+            .object({
+              code: z.number().int().nullable(),
+              signal: z.string().nullable(),
+              stdout: z.string(),
+              stderr: z.string(),
+              truncated: z.boolean(),
+            })
+            .optional(),
+          error: z
+            .object({ kind: errorKindSchema, message: z.string().max(MAX_INNER_COMMAND_MESSAGE) })
+            .optional(),
+        })
+        .refine(
+          (entry) => (entry.result === undefined) !== (entry.error === undefined),
+          'An inner command records exactly one of result and error.',
+        ),
+    )
+    .max(MAX_INNER_COMMANDS),
+  omitted: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+});
 const stepSchema = z
   .object({
     frame: z.string().nullable().optional(),
@@ -670,6 +723,7 @@ const stepSchema = z
         }),
       )
       .optional(),
+    innerCommands: innerCommandsSchema.optional(),
     reusedFrom: reusedStepSchema.optional(),
     fingerprint: z.string(),
     status: z.enum([
@@ -1293,9 +1347,10 @@ export function withProjectInstructions(
  * Revision 13 (#302) changed only a nested shape: the step field `mapItems` in `steps`.
  * Revision 14 (#311) changed only a nested shape: the error kind `configuration` in
  * `rootCause.errorKind` and step attempt `errorKind`.
+ * Revision 15 (#317) changed only a nested shape: the step field `innerCommands` in `steps`.
  * @internal
  */
-export const SUPPORTED_SCHEMA_REVISION = 14;
+export const SUPPORTED_SCHEMA_REVISION = 15;
 
 /**
  * Whether a run recorded any work: at least one step or settled map. A failed run without any gets

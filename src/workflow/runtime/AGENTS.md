@@ -137,10 +137,12 @@ transfer that ownership to the runtime. See
 
 Exec depends on ProcessRunner, never a native spawn import. It shares durable registration with
 agents but never their admission slots, grants, or usage. Keep command/cwd/env/input/exit contract
-in identity and limits/retry in policy. Plain capture is bounded head/tail; structured output must
-reject truncation. File receipts contain hashes, not write content; reads remain memoized snapshots.
-Conditional rename is optimistic, not protection from unrelated writers. Guard bodies have terminal
-journaled outcomes so an already replayed restore cannot be followed by a rerun mutation. See
+in identity and limits/retry in policy. A step's or wait's `innerCommands` (what `context.exec` ran)
+is export-only: it rides on existing saves and is never an identity, replay or reuse input. Plain
+capture is bounded head/tail; structured output must reject truncation. File receipts contain
+hashes, not write content; reads remain memoized snapshots. Conditional rename is optimistic, not
+protection from unrelated writers. Guard bodies have terminal journaled outcomes so an already
+replayed restore cannot be followed by a rerun mutation. See
 [ADR 0021](../../../docs/decisions/0021-durable-commands-and-files.md).
 
 Worktree isolation belongs above harness adapters and uses ProcessRunner for tracked Git commands.

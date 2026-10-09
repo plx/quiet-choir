@@ -2,6 +2,15 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `workflow fixtures` exports commands that step callbacks and poll observers run through
+  `context.exec` (#317). The runtime records them on the parent step (`innerCommands`, schema
+  revision 15: the raw result and only env and stdin digests, at most 256 commands and 1 MiB of
+  output per attempt), and export emits exec rules keyed by the parent ID, argv and digests, with
+  `call` only when the parent ran more than one matching command or the record omitted later ones. A
+  step exports its latest attempt and a poll its terminal check, so a `"commands": "fixture"` replay
+  of such a run completes without hand-written rules. The raw stdout and stderr of these commands
+  are now retained in the checkpoint and journal (up to 1 MiB per attempt), including output an
+  `exec.json` schema discards; the docs no longer say they save nothing.
 - Exec fixture rules gain a `call` filter (#318): the nth command of one parent, so identical
   `context.exec` commands in one step callback or poll observer, and the repeated check of a command
   poll, can get different answers. The count is per rule, per parent ID and attempt, in this

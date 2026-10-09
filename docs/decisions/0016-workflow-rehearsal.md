@@ -361,3 +361,56 @@ Exec rules gain an optional positive-integer `call`: the nth command of one pare
 
 The stale-rule warning names `call`. Agent rules, the rehearsal `commands` entries and
 `workflow fixtures` export are unchanged.
+
+## Amendment: exported inner commands (#317)
+
+Commands a step callback or poll observer ran through `context.exec` left no record, so
+`workflow fixtures` could not export them and a `"commands": "fixture"` replay of such a run needed
+hand-written rules. The runtime now records them on the parent's step record (`innerCommands`,
+schema revision 15) and export turns them into exec rules. Choices:
+
+- Record the raw process result (code, signal, stdout, stderr, truncated) the runner gave, not the
+  value the callback received. A replayed rule pushes it back through the same `okExitCodes` and
+  `exec.json` schema checks, so successes, exit-code failures and schema failures, whether thrown,
+  caught or returned with `onError: 'return'`, replay identically without separate failure-export
+  logic. A runner rejection (spawn failure, timeout, cancellation) is recorded as `{kind, message}`
+  and exports no rule, like a top-level one; a result with a signal, no exit code or truncated
+  output exports none either, since a rule can carry no signal and a truncated `exec.json` result
+  would replay as a schema error instead of `output-limit`.
+- Store only `envSha256` and `inputSha256`, the digests the rules filter on; environment values and
+  stdin are never stored.
+- A step's record is replaced when an attempt's callback settles (after its inner commands are
+  drained) and removed when the attempt ran none; a wait's only for the observation whose
+  `done: true` result completes the wait, right before the completion save (a discarded, abandoned,
+  timed-out, drained or closed observation never writes it, even when it resolves later). It rides
+  on the save that already records the attempt's outcome or the wait's completion: no new save
+  point, and no identity, fingerprint, replay, resume or fork-reuse input reads it, so checkpointing
+  and at-least-once behavior are unchanged.
+- Slots are reserved in the order commands reach the process runner, the order exec rules count
+  calls in.
+- Bound the record per parent attempt to 256 commands and 1 MiB of stdout plus stderr, keeping a
+  contiguous prefix and counting the rest as `omitted`; export emits rules for the prefix, each
+  pinned with `call` when the record is incomplete, so a replay fails at the first omitted command
+  rather than answering it wrongly, even when it repeats a retained command. Without a bound a
+  looping callback would grow a record that every save rewrites.
+- A poll exports only its terminal observation, and only when a poll completed the wait. Its first
+  replayed check then gets the terminal answers and completes, which also works under `--dry-run`
+  (one observation, #323), under suspend mode across processes (where call counters restart) and
+  under `--wait-mode block`, without real-time intervals. Intermediate checks have no durable effect
+  the body can see. An observer whose terminal argv depends on `previous` can issue a different
+  command on its first replayed check; it fails as unmatched and needs a hand-written rule.
+- A rule's `step` is the parent's ID with the full argv and the digests. `call` is added only when
+  another recorded command of the parent meets the same filters (the shared `filtersMatch`
+  predicate: argv prefix, a shell rule matching any command, equal digests), and is then 1 plus the
+  number of earlier ones. Since every rule counts every command (#318), each recorded command
+  matches exactly its own rule whatever the order; a unique rule stays robust to repeated checks and
+  to counters that restart in a new process. No rule pins an attempt: the final attempt's answers
+  replay on attempt 1, as with top-level exec and agent rules.
+- Inner rules sit at the parent's `seq` among top-level exec rules. A parent with any recorded inner
+  command (a step that completed, settled a failure or failed in a completed run, or a
+  poll-completed wait) sets `"commands": "fixture"`, even when none of its commands produced a rule.
+
+An observer's `live: true` command is recorded and exported like any other: under `--dry-run` it
+stays real and uncounted, so its rule shows as stale, but a non-dry fixture replay needs it. If it
+shared filters with another exported command of the same observation, the uncounted live command
+would shift that command's call number under `--dry-run`; this is unlikely and left as is.

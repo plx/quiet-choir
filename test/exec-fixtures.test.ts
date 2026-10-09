@@ -15,7 +15,9 @@ import {
   runWorkflow,
   z,
   type Command,
+  type ExecResult,
   type HarnessFixtures,
+  type ProcessRunner,
   type ProcessRunRequest,
   type WorkflowContext,
 } from '../src/index.js';
@@ -1136,6 +1138,477 @@ describe('fixture export of settled and absorbed exec failures', () => {
       stepId: 'missing',
       message: expect.stringContaining('No exec fixture matches step missing') as unknown,
     });
+  });
+});
+
+describe('fixture export of inner context.exec commands (#317)', () => {
+  const reply = (stdout: string, extra: Partial<ExecResult> = {}): ExecResult => ({
+    code: 0,
+    signal: null,
+    stdout,
+    stderr: '',
+    truncated: false,
+    durationMs: 1,
+    ...extra,
+  });
+  /** A source runner that answers each argv (joined by spaces) from a queue, then its last entry. */
+  function scripted(answers: Record<string, (ExecResult | Error)[]>): ProcessRunner {
+    const served = new Map<string, number>();
+    return {
+      run: (request) => {
+        const name = Array.isArray(request.command)
+          ? (request.command as readonly string[]).join(' ')
+          : (request.command as { shell: string }).shell;
+        const queue = answers[name];
+        if (!queue) return Promise.reject(new Error(`unexpected command ${name}`));
+        const index = served.get(name) ?? 0;
+        served.set(name, index + 1);
+        const answer = queue[Math.min(index, queue.length - 1)];
+        return answer instanceof Error || answer === undefined
+          ? Promise.reject(answer ?? new Error('no answer'))
+          : Promise.resolve(answer);
+      },
+    };
+  }
+  /** Run the source with fake processes and export it through the executor, as the CLI does. */
+  async function exportSource<T>(
+    workflow: ReturnType<typeof definition<T>>,
+    runner: ProcessRunner,
+    extra: { readonly waitMode?: 'block' } = {},
+  ) {
+    const source = await runWorkflow(workflow, {
+      ...options('source'),
+      harness: new FixtureHarness({ version: 1, calls: [] }),
+      processRunner: runner,
+      ...extra,
+    });
+    const exported = await new WorkflowExecutor({
+      typecheckCache,
+      logger: new ThresholdLogger('silent', () => undefined),
+    }).execute({ kind: 'workflow.fixtures', runId: 'source', stateDir });
+    if (exported.kind !== 'workflow.fixtures.result') throw new Error(JSON.stringify(exported));
+    expect(fixturesFromRun(source)).toEqual(exported.fixtures);
+    return { source, fixtures: exported.fixtures };
+  }
+  /**
+   * Replay under --dry-run (from the written file) and under fixture execution in suspend mode,
+   * with a fallback runner that fails if anything reaches it, then check the re-exports.
+   */
+  async function replays<T>(workflow: ReturnType<typeof definition<T>>, fixtures: HarnessFixtures) {
+    await writeFile(join(root, 'export.json'), JSON.stringify(fixtures));
+    const selection = await readHarnessSelection('fixture:export.json', undefined, root);
+    const harness = new RehearsalHarness(selection);
+    const dry = await runWorkflow(workflow, {
+      ...options('dry'),
+      harness,
+      rehearsal: harness.hooks,
+      processRunner: harness.processRunner,
+    });
+    const refuse = { run: () => Promise.reject(new Error('spawned a real command')) };
+    const fixture = await runWorkflow(workflow, {
+      ...options('fixture'),
+      harness: new FixtureHarness(fixtures),
+      processRunner: refuse,
+      execRunner: new FixtureProcessRunner(fixtures, refuse),
+    });
+    const report = harness.report(dry);
+    expect(report.staleExecFixtures).toEqual([]);
+    expect(JSON.stringify(fixturesFromRun(dry))).toBe(JSON.stringify(fixtures));
+    expect(JSON.stringify(fixturesFromRun(fixture))).toBe(JSON.stringify(fixtures));
+    return { dry, fixture, report };
+  }
+  const key = (step: string, argv?: string[]) => ({
+    step,
+    ...(argv ? { argvPrefix: argv } : {}),
+    envSha256: digest({}),
+    inputSha256: sha256(''),
+  });
+  const State = z.object({ state: z.string() });
+
+  it('exports a callback’s commands keyed by the parent, with call only on the repeated pair, and replays them (AC1, AC2)', async () => {
+    const workflow = definition(z.json(), (ctx) =>
+      ctx.step('gather', {
+        input: null,
+        schema: z.json(),
+        run: async (context) => {
+          const first = (await context.exec(['gh', 'pr', 'checks'])).stdout;
+          const second = (await context.exec(['gh', 'pr', 'checks'])).stdout;
+          const user = await context.exec(['gh', 'api', 'user'], { okExitCodes: 'any' });
+          const view = await context.exec.json(['gh', 'pr', 'view'], { schema: State });
+          return { first, second, user: `${String(user.code)}:${user.stderr}`, view };
+        },
+      }),
+    );
+    const { source, fixtures } = await exportSource(
+      workflow,
+      scripted({
+        'gh pr checks': [reply('pending'), reply('green')],
+        'gh api user': [reply('', { code: 2, stderr: 'warn' })],
+        'gh pr view': [reply('{"state":"OPEN"}')],
+      }),
+    );
+    expect(source.output).toEqual({
+      first: 'pending',
+      second: 'green',
+      user: '2:warn',
+      view: { state: 'OPEN' },
+    });
+    expect(fixtures.calls).toEqual([]);
+    expect(fixtures.commands).toBe('fixture');
+    expect(fixtures.exec).toEqual([
+      { ...key('gather', ['gh', 'pr', 'checks']), call: 1, stdout: 'pending' },
+      { ...key('gather', ['gh', 'pr', 'checks']), call: 2, stdout: 'green' },
+      { ...key('gather', ['gh', 'api', 'user']), stdout: '', stderr: 'warn', code: 2 },
+      { ...key('gather', ['gh', 'pr', 'view']), stdout: '{"state":"OPEN"}' },
+    ]);
+    const { dry, fixture, report } = await replays(workflow, fixtures);
+    expect(dry.output).toEqual(source.output);
+    expect(fixture.output).toEqual(source.output);
+    expect(report.commands.map((entry) => [entry.parentStepId, entry.fixtureIndex])).toEqual([
+      ['gather', 0],
+      ['gather', 1],
+      ['gather', 2],
+      ['gather', 3],
+    ]);
+  });
+
+  it('exports only the terminal check of an observer poll and a command poll, and replays them on the first check (AC1, AC2)', async () => {
+    const workflow = definition(z.json(), async (ctx) => {
+      const observed = await ctx.poll('ci', {
+        input: null,
+        schema: z.literal('success'),
+        every: 1,
+        timeoutMs: 60_000,
+        observe: async (context) => {
+          const checks = await context.exec.json(['gh', 'pr', 'checks'], { schema: State });
+          return checks.state === 'success'
+            ? { done: true, value: 'success' as const }
+            : { done: false };
+        },
+      });
+      const command = await ctx.poll('merged', {
+        input: null,
+        schema: z.literal('MERGED'),
+        every: 1,
+        timeoutMs: 60_000,
+        command: ['gh', 'pr', 'view', '--json', 'state'],
+        output: State,
+        done: (output) =>
+          output.state === 'MERGED' ? { done: true, value: 'MERGED' as const } : { done: false },
+      });
+      // The check counts differ in a replay, which completes on its first check.
+      return [
+        observed.by === 'poll' ? observed.value : null,
+        command.by === 'poll' ? command.value : null,
+      ];
+    });
+    const { source, fixtures } = await exportSource(
+      workflow,
+      scripted({
+        'gh pr checks': [
+          reply('{"state":"pending"}'),
+          reply('{"state":"pending"}'),
+          reply('{"state":"success"}'),
+        ],
+        'gh pr view --json state': [reply('{"state":"OPEN"}'), reply('{"state":"MERGED"}')],
+      }),
+      { waitMode: 'block' },
+    );
+    expect(source.output).toEqual(['success', 'MERGED']);
+    expect(source.steps['ci']?.output).toMatchObject({ by: 'poll', checks: 3 });
+    expect(source.steps['merged']?.output).toMatchObject({ by: 'poll', checks: 2 });
+    expect(fixtures.commands).toBe('fixture');
+    expect(fixtures.exec).toEqual([
+      { ...key('ci', ['gh', 'pr', 'checks']), stdout: '{"state":"success"}' },
+      { ...key('merged', ['gh', 'pr', 'view', '--json', 'state']), stdout: '{"state":"MERGED"}' },
+    ]);
+    const { dry, fixture } = await replays(workflow, fixtures);
+    expect(dry.output).toEqual(source.output);
+    expect(fixture.output).toEqual(source.output);
+    expect(fixture.steps['ci']?.output).toMatchObject({ by: 'poll', checks: 1 });
+  });
+
+  it('counts a shell rule’s calls over every command of the parent with its digests', async () => {
+    const workflow = definition(z.json(), (ctx) =>
+      ctx.step('shells', {
+        input: null,
+        schema: z.json(),
+        run: async (context) => [
+          (await context.exec({ shell: 'gh pr checks' })).stdout,
+          (await context.exec(['gh', 'x'])).stdout,
+          (await context.exec({ shell: 'gh pr checks' }, { env: { A: '1' } })).stdout,
+          (await context.exec({ shell: 'gh pr checks' })).stdout,
+        ],
+      }),
+    );
+    const { source, fixtures } = await exportSource(
+      workflow,
+      scripted({
+        'gh pr checks': [reply('one'), reply('env'), reply('two')],
+        'gh x': [reply('argv')],
+      }),
+    );
+    expect(source.output).toEqual(['one', 'argv', 'env', 'two']);
+    expect(fixtures.exec).toEqual([
+      // The argv command meets a shell rule's filters too, so the second shell command is call 3.
+      { ...key('shells'), call: 1, stdout: 'one' },
+      { ...key('shells', ['gh', 'x']), stdout: 'argv' },
+      { ...key('shells'), envSha256: digest({ A: '1' }), stdout: 'env' },
+      { ...key('shells'), call: 3, stdout: 'two' },
+    ]);
+    const { dry, fixture } = await replays(workflow, fixtures);
+    expect(dry.output).toEqual(source.output);
+    expect(fixture.output).toEqual(source.output);
+  });
+
+  it('exports a retried step’s final attempt without an attempt pin, and replays absorbed and returned inner failures (AC2)', async () => {
+    let attempts = 0;
+    const workflow = definition(z.json(), async (ctx) => {
+      const merged = await ctx.step('merge', {
+        input: null,
+        schema: z.string(),
+        retry: { maxAttempts: 2, delayMs: 1 },
+        run: async (context) => {
+          attempts++;
+          return (await context.exec(['gh', 'pr', 'merge'])).stdout;
+        },
+      });
+      const absorbed = await ctx
+        .step('rethrow', {
+          input: null,
+          schema: z.null(),
+          run: async (context) => {
+            await context.exec(['gh', 'fail']);
+            return null;
+          },
+        })
+        .then(
+          () => null,
+          (error: unknown) => {
+            let cause: unknown = error;
+            while (cause instanceof Error && !(cause instanceof ExecError)) cause = cause.cause;
+            return cause instanceof ExecError
+              ? { kind: cause.kind, message: cause.message, code: cause.diagnostics.code }
+              : String(error);
+          },
+        );
+      const returned = await ctx.step('settle', {
+        input: null,
+        schema: z.json(),
+        run: async (context) => {
+          const result = await context.exec.json(['gh', 'view'], {
+            schema: State,
+            onError: 'return',
+          });
+          return result.ok
+            ? null
+            : {
+                kind: result.error.kind,
+                message: result.error.message,
+                code: result.error.code ?? null,
+                parsed: result.error.parsed ?? null,
+              };
+        },
+      });
+      return { merged, absorbed, returned };
+    });
+    const { source, fixtures } = await exportSource(
+      workflow,
+      scripted({
+        'gh pr merge': [reply('', { code: 1, stderr: 'not yet' }), reply('merged')],
+        'gh fail': [reply('', { code: 3, stderr: 'boom' })],
+        'gh view': [reply('{"state":1}')],
+      }),
+    );
+    expect(attempts).toBe(2);
+    expect(source.status).toBe('completed');
+    expect(source.steps['merge']?.innerCommands?.attempt).toBe(2);
+    expect(source.steps['rethrow']?.status).toBe('failed');
+    expect(source.output).toMatchObject({
+      merged: 'merged',
+      absorbed: { kind: 'process', message: 'Command exited with 3.', code: 3 },
+      returned: { kind: 'schema', code: 0, parsed: { state: 1 } },
+    });
+    expect(fixtures.exec).toEqual([
+      { ...key('merge', ['gh', 'pr', 'merge']), stdout: 'merged' },
+      { ...key('rethrow', ['gh', 'fail']), stdout: '', stderr: 'boom', code: 3 },
+      { ...key('settle', ['gh', 'view']), stdout: '{"state":1}' },
+    ]);
+    attempts = 0;
+    const { dry, fixture } = await replays(workflow, fixtures);
+    expect(dry.output).toEqual(source.output);
+    expect(fixture.output).toEqual(source.output);
+    // Each replay's merge took one attempt: the final attempt's answer replays on attempt 1.
+    expect(attempts).toBe(2);
+    expect(fixture.steps['merge']?.attempts).toBe(1);
+  });
+
+  it('exports no rule for a spawn failure, a timeout or a truncated result, but keeps commands: fixture', async () => {
+    const workflow = definition(z.json(), (ctx) =>
+      ctx.step('probe', {
+        input: null,
+        schema: z.json(),
+        run: async (context) => {
+          const missing = await context.exec(['gh', 'missing'], { onError: 'return' });
+          const slow = await context.exec(['gh', 'slow'], { onError: 'return' });
+          const big = await context.exec(['gh', 'big']);
+          const fine = await context.exec(['gh', 'fine']);
+          return [
+            missing.ok ? 'ran' : missing.error.kind,
+            slow.ok ? 'ran' : slow.error.kind,
+            big.truncated,
+            fine.stdout,
+          ];
+        },
+      }),
+    );
+    const { source, fixtures } = await exportSource(
+      workflow,
+      scripted({
+        'gh missing': [Object.assign(new Error('spawn gh ENOENT'), { code: 'ENOENT' })],
+        'gh slow': [Object.assign(new Error('timed out'), { name: 'TimeoutError' })],
+        'gh big': [reply('head...tail', { truncated: true })],
+        'gh fine': [reply('ok')],
+      }),
+    );
+    expect(source.output).toEqual(['process', 'timeout', true, 'ok']);
+    expect(
+      source.steps['probe']?.innerCommands?.commands.map((entry) => entry.error?.kind),
+    ).toEqual(['process', 'timeout', undefined, undefined]);
+    expect(fixtures.commands).toBe('fixture');
+    expect(fixtures.exec).toEqual([{ ...key('probe', ['gh', 'fine']), stdout: 'ok' }]);
+    const refuse = { run: () => Promise.reject(new Error('spawned a real command')) };
+    await expect(
+      runWorkflow(workflow, {
+        ...options('fixture'),
+        harness: new FixtureHarness(fixtures),
+        processRunner: refuse,
+        execRunner: new FixtureProcessRunner(fixtures, refuse),
+      }),
+    ).rejects.toThrow('No exec fixture matches step probe: ["gh","missing"]');
+  });
+
+  it('exports only the recorded prefix past the command bound', async () => {
+    const workflow = definition(z.null(), (ctx) =>
+      ctx.step('loop', {
+        input: null,
+        schema: z.null(),
+        run: async (context) => {
+          for (let index = 0; index <= 256; index++) await context.exec(['gh', String(index)]);
+          return null;
+        },
+      }),
+    );
+    const runner: ProcessRunner = { run: () => Promise.resolve(reply('x')) };
+    const { source, fixtures } = await exportSource(workflow, runner);
+    expect(source.steps['loop']?.innerCommands?.omitted).toBe(1);
+    expect(fixtures.commands).toBe('fixture');
+    expect(fixtures.exec).toHaveLength(256);
+    // An incomplete record pins every rule with call, unique or not.
+    expect(fixtures.exec?.at(-1)).toEqual({ ...key('loop', ['gh', '255']), call: 1, stdout: 'x' });
+  });
+
+  it('pins a retained command with call when the byte bound omitted an identical later one, so the replay fails at the parent', async () => {
+    const workflow = definition(z.json(), (ctx) =>
+      ctx.step('diff', {
+        input: null,
+        schema: z.json(),
+        run: async (context) => [
+          (await context.exec(['gh', 'pr', 'diff'])).stdout.length,
+          (await context.exec(['gh', 'pr', 'diff'])).stdout.length,
+        ],
+      }),
+    );
+    const big = 'x'.repeat(1_048_577);
+    const { source, fixtures } = await exportSource(
+      workflow,
+      scripted({ 'gh pr diff': [reply('small'), reply(big)] }),
+    );
+    expect(source.output).toEqual([5, big.length]);
+    expect(source.steps['diff']?.innerCommands?.omitted).toBe(1);
+    expect(fixtures.commands).toBe('fixture');
+    expect(fixtures.exec).toEqual([
+      { ...key('diff', ['gh', 'pr', 'diff']), call: 1, stdout: 'small' },
+    ]);
+    const refuse = { run: () => Promise.reject(new Error('spawned a real command')) };
+    await expect(
+      runWorkflow(workflow, {
+        ...options('fixture'),
+        harness: new FixtureHarness(fixtures),
+        processRunner: refuse,
+        execRunner: new FixtureProcessRunner(fixtures, refuse),
+      }),
+    ).rejects.toThrow('No exec fixture matches step diff: ["gh","pr","diff"]');
+  });
+
+  it(
+    'keeps the commands of the observation that completed the wait, not those of a later-resolving abandoned one',
+    // measured: about 2.1 s alone (the fixed 2 s observer grace before the first is abandoned)
+    { timeout: 10_000 },
+    async () => {
+      let observations = 0;
+      let release!: () => void;
+      const released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const workflow = definition(z.json(), async (ctx) => {
+        const outcome = await ctx.wait('ci', {
+          deadline: Date.now() + 60_000,
+          // A signal source makes each check scan the inbox, so the abandoned observation settles
+          // between the accepted one's result and the wait's completion save.
+          signal: { prompt: 'Override?', schema: z.null() },
+          poll: {
+            input: null,
+            schema: z.string(),
+            every: 1,
+            observeTimeoutMs: 50,
+            onError: { tolerate: 1, retryAfterMs: () => 0 },
+            observe: async (context) => {
+              const own = ++observations;
+              const { stdout } = await context.exec(['gh', 'pr', 'checks']);
+              // The first ignores its aborted signal, so it is abandoned and the timeout tolerated;
+              // it resolves done only after the second check has returned its own result.
+              if (own === 1) await released;
+              else setImmediate(release);
+              return { done: true as const, value: stdout };
+            },
+          },
+        });
+        return outcome.by === 'poll' ? outcome.value : null;
+      });
+      const { source, fixtures } = await exportSource(
+        workflow,
+        scripted({ 'gh pr checks': [reply('stale'), reply('fresh')] }),
+        { waitMode: 'block' },
+      );
+      expect(source.output).toBe('fresh');
+      expect(source.steps['ci']?.output).toMatchObject({ by: 'poll', checks: 2 });
+      expect(fixtures.exec).toEqual([{ ...key('ci', ['gh', 'pr', 'checks']), stdout: 'fresh' }]);
+    },
+  );
+
+  it('exports nothing for a wait that ended by deadline, and no commands key without commands', async () => {
+    const workflow = definition(z.json(), async (ctx) => {
+      await ctx.step('quiet', { input: null, schema: z.null(), run: () => Promise.resolve(null) });
+      const late = await ctx.poll('late', {
+        input: null,
+        schema: z.null(),
+        every: 1,
+        timeoutMs: 30,
+        observe: async (context) => {
+          await context.exec(['gh', 'never']);
+          return { done: false };
+        },
+      });
+      return late.by;
+    });
+    const { source, fixtures } = await exportSource(
+      workflow,
+      scripted({ 'gh never': [reply('no')] }),
+      { waitMode: 'block' },
+    );
+    expect(source.output).toBe('deadline');
+    expect(fixtures).toEqual({ version: 1, unmatched: 'error', calls: [] });
   });
 });
 

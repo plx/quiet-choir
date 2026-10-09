@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type {
+  Command,
   ExecResult,
   ProcessRunRequest,
   ProcessRunner,
@@ -62,7 +63,7 @@ export class FixtureExecRules {
     const inputSha256 = createHash('sha256').update(request.input).digest('hex');
     let found: FixtureExecMatch | undefined;
     this.#rules.forEach((rule, index) => {
-      if (!filtersMatch(rule, request, invocation.stepId, envSha256, inputSha256)) return;
+      if (!filtersMatch(rule, request.command, invocation.stepId, envSha256, inputSha256)) return;
       const seen = this.#seen[index] ?? [];
       if (!seen.includes(invocation.stepId)) seen.push(invocation.stepId);
       const occurrence = seen.indexOf(invocation.stepId) + 1;
@@ -127,16 +128,21 @@ export class FixtureExecRules {
   }
 }
 
-function filtersMatch(
-  rule: FixtureExecCall,
-  request: ProcessRunRequest,
+/**
+ * Whether a command meets a rule's step, argv-prefix and digest filters, before its `attempt`,
+ * `occurrence` and `call` selectors: the test {@link FixtureExecRules} counts calls with. A rule
+ * without `argvPrefix` (such as a `{ shell }` command's) meets every command with its digests.
+ * Fixture export uses it to tell when an inner command's rule needs a `call`. @internal
+ */
+export function filtersMatch(
+  rule: Pick<FixtureExecCall, 'step' | 'argvPrefix' | 'envSha256' | 'inputSha256'>,
+  command: Command,
   stepId: string,
   envSha256: string,
   inputSha256: string,
 ): boolean {
   if (!matchesStepGlob(rule.step, stepId)) return false;
   if (rule.argvPrefix !== undefined) {
-    const command = request.command;
     if (!Array.isArray(command)) return false;
     const argv = command as readonly string[];
     if (argv.length < rule.argvPrefix.length) return false;

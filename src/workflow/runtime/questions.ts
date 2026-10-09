@@ -57,8 +57,19 @@ type Interruption =
 interface Inflight {
   readonly interrupt: (reason: Interruption) => void;
 }
+/**
+ * One poll observation's result, as the run's observe dependency returns it. `commit` keeps what
+ * the observation recorded for export (its inner commands) on the wait's record; RunQuestions calls
+ * it only for the observation whose `done: true` result completes the wait, right before the
+ * completion save, so a discarded, abandoned, timed-out, drained or closed observation never
+ * writes.
+ */
+export interface ObservedPoll {
+  readonly result: Awaited<PollObservation>;
+  readonly commit?: () => void;
+}
 type Observed =
-  | { readonly kind: 'settled'; readonly observation: Promise<unknown> }
+  | { readonly kind: 'settled'; readonly observation: Promise<ObservedPoll> }
   | { readonly kind: 'cancelled' }
   | { readonly kind: 'closed' }
   /** Aborted because a body failure started draining the run; nothing is recorded. */
@@ -144,7 +155,11 @@ interface QuestionDependencies {
   /** Record a nonfatal run warning, such as an abandoned poll observation. */
   readonly warn: (message: string) => void;
   /** Run one poll observation for the wait `id`; rehearsal may replace it with a stub. */
-  readonly observe?: (id: string, source: AnyPollSource, context: PollContext) => PollObservation;
+  readonly observe?: (
+    id: string,
+    source: AnyPollSource,
+    context: PollContext,
+  ) => Promise<ObservedPoll>;
   /** Whether an error is an authoring violation that must fail the run; never tolerated. */
   readonly isFatal?: (error: unknown) => boolean;
   /**
@@ -598,10 +613,11 @@ export class RunQuestions {
         return;
       }
       let result: Awaited<PollObservation>;
+      let commit: (() => void) | undefined;
       try {
         // An expiry fails like a thrown observer, so the same onError policy applies to it.
         if (observed.kind === 'observeTimeoutMs') throw this.#observeTimeout(id, poll);
-        result = (await observed.observation) as typeof result;
+        ({ result, commit } = await observed.observation);
       } catch (error) {
         await this.#tolerate(id, step, waiter, poll, progress, error);
         return;
@@ -628,6 +644,8 @@ export class RunQuestions {
         const value = jsonValue(poll.schema.parse(result.value), `Wait ${id} terminal result`, {
           canonical: false,
         });
+        // Only the accepted observation keeps its records; the completion save persists them.
+        commit?.();
         await this.#complete(id, step, waiter, { by: 'poll', value, at, checks: progress.checks });
         return;
       }
@@ -802,8 +820,10 @@ export class RunQuestions {
       exec: unavailableExec(id),
       previous,
     };
-    const observation = (async () =>
-      this.#deps.observe ? this.#deps.observe(id, poll, context) : observePoll(poll, context))();
+    const observation = (async (): Promise<ObservedPoll> =>
+      this.#deps.observe
+        ? this.#deps.observe(id, poll, context)
+        : { result: await observePoll(poll, context) })();
     void observation.catch(() => undefined);
     const settled = observation.then(
       () => 'settled' as const,
