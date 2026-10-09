@@ -999,11 +999,12 @@ loop of it: `for`, `while`, `do`, an array callback (`map`, `forEach`, `reduce`,
 two `ctx.scope('s', ...)` blocks share `s/`. The workflow function, a named-map mapper, a child
 workflow and a non-literal prefix (`ctx.within(ctx.id('item', item))`) each start a separate
 namespace. A view keeps its own path, except inside a scope or named map launched through it, where
-it uses that callback's path. A literal `ctx.scope('x', ...)` or `ctx.within('x')` created inside a
-loop is reported at the prefix when a literal-ID effect runs under it. Reuse in different branches
-of one `if`/`else`, `?:` or `switch`, or in an `if` branch that ends in `return`/`throw` versus code
-after it, is not reported. Use `ctx.id(...)` for the ID or the prefix, or a named map. Views stored
-in `let`/`var`, destructured or passed to a helper are not checked.
+it uses that callback's path; root calls in a view's `phase` body use the view's path. A literal
+`ctx.scope('x', ...)` or `ctx.within('x')` created inside a loop is reported at the prefix when a
+literal-ID effect runs under it. Reuse in different branches of one `if`/`else`, `?:` or `switch`,
+or in an `if` branch that ends in `return`/`throw` versus code after it, is not reported. Use
+`ctx.id(...)` for the ID or the prefix, or a named map. Views stored in `let`/`var`, destructured or
+passed to a helper are not checked.
 
 #### Suppress a finding
 

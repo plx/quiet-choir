@@ -68,6 +68,14 @@ export default defineWorkflow({
     // Clean: a view's calls inside another view's scope keep that view's fixed path.
     const outside = ctx.within('outside');
     await ctx.scope('unrelated', async () => outside.step('once', text));
+    // Clean: root calls in a view's phase body use the view's path, also for a per-item view.
+    const staged = ctx.within('staged');
+    await staged.phase('stage', async () => ctx.step('once', text));
+    await ctx.step('once', text);
+    for (const item of input.items) {
+      const each = ctx.within(ctx.id('each', item));
+      await each.phase('stage', async () => ctx.step('fixed', text));
+    }
     return 'done';
   },
 });

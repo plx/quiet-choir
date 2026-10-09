@@ -779,6 +779,8 @@ class DurabilityLinter {
       if (index >= 0) {
         if (index === 1 && this.#contextMember(parent, 'scope'))
           return this.#enterScope(parent, state);
+        if (index === 1 && this.#contextMember(parent, 'phase'))
+          return this.#enterPhase(parent, state);
         if (this.#contextMember(parent, 'map'))
           return index === 3 ? this.#enterMapItem(parent, state) : state;
         if (this.#quietChoir(parent)) return state;
@@ -806,6 +808,20 @@ class DurabilityLinter {
     return {
       ...state,
       ambient: receiver ? this.#derive(receiver.space, call, state) : fresh(state.loopDepth),
+      active: receiver ? activate(state.active, receiver.chain) : state.active,
+    };
+  }
+
+  /**
+   * A phase body runs under its receiver's frame, as every bound-view callback does: root calls in
+   * `a.phase(title, body)` use a's path, and a's own calls stay there. An unresolved receiver gives
+   * a fresh tree.
+   */
+  #enterPhase(call: ts.CallExpression, state: State): State {
+    const receiver = this.#calleeReceiver(call, state);
+    return {
+      ...state,
+      ambient: receiver ? receiver.space : fresh(state.loopDepth),
       active: receiver ? activate(state.active, receiver.chain) : state.active,
     };
   }

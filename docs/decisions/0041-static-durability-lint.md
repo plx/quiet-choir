@@ -186,7 +186,9 @@ time with `Duplicate step ID`. The lint now names namespaces the way the runtime
   `NameScopes.bound`: its own calls use the path it was created with, except inside a scope or
   named-map callback launched through that view or a view derived from it, where they use the
   ambient (callback) path, as the descendant prefixes of `panel.map('people', ...)` do. Root
-  receivers always use the ambient path.
+  receivers always use the ambient path. A `phase(title, body)` body also runs under its receiver's
+  frame, so root calls in `a.phase(...)` use `a/`; an unresolved phase or scope receiver starts a
+  fresh tree.
 - **Loops.** Loop depth grows lexically: loop bodies, standard-library iteration callbacks and
   named-map item callbacks each add one. An effect is in a loop of its namespace when it is deeper
   than the depth its space was entered at. A `const` view created before a loop and used inside it,
