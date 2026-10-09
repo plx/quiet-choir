@@ -224,32 +224,33 @@ describe('recordEventLines derivation', () => {
   });
 
   it('carries toolUses per attempt and warnings only for the latest completed attempt', () => {
+    const agentCall = { request: { harness: 'claude' } };
     const warning = 'no-tool-use: Profile readonly expects tool use, but it ran none.';
     const run = record({
       steps: {
         retried: step(
           [
-            attempt(1, 'failed', 10, { diagnostics: { toolUses: 3 } }),
-            attempt(2, 'completed', 20, { diagnostics: { toolUses: 0 } }),
+            attempt(1, 'failed', 10, { ...agentCall, diagnostics: { toolUses: 3 } }),
+            attempt(2, 'completed', 20, { ...agentCall, diagnostics: { toolUses: 0 } }),
           ],
           { kind: 'claude', warnings: [warning] },
         ),
         twice: step(
           [
-            attempt(1, 'completed', 30, { diagnostics: { toolUses: 2 } }),
-            attempt(2, 'completed', 40, { diagnostics: { toolUses: 0 } }),
+            attempt(1, 'completed', 30, { ...agentCall, diagnostics: { toolUses: 2 } }),
+            attempt(2, 'completed', 40, { ...agentCall, diagnostics: { toolUses: 0 } }),
           ],
           { kind: 'codex', warnings: ['Other', warning] },
         ),
-        settled: step([attempt(1, 'failed', 50, { diagnostics: { toolUses: 7 } })], {
+        settled: step([attempt(1, 'failed', 50, { ...agentCall, diagnostics: { toolUses: 7 } })], {
           kind: 'claude',
           status: 'settled-failed',
           warnings: [warning],
         }),
         unknown: step(
           [
-            attempt(1, 'completed', 60, { diagnostics: { toolUses: null } }),
-            attempt(2, 'failed', 61, { diagnostics: { toolUses: -1 } }),
+            attempt(1, 'completed', 60, { ...agentCall, diagnostics: { toolUses: null } }),
+            attempt(2, 'failed', 61, { ...agentCall, diagnostics: { toolUses: -1 } }),
             attempt(3, 'completed', 62),
           ],
           { kind: 'claude', warnings: [] },
@@ -287,6 +288,28 @@ describe('recordEventLines derivation', () => {
     // Neither field appears on non-agent warnings or history-less steps.
     expect(pick('local')).toEqual([{ ev: 'step.completed' }]);
     expect(pick('waited')).toEqual([{ ev: 'step.completed' }]);
+  });
+
+  it('reads toolUses from the recorded request of each attempt, not the current step kind', () => {
+    const run = record({
+      steps: {
+        redefined: step(
+          [
+            attempt(1, 'failed', 10, {
+              request: { harness: 'claude' },
+              diagnostics: { toolUses: 3 },
+            }),
+            attempt(2, 'completed', 20, { diagnostics: { toolUses: 5 } }),
+          ],
+          { kind: 'local' },
+        ),
+      },
+    });
+    const lines = parse(read(run).lines).filter((line) => line.step === 'redefined');
+    expect(lines.map(({ ev, toolUses }) => ({ ev, toolUses }))).toEqual([
+      { ev: 'step.failed', toolUses: 3 },
+      { ev: 'step.completed', toolUses: undefined },
+    ]);
   });
 
   it('skips fork-reused steps and derives history-less settlements from the step', () => {

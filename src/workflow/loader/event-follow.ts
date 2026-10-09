@@ -167,8 +167,10 @@ function stepCandidates(record: RunRecord, id: string, step: StepRecord): Candid
   const result: Candidate[] = [];
   const history: readonly AttemptRecord[] = step.attemptHistory ?? [];
   const toolUsesOf = (attempt: AttemptRecord): { toolUses?: number } => {
-    // Only agent attempts report a count; live, only agent.finished supplies one.
-    const value = harness === undefined ? undefined : attempt.diagnostics?.['toolUses'];
+    // Only agent attempts report a count; live, only agent.finished supplies one. The attempt's own
+    // request says it was an agent call, so a step later redefined as another kind keeps its count.
+    const value =
+      attempt.request?.harness === undefined ? undefined : attempt.diagnostics?.['toolUses'];
     return validToolUses(value) ? { toolUses: value } : {};
   };
   history.forEach((attempt, index) => {
@@ -274,7 +276,8 @@ function stepCandidates(record: RunRecord, id: string, step: StepRecord): Candid
  * effect carries the root cause's kind in the latest execution, or the kind of that step's last
  * failed attempt in an earlier execution, and no kind when the record has neither; and every
  * question that notified (`wait.opened`). Completed and failed attempts also carry the attempt's
- * recorded `diagnostics.toolUses`, and a `step.completed` line carries the step's warnings as its
+ * recorded `diagnostics.toolUses` when its own recorded request names a harness, whatever kind the
+ * step has now, and a `step.completed` line carries the step's warnings as its
  * `msg` only for the step's latest attempt, because the record keeps warnings per step, not per
  * attempt. Fork-reused steps and cancelled or
  * interrupted attempts write nothing, and fields the record cannot supply are omitted. Lines are
