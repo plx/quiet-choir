@@ -109,7 +109,7 @@ export abstract class WorkflowCommand extends BaseCommand {
     const exit = workflowExitCodes[failure.code];
     const human = [failure.message, ...formatNextCommands(failure.next)].join('\n');
     // Checked before --json: stdout already carries other output, which a document would corrupt.
-    if (cause instanceof WorkflowCommandError && cause.humanExitOnly) {
+    if (cause instanceof WorkflowCommandError && cause.stdoutClaimed) {
       this.logToStderr(human);
       this.exit(exit);
     }
@@ -119,6 +119,10 @@ export abstract class WorkflowCommand extends BaseCommand {
         workflowErrorDocument(failure, { compact: this.compactRunDocuments() }),
         failure.message,
       );
+      this.exit(exit);
+    }
+    if (cause instanceof WorkflowCommandError && cause.humanExitOnly) {
+      this.logToStderr(human);
       this.exit(exit);
     }
     this.error(human, { code: failure.code, exit });
@@ -193,12 +197,16 @@ export abstract class WorkflowCommand extends BaseCommand {
     return this.failResult(workflowFailure(code, message, { ...this.failureContext, details }));
   }
 
-  /**
-   * Fail with `failure`. With `humanExitOnly`, the message and next commands go to stderr even under
-   * `--json`, for a command whose stdout already carries other output. @internal
-   */
   protected failResult(failure: WorkflowFailure, humanExitOnly = false): never {
     throw new WorkflowCommandError(failure, humanExitOnly);
+  }
+
+  /**
+   * Fail with `failure` after the command already wrote other output to stdout: the message and next
+   * commands go to stderr even under `--json`, whose document would corrupt that output. @internal
+   */
+  protected failAfterStdout(failure: WorkflowFailure): never {
+    throw new WorkflowCommandError(failure, true, true);
   }
 
   protected runContext(runId: string, stateDir?: string): string {

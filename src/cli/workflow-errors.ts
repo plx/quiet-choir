@@ -47,6 +47,8 @@ export class WorkflowCommandError extends Error {
   public constructor(
     public readonly failure: WorkflowFailure,
     public readonly humanExitOnly = false,
+    /** Stdout already carries other output, so even `--json` reports this failure on stderr. */
+    public readonly stdoutClaimed = false,
   ) {
     super(failure.message);
     this.name = 'WorkflowCommandError';

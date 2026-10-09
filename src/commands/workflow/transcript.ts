@@ -52,7 +52,7 @@ export default class WorkflowTranscript extends WorkflowCommand {
     // A reader that went away (such as `| head`) stops the decode instead of reading on for nobody.
     const closed = new AbortController();
     // Once transcript bytes are on stdout, a failure document there would corrupt them.
-    let wroteOutput = false;
+    const output = { written: false };
     const executor = new WorkflowExecutor({
       logger: this.createExecutionLogger(flags),
       commandLauncher: this.commandLauncher,
@@ -61,7 +61,7 @@ export default class WorkflowTranscript extends WorkflowCommand {
         if (closed.signal.aborted) return;
         try {
           await this.writeStdout(chunk);
-          if (chunk.length > 0) wroteOutput = true;
+          if (chunk.length > 0) output.written = true;
         } catch (error) {
           closed.abort(error);
         }
@@ -78,7 +78,10 @@ export default class WorkflowTranscript extends WorkflowCommand {
     // A reader that went away is a success. Exit through ExitError so the launcher drains and exits
     // instead of waiting on oclif's flush() for a stdout that will never drain.
     if (closed.signal.aborted && !this.signal.aborted) this.exit(0);
-    if (!result.ok) this.failResult(result, wroteOutput);
+    if (!result.ok) {
+      if (output.written) this.failAfterStdout(result);
+      this.failResult(result);
+    }
     if (result.kind !== 'workflow.transcript.result') return;
     if (result.truncated)
       this.logToStderr(
