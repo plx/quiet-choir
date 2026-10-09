@@ -246,7 +246,8 @@ export class WorktreeRehearsal {
    * one recovers it instead. An empty `--version` answer (a synthesizing runner) skips the version
    * check, and a failure to run it is left to the placeholder path that a missing Git already
    * takes. The status read is refused instead in a partial clone or with an initialized submodule
-   * on Git older than 2.44 (see {@link refuseLazyFetch}). Memoized once it passes, so concurrent effects share one check.
+   * on Git older than 2.44 (see {@link refuseLazyFetch}). Memoized once it passes, so concurrent
+   * effects share one check.
    */
   private initialize(repo: string, invocation: HarnessInvocation): Promise<void> {
     const git = this.readOnly;
