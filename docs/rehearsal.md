@@ -183,6 +183,8 @@ use `--harness fixture:FILE` with `--wait-mode block`:
 
 ```json
 {
+  "version": 1,
+  "calls": [],
   "exec": [
     {
       "step": "ci",
