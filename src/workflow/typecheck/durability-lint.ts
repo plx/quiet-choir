@@ -275,7 +275,11 @@ interface Space {
 /** A resolved receiver: its space and the within views whose callbacks make it ambient. */
 interface Receiver {
   readonly space: Space;
-  /** The `const` within views this receiver derives from, outermost first. */
+  /**
+   * The `const` within views bound in the frame its calls run under, ending with the view that owns
+   * that frame; empty for a root receiver. An inline `X.within(...)` carries X's chain, since its
+   * fresh runtime token matches no view.
+   */
   readonly chain: readonly ts.Symbol[];
 }
 
@@ -309,8 +313,9 @@ interface State {
   /** WorkflowContext parameters visible here: the root receivers of QC005. */
   readonly roots: ReadonlySet<ts.Symbol>;
   /**
-   * Within views whose scope or named-map callbacks enclose this node: their own calls use the
-   * ambient path here, as the runtime's bound context does.
+   * Within views bound to the runtime frame here: their own calls use the ambient path, as the
+   * runtime's bound context does. A callback entered through a view that is not bound here switches
+   * to that view's frame and replaces them.
    */
   readonly active: ReadonlySet<ts.Symbol>;
   /** The visit of the function that established the current roots. */
@@ -800,15 +805,15 @@ class DurabilityLinter {
   }
 
   /**
-   * A scope callback runs under its receiver's space extended by the prefix, and makes the
-   * receiver's within views ambient. An unresolved receiver gives a fresh tree.
+   * A scope callback runs under its receiver's space extended by the prefix, and under its
+   * receiver's frame (see {@link enterFrame}). An unresolved receiver gives a fresh tree.
    */
   #enterScope(call: ts.CallExpression, state: State): State {
     const receiver = this.#calleeReceiver(call, state);
     return {
       ...state,
       ambient: receiver ? this.#derive(receiver.space, call, state) : fresh(state.loopDepth),
-      active: receiver ? activate(state.active, receiver.chain) : state.active,
+      active: receiver ? enterFrame(state.active, receiver.chain) : state.active,
     };
   }
 
@@ -822,14 +827,14 @@ class DurabilityLinter {
     return {
       ...state,
       ambient: receiver ? receiver.space : fresh(state.loopDepth),
-      active: receiver ? activate(state.active, receiver.chain) : state.active,
+      active: receiver ? enterFrame(state.active, receiver.chain) : state.active,
     };
   }
 
   /**
    * A named-map item callback repeats per item under an item prefix: a fresh tree one loop level
-   * deeper, so a fixed-path view used in it is inside a loop. It makes the map receiver's within
-   * views ambient.
+   * deeper, so a fixed-path view used in it is inside a loop. It runs under the map receiver's frame
+   * (see {@link enterFrame}).
    */
   #enterMapItem(call: ts.CallExpression, state: State): State {
     const receiver = this.#calleeReceiver(call, state);
@@ -838,7 +843,7 @@ class DurabilityLinter {
       ...state,
       loopDepth,
       ambient: fresh(loopDepth),
-      active: receiver ? activate(state.active, receiver.chain) : state.active,
+      active: receiver ? enterFrame(state.active, receiver.chain) : state.active,
     };
   }
 
@@ -905,7 +910,9 @@ class DurabilityLinter {
 
   /**
    * Register `const name = <within call>` as a view. Only the first visit outside a zone counts,
-   * because zone walks revisit bodies; `let`, `var`, destructuring and parameters stay unknown.
+   * because zone walks revisit bodies; `let`, `var`, destructuring and parameters stay unknown. Its
+   * chain is the frame the within call runs under plus itself, as `NameScopes.bind` appends a token
+   * to the current bindings.
    */
   #registerView(declaration: ts.VariableDeclaration, state: State): void {
     if (
@@ -925,7 +932,7 @@ class DurabilityLinter {
     if (resolved)
       this.#views.set(symbol, {
         space: resolved.space,
-        chain: [...resolved.chain, symbol],
+        chain: [...enterFrame(state.active, resolved.chain), symbol],
         entry: state.entry,
       });
   }
@@ -1238,12 +1245,18 @@ function looped(state: State): State {
   return { ...state, loopDepth: state.loopDepth + 1 };
 }
 
-/** The active views plus a receiver's chain. */
-function activate(
+/**
+ * The views bound after a call through a receiver with this chain, following `NameScopes.bound`: a
+ * root receiver, or a view already bound here, keeps the current frame; any other view switches to
+ * its own frame, whose bindings are exactly its chain. An inline `X.within(...)` mints a fresh token
+ * that no view names, so X's chain gives the same result.
+ */
+function enterFrame(
   active: ReadonlySet<ts.Symbol>,
   chain: readonly ts.Symbol[],
 ): ReadonlySet<ts.Symbol> {
-  return chain.length === 0 ? active : new Set([...active, ...chain]);
+  const view = chain.at(-1);
+  return view === undefined || active.has(view) ? active : new Set(chain);
 }
 
 function hasBody(info: CallInfo): boolean {

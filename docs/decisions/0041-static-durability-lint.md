@@ -183,12 +183,15 @@ time with `Duplicate step ID`. The lint now names namespaces the way the runtime
 - **Receivers.** An effect's receiver resolves to a namespace when it is a root context parameter,
   an inline `X.within('a')` call on a resolved receiver, or a `const` initialized directly from a
   `within` call in the same visit of the same workflow function. A bound view follows the runtime's
-  `NameScopes.bound`: its own calls use the path it was created with, except inside a scope or
-  named-map callback launched through that view or a view derived from it, where they use the
-  ambient (callback) path, as the descendant prefixes of `panel.map('people', ...)` do. Root
-  receivers always use the ambient path. A `phase(title, body)` body also runs under its receiver's
-  frame, so root calls in `a.phase(...)` use `a/`; an unresolved phase or scope receiver starts a
-  fresh tree.
+  `NameScopes.bound`: its own calls use the path it was created with, except while it is bound in
+  the current frame, where they use the ambient (callback) path, as the descendant prefixes of
+  `panel.map('people', ...)` do. A scope, named-map or phase callback launched through a view that
+  is already bound, or through a root receiver, keeps the current frame. One launched through any
+  other view switches to that view's frame, whose bindings are the view plus those of the frame its
+  `within` call ran under, so an unrelated outer view's calls inside it return to its fixed path.
+  Root receivers always use the ambient path. A `phase(title, body)` body also runs under its
+  receiver's frame, so root calls in `a.phase(...)` use `a/`; an unresolved phase or scope receiver
+  starts a fresh tree.
 - **Loops.** Loop depth grows lexically: loop bodies, standard-library iteration callbacks and
   named-map item callbacks each add one. An effect is in a loop of its namespace when it is deeper
   than the depth its space was entered at. A `const` view created before a loop and used inside it,

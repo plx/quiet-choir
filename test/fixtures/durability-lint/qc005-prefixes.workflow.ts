@@ -76,6 +76,32 @@ export default defineWorkflow({
       const each = ctx.within(ctx.id('each', item));
       await each.phase('stage', async () => ctx.step('fixed', text));
     }
+    // Clean: a callback entered through an unrelated view switches to that view's frame, so the
+    // outer view's own calls return to its fixed path.
+    const ra = ctx.within('ra');
+    const rb = ctx.within('rb');
+    await ra.scope('s', async () =>
+      rb.scope('t', async () => {
+        await ra.step('x', text);
+        await rb.step('x', text);
+      }),
+    );
+    const pa = ctx.within('pa');
+    const pb = ctx.within('pb');
+    await pa.phase('p', async () =>
+      pb.phase('q', async () => {
+        await pa.step('x', text);
+        await pb.step('x', text);
+      }),
+    );
+    // Clean: a view created inside another view's scope binds both, so the outer view's calls in
+    // its callbacks keep the ambient path.
+    const r = ctx.within('r');
+    await r.step('y', text);
+    await r.scope('s', async () => {
+      const inner = ctx.within('in');
+      await inner.scope('u', async () => r.step('y', text));
+    });
     return 'done';
   },
 });
