@@ -1,13 +1,28 @@
 /**
- * Dry-run synthesis of worktree isolation and integration (ADR 0016, #148).
+ * Dry-run synthesis of worktree isolation and integration (ADR 0016, #148, #310).
  *
- * A rehearsal never creates refs, worktrees, objects or cache directories. The only Git it runs is
- * `rev-parse`, through a read-only {@link WorktreeGit} that refuses every other command before it
- * reaches the process runner, to resolve the repository and the base commit a real run would pin.
- * A fresh isolated agent call is planned in an absolute placeholder directory that is never created
- * and returns an unchanged change; a merge whose inputs are all unchanged changes returns the real
- * no-op integration (`commit` is the target's current commit). Everything else that touches Git
- * stays refused by the replay decision.
+ * A rehearsal never creates refs, worktrees or cache directories, and writes no object into the
+ * repository. It resolves the repository and the base commit a real run would pin with `rev-parse`,
+ * through a read-only {@link WorktreeGit} that refuses every other command before it reaches the
+ * process runner. A fresh isolated agent call is planned in an absolute placeholder directory that
+ * is never created and returns an unchanged change; a merge whose inputs are all unchanged changes
+ * returns the real no-op integration (`commit` is the target's current commit).
+ *
+ * A merge over captured commits (a completed isolated step replayed by a dry-run resume or reused
+ * by a dry-run fork, or a replayed `ctx.worktree` handle from the copied ledger) is previewed with
+ * the real integration code (`computeIntegration`). The first such merge creates one temporary
+ * object directory for the rest of the rehearsal; from then on every rehearsal Git command runs
+ * through a quarantined {@link WorktreeGit} that writes objects only there, reads the repository's
+ * objects as an alternate, runs only `rev-parse`, `merge-tree`, `commit-tree` and `var`, and makes
+ * Git itself refuse ref updates. {@link WorktreeRehearsal.dispose} removes the directory when the
+ * run ends, so a preview's commit exists only during the rehearsal. A configured custom merge
+ * driver, or a configured clean, smudge or process filter while `merge.renormalize` is set, refuses
+ * the preview before any `merge-tree`, since Git would run it outside the quarantine. So does a
+ * partial clone on Git older than 2.44, which ignores `GIT_NO_LAZY_FETCH` and could fetch missing
+ * objects from the promisor remote into the repository. Previews into
+ * a `branch` or `checkout` target leave an in-memory tip that later previews and fresh isolation
+ * bases start from, as they would after the real merge moved the target. Everything else that
+ * touches Git (`ctx.worktree`, isolation on a handle) stays refused by the replay decision.
  *
  * The accepted-replay preflight's probe (#217) constructs this class with `synthesizeAll` and no
  * process runner, so it never resolves a repository and issues no Git command at all. It also
@@ -18,7 +33,8 @@
  * values, so low-fidelity placeholders (the forty-zero commit, uncreated paths) suffice; they can
  * still steer the copy onto a branch the real run would not take (ADR 0006's path-parity caveat).
  */
-import { realpath } from 'node:fs/promises';
+import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { WorktreeGit, commitId } from '../../worktrees/git.js';
 import { CheckpointError } from './checkpoint.js';
@@ -26,6 +42,7 @@ import { ConfigurationError } from './configuration-error.js';
 import type { ProcessRunner } from './exec-model.js';
 import { digest } from './json.js';
 import type { HarnessInvocation, StepContext } from './model.js';
+import { commitTree, computeIntegration, resolveCommit } from './worktree-merge.js';
 import type { AttemptRecord, RunRecord, StepRecord } from './record.js';
 import type { RunOptions } from './runner.js';
 import type {
@@ -40,7 +57,9 @@ import type { ResolvedWorktree, WorktreeStep } from './worktree-schema.js';
 import { resolveWorktree } from './worktree-schema.js';
 import {
   defaultWorktreeRoot,
+  handleChange,
   isolatedCwdOutsideMessage,
+  ownedHandle,
   rootInsideCheckoutMessage,
   unresolvedBaseMessage,
   within,
@@ -60,16 +79,71 @@ export function canSynthesizeIsolation(isolation: ResolvedWorktree): boolean {
   return !('id' in isolation);
 }
 
-/** Whether a dry-run synthesizes this merge: every input is an unchanged change. @internal */
-export function canSynthesizeMerge(inputs: readonly (WorktreeChange | WorktreeHandle)[]): boolean {
-  return inputs.every((input) => !('id' in input) && input.commit === null);
+/** The refusal of a merge preview over captured commits without a repository. @internal */
+export const previewNeedsRepositoryMessage =
+  'Dry-run needs the Git repository to preview a merge of captured commits or a worktree handle; the workflow cwd is not in a Git working tree, or no process runner resolved it.';
+
+/**
+ * The refusal of a merge preview while custom merge drivers are configured: `merge-tree` would run
+ * them, and a driver is an arbitrary command that can write outside the quarantine. @internal
+ */
+export function customMergeDriversMessage(names: readonly string[]): string {
+  return `Dry-run cannot preview a merge of captured commits while custom merge drivers are configured (${names.join(', ')}): Git would run them, and they can write outside the preview's quarantine.`;
+}
+
+/**
+ * The refusal of a merge preview while `merge.renormalize` is set and clean, smudge or process
+ * filters are configured: `merge-tree` would run them on every renormalized blob, and a filter is
+ * an arbitrary command that can write outside the quarantine. @internal
+ */
+export function customMergeFiltersMessage(names: readonly string[]): string {
+  return `Dry-run cannot preview a merge of captured commits while merge.renormalize is set and filters are configured (${names.join(', ')}): Git would run them, and they can write outside the preview's quarantine.`;
+}
+
+/**
+ * The refusal of a merge preview in a partial clone on Git older than 2.44: it ignores
+ * `GIT_NO_LAZY_FETCH`, so a missing object would be fetched from the promisor remote into the
+ * repository. @internal
+ */
+export function partialCloneGitMessage(version: string): string {
+  return `Dry-run cannot preview a merge of captured commits in a partial clone with ${version}: merge previews in a partial clone need Git 2.44 or later, the first to honor GIT_NO_LAZY_FETCH, so the preview cannot fetch missing objects from the promisor remote into the repository.`;
+}
+
+/** Whether `git --version` output names Git 2.44 or later, the first to honor `GIT_NO_LAZY_FETCH`. */
+function honorsNoLazyFetch(version: string): boolean {
+  const match = /^git version (\d+)\.(\d+)/u.exec(version);
+  if (!match) return false;
+  const major = Number(match[1]);
+  return major > 2 || (major === 2 && Number(match[2]) >= 44);
 }
 
 /** Read-only base resolution and synthesis for one rehearsal run. @internal */
 export class WorktreeRehearsal {
-  private readonly git: WorktreeGit | undefined;
+  /** The read-only driver, replaced by the quarantined one once a merge preview creates it. */
+  private git: WorktreeGit | undefined;
   private repository: Promise<string | null> | undefined;
   private readonly revisions = new Map<string, Promise<string | null>>();
+  /** The run's quarantined driver, created by the first merge preview that needs one. */
+  private quarantine: Promise<WorktreeGit> | undefined;
+  /** The run's partial-clone check (see {@link refuseLazyFetch}), memoized once it passes. */
+  private lazyFetch: Promise<void> | undefined;
+  /** The quarantine's temporary object directory, removed by {@link dispose}. */
+  private objects: string | undefined;
+  private disposed = false;
+  private readonly runner: ProcessRunner | undefined;
+  /**
+   * The last previewed commit of each `branch` or `checkout` target, by target ref
+   * (`refs/heads/<branch>`, or `HEAD` for a detached checkout), so later previews into the same
+   * target build on it as the real merges would. In memory only: no ref is ever written.
+   */
+  private readonly tips = new Map<string, string>();
+  /** The checked-out branch's ref, or `HEAD` when detached; resolved once per run. */
+  private checkout: Promise<string> | undefined;
+  /**
+   * The tail of the run's merge previews, which run one at a time in call order, as real merges do
+   * under the run's integration lock, so concurrent previews into one target chain like them.
+   */
+  private integration: Promise<void> = Promise.resolve();
 
   /**
    * @param synthesizeAll - Set only for the accepted-replay probe: also synthesize `ctx.worktree`,
@@ -88,6 +162,7 @@ export class WorktreeRehearsal {
     private readonly runSignal?: AbortSignal,
     private readonly synthesizeAll = false,
   ) {
+    this.runner = runner;
     this.git = runner === undefined ? undefined : new WorktreeGit(runner, true);
   }
 
@@ -144,13 +219,86 @@ export class WorktreeRehearsal {
     return resolved;
   }
 
+  /**
+   * The ref a `checkout` target moves: the checked-out branch's full ref, or `HEAD` when it is
+   * detached (or unborn, when no merge can run anyway). Memoized per run.
+   */
+  private checkoutRef(repo: string, invocation: HarnessInvocation): Promise<string> {
+    const git = this.git;
+    if (!git) return Promise.resolve('HEAD');
+    const shared = { ...invocation, signal: this.runSignal ?? invocation.signal };
+    this.checkout ??= (async () => {
+      const result = await git.run(repo, ['rev-parse', '--symbolic-full-name', 'HEAD'], shared, {
+        codes: [0, 128],
+      });
+      const ref = result.stdout.trim();
+      return result.code === 0 && ref.startsWith('refs/heads/') ? ref : 'HEAD';
+    })().catch((error: unknown) => {
+      this.checkout = undefined;
+      throw error;
+    });
+    return this.checkout;
+  }
+
+  /** The commit at `ref`: the last preview into it in this rehearsal, otherwise the repository's. */
+  private async tip(
+    repo: string,
+    ref: string,
+    invocation: HarnessInvocation,
+  ): Promise<string | null> {
+    return this.tips.get(ref) ?? this.revision(repo, ref, invocation);
+  }
+
+  /** The commit HEAD's branch is at, counting earlier `checkout` previews of this rehearsal. */
+  private async headTip(repo: string, invocation: HarnessInvocation): Promise<string | null> {
+    const previewed =
+      this.tips.size === 0 ? undefined : this.tips.get(await this.checkoutRef(repo, invocation));
+    return previewed ?? this.revision(repo, 'HEAD', invocation);
+  }
+
+  /**
+   * The commit a named base resolves to, counting earlier `branch` and `checkout` previews of this
+   * rehearsal: a name for a previewed branch (one only a preview created included), or for a
+   * detached `HEAD`, resolves to the previewed tip, as it would after the real merges moved or
+   * created it. Anything else resolves in the repository.
+   */
+  private async named(
+    repo: string,
+    revision: string,
+    invocation: HarnessInvocation,
+  ): Promise<string | null> {
+    const git = this.git;
+    if (!git || this.tips.size === 0) return this.revision(repo, revision, invocation);
+    const shared = { ...invocation, signal: this.runSignal ?? invocation.signal };
+    const result = await git.run(
+      repo,
+      ['rev-parse', '--verify', '--quiet', '--symbolic-full-name', '--end-of-options', revision],
+      shared,
+      { codes: [0, 1, 128] },
+    );
+    // A branch only a preview created does not resolve in the repository; its name still does.
+    const ref =
+      result.code === 0
+        ? result.stdout.trim()
+        : revision.startsWith('refs/')
+          ? revision
+          : `refs/heads/${revision}`;
+    if (ref === 'HEAD') return this.headTip(repo, invocation);
+    return this.tips.get(ref) ?? this.revision(repo, revision, invocation);
+  }
+
+  /** A fresh isolation's base, from the rehearsal's view of the repository (see {@link named}). */
   private async base(
     repo: string,
     base: WorktreeBase | undefined,
     invocation: HarnessInvocation,
   ): Promise<string> {
-    const revision = base === undefined ? 'HEAD' : typeof base === 'string' ? base : base.commit;
-    const commit = await this.revision(repo, revision, invocation);
+    const commit =
+      base === undefined
+        ? await this.headTip(repo, invocation)
+        : typeof base === 'string'
+          ? await this.named(repo, base, invocation)
+          : await this.revision(repo, base.commit, invocation);
     if (commit === null) throw new ConfigurationError(unresolvedBaseMessage(base));
     return commit;
   }
@@ -298,66 +446,245 @@ export class WorktreeRehearsal {
   }
 
   /**
-   * The real integration result of unchanged inputs: nothing merged, no conflicts, and the target's
-   * current commit (an existing branch target, otherwise HEAD). Under `synthesizeAll`, any inputs
-   * merge cleanly onto the placeholder commit: every captured commit is reported merged, in order,
-   * and a handle contributes nothing, since its latest commit is unknown without Git.
+   * Refuse a merge preview in a partial clone (`extensions.partialClone` or a `remote.<name>.promisor`
+   * is configured) when Git is older than 2.44: older Git ignores `GIT_NO_LAZY_FETCH`, so a missing
+   * object would be fetched from the promisor remote into the repository. Both reads go through the
+   * read-only driver before the preview runs any other command; `--version` runs only in a partial
+   * clone. Memoized per run once it passes.
+   */
+  private refuseLazyFetch(repo: string, invocation: HarnessInvocation): Promise<void> {
+    const git = this.git;
+    if (!git) return Promise.resolve();
+    const shared = { ...invocation, signal: this.runSignal ?? invocation.signal };
+    this.lazyFetch ??= (async () => {
+      const promisors = await git.run(
+        repo,
+        [
+          'config',
+          '--name-only',
+          '--get-regexp',
+          '^(extensions\\.partialclone|remote\\..*\\.promisor)$',
+        ],
+        shared,
+        { codes: [0, 1] },
+      );
+      if (promisors.code !== 0 || promisors.stdout.trim() === '') return;
+      const version = await git.text(repo, ['--version'], shared);
+      if (!honorsNoLazyFetch(version))
+        throw new ConfigurationError(partialCloneGitMessage(version || 'an unknown Git version'));
+    })().catch((error: unknown) => {
+      this.lazyFetch = undefined;
+      throw error;
+    });
+    return this.lazyFetch;
+  }
+
+  /**
+   * The run's quarantined driver: a fresh `0700` temporary object directory with the repository's
+   * object directory (read through the read-only driver first) as its alternate. Created once and
+   * shared by every later rehearsal Git command, so a preview's commit stays resolvable by later
+   * steps of the same rehearsal.
+   */
+  private quarantined(repo: string, invocation: HarnessInvocation): Promise<WorktreeGit> {
+    const { git, runner } = this;
+    if (!git || !runner) throw new Error('Dry-run merge preview requires a process runner.');
+    if (this.disposed) throw new Error('Dry-run merge preview ran after the rehearsal ended.');
+    const shared = { ...invocation, signal: this.runSignal ?? invocation.signal };
+    this.quarantine ??= (async () => {
+      // Read-only and before any merge-tree: Git would run a configured driver during the preview.
+      const drivers = await git.run(
+        repo,
+        ['config', '--name-only', '--get-regexp', '^merge\\..*\\.driver$'],
+        shared,
+        { codes: [0, 1] },
+      );
+      const names = drivers.stdout.split('\n').filter((name) => name !== '');
+      if (drivers.code === 0 && names.length)
+        throw new ConfigurationError(customMergeDriversMessage(names));
+      // With merge.renormalize, merge-tree runs clean and smudge filters, which are commands too.
+      const renormalize = await git.run(
+        repo,
+        ['config', '--type=bool', '--get', 'merge.renormalize'],
+        shared,
+        { codes: [0, 1] },
+      );
+      if (renormalize.code === 0 && renormalize.stdout.trim() === 'true') {
+        const filters = await git.run(
+          repo,
+          ['config', '--name-only', '--get-regexp', '^filter\\..*\\.(clean|smudge|process)$'],
+          shared,
+          { codes: [0, 1] },
+        );
+        const commands = filters.stdout.split('\n').filter((name) => name !== '');
+        if (filters.code === 0 && commands.length)
+          throw new ConfigurationError(customMergeFiltersMessage(commands));
+      }
+      const alternate = await git.text(
+        repo,
+        ['rev-parse', '--path-format=absolute', '--git-path', 'objects'],
+        shared,
+      );
+      if (!isAbsolute(alternate))
+        throw new Error('Git did not report an absolute object directory.');
+      const objects = await mkdtemp(join(tmpdir(), 'quiet-choir-rehearsal-objects-'));
+      this.objects = objects;
+      const quarantined = new WorktreeGit(runner, { quarantine: { objects, alternate } });
+      this.git = quarantined;
+      return quarantined;
+    })().catch((error: unknown) => {
+      this.quarantine = undefined;
+      throw error;
+    });
+    return this.quarantine;
+  }
+
+  /**
+   * Remove the quarantine's temporary object directory, if a merge preview created one. Called once
+   * the run has drained; idempotent, and a removal failure is ignored (the directory is under the
+   * system temporary directory).
+   */
+  public async dispose(): Promise<void> {
+    this.disposed = true;
+    await this.quarantine?.catch(() => undefined);
+    const objects = this.objects;
+    this.objects = undefined;
+    if (objects !== undefined)
+      await rm(objects, { recursive: true, force: true }).catch(() => undefined);
+  }
+
+  /**
+   * The integration a real merge would compute. Unchanged inputs return the no-op result: nothing
+   * merged, no conflicts, and the target's current commit (an existing branch target, otherwise
+   * HEAD). A `branch` or `checkout` target's current commit is the last preview into it in this
+   * rehearsal, if any, and a resolved preview into one (a no-op included, which creates a missing
+   * branch) becomes its tip for later previews and fresh isolation bases, as the real merge would
+   * move it; a `ref` target moves nothing, so it reads but never sets a tip. Previews run one at a
+   * time in call order, as real merges do under the run's integration lock. Captured commits and
+   * handles (resolved from the copied ledger as a real merge does) are previewed with the real
+   * integration in the run's quarantine, dated `date` (the attempt's start, as in a real run), so
+   * `merged` and `conflicts` match a real merge while the commit is discarded after the rehearsal.
+   * Nothing is pinned, recorded in `step.merge` or published, and no repository lock is taken.
+   * Under `synthesizeAll`, any inputs merge cleanly onto the placeholder commit: every captured
+   * commit is reported merged, in order, and a handle contributes nothing, since its latest commit
+   * is unknown without Git.
    */
   public async merge(
     id: string,
     inputs: readonly (WorktreeChange | WorktreeHandle)[],
     options: MergeOptions,
     context: Omit<StepContext, 'exec'>,
+    date: string,
   ): Promise<{ result: MergeResult; event: RehearsalWorktreeEvent }> {
     const target = options.target ?? 'ref';
     const kind = typeof target === 'object' ? 'branch' : target;
-    if (this.synthesizeAll) {
-      const merged = inputs.flatMap((input) =>
-        'id' in input || input.commit === null ? [] : [input.commit],
-      );
-      return {
-        result: { commit: placeholderCommit, merged, conflicts: [] },
-        event: {
-          kind: 'merge',
-          stepId: id,
-          attempt: context.attempt,
-          commit: placeholderCommit,
-          inputs: inputs.length,
-          target: kind,
-          baseSource: 'placeholder',
-        },
-      };
-    }
-    if (!canSynthesizeMerge(inputs))
-      throw new Error('Dry-run synthesizes only merges of unchanged changes.');
-    const changes = inputs.flatMap((input) => ('id' in input ? [] : [input]));
-    const invocation = this.invocation(id, context);
-    const repo = await this.repo(invocation);
-    let commit = placeholderCommit;
-    if (repo !== null) {
-      const branch =
-        typeof target === 'object'
-          ? await this.revision(repo, `refs/heads/${target.branch}`, invocation)
-          : null;
-      const head = branch ?? (await this.revision(repo, 'HEAD', invocation));
-      if (head === null)
-        throw new Error('Merge requires a committed HEAD or existing target branch.');
-      for (const input of changes)
-        if ((await this.revision(repo, input.base, invocation)) !== input.base)
-          throw new Error('Merge input commit is unavailable in this repository.');
-      commit = head;
-    }
-    return {
-      result: { commit, merged: [], conflicts: [] },
+    const event = (
+      result: MergeResult,
+      baseSource: 'resolved' | 'placeholder',
+    ): { result: MergeResult; event: RehearsalWorktreeEvent } => ({
+      result,
       event: {
         kind: 'merge',
         stepId: id,
         attempt: context.attempt,
-        commit,
+        commit: result.commit,
         inputs: inputs.length,
         target: kind,
-        baseSource: repo === null ? 'placeholder' : 'resolved',
+        baseSource,
+        merged: [...result.merged],
+        conflicts: result.conflicts.map((conflict) => ({
+          commit: conflict.commit,
+          files: [...conflict.files],
+        })),
       },
-    };
+    });
+    if (this.synthesizeAll) {
+      const merged = inputs.flatMap((input) =>
+        'id' in input || input.commit === null ? [] : [input.commit],
+      );
+      return event({ commit: placeholderCommit, merged, conflicts: [] }, 'placeholder');
+    }
+    const previous = this.integration;
+    let done = (): void => undefined;
+    this.integration = new Promise<void>((resolve) => {
+      done = resolve;
+    });
+    try {
+      await previous;
+      return event(...(await this.preview(id, inputs, options, context, date, target)));
+    } finally {
+      done();
+    }
+  }
+
+  /** {@link merge} without `synthesizeAll`, run in its turn: the result and its base source. */
+  private async preview(
+    id: string,
+    inputs: readonly (WorktreeChange | WorktreeHandle)[],
+    options: MergeOptions,
+    context: Omit<StepContext, 'exec'>,
+    date: string,
+    target: NonNullable<MergeOptions['target']>,
+  ): Promise<[MergeResult, 'resolved' | 'placeholder']> {
+    // The same ownership check and mapping as a real merge; a dry-run never creates a handle, so
+    // the copied ledger holds exactly what a real resume would merge.
+    const changes = inputs.map((input) =>
+      'id' in input ? handleChange(ownedHandle(input, this.record.worktrees)) : input,
+    );
+    const invocation = this.invocation(id, context);
+    const repo = await this.repo(invocation);
+    if (repo === null) {
+      if (inputs.some((input) => 'id' in input || input.commit !== null))
+        throw new ConfigurationError(previewNeedsRepositoryMessage);
+      return [{ commit: placeholderCommit, merged: [], conflicts: [] }, 'placeholder'];
+    }
+    // Before the preview resolves anything: older Git could lazy-fetch a captured commit.
+    if (changes.some((change) => change.commit !== null))
+      await this.refuseLazyFetch(repo, invocation);
+    // The ref a real merge would move. A checkout target and a branch target naming the checked-out
+    // branch share one key, so each sees the other's previews.
+    const moved =
+      typeof target === 'object'
+        ? `refs/heads/${target.branch}`
+        : target === 'checkout'
+          ? await this.checkoutRef(repo, invocation)
+          : null;
+    const head =
+      (moved === null ? null : await this.tip(repo, moved, invocation)) ??
+      (await this.headTip(repo, invocation));
+    if (head === null)
+      throw new Error('Merge requires a committed HEAD or existing target branch.');
+    for (const change of changes)
+      if (
+        (await this.revision(repo, change.base, invocation)) !== change.base ||
+        (change.commit !== null &&
+          (await this.revision(repo, change.commit, invocation)) !== change.commit)
+      )
+        throw new Error('Merge input commit is unavailable in this repository.');
+    if (changes.every((change) => change.commit === null)) {
+      // The real no-op merge still creates a missing target branch at its base.
+      if (moved !== null) this.tips.set(moved, head);
+      return [{ commit: head, merged: [], conflicts: [] }, 'resolved'];
+    }
+    const git = await this.quarantined(repo, invocation);
+    const custom = options.commit
+      ? await resolveCommit(git, repo, options.commit, invocation)
+      : undefined;
+    const result = await computeIntegration(
+      {
+        git,
+        repo,
+        commit: (tree, parents, message, commitDate, identity) =>
+          commitTree(git, repo, tree, parents, message, commitDate, invocation, identity),
+      },
+      id,
+      head,
+      changes,
+      options,
+      date,
+      custom,
+      invocation,
+    );
+    if (moved !== null) this.tips.set(moved, result.commit);
+    return [result, 'resolved'];
   }
 }

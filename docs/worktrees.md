@@ -16,12 +16,19 @@ cache root that is never created, runs no `worktrees.setup`, and returns an unch
 outside the repository fails with the same configuration error as a real run. Outside a Git working
 tree a placeholder of forty zeros stands in, with a warning that the real run would fail.
 `ctx.merge` over unchanged changes returns the real no-op result
-`{ commit, merged: [], conflicts: [] }`, where `commit` is the existing target branch or `HEAD`. The
-rehearsal report marks these calls with `worktree.synthesized` and lists the merges under `merges`;
-no refs, worktrees or cache directories are created. `ctx.worktree`, effects isolated on a handle,
-and merges of captured commits still fail with a configuration error before Git or agent invocation.
-Rehearse them with a fixture harness in a temporary repository; Git, commands, and local callbacks
-remain real, while agent responses incur no model calls.
+`{ commit, merged: [], conflicts: [] }`, where `commit` is the existing target branch or `HEAD`. A
+dry-run resume or fork that reaches `ctx.merge` with captured commits (a replayed or reused isolated
+step) or a replayed `ctx.worktree` handle previews the merge with the real integration code, so
+`merged` and `conflicts` (and an `onConflict: 'fail'` error) match a real merge. Its objects go to a
+temporary object directory, with the repository's objects as a read-only alternate, that is removed
+when the rehearsal ends, so the preview `commit` (dated at the rehearsal attempt's start) resolves
+only during the rehearsal and differs from a later real run's. A preview needs the repository:
+outside a Git working tree it fails with a configuration error. The rehearsal report marks
+synthesized calls with `worktree.synthesized` and lists the merges under `merges`, with `merged` and
+`conflicts`; no refs, worktrees, cache directories or repository objects are created. `ctx.worktree`
+and effects isolated on a handle still fail with a configuration error before Git or agent
+invocation. Rehearse them with a fixture harness in a temporary repository; Git, commands, and local
+callbacks remain real, while agent responses incur no model calls.
 
 The source directory must belong to a Git working tree with committed history. Dirty source files
 produce a warning: isolated calls start from committed files only. Unmet prerequisites (Git version,

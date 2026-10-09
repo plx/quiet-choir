@@ -156,20 +156,97 @@ observer's `live: true` command is the one other process a dry-run starts: it go
 a synthesizing `processRunner`, as the CLI did before, now gets placeholder bases instead of a
 refusal.
 
-Still refused, with a message that names what dry-run synthesizes: `ctx.worktree`, any effect
-isolated on a handle (agent, exec or step), and a merge with a handle input or a captured commit,
-which reaches rehearsal only from a dry-run resume or fork of a real run. Synthesizing an
-integration over real commits would misreport `merged` and `conflicts`, and computing it writes
-objects. A branch on a captured change takes the unchanged path in rehearsal. The CLI also prints
-the rehearsal warnings and summary on the failure path; the failure document keeps its shape, and,
-as before (#276), a dry-run failure carries no resume advice.
+Still refused, with a message that names what dry-run synthesizes: `ctx.worktree` and any effect
+isolated on a handle (agent, exec or step). A merge with a handle input or a captured commit was
+refused here too, until #310 (below) previewed it. A branch on a captured change takes the unchanged
+path in rehearsal. The CLI also prints the rehearsal warnings and summary on the failure path; the
+failure document keeps its shape, and, as before (#276), a dry-run failure carries no resume advice.
 
 The accepted-replay preflight's probe (ADR 0006, #217) is the one exception: the runtime recognizes
 its rehearsal hooks and synthesizes every worktree effect, `ctx.worktree`, handle isolation and
 merges of captured commits included, with placeholders and no Git command at all (its synthesis gets
 no process runner). The probe only looks for a changed or skipped completed step and reports
 nothing, so placeholder values cannot misreport a preview. `--dry-run` and embedders passing their
-own `rehearsal` hooks keep the refusals above.
+own `rehearsal` hooks keep the refusals above, except merges, which #310 previews.
+
+## Amendment: previewed merges over captured commits (#310)
+
+A dry-run resume or fork of a real run reaches `ctx.merge` with real inputs: a completed isolated
+step replayed or reused with a captured commit, or a replayed `ctx.worktree` handle. Rehearsal
+refused those merges, because computing the integration with `merge-tree` and `commit-tree` writes
+objects into the repository, and a placeholder would misreport `merged` and `conflicts`.
+
+Dry-run now synthesizes every `ctx.merge` and previews one over captured commits with the real
+computation, in a quarantined object store:
+
+- The first merge that has an input commit creates one `0700` temporary directory under the system
+  temporary directory (`quiet-choir-rehearsal-objects-*`) for the rest of the rehearsal. From then
+  on every rehearsal Git command runs with `GIT_OBJECT_DIRECTORY` set to it,
+  `GIT_ALTERNATE_OBJECT_DIRECTORIES` set to the repository's object directory (from
+  `rev-parse --path-format=absolute --git-path objects`, quoted as a C-style string when it contains
+  the path delimiter), `GIT_QUARANTINE_PATH` (so Git itself refuses any ref update) and
+  `GIT_NO_LAZY_FETCH`, all applied after the driver's `GIT_*` scrub and the per-call environment.
+  The quarantined driver runs only `rev-parse`, `merge-tree`, `commit-tree` and `var` and refuses
+  anything else before it reaches the runner. The read-only `rev-parse` driver gets the same
+  `GIT_NO_LAZY_FETCH`, so neither driver fetches a missing object from a partial clone. Only Git
+  2.44 or later honors that variable, so merge previews in a partial clone need Git 2.44 or later:
+  before a preview over captured commits looks up any input, it lists `extensions.partialclone` and
+  `remote.<name>.promisor` with `git config --name-only --get-regexp` and, if either is set, reads
+  `git --version` and refuses with a `ConfigurationError` on older (or unrecognized) Git. One store
+  per run, not per merge, keeps a preview's commit resolvable by later rehearsal steps, such as an
+  isolation with `base: { commit }` or a stacked merge; real commits still resolve through the
+  alternate. The runner removes the directory when the execution ends, on every path, after its
+  operations drain. A killed process leaks it in the temporary directory.
+- The real merge and the preview share the code, not just the idea: `computeIntegration` (virtual
+  merge-base commits, `merge-tree`, conflict collection, the `onConflict: 'fail'` error, squash and
+  the custom-message commit), `commitTree` and `resolveCommit`. Inputs are checked the same way
+  (`base` and `commit` must round-trip through `rev-parse`, otherwise "Merge input commit is
+  unavailable in this repository."). A `'git-config'` author runs the read-only `git var`, so a
+  missing identity still fails the rehearsal. The commit date is the rehearsal attempt's start, as
+  the real merge uses its attempt's start, so preview commit IDs differ from a later real run and
+  vanish with the store; a workflow that persists `result.commit` outside the run sees a dangling
+  ID.
+- A handle input resolves from the copied record's ledger with the real ownership check and mapping
+  (`latest`, or no commit when it equals the base), and a foreign handle fails with the real
+  `ConfigurationError`. A handle reaches a dry-run merge only as a replayed completed `ctx.worktree`
+  in a dry-run resume, and dry-run still refuses `ctx.worktree` and handle isolation, so the ledger
+  holds exactly what a real resume would merge. ADR 0022 forbids fork reuse of handles, so a fork
+  brings only changes.
+- Unchanged inputs keep the no-op path and create no store. A captured commit or handle without a
+  resolvable repository (no process runner, outside a Git working tree, or a runner that answers
+  nothing) fails with a `ConfigurationError`: placeholders cannot represent `merged` or `conflicts`.
+- A custom merge driver (`merge.<name>.driver`) is an arbitrary command that `merge-tree` runs, and
+  the object quarantine cannot stop it writing to the checkout or anywhere else. Before creating the
+  store, the preview lists the configured drivers with `git config --name-only --get-regexp` and
+  refuses with a `ConfigurationError` if there is any. It does not override them: a text merge would
+  report conflicts the real merge would not, which is worse than no preview.
+- With `merge.renormalize` set, `merge-tree` runs the clean and smudge filters
+  (`filter.<name>.clean`, `.smudge` or `.process`) on the blobs it renormalizes, and they are
+  arbitrary commands too. The preview reads `merge.renormalize` with `git config --type=bool --get`
+  and, when it is true, lists the configured filters the same way and refuses with a
+  `ConfigurationError` if there is any. It does not turn renormalization off, which would make the
+  preview diverge from the real merge. These configuration reads and the partial-clone check's
+  `git --version` are the only commands besides `rev-parse` the read-only driver runs.
+- The rehearsal keeps the tip each `branch` or `checkout` preview would leave, in memory, keyed by
+  the ref the real merge moves (`refs/heads/<branch>`, or the checked-out branch's ref, or `HEAD`
+  when detached, for `checkout`; a branch target naming the checked-out branch shares its key). A
+  later merge into the same target starts from that tip, and one into `ref` or a missing branch,
+  which starts from `HEAD`, starts from the checked-out branch's tip, so sequential previews
+  conflict where the real merges would. A no-op into a missing branch records `HEAD`'s tip for it,
+  since the real merge creates the branch there. Previews run one at a time in call order, as real
+  merges do under the run's integration lock, so concurrent previews into one target chain too. A
+  later fresh isolation based on `HEAD` (the default) or on a name for a previewed branch starts
+  from the previewed tip, as it would after the real merge; a `{ commit }` base is unaffected. A
+  `ref` target moves no ref and records no tip. No ref is written.
+- Nothing else of a real merge happens: no `step.merge` preparation, no pinned or published ref, no
+  checkout update and no integration or handle locks, since the repository does not change. The
+  target-specific preflight checks (`check-ref-format`, a branch checked out elsewhere, a dirty
+  checkout target) and the Git version check stay with #312.
+
+The merge event and the report's `merges` entries gain `merged` and `conflicts`. The pure replay
+decision is unchanged: its `kind === 'merge'` clause still refuses a merge that a caller does not
+synthesize, but the runner now synthesizes every merge under rehearsal, and the `rehearsal-git`
+message no longer lists merges. The accepted-replay probe keeps its Git-free placeholder merges.
 
 ## Amendment: exec error rules and stale agent rules (#307)
 

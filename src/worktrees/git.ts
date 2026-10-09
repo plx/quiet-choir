@@ -1,18 +1,95 @@
+import { delimiter } from 'node:path';
 import type { HarnessInvocation } from '../workflow/runtime/model.js';
 import type { ExecResult, ProcessRunner } from '../workflow/runtime/exec-model.js';
 import { ExecError } from '../workflow/runtime/exec-error.js';
 import { execResultSchema } from '../workflow/runtime/exec-schema.js';
 
+/**
+ * A temporary object directory that takes every object Git writes, with the repository's own object
+ * directory as a read-only alternate. Dry-run merge previews (#310) compute through it, so they write
+ * nothing into the repository. @internal
+ */
+export interface GitQuarantine {
+  /** The temporary object directory, exported as `GIT_OBJECT_DIRECTORY` and `GIT_QUARANTINE_PATH`. */
+  readonly objects: string;
+  /** The repository's object directory, exported as `GIT_ALTERNATE_OBJECT_DIRECTORIES`. */
+  readonly alternate: string;
+}
+
+/** The only commands a quarantined driver runs: none of them updates a ref, index or checkout. */
+const quarantinedCommands = new Set(['rev-parse', 'merge-tree', 'commit-tree', 'var']);
+
+/**
+ * Whether a read-only driver runs `args`: `rev-parse`, exactly `--version`, exactly `config
+ * --name-only --get-regexp <pattern>`, which lists configuration names, or exactly `config
+ * --type=bool --get <name>`, which reads one boolean. None of them can write.
+ */
+function readOnlyCommand(args: readonly string[]): boolean {
+  return (
+    args[0] === 'rev-parse' ||
+    (args.length === 1 && args[0] === '--version') ||
+    (args.length === 4 &&
+      args[0] === 'config' &&
+      ((args[1] === '--name-only' && args[2] === '--get-regexp') ||
+        (args[1] === '--type=bool' && args[2] === '--get')))
+  );
+}
+
+/**
+ * Quote one `GIT_ALTERNATE_OBJECT_DIRECTORIES` entry as a C-style string when Git would otherwise
+ * split it at the platform path delimiter or read it as quoted. @internal
+ */
+export function alternateEntry(path: string, separator: string = delimiter): string {
+  if (!path.includes(separator) && !path.startsWith('"')) return path;
+  let quoted = '"';
+  for (const character of path) {
+    const code = character.charCodeAt(0);
+    quoted +=
+      character === '\\' || character === '"'
+        ? `\\${character}`
+        : code < 0x20 || code === 0x7f
+          ? `\\${code.toString(8).padStart(3, '0')}`
+          : character;
+  }
+  return `${quoted}"`;
+}
+
 /** Command protocol for local Git operations; the caller owns sequencing and checkpoint policy. @internal */
 export class WorktreeGit {
+  /** Fixed environment applied last, so neither the caller's nor the per-call environment overrides it. */
+  private readonly fixedEnv: Readonly<Record<string, string>> | undefined;
+
   /**
-   * @param readOnly - Refuse every command except `rev-parse` before it reaches the runner. Dry-run
-   * rehearsal resolves bases through this mode, so it can never create refs, worktrees or objects.
+   * @param mode - `true` refuses every command except `rev-parse`, `--version`, a `config
+   * --name-only --get-regexp` listing and a `config --type=bool --get` read before it reaches the
+   * runner.
+   * Dry-run rehearsal resolves bases (and checks for custom merge drivers and renormalizing
+   * filters) through this mode, so it can never create refs, worktrees or objects, and it never
+   * fetches a missing object from a partial clone's promisor remote (`GIT_NO_LAZY_FETCH`, which
+   * Git honors from 2.44; the rehearsal refuses merge previews in a partial clone on older Git).
+   * `{ quarantine }` runs only `rev-parse`, `merge-tree`, `commit-tree` and `var`, and points every
+   * command at the quarantine's object directory, after the caller's `GIT_*` variables are removed
+   * and the per-call environment applied, so new objects land there, Git refuses ref updates and
+   * nothing lazy-fetches.
    */
   public constructor(
     private readonly runner: ProcessRunner,
-    private readonly readOnly = false,
-  ) {}
+    private readonly mode: boolean | { readonly quarantine: GitQuarantine } = false,
+  ) {
+    this.fixedEnv =
+      mode === true
+        ? { GIT_NO_LAZY_FETCH: '1' }
+        : typeof mode === 'object'
+          ? {
+              GIT_OBJECT_DIRECTORY: mode.quarantine.objects,
+              GIT_ALTERNATE_OBJECT_DIRECTORIES: alternateEntry(mode.quarantine.alternate),
+              // Git refuses every ref update while this is set (its receive-pack quarantine).
+              GIT_QUARANTINE_PATH: mode.quarantine.objects,
+              // A partial clone must not fetch missing objects during a preview.
+              GIT_NO_LAZY_FETCH: '1',
+            }
+          : undefined;
+  }
 
   public async run(
     cwd: string,
@@ -25,9 +102,13 @@ export class WorktreeGit {
       readonly timeoutMs?: number;
     } = {},
   ): Promise<ExecResult> {
-    if (this.readOnly && args[0] !== 'rev-parse')
+    if (this.mode === true && !readOnlyCommand(args))
       throw new Error(
-        `Read-only Git refuses ${args[0] ?? 'an empty command'}; only rev-parse runs.`,
+        `Read-only Git refuses ${args[0] ?? 'an empty command'}; only rev-parse, --version, config --name-only --get-regexp and config --type=bool --get run.`,
+      );
+    if (typeof this.mode === 'object' && !quarantinedCommands.has(args[0] ?? ''))
+      throw new Error(
+        `Quarantined Git refuses ${args[0] ?? 'an empty command'}; only rev-parse, merge-tree, commit-tree and var run.`,
       );
     // Caller environment must not redirect repository/index ownership away from -C cwd. Windows
     // names are case-insensitive, so strip every casing on all platforms.
@@ -55,7 +136,7 @@ export class WorktreeGit {
             ...args,
           ],
           cwd,
-          env: { ...env, ...options.env, LC_ALL: 'C' },
+          env: { ...env, ...options.env, LC_ALL: 'C', ...this.fixedEnv },
           inheritEnv: false,
           input: options.input ?? '',
           timeoutMs: options.timeoutMs ?? 120_000,

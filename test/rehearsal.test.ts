@@ -1528,6 +1528,8 @@ export default defineWorkflow({
         inputs: 1,
         target: 'ref',
         baseSource: 'resolved',
+        merged: [],
+        conflicts: [],
       },
     ]);
     expect(rehearsal.warnings).toContainEqual(

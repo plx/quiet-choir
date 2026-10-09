@@ -107,11 +107,12 @@ same run after delivery.
   session IDs cannot resume the workflow.
 - Rehearse agent work with `--dry-run --json`. Commands are synthesized unless the fixture file has
   exec rules (`workflow fixtures RUN` exports them from a real run); files/local callbacks/imports
-  still run unless a step is explicitly stubbed. Fresh isolated agent calls and merges of their
-  unchanged changes are synthesized (marked `worktree.synthesized` and listed under `merges`) with
-  only a read-only `git rev-parse`; `ctx.worktree` and handle isolation still need a fixture harness
-  in a temporary repository. Native calls retain native authentication and default to restricted
-  configuration; see [harness isolation](references/harness-isolation.md).
+  still run unless a step is explicitly stubbed. Fresh isolated agent calls are synthesized (marked
+  `worktree.synthesized`) with only a read-only `git rev-parse`; merges are listed under `merges`,
+  and a resume or fork's merge of captured commits is previewed in a discarded temporary object
+  store, with real `merged`/`conflicts`. `ctx.worktree` and handle isolation still need a fixture
+  harness in a temporary repository. Native calls retain native authentication and default to
+  restricted configuration; see [harness isolation](references/harness-isolation.md).
 - Effects are at least once. Pass `idempotencyKey` to systems that support deduplication; native
   CLIs do not deduplicate edits with it. Checkpoints cannot undo mutations.
 - This private 0.0.0 engine executes trusted TypeScript locally. Harness permission flags do not

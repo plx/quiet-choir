@@ -1,4 +1,4 @@
-import { fixedIdentity, integrate, type CommitIdentity } from './worktree-merge.js';
+import { commitTree, integrate, type CommitIdentity } from './worktree-merge.js';
 import type { MergeOptions, MergeResult, WorktreeChange } from './worktree-model.js';
 import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, readlink, realpath } from 'node:fs/promises';
@@ -153,6 +153,34 @@ async function administerBounded<T>(commonGitDir: string, work: () => Promise<T>
       );
     throw error;
   }
+}
+
+/**
+ * The ledger entry of a handle this run created with `ctx.worktree`, or the same
+ * {@link ConfigurationError} a real effect on it raises when the ledger has no matching entry (a
+ * foreign, forged or forked handle). Pure. @internal
+ */
+export function ownedHandle(
+  handle: WorktreeHandle,
+  ledger: WorktreeLedger | undefined,
+): WorktreeLedger['handles'][string] {
+  const saved =
+    ledger && Object.hasOwn(ledger.handles, handle.id) ? ledger.handles[handle.id] : undefined;
+  if (saved?.handle.path !== handle.path || saved.handle.base !== handle.base)
+    throw new ConfigurationError(
+      'Worktree handle does not belong to this run; create it with ctx.worktree.',
+    );
+  return saved;
+}
+
+/** The change a merge integrates for a handle: its latest committed snapshot over its base. @internal */
+export function handleChange(saved: WorktreeLedger['handles'][string]): WorktreeChange {
+  return {
+    base: saved.handle.base,
+    commit: saved.latest === saved.handle.base ? null : saved.latest,
+    ref: saved.ref,
+    files: [],
+  };
 }
 
 /** A live attempt owns the handle through result validation, capture, and durable save. @internal */
@@ -460,12 +488,7 @@ export class RunWorktrees {
     handle: WorktreeHandle,
     ledger: WorktreeLedger,
   ): WorktreeLedger['handles'][string] {
-    const saved = Object.hasOwn(ledger.handles, handle.id) ? ledger.handles[handle.id] : undefined;
-    if (saved?.handle.path !== handle.path || saved.handle.base !== handle.base)
-      throw new ConfigurationError(
-        'Worktree handle does not belong to this run; create it with ctx.worktree.',
-      );
-    return saved;
+    return ownedHandle(handle, ledger);
   }
 
   private async ensureCache(
@@ -736,16 +759,9 @@ export class RunWorktrees {
     }
     const resolved =
       step.merge?.changes ??
-      changes.map((change): WorktreeChange => {
-        if (!('id' in change)) return change;
-        const saved = this.handle(change, ledger);
-        return {
-          base: saved.handle.base,
-          commit: saved.latest === saved.handle.base ? null : saved.latest,
-          ref: saved.ref,
-          files: [],
-        };
-      });
+      changes.map((change): WorktreeChange =>
+        'id' in change ? handleChange(this.handle(change, ledger)) : change,
+      );
     const commonGitDir = await this.adminKey(ledger, invocation);
     return await integrate(
       {
@@ -774,25 +790,17 @@ export class RunWorktrees {
     message: string,
     date: string,
     invocation: HarnessInvocation,
-    identity: CommitIdentity = fixedIdentity,
+    identity?: CommitIdentity,
   ): Promise<string> {
-    const env = {
-      GIT_AUTHOR_NAME: identity.author.name,
-      GIT_AUTHOR_EMAIL: identity.author.email,
-      GIT_COMMITTER_NAME: identity.committer.name,
-      GIT_COMMITTER_EMAIL: identity.committer.email,
-      GIT_AUTHOR_DATE: date,
-      GIT_COMMITTER_DATE: date,
-    };
-    return commitId(
-      (
-        await this.driver().run(
-          ledger.repo,
-          ['commit-tree', tree, ...parents.flatMap((parent) => ['-p', parent]), '-F', '-'],
-          invocation,
-          { input: `${message}\n`, env },
-        )
-      ).stdout.trim(),
+    return commitTree(
+      this.driver(),
+      ledger.repo,
+      tree,
+      parents,
+      message,
+      date,
+      invocation,
+      identity,
     );
   }
 
