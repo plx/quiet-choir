@@ -2212,6 +2212,11 @@ export async function runWorkflow<
                   await innerExec.close(
                     new Error(`Step ${id}: its callback settled; inner command terminated.`),
                   );
+                  // Export-only: the attempt's completion or failure save persists it, and no
+                  // identity, replay or reuse path reads it.
+                  const inner = innerExec.records();
+                  if (inner) step.innerCommands = inner;
+                  else delete step.innerCommands;
                 }
               });
               if (transcript) {
@@ -3333,14 +3338,31 @@ export async function runWorkflow<
           active: () => !closed,
         });
         return inEffect.run('poll', async () => {
+          let result: Awaited<ReturnType<typeof observePoll>>;
           try {
             // A command poll runs its command through this same exec, then calls done.
-            return await observePoll(source, { ...context, exec: innerExec.exec });
+            result = await observePoll(source, { ...context, exec: innerExec.exec });
           } finally {
             await innerExec.close(
               new Error(`Wait ${id}: its observation settled; inner command terminated.`),
             );
           }
+          // Export-only, like a step's: only a terminal observation replaces it, and the wait's
+          // completion save persists it. A late result of an abandoned observation, or one after
+          // close, leaves the record alone; no identity, replay or reuse path reads it.
+          const step = record.steps[id];
+          if (
+            typeof result === 'object' &&
+            (result as unknown) !== null &&
+            result.done &&
+            !closed &&
+            step?.status === 'waiting'
+          ) {
+            const inner = innerExec.records();
+            if (inner) step.innerCommands = inner;
+            else delete step.innerCommands;
+          }
+          return result;
         });
       },
       isFatal: (error) => origins.isFatal(error),

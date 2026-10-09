@@ -4,9 +4,11 @@ import { ConfigurationError } from './configuration-error.js';
 import { ExecError } from './exec-error.js';
 import { executeCommand, prepareExec, processRequest } from './exec.js';
 import { execResultSchema } from './exec-schema.js';
+import { InnerCommandRecorder, type InnerCommands } from './inner-commands.js';
 import type {
   Command,
   ExecStepError,
+  ExecSummary,
   ProcessRunner,
   StepExecFunction,
   StepExecOptions,
@@ -45,11 +47,14 @@ export interface StepExecDependencies {
  * Build the non-durable `context.exec` of a step callback or poll observer. Every call writes no
  * checkpoint: it prepares the command like `ctx.exec`, marks the request `nested`, and runs it
  * under the parent's invocation. {@link StepExecHandle.close} refuses later calls, aborts calls
- * still running and waits for them to finish.
+ * still running and waits for them to finish. Each command that reaches the process runner is
+ * recorded for fixture export ({@link StepExecHandle.records}); a command with no runner records
+ * nothing.
  * @internal
  */
 export function createStepExec(dependencies: StepExecDependencies): StepExecHandle {
   const pending = new Set<Promise<unknown>>();
+  const recorder = new InnerCommandRecorder(dependencies.attempt);
   let closed = false;
   // Created on the first call, so a callback that never runs a command costs no signal.
   let controller: AbortController | undefined;
@@ -60,6 +65,10 @@ export function createStepExec(dependencies: StepExecDependencies): StepExecHand
       controller ??= new AbortController();
       combined ??= AbortSignal.any([dependencies.signal, controller.signal]);
       return combined;
+    },
+    runner: (live, summary) => {
+      const runner = dependencies.runner(live);
+      return runner && recorded(runner, recorder, summary, live);
     },
   };
   const run = (command: Command, options: unknown, schema: z.ZodType | null): Promise<unknown> => {
@@ -93,6 +102,37 @@ export function createStepExec(dependencies: StepExecDependencies): StepExecHand
       controller?.abort(reason);
       await Promise.allSettled([...pending]);
     },
+    records: () => recorder.records(),
+  };
+}
+
+/**
+ * `runner` with each call recorded: the slot is reserved synchronously when the call arrives, so
+ * the record's order is the order the runner (and exec fixture rules, which count calls) saw.
+ */
+function recorded(
+  runner: ProcessRunner,
+  recorder: InnerCommandRecorder,
+  summary: ExecSummary,
+  live: boolean,
+): ProcessRunner {
+  return {
+    run: async (request, invocation) => {
+      // Reserved before the first await, so in arrival order.
+      const slot = recorder.reserve(summary, live);
+      let value: unknown;
+      try {
+        value = await runner.run(request, invocation);
+      } catch (error) {
+        slot.rejected(errorKind(error), error instanceof Error ? error.message : String(error));
+        throw error;
+      }
+      // executeCommand applies the same parse and fails the call when it does not hold.
+      const result = execResultSchema.safeParse(value);
+      if (result.success) slot.resolved(result.data);
+      else slot.rejected(errorKind(result.error), result.error.message);
+      return value as z.infer<typeof execResultSchema>;
+    },
   };
 }
 
@@ -101,11 +141,18 @@ export interface StepExecHandle {
   readonly exec: StepExecFunction;
   /** Refuse further calls, abort running ones with `reason`, and wait until all have settled. */
   readonly close: (reason: Error) => Promise<void>;
+  /**
+   * The commands that reached the process runner, for the parent's `innerCommands`; undefined
+   * when none did. Read it after {@link StepExecHandle.close}, when every call has settled.
+   */
+  readonly records: () => InnerCommands | undefined;
 }
 
 interface CallScope {
   readonly active: () => boolean;
   readonly signal: () => AbortSignal;
+  /** The call's runner, recording the call, or undefined when none is configured. */
+  readonly runner: (live: boolean, summary: ExecSummary) => ProcessRunner | undefined;
 }
 
 function label({ owner }: StepExecDependencies): string {
@@ -157,7 +204,7 @@ async function execute(
   signal.throwIfAborted();
   try {
     const value = await executeCommand(
-      dependencies.runner(live),
+      scope.runner(live, prepared.summary),
       request,
       dependencies.invocation(signal),
       prepared.summary.okExitCodes,

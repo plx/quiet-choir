@@ -71,6 +71,8 @@ const revisionDigests: Readonly<Record<string, string>> = {
   '13': '01979d40f27afb4d663d424a519d1b89a7d840c34dfdb7f4d206d99bc60a27a5',
   // Revision 14 (#311) changed only nested shapes (the configuration error kind), so it repeats 13.
   '14': '01979d40f27afb4d663d424a519d1b89a7d840c34dfdb7f4d206d99bc60a27a5',
+  // Revision 15 (#317) changed only the nested steps shape (innerCommands), so it repeats 14.
+  '15': '01979d40f27afb4d663d424a519d1b89a7d840c34dfdb7f4d206d99bc60a27a5',
 };
 // digest(readRun(...)) of the installed pre-revision fixture, computed on unmodified main 91a6d2f.
 const preRevisionReadDigest = '714b6cb068de5c933b7ba04a26d1f931f589f7c9910f76f0e5c8cc493eb13016';
@@ -101,6 +103,9 @@ const revisionTwelveReadDigest = '2cb7aab642b978a2ed6fcceb5d0d139f8da680c27d83b1
 // digest(readRun(...)) of the installed revision-thirteen fixture, computed on unmodified main ac17712.
 const revisionThirteenReadDigest =
   'b05872c6c0627eb16e45d7b8b4eb649a7eceefef0878f8962aa638eca35e78f3';
+// digest(readRun(...)) of the installed revision-fourteen fixture, computed on unmodified main d84b659.
+const revisionFourteenReadDigest =
+  '9c3dd6e794b3c2d923c5ed012ed2acc1d482947b4a143354cab46ac3de8aa7a5';
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex');
 
@@ -1508,7 +1513,7 @@ describe('revision-nine records (a grant failure before recoveryCause, #284)', (
     expect(saved.recoveryCause).toBeUndefined();
     expect(recordSchemaDrift(saved)).toBeUndefined();
     expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
-    expect(SUPPORTED_SCHEMA_REVISION).toBe(14);
+    expect(SUPPORTED_SCHEMA_REVISION).toBe(15);
   });
 
   it('round-trip every recovery cause through the record parser', async () => {
@@ -1829,5 +1834,122 @@ describe('revision-thirteen records (a pre-attempt grant refusal classified unkn
     });
     expect(recordSchemaDrift(saved)).toBeUndefined();
     expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
+  });
+});
+
+describe('revision-fourteen records (a step callback with an inner command before innerCommands, #317)', () => {
+  const runId = 'revision-fourteen';
+  async function install(): Promise<void> {
+    const fixture = await readFile(
+      new URL('./fixtures/schema-revision/revision-fourteen-checkpoint.json', import.meta.url),
+      'utf8',
+    );
+    await mkdir(join(stateDir, runId));
+    await writeFile(paths(runId).snapshot, fixture);
+    await writeFile(paths(runId).journal, '');
+  }
+  const probe = defineWorkflow({
+    name: 'schema-revision',
+    version: '1',
+    input: z.null(),
+    output: z.null(),
+    async run(ctx) {
+      await ctx.now('prepare');
+      await ctx.step('probe', {
+        input: null,
+        schema: z.null(),
+        run: async (context) => {
+          await context.exec(['fixture-tool', 'status']);
+          return null;
+        },
+      });
+      return null;
+    },
+  });
+  const execRunner = {
+    run: () =>
+      Promise.resolve({
+        code: 0,
+        signal: null,
+        stdout: 'ok\n',
+        stderr: '',
+        truncated: false,
+        durationMs: 1,
+      }),
+  };
+
+  it('read exactly as on main, with a failed callback step and no inner commands', async () => {
+    await install();
+    const record = await readRun({ stateDir, runId });
+    expect(record.schemaRevision).toBe(14);
+    expect(recordSchemaDrift(record)).toBeUndefined();
+    expect(digest(record)).toBe(revisionFourteenReadDigest);
+    expect(record.steps['prepare']?.status).toBe('completed');
+    expect(record.steps['probe']).toMatchObject({ status: 'failed', error: 'fixture tail' });
+    expect(record.steps['probe']).not.toHaveProperty('innerCommands');
+  });
+
+  it('resume at the current revision: the rerun callback records its inner command', async () => {
+    await install();
+    const original = await readRun({ stateDir, runId });
+    const result = await runWorkflow(probe, {
+      ...options,
+      stateDir,
+      runId,
+      input: null,
+      resume: true,
+      execRunner,
+    });
+    expect(result.status).toBe('completed');
+    const saved = await readRun({ stateDir, runId });
+    expect(saved.steps['prepare']).toEqual(original.steps['prepare']);
+    expect(saved.steps['probe']?.innerCommands).toEqual({
+      attempt: 2,
+      commands: [
+        {
+          command: ['fixture-tool', 'status'],
+          envSha256: expect.stringMatching(/^[0-9a-f]{64}$/u) as string,
+          inputSha256: sha256(''),
+          structured: false,
+          result: { code: 0, signal: null, stdout: 'ok\n', stderr: '', truncated: false },
+        },
+      ],
+    });
+    expect(recordSchemaDrift(saved)).toBeUndefined();
+    expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
+  });
+
+  const setInner = (value: unknown) =>
+    editSnapshot(runId, (raw) => {
+      const steps = raw['steps'] as Record<string, Record<string, unknown>>;
+      steps['probe'] = { ...steps['probe'], innerCommands: value };
+    });
+
+  it('validate innerCommands: one of result and error, digests and the command bound', async () => {
+    await install();
+    const valid = {
+      command: { shell: 'true' },
+      envSha256: 'a'.repeat(64),
+      inputSha256: 'b'.repeat(64),
+      structured: true,
+      live: true,
+      error: { kind: 'timeout', message: 'timed out' },
+    };
+    await setInner({ attempt: 1, commands: [valid], omitted: 3 });
+    const record = await readRun({ stateDir, runId });
+    expect(record.steps['probe']?.innerCommands).toEqual({
+      attempt: 1,
+      commands: [valid],
+      omitted: 3,
+    });
+    for (const commands of [
+      [{ ...valid, result: { code: 0, signal: null, stdout: '', stderr: '', truncated: false } }],
+      [{ ...valid, error: undefined }],
+      [{ ...valid, envSha256: 'env' }],
+      Array.from({ length: 257 }, () => valid),
+    ]) {
+      await setInner({ attempt: 1, commands });
+      await expect(readRun({ stateDir, runId })).rejects.toThrow();
+    }
   });
 });
