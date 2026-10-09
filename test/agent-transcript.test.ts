@@ -79,6 +79,13 @@ describe('readAttemptTranscript', () => {
         /line 3 .* follows the truncation marker/u,
       ],
       [`${good}{"stream":"stdout","base64":"b2`, /line 2 .* is not valid JSON/u],
+      // Padding only at the end, at most two, and a whole number of 4-character quanta.
+      ...['AB=C', '=ABC', 'A===', '====', 'b2s=b2s=', 'b2s', 'b2s==', 'YQ=='.repeat(2)].map(
+        (base64): [string, RegExp] => [
+          `${JSON.stringify({ stream: 'stdout', base64 })}\n`,
+          /line 1 .* is not a transcript entry/u,
+        ],
+      ),
     ];
     for (const [text, error] of cases) {
       await writeFile(path, text);
@@ -91,6 +98,18 @@ describe('readAttemptTranscript', () => {
     );
     await expect(decode(path, 'stdout', 40)).rejects.toThrow(/line 2 .* is longer than 40 bytes/u);
     expect((await decode(path, 'stdout', 4096)).text.toString('utf8')).toBe('ok');
+  });
+
+  it('decodes a single multi-megabyte chunk and every padding length', async ({ stateDir }) => {
+    const transcript = await AttemptTranscript.create(stateDir, 'task', 1, 'claude');
+    const large = Buffer.alloc(4 * 1024 * 1024);
+    for (let index = 0; index < large.length; index++) large[index] = (index * 131) % 251;
+    await transcript.write('stdout', large);
+    for (const tail of ['a', 'ab', 'abc']) await transcript.write('stdout', Buffer.from(tail));
+    await transcript.close();
+    const result = await decode(transcript.snapshot().path, 'stdout');
+    expect(result).toMatchObject({ bytes: large.length + 6, truncated: false, chunks: 4 });
+    expect(result.text.equals(Buffer.concat([large, Buffer.from('aababc')]))).toBe(true);
   });
 
   it('refuses a symlinked transcript file', async ({ stateDir }) => {

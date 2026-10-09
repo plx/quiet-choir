@@ -8,7 +8,13 @@ import { syncDirectory, syncHandle } from './storage-io.js';
 const marker = `${JSON.stringify({ type: 'truncated', reason: 'maxTranscriptBytes' })}\n`;
 /** Longest transcript line {@link readAttemptTranscript} accepts by default, in bytes. */
 const maxTranscriptLineBytes = 64 * 1024 * 1024;
-const base64Text = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
+/** Base64 alphabet with up to two trailing `=`: one flat class, so a long line cannot overflow. */
+const base64Characters = /^[A-Za-z0-9+/]*={0,2}$/u;
+
+/** Padded base64, checked without a repeated group (which backtracks per quantum). */
+function isBase64(text: string): boolean {
+  return text.length % 4 === 0 && base64Characters.test(text);
+}
 
 async function privateDirectory(path: string): Promise<void> {
   try {
@@ -170,7 +176,7 @@ export async function readAttemptTranscript(
       keys === 'base64,stream' &&
       (fields?.['stream'] === 'stdout' || fields?.['stream'] === 'stderr') &&
       typeof fields['base64'] === 'string' &&
-      base64Text.test(fields['base64'])
+      isBase64(fields['base64'])
     ) {
       if (fields['stream'] !== stream) return;
       const chunk = Buffer.from(fields['base64'], 'base64');
