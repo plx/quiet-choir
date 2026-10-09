@@ -254,13 +254,17 @@ previous filesystem edits remain.
 
 Kinds include `timeout`, `idle-timeout` (no output for `idleTimeoutMs`), `rate-limit`, `overloaded`,
 `invalid-request`, `schema`, `authentication`, `permission`, `turn-limit`, `budget-limit`,
-`output-limit`, `process`, `protocol`, `cancelled`, and `unknown`. HTTP 400/404/422 is
-`invalid-request` (an unknown model, an invalid effort or option) and 500/502/503/529 is
-`overloaded`. Classification uses structured protocol metadata, process codes, or error types. The
-Codex adapter's protocol layer also classifies Codex's own `rate limit exceeded` terminal errors and
-reconnect notices as `rate-limit`; plain messages from other errors are still never guessed. Custom
-adapters can set `HarnessErrorDetails.kind`, or `ProtocolFailure.kind` from their protocol parser;
-the first wins over the second, which wins over the HTTP status. Broadly typed options with a
+`output-limit`, `process`, `protocol`, `configuration`, `cancelled`, and `unknown`. `configuration`
+appears only on a run's `rootCause`, for a configuration refusal raised before the effect's attempt
+(a dry-run refusing a Git worktree effect, a missing grant); it is never retried or settled, and
+`retry.on: ['configuration']` matches nothing. HTTP 400/404/422 is `invalid-request` (an unknown
+model, an invalid effort or option) and 500/502/503/529 is `overloaded`. Classification uses
+structured protocol metadata, process codes, or error types. The Codex adapter's protocol layer also
+classifies Codex's own `rate limit exceeded` terminal errors and reconnect notices as `rate-limit`;
+plain messages from other errors are still never guessed. Custom adapters can set
+`HarnessErrorDetails.kind`, or `ProtocolFailure.kind` from their protocol parser; the first wins
+over the second, which wins over the HTTP status; an adapter kind of `configuration` is classified
+`unknown`, since that kind is reserved for refusals before an attempt. Broadly typed options with a
 dynamic `onError` produce a union result; preserve the literal mode (or explicitly use
 `onError: 'throw'`) to narrow it.
 

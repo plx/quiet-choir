@@ -146,7 +146,11 @@ attempt totals may be low, because of legacy checkpoints or attempts with unknow
 `counts` is the step total by status, `rootCause` the failing effect as `{stepId, error, errorKind}`
 (`errorKind` is null for a body failure and for a record from before the kind was stored without an
 attempt to read it from) or null, and `warnings` the run's warnings, de-duplicated and capped at 20
-followed by a note that says how many more exist.
+followed by a note that says how many more exist. `errorKind` is `configuration`, which is never
+retryable, for a configuration refusal raised before the root effect's attempt, such as a dry-run
+refusing a Git worktree effect or a missing grant; the same kind fills the `workflow list` row's
+`errorKind` and the `workflow.failed` document's `error.details`. Records written before schema
+revision 14 keep the `unknown` they recorded for such a refusal.
 
 A suspension (exit 75) returns
 `{kind:"workflow.run.suspended", ok:true, exitCode:75, runId, stateDir, pending, resumeCommand, nextWakeAt, summary}`,
@@ -405,7 +409,7 @@ Failures have these fields:
 | `kind`, `ok`, `exitCode`      | `"workflow.error"`, `false`, and the process exit code                                                                                                                                                                                                                            |
 | `error.code`, `error.message` | Stable code and diagnostic naming the root effect when available                                                                                                                                                                                                                  |
 | `error.stepId`                | Root failing effect, or null for a body failure or interruption; never an aborted sibling                                                                                                                                                                                         |
-| `error.details`               | Structured context: lock PID/host, schema issues, input source/position, compatibility comparison, or available run IDs; `{errorKind, retryable}` for `workflow.failed`                                                                                                           |
+| `error.details`               | Structured context: lock PID/host, schema issues, input source/position, compatibility comparison, or available run IDs; `{errorKind, retryable}` for `workflow.failed`, the root cause's kind (`configuration` for a refusal before the effect's attempt)                        |
 | `runId`, `stateDir`           | Requested/generated ID and absolute storage directory when known; otherwise null                                                                                                                                                                                                  |
 | `status`                      | Actual saved checkpoint status, or null when unavailable                                                                                                                                                                                                                          |
 | `summary`                     | execute, resume and answer without `--full`, and inspect with `--summary`: the compact run result, or null when unavailable                                                                                                                                                       |

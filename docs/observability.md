@@ -122,7 +122,7 @@ tail -n +1 -F /abs/review-42.events.jsonl | grep --line-buffered '"ev":"step.fai
 | `ev`        | Event type                                                                                                                                                                                                                                                                                                                                                          |
 | `step`      | Full step ID; on `run.failed`, the root effect when known; on `wait.tolerated`, the wait ID                                                                                                                                                                                                                                                                         |
 | `attempt`   | Persisted attempt count, on `step.failed` and `step.settled` only                                                                                                                                                                                                                                                                                                   |
-| `errorKind` | The recorded failure kind, on `step.failed` and on `run.failed` that names a root effect (`step`); null on `step.failed` when the attempt recorded none. Absent on every other line                                                                                                                                                                                 |
+| `errorKind` | The recorded failure kind, on `step.failed` and on `run.failed` that names a root effect (`step`); null on `step.failed` when the attempt recorded none. On `run.failed` it is `configuration` for a configuration refusal raised before the effect's attempt. Absent on every other line                                                                           |
 | `retryable` | Whether `errorKind` is a transient kind (`rate-limit`, `overloaded`, `timeout`, `idle-timeout`), as in failure documents; present exactly when `errorKind` is. It does not promise that the runtime retries the step                                                                                                                                                |
 | `harness`   | The event's harness, or the one last seen on an agent event for this step in this process                                                                                                                                                                                                                                                                           |
 | `ms`        | Step events: time since the step's latest start in this process. Terminal run events: time since this execution's `run.started`. Omitted when no start was seen in this process                                                                                                                                                                                     |
@@ -293,7 +293,12 @@ observer mutation or failure cannot invalidate committed work, and observer prom
 awaited.
 
 `rootCause` is `{ stepId, error, errorKind, effect }`: `errorKind` is the classified kind of the
-root effect's failure, null for a body failure, and absent in records from before the field.
+root effect's failure, null for a body failure, and absent in records from before the field. A
+configuration refusal raised before the effect's attempt, so with no attempt to classify it (a
+dry-run refusing a Git worktree effect, a missing grant, or another `ConfigurationError`, including
+one wrapped by the agent request preparation), is `configuration`; it is never transient, and no
+attempt records it, so a configuration failure inside an attempt (a missing adapter) stays
+`unknown`. Records from before revision 14 keep the `unknown` they recorded for such a refusal.
 `effect` is the root step's call-site effect kind (the harness name for an agent call, otherwise the
 step kind such as `step`, `exec` or `read-file`), recorded even when the failure came before the
 step had a record; it is null for a body failure or interruption and absent in older records. It
