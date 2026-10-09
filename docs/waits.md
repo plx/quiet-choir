@@ -115,6 +115,12 @@ const color = await ctx.poll('ci', {
 }); // PollOutcome<'green' | 'red'> | DeadlineOutcome
 ```
 
+Capturing the result keeps array literals as readonly tuples (`[1, 2]` is `readonly [1, 2]`), so the
+result is checked against a readonly view of the schema's type (`PollReadonly<T>`, and
+`PollReadonly<N>` for the note): an array literal matches `z.array(…)`, a tuple schema or an array
+`noteSchema`, while a wrong element type is still rejected. The outcome keeps the schema's own type,
+such as `number[]`, because the runtime parses the value with `schema`.
+
 Two shapes can still widen a literal. A callback that is not `async` and wraps its result in
 `Promise.resolve(…)` without taking a parameter loses it inside the nested call: write it `async`. A
 call with explicit type arguments (`ctx.poll<T, N>(…)`) uses the older overloads, where a callback

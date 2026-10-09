@@ -117,9 +117,11 @@ avoid non-idempotent transforms; to migrate a changed shape accept the old one (
 `ctx.poll` infers `T` only from `schema` (`N` from `noteSchema`, a command poll's output from
 `output`). An `observe` or `done` callback, with or without parameters, may return a literal from a
 conditional or from `if`/`return` statements without `as const`: against `z.enum(['green', 'red'])`,
-`observe: async () => (ok() ? { done: true, value: 'green' } : { done: false })` type-checks. A
-non-`async` callback without parameters that returns `Promise.resolve(…)` can still widen it (write
-it `async`), and so can a call with explicit type arguments; prefer `noteSchema` to type arguments.
+`observe: async () => (ok() ? { done: true, value: 'green' } : { done: false })` type-checks. Array
+literals are checked against a readonly view of the schema (`[1, 2]` matches `z.array(z.number())`);
+the outcome keeps the schema's type. A non-`async` callback without parameters that returns
+`Promise.resolve(…)` can still widen it (write it `async`), and so can a call with explicit type
+arguments; prefer `noteSchema` to type arguments.
 
 `onError: { tolerate, classify?, retryAfterMs? }` tolerates transient observation errors. Candidates
 are a rejected observation and an `observeTimeoutMs` expiry (code
