@@ -972,6 +972,71 @@ describe('rehearsed poll checks', () => {
     },
   );
 
+  it('stamps a deadline reached during a rehearsed observation at the deadline', async () => {
+    // The automatic clock advances through the limit timer's sleep, so the hanging second check
+    // (virtual 30 s) crosses the 45 s deadline after 15 s of observation.
+    const clock = new Clock(true);
+    const started = clock.time;
+    let calls = 0;
+    const definition = pollWorkflow(
+      ({ signal }) => {
+        calls++;
+        if (calls === 1) return Promise.resolve({ done: false as const });
+        return new Promise<never>((_resolve, reject) => {
+          signal.addEventListener(
+            'abort',
+            () => {
+              reject(signal.reason instanceof Error ? signal.reason : new Error('aborted'));
+            },
+            { once: true },
+          );
+        });
+      },
+      { every: 30_000, timeoutMs: 45_000, observeTimeoutMs: 120_000 },
+    );
+    const run = await runWorkflow(definition, {
+      stateDir,
+      runId: 'hanging-deadline-at',
+      input: null,
+      clock,
+      harness: dryRun,
+      rehearsal: {},
+    });
+    expect(run.status).toBe('completed');
+    expect(calls).toBe(2);
+    expect(run.output).toMatchObject({ by: 'deadline' });
+    const at = (run.output as { at: number }).at;
+    expect(at).toBeGreaterThanOrEqual(started + 45_000);
+  });
+
+  it('counts elapsed rehearsed observation time on the virtual clock', async () => {
+    // Every observation takes 2 s on the injected clock. Check 1 runs at +0 s and ends at +2 s, so
+    // check 2 falls at +32 s and ends at +34 s, and check 3 falls at +64 s and ends at +66 s.
+    const clock = new Clock();
+    const started = clock.time;
+    const definition = pollWorkflow(
+      (context) => {
+        clock.time += 2_000;
+        return Promise.resolve(
+          context.previous.checks < 2
+            ? { done: false as const, note: { checks: context.previous.checks } }
+            : { done: true as const, value: 'green' },
+        );
+      },
+      { every: 30_000, timeoutMs: 600_000 },
+    );
+    const run = await runWorkflow(definition, {
+      stateDir,
+      runId: 'elapsed-observation',
+      input: null,
+      clock,
+      harness: dryRun,
+      rehearsal: {},
+    });
+    expect(run.status).toBe('completed');
+    expect(run.output).toEqual({ by: 'poll', value: 'green', at: started + 66_000, checks: 3 });
+  });
+
   it('tolerates an observer error and completes on the next rehearsed check', async () => {
     const clock = new Clock();
     let calls = 0;

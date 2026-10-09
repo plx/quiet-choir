@@ -302,10 +302,12 @@ virtual clock at the moment a live run would wake for it, which is its next chec
 wait's deadline when that comes first. A deadline that falls within those checks therefore resolves
 the wait `{ by: 'deadline' }` after the checks a live run would make: `every: 30_000` with
 `timeoutMs: 45_000` checks at 0 s, 30 s and 45 s, then resolves by deadline. The virtual clock moves
-only the wait's progress (the outcome's `at`, `nextCheckAt`, the deadline test and an `onError`
-retry), so a deadline reached during a check's observation cuts it short and resolves the wait by
-deadline, as in a live run. Step timestamps and `lastError.at` keep real time, and
-`observeTimeoutMs` still bounds each observation in real time, because the observer really runs.
+only the wait's progress (the outcome's `at`, `nextCheckAt`, `lastError.at`, the deadline test and
+an `onError` retry), and the time an observation really takes counts on it: a check that starts at
+30 s and observes for 20 s completes at 50 s and schedules the next check from there. A deadline
+reached during a check's observation cuts it short and resolves the wait by deadline, as in a live
+run. Step timestamps keep real time, and `observeTimeoutMs` still bounds each observation in real
+time, because the observer really runs.
 
 Every check runs the observer again and synthesizes or answers its commands again. A poll that never
 turns terminal makes five observations and lists five `commands` entries for each command it runs

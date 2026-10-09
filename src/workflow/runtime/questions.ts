@@ -702,9 +702,11 @@ export class RunQuestions {
           Math.min(progress.nextCheckAt ?? clocked, progress.deadline ?? Number.POSITIVE_INFINITY),
         )
       : clocked;
-    /** The time after an await: never earlier than this check's virtual time under rehearsal. */
-    const later = (): number =>
-      rehearsed ? Math.max(clockNow(this.#clock), now) : clockNow(this.#clock);
+    // Under rehearsal the workflow clock is shifted by this offset, so the observation's elapsed
+    // time still counts after the check's virtual start.
+    const offset = rehearsed ? now - clocked : 0;
+    /** The time after an await, on the same shifted clock the observation's deadline uses. */
+    const later = (): number => clockNow(this.#clock) + offset;
     const expired =
       progress.deadline !== null &&
       (now >= progress.deadline ||
@@ -725,14 +727,7 @@ export class RunQuestions {
       progress.checks++;
       if (rehearsed) this.#rehearsedChecks.set(id, this.#rehearsedCount(id) + 1);
       // Under rehearsal the observation's deadline is measured on the check's virtual clock.
-      const observed = await this.#observe(
-        id,
-        poll,
-        progress.deadline,
-        waiter,
-        previous,
-        rehearsed ? now - clocked : 0,
-      );
+      const observed = await this.#observe(id, poll, progress.deadline, waiter, previous, offset);
       // A drain-aborted observation records nothing, like a closed one: no check result, error or
       // lastError, and nextCheckAt stays due, so it reruns on resume. It never reaches #tolerate.
       if (this.#isClosed() || observed.kind === 'closed' || observed.kind === 'drained') return;
@@ -753,7 +748,7 @@ export class RunQuestions {
         if (observed.kind === 'observeTimeoutMs') throw this.#observeTimeout(id, poll);
         ({ result, commit } = await observed.observation);
       } catch (error) {
-        await this.#tolerate(id, step, waiter, poll, progress, error, rehearsed ? now : undefined);
+        await this.#tolerate(id, step, waiter, poll, progress, error, offset);
         return;
       }
       if (this.#isClosed()) return;
@@ -815,8 +810,9 @@ export class RunQuestions {
    * context-operation violations are never tolerated. The note is left untouched. Each tolerated
    * error appends one `wait.tolerated` run event together with `lastError`, so both commit in the
    * same save, and notifies it only after that save; every throwing path runs before the append,
-   * so an error that fails the wait records no event. Under rehearsal `floor` is the check's
-   * virtual time, which the deadline test and the next check never fall behind.
+   * so an error that fails the wait records no event. Under rehearsal `offset` shifts the workflow
+   * clock to the check's virtual time, so `lastError.at`, the deadline test and the next check keep
+   * the observation's elapsed time on that clock.
    */
   async #tolerate(
     id: string,
@@ -825,7 +821,7 @@ export class RunQuestions {
     poll: AnyPollSource,
     progress: WaitRecord,
     error: unknown,
-    floor?: number,
+    offset: number,
   ): Promise<void> {
     const policy = poll.onError;
     if (
@@ -850,7 +846,7 @@ export class RunQuestions {
     const lastError = {
       message: (error instanceof Error ? error.message : String(error)).slice(0, 4096),
       consecutive,
-      at: clockNow(this.#clock),
+      at: clockNow(this.#clock) + offset,
     };
     const code = errorCode(error);
     // Record the error and its run event in one synchronous step; the caller's save commits both.
@@ -871,8 +867,8 @@ export class RunQuestions {
       await this.#complete(id, step, waiter, signal.outcome, signal, record());
       return;
     }
-    // Under rehearsal, `floor` is the check's virtual time, so its deadline and retry advance too.
-    const at = floor === undefined ? clockNow(this.#clock) : Math.max(clockNow(this.#clock), floor);
+    // Under rehearsal the offset puts the deadline test and the retry on the check's virtual clock.
+    const at = clockNow(this.#clock) + offset;
     if (progress.deadline !== null && at >= progress.deadline) {
       const announce = record();
       await this.#complete(
