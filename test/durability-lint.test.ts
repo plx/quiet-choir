@@ -19,6 +19,7 @@ const files = readdirSync(fixtures)
   .filter((name) => name.endsWith('.workflow.ts'))
   .sort()
   .map((name) => join(fixtures, name));
+const support = join(fixtures, 'support', 'zone-callbacks.ts');
 
 let program: ts.Program;
 let findings: DurabilityFinding[];
@@ -151,6 +152,59 @@ describe('durability lint', () => {
     expect(found('sort-comparator')).toEqual(['QC005@21', 'QC005@25']);
   });
 
+  it('gives a callback bound by name its zone at the definition', () => {
+    // { run }, run: name of a function declaration, a satisfies-wrapped name, a poll observe
+    // shorthand and an onError classify are clean. A callback also called in the body (36-37) or
+    // stored in an array (42) is shared: its Date.now() is still reported at the definition, and
+    // its zone use reports the nested ctx.now. A callback that stores itself from its own body
+    // (47-50) is shared as well, since only a recursive call keeps it exclusive. The same goes for a
+    // named function expression that stores its own name (55-58); one that only calls itself (60-64)
+    // stays exclusive and clean. One whose nested closure calls it (73-76) is shared too, since a call
+    // in a closure can escape (75).
+    expect(found('zone-identifier')).toEqual([
+      'QC003@36',
+      'QC002@37',
+      'QC002@42',
+      'QC002@49',
+      'QC002@57',
+      'QC002@75',
+    ]);
+    expect(of('zone-identifier').find((finding) => finding.rule === 'QC003')?.message).toContain(
+      'inside a StepDefinition.run callback (bound as shared at line 40) is a nested durable call',
+    );
+  });
+
+  it('walks same-file helpers called from a callback in its zone, once each', () => {
+    // A module-level helper with a context parameter from a poll observe (5), a two-level chain
+    // (9), a mutually recursive pair called from two steps (21, reported once) and a body-level
+    // const (39). The Date.now() of a helper only called from a callback stays reported where it
+    // is written (41), the self-recursive countdown and the self-referencing bound tick are clean,
+    // a generator helper's durable call is not followed, and a helper written inside the callback
+    // keeps the plain message (65).
+    expect(found('zone-helpers')).toEqual([
+      'QC003@5',
+      'QC003@9',
+      'QC003@21',
+      'QC003@39',
+      'QC002@41',
+      'QC003@65',
+    ]);
+    const message = (line: number) =>
+      of('zone-helpers').find((finding) => finding.line === line)?.message;
+    expect(message(5)).toContain(
+      'ctx.step(...) inside a PollSource.observe callback (reached through record() from line 48)',
+    );
+    expect(message(9)).toContain('(reached through outer() from line 50)');
+    expect(message(65)).not.toContain('reached through');
+  });
+
+  it('keeps the findings of callbacks it cannot resolve to a same-file function', () => {
+    // An imported callback and helper, a parameter, a property access, a call result and a
+    // workflow's own run shorthand add nothing; the let (34-35) and destructured (40) callbacks and
+    // the bound workflow function (11) keep their body findings.
+    expect(found('zone-unresolved')).toEqual(['QC002@11', 'QC002@34', 'QC002@35', 'QC002@40']);
+  });
+
   it('silences exactly the rules a suppression comment names, on the next line only', () => {
     expect(found('suppression')).toEqual(['QC002@12']);
     // A comment naming another rule silences nothing; one listing the rule among others, or
@@ -161,8 +215,15 @@ describe('durability lint', () => {
   it('never lints quiet-choir sources the fixtures import', () => {
     const source = `${join(projectRoot, 'src')}${sep}`;
     expect(program.getSourceFiles().some((file) => file.fileName.startsWith(source))).toBe(true);
-    expect(durabilityLintFiles(program).map((file) => file.fileName)).toEqual(files);
+    // The program lists an imported module before its importer, so compare sorted names. The
+    // fixtures' own support module is linted like any workflow helper, and has no findings.
+    expect(
+      durabilityLintFiles(program)
+        .map((file) => file.fileName)
+        .sort(),
+    ).toEqual([...files, support].sort());
     expect(findings.filter((finding) => finding.file.startsWith(source))).toEqual([]);
+    expect(findings.filter((finding) => finding.file === support)).toEqual([]);
   });
 
   it('returns sorted plain data with 1-based positions', () => {

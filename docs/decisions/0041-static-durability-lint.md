@@ -1,6 +1,7 @@
 # 0041: Static durability lint at load time
 
-- Status: accepted; amended by #339 (QC006 retired)
+- Status: accepted; amended by #339 (QC006 retired) and #326 (identifier-bound zones and same-file
+  helpers)
 - Issue: #154
 
 ## Context
@@ -52,7 +53,8 @@ check with no errors and before import.
   - QC002: in a workflow body outside callback zones, `Date.now()`, argument-less `new Date()` or
     `Date()`, `Math.random()`, `performance.now()`, `crypto.randomUUID` (global or `node:crypto`),
     `process.env`, or an `fs` `*Sync` call.
-  - QC003: a durable call lexically inside a callback zone.
+  - QC003: a durable call lexically inside a callback zone, and since #326 one in a same-file
+    function a zone reaches by name (see the amendment below).
   - QC004: `Promise.race` or `Promise.any` (the global `PromiseConstructor`) whose argument contains
     a durable call or an identifier initialized from one.
   - QC005: a literal ID (string or no-substitution template) as the first argument of an effect on a
@@ -98,12 +100,13 @@ usable gate for agents writing workflows. Execution is never blocked by the lint
 run whose source has a finding still resumes. A workflow that validated before can now fail
 `validate` with exit 4; it needs a fix or a reasoned suppression.
 
-The analysis is lexical and per function. It does not track helpers across calls (a hazard in a
-function called from a step callback is judged where it is written, and a step `run` defined as a
-separate variable is not a callback zone), does not check literal `ctx.scope` or `ctx.within`
-prefixes inside loops or IDs on a `ctx.within(...)` context, and does not cover `fs/promises` or
-`child_process` reads. Runtime guards (duplicate IDs, nested effects, tracked-operation draining)
-remain the backstop. Unused suppressions are not reported.
+The analysis is lexical and per function, with the same-file zone resolution of the
+[#326 amendment](#amendment-identifier-bound-zones-and-same-file-helpers-326): it does not track
+helpers across modules, and a nondeterministic read in a helper is still judged where the helper is
+written. It does not check literal `ctx.scope` or `ctx.within` prefixes inside loops or IDs on a
+`ctx.within(...)` context, and does not cover `fs/promises` or `child_process` reads. Runtime guards
+(duplicate IDs, nested effects, tracked-operation draining) remain the backstop. Unused suppressions
+are not reported.
 
 ## Amendment: QC006 retired (#339)
 
@@ -115,3 +118,46 @@ mistaken for a new rule. Suppression parsing still accepts any `QCnnn`. Batch 01
 pipeline helpers use named maps whose mappers scope IDs relative to the item prefix, so their full
 step IDs and verification records are unchanged and the corpus needs no suppressions. The lint
 reports QC001-QC005.
+
+## Amendment: identifier-bound zones and same-file helpers (#326)
+
+A zone used to come only from a function literal written as the zone property. A callback defined as
+a variable was judged in the workflow body (a QC002 false positive for
+`const run = () => Date.now()` passed as `{ run }`), and a durable call in a helper called from a
+callback was missed. The lint now resolves zones within one file, in two narrow ways, and keeps
+today's behaviour for anything it cannot resolve. Neither can add a QC002 finding.
+
+- **Identifier-bound zones.** A zone property (the same contextual-type test as for literals) whose
+  value is an identifier, as `{ run }` or `run: name`, also through parentheses, `as`, `satisfies`
+  and `!`, is a binding when the identifier names a same-file function: a function declaration with
+  a body, or a `const` whose initializer is an arrow function or function expression. Imports,
+  declarations in another file, `let`, `var`, parameters, destructuring, property accesses, call
+  results and conditionals resolve to nothing. A bound function is exclusive when every other
+  same-file reference to it is a binding or a direct recursive call in the function's own body, not
+  in a nested function; it then gets the zone at its definition, so QC002 is skipped there. Any
+  other reference (a call, an array, `typeof`, an assignment or argument inside its own body, a call
+  inside a nested closure, an export specifier or `export default`; a named function expression's
+  own name counts as a reference too) makes it shared: it keeps its body findings at the definition,
+  so a real QC002 still reports, and it is also walked in the zone from its first binding, so a
+  nested durable call reports QC003. An exported function whose only same-file references are
+  bindings counts as exclusive; the lint does not guess at uses in other modules. If bindings give
+  different zones, the first in source order names the zone.
+- **Following helpers.** A direct call from a zone whose callee is a bare identifier naming a
+  same-file function, resolved the same way, walks that function's body in the zone, so a durable
+  call in it reports QC003, also through a chain of helpers. The body, not the function node, is
+  walked, so a helper with a `WorkflowContext` parameter keeps the zone. Each function is walked
+  once per file, which stops recursion and reports each nested call once. A helper keeps its own
+  definition walk, so a QC002 in a helper that is only ever called from callbacks is still reported
+  where it is written.
+- **Messages.** A QC003 reached this way keeps its wording and names the entry point after the zone,
+  as in `inside a StepDefinition.run callback (reached through record() from line 21)` or
+  `(bound as run at line 12)`. A direct lexical finding is unchanged. The suppression comment goes
+  on the line of the durable call inside the helper. A zone walk revisits nodes the definition walk
+  also sees; duplicate findings at one position and rule are collapsed, keeping the first report.
+
+Limits: same file only; direct identifier calls only, not method calls, imported functions or
+callbacks passed as arguments (`items.map(helper)`); generator and async generator helpers, whose
+call only creates an iterator; `const` and function declarations only; QC002 is still judged at a
+helper's definition; an untyped options object stored in a variable (`const options = { run }`) is
+still not a zone; and inside a followed helper, a nested function with a `WorkflowContext` parameter
+starts a workflow body as before, ending the zone.

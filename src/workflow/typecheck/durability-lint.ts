@@ -5,7 +5,10 @@ import type { DurabilityFinding, DurabilityRule } from './model.js';
 /*
  * Static durability lint (ADR 0041). Pure: it reads only the compiler program it is given and
  * returns plain data. The analysis is lexical and per function: receivers and APIs are resolved by
- * their declarations, never by name, and a shape it does not recognize yields no finding.
+ * their declarations, never by name, and a shape it does not recognize yields no finding. Callback
+ * zones are also resolved within one file (#326): a zone property bound to an identifier applies to
+ * the same-file `const` or function declaration it names, and a direct call from a zone walks the
+ * same-file helper it names in that zone.
  */
 
 const contextEffects = new Set([
@@ -33,6 +36,10 @@ const zoneProperties: Readonly<Record<string, ReadonlySet<string>>> = {
   // The inferred ctx.poll overload's options declare their own observe and done members.
   PollCallOptions: new Set(['observe', 'done']),
 };
+/** Every member name that can be a callback zone, to skip checker calls for other properties. */
+const zoneMembers: ReadonlySet<string> = new Set(
+  Object.values(zoneProperties).flatMap((members) => [...members]),
+);
 /** Zones reported under the source type their members mirror. */
 const zoneAliases: Readonly<Record<string, string>> = {
   'PollCallOptions.observe': 'PollSource.observe',
@@ -134,6 +141,15 @@ function hasFunctionBody(node: ts.Node): node is ts.FunctionLikeDeclaration {
   );
 }
 
+function lineOf(node: ts.Node): number {
+  const file = node.getSourceFile();
+  return file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1;
+}
+
+function contains(outer: ts.Node, inner: ts.Node): boolean {
+  return outer.getStart() <= inner.getStart() && inner.end <= outer.end;
+}
+
 function skipParentheses(node: ts.Expression): ts.Expression {
   let current = node;
   while (
@@ -232,6 +248,40 @@ interface State {
   readonly loop: boolean;
   /** WorkflowContext parameters visible here: the root receivers of QC005. */
   readonly roots: ReadonlySet<ts.Symbol>;
+  /**
+   * How a zone reached a function written outside it: a binding (`bound as run at line 12`) or the
+   * first followed helper call (`reached through record() from line 21`). Undefined for a lexical
+   * zone.
+   */
+  readonly via?: string | undefined;
+}
+
+/** A same-file function an identifier names. */
+interface LocalFunction {
+  readonly fn: ts.FunctionLikeDeclaration;
+  readonly symbol: ts.Symbol;
+}
+
+/** The name of a named function expression, which is in scope only inside its own body. */
+function selfNameOf(fn: ts.FunctionLikeDeclaration): ts.Identifier | undefined {
+  return ts.isFunctionExpression(fn) ? fn.name : undefined;
+}
+
+/** A zone property whose value is an identifier naming a same-file function. */
+interface Binding {
+  readonly fn: ts.FunctionLikeDeclaration;
+  readonly zone: string;
+  readonly via: string;
+}
+
+/**
+ * A function bound to at least one zone property. It is exclusive when every same-file reference
+ * is a binding or a recursive call inside its own body, so it only ever runs as a callback.
+ */
+interface Bound {
+  readonly zone: string;
+  readonly via: string;
+  readonly exclusive: boolean;
 }
 
 interface RawFinding {
@@ -282,6 +332,12 @@ class DurabilityLinter {
   readonly #durable = new Map<ts.Node, boolean>();
   readonly #namespaces: Namespace[] = [];
   readonly #findings: RawFinding[] = [];
+  /** Per file: zone properties bound to a same-file function, keyed by the property node. */
+  readonly #bindings = new Map<ts.Node, Binding>();
+  /** Per file: the zone and exclusivity of every bound function. */
+  readonly #bound = new Map<ts.Node, Bound>();
+  /** Per file: functions already walked in a zone from a binding or a call. */
+  readonly #walked = new Set<ts.Node>();
 
   public constructor(program: ts.Program) {
     this.#program = program;
@@ -291,6 +347,7 @@ class DurabilityLinter {
   public lint(file: ts.SourceFile): RawFinding[] {
     this.#namespaces.length = 0;
     this.#findings.length = 0;
+    this.#prepare(file);
     const state: State = {
       workflow: false,
       zone: undefined,
@@ -410,16 +467,21 @@ class DurabilityLinter {
 
   /** The callback zone a function literal fills, from its property's contextual declaration. */
   #zone(fn: ts.FunctionLikeDeclaration): string | undefined {
-    let property: ts.PropertyAssignment | ts.MethodDeclaration | undefined;
-    if (ts.isMethodDeclaration(fn)) property = fn;
-    else {
-      const node = outermostWrapper(fn);
-      if (ts.isPropertyAssignment(node.parent) && node.parent.initializer === node)
-        property = node.parent;
-    }
-    if (!property || !ts.isObjectLiteralExpression(property.parent)) return undefined;
+    if (ts.isMethodDeclaration(fn)) return this.#propertyZone(fn);
+    const node = outermostWrapper(fn);
+    return ts.isPropertyAssignment(node.parent) && node.parent.initializer === node
+      ? this.#propertyZone(node.parent)
+      : undefined;
+  }
+
+  /** The callback zone an object-literal property fills, from its contextual declaration. */
+  #propertyZone(
+    property: ts.PropertyAssignment | ts.ShorthandPropertyAssignment | ts.MethodDeclaration,
+  ): string | undefined {
+    if (!ts.isObjectLiteralExpression(property.parent)) return undefined;
     const name = property.name;
     if (!ts.isIdentifier(name) && !ts.isStringLiteral(name)) return undefined;
+    if (!zoneMembers.has(name.text)) return undefined;
     try {
       const type = this.#checker.getContextualType(property.parent);
       if (!type) return undefined;
@@ -441,6 +503,178 @@ class DurabilityLinter {
     return undefined;
   }
 
+  /**
+   * The same-file function an identifier names: a function declaration with a body, or a `const`
+   * whose initializer is an arrow function or function expression. Imports, other files, `let`,
+   * `var`, parameters, destructuring and anything else resolve to nothing.
+   */
+  #localFunction(identifier: ts.Identifier): LocalFunction | undefined {
+    try {
+      const parent = identifier.parent;
+      const symbol =
+        ts.isShorthandPropertyAssignment(parent) && parent.name === identifier
+          ? this.#checker.getShorthandAssignmentValueSymbol(parent)
+          : this.#checker.getSymbolAtLocation(identifier);
+      if (!symbol || (symbol.flags & ts.SymbolFlags.Alias) !== 0) return undefined;
+      const declarations = symbol.declarations ?? [];
+      const file = identifier.getSourceFile();
+      if (declarations.length === 0 || declarations.some((d) => d.getSourceFile() !== file))
+        return undefined;
+      const implementation = declarations.find(
+        (declaration): declaration is ts.FunctionDeclaration =>
+          ts.isFunctionDeclaration(declaration) && declaration.body !== undefined,
+      );
+      if (implementation) return { fn: implementation, symbol };
+      const [declaration] = declarations;
+      if (
+        declarations.length !== 1 ||
+        !declaration ||
+        !ts.isVariableDeclaration(declaration) ||
+        !ts.isIdentifier(declaration.name) ||
+        !declaration.initializer ||
+        !ts.isVariableDeclarationList(declaration.parent) ||
+        (declaration.parent.flags & ts.NodeFlags.Const) === 0 ||
+        (declaration.parent.flags & ts.NodeFlags.Using) !== 0
+      )
+        return undefined;
+      const initializer = skipParentheses(declaration.initializer);
+      return ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer)
+        ? { fn: initializer, symbol }
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Find the zone properties bound to same-file functions and decide, for each bound function,
+   * whether it is exclusive (every same-file reference is a binding or a recursive call inside its own body) or shared.
+   */
+  #prepare(file: ts.SourceFile): void {
+    this.#bindings.clear();
+    this.#bound.clear();
+    this.#walked.clear();
+    const bindings: {
+      readonly property: ts.Node;
+      readonly identifier: ts.Identifier;
+      readonly target: LocalFunction;
+      readonly zone: string;
+    }[] = [];
+    const collect = (node: ts.Node): void => {
+      if (ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node)) {
+        const value = ts.isShorthandPropertyAssignment(node)
+          ? node.name
+          : skipParentheses(node.initializer);
+        if (ts.isIdentifier(value)) {
+          const zone = this.#propertyZone(node);
+          const target = zone === undefined ? undefined : this.#localFunction(value);
+          if (zone !== undefined && target)
+            bindings.push({ property: node, identifier: value, target, zone });
+        }
+      }
+      ts.forEachChild(node, collect);
+    };
+    collect(file);
+    if (bindings.length === 0) return;
+    const references = new Map<string, ts.Identifier[]>();
+    const names = new Set(bindings.map((binding) => binding.identifier.text));
+    for (const { target } of bindings) {
+      const selfName = selfNameOf(target.fn);
+      if (selfName) names.add(selfName.text);
+    }
+    const gather = (node: ts.Node): void => {
+      if (ts.isIdentifier(node) && names.has(node.text)) {
+        const list = references.get(node.text) ?? [];
+        list.push(node);
+        references.set(node.text, list);
+      }
+      ts.forEachChild(node, gather);
+    };
+    gather(file);
+    const bound = new Set<ts.Identifier>(bindings.map((binding) => binding.identifier));
+    for (const { property, identifier, target, zone } of bindings) {
+      const via = `bound as ${identifier.text} at line ${String(lineOf(property))}`;
+      this.#bindings.set(property, { fn: target.fn, zone, via });
+      if (this.#bound.has(target.fn)) continue;
+      const declarationNames = new Set(
+        (target.symbol.declarations ?? []).map((declaration) =>
+          ts.getNameOfDeclaration(declaration),
+        ),
+      );
+      const exclusive = (references.get(identifier.text) ?? []).every(
+        (reference) =>
+          declarationNames.has(reference) ||
+          !this.#refersTo(reference, target.symbol) ||
+          bound.has(reference) ||
+          this.#isRecursiveCall(reference, target.fn),
+      );
+      // A named function expression's own name is a second way to reach it from inside its body.
+      const selfName = selfNameOf(target.fn);
+      const selfSymbol = selfName ? this.#symbolAt(selfName) : undefined;
+      const selfExclusive =
+        selfName === undefined ||
+        (references.get(selfName.text) ?? []).every(
+          (reference) =>
+            reference === selfName ||
+            (selfSymbol !== undefined && !this.#refersTo(reference, selfSymbol)) ||
+            this.#isRecursiveCall(reference, target.fn),
+        );
+      this.#bound.set(target.fn, { zone, via, exclusive: exclusive && selfExclusive });
+    }
+  }
+
+  /** The symbol at an identifier, or undefined when the checker cannot resolve it. */
+  #symbolAt(identifier: ts.Identifier): ts.Symbol | undefined {
+    try {
+      return this.#checker.getSymbolAtLocation(identifier);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Whether a reference is the callee of a direct call in the body of the function it names. A call
+   * inside a closure nested in that function does not count: the closure can escape and outlive the step.
+   */
+  #isRecursiveCall(reference: ts.Identifier, fn: ts.FunctionLikeDeclaration): boolean {
+    if (!contains(fn, reference)) return false;
+    let owner: ts.Node = reference.parent;
+    while (!ts.isFunctionLike(owner)) owner = owner.parent;
+    if (owner !== fn) return false;
+    let node: ts.Expression = reference;
+    while (ts.isParenthesizedExpression(node.parent)) node = node.parent;
+    const parent = node.parent;
+    return ts.isCallExpression(parent) && parent.expression === node;
+  }
+
+  /** Whether an identifier refers to a symbol; an identifier the checker cannot resolve might. */
+  #refersTo(identifier: ts.Identifier, symbol: ts.Symbol): boolean {
+    try {
+      const parent = identifier.parent;
+      const resolved =
+        ts.isShorthandPropertyAssignment(parent) && parent.name === identifier
+          ? this.#checker.getShorthandAssignmentValueSymbol(parent)
+          : ts.isExportSpecifier(parent)
+            ? this.#checker.getExportSpecifierLocalTargetSymbol(parent)
+            : this.#checker.getSymbolAtLocation(identifier);
+      return resolved === symbol;
+    } catch {
+      return true;
+    }
+  }
+
+  /**
+   * Walk a same-file function's body in a zone that reaches it from a binding or a call. The body,
+   * not the function node, is visited, so a helper with a WorkflowContext parameter keeps the zone.
+   * Each function is walked once per file, which also stops recursion; an exclusive bound function
+   * already has its zone at its definition.
+   */
+  #walkInZone(fn: ts.FunctionLikeDeclaration, state: State): void {
+    if (this.#walked.has(fn) || this.#bound.get(fn)?.exclusive === true || !fn.body) return;
+    this.#walked.add(fn);
+    this.#visit(fn.body, state);
+  }
+
   #enterFunction(fn: ts.FunctionLikeDeclaration, state: State): State {
     const contexts = fn.parameters.filter((parameter) => this.#isWorkflowContext(parameter));
     if (contexts.length > 0) {
@@ -449,10 +683,12 @@ class DurabilityLinter {
         const symbol = this.#checker.getSymbolAtLocation(parameter.name);
         if (symbol) roots.add(symbol);
       }
-      return this.#namespace({ workflow: true, zone: undefined, roots }, state);
+      return this.#namespace({ workflow: true, zone: undefined, via: undefined, roots }, state);
     }
     const zone = this.#zone(fn);
-    if (zone !== undefined) return { ...state, zone };
+    if (zone !== undefined) return { ...state, zone, via: undefined };
+    const bound = this.#bound.get(fn);
+    if (bound?.exclusive === true) return { ...state, zone: bound.zone, via: bound.via };
     // A parenthesized or asserted callback is still the call's argument.
     const wrapper = outermostWrapper(fn);
     const parent = wrapper.parent;
@@ -513,6 +749,8 @@ class DurabilityLinter {
       });
       return;
     }
+    const binding = this.#bindings.get(node);
+    if (binding) this.#walkInZone(binding.fn, { ...state, zone: binding.zone, via: binding.via });
     try {
       if (ts.isCallExpression(node)) this.#call(node, state);
       else if (ts.isNewExpression(node)) this.#new(node, state);
@@ -536,6 +774,7 @@ class DurabilityLinter {
       state.workflow && state.zone === undefined && this.#nondeterminism(node);
     if (nondeterministic) this.#reportNondeterminism(node, nondeterministic);
     this.#race(node);
+    if (state.zone !== undefined) this.#followHelper(node, state);
     if (!info) return;
     const effect = this.#isEffect(node);
     const label = this.#label(node, info);
@@ -554,7 +793,7 @@ class DurabilityLinter {
       this.#report(
         'QC003',
         node,
-        `${label}(...) inside a ${state.zone} callback is a nested durable call, which the runtime rejects; use the callback's context.exec or move the call into the workflow body.`,
+        `${label}(...) inside a ${state.zone} callback${state.via === undefined ? '' : ` (${state.via})`} is a nested durable call, which the runtime rejects; use the callback's context.exec or move the call into the workflow body.`,
       );
     if (effect && state.namespace && state.zone === undefined) {
       const first = node.arguments[0];
@@ -565,6 +804,19 @@ class DurabilityLinter {
       )
         state.namespace.occurrences.push({ id: first.text, call: node, inLoop: state.loop });
     }
+  }
+
+  /** From a zone, walk a direct call's same-file helper in that zone. */
+  #followHelper(node: ts.CallExpression, state: State): void {
+    const callee = skipParentheses(node.expression);
+    if (!ts.isIdentifier(callee)) return;
+    const target = this.#localFunction(callee);
+    // Calling a generator only creates an iterator, so its body does not run at the call.
+    if (!target || target.fn.asteriskToken) return;
+    this.#walkInZone(target.fn, {
+      ...state,
+      via: state.via ?? `reached through ${callee.text}() from line ${String(lineOf(node))}`,
+    });
   }
 
   #isRootReceiver(node: ts.CallExpression, info: CallInfo, state: State): boolean {
@@ -787,10 +1039,9 @@ export function lintDurability(program: ts.Program): DurabilityFinding[] {
         column: position.character + 1,
         message: raw.message,
       };
-      findings.set(
-        `${finding.file}\0${String(line)}\0${String(finding.column)}\0${finding.rule}`,
-        finding,
-      );
+      // A zone walk can revisit a node the definition walk saw; the first report wins.
+      const key = `${finding.file}\0${String(line)}\0${String(finding.column)}\0${finding.rule}`;
+      if (!findings.has(key)) findings.set(key, finding);
     }
   }
   return [...findings.values()].sort(
