@@ -194,9 +194,10 @@ callback can get different answers (`argvPrefix` also works when their argv diff
 a command poll counts as a call. A poll observer may pass `live: true` to run a read-only command
 for real under `--dry-run`; it is listed with `outputSource: 'live'`. Each check of a command poll
 is rehearsed the same way, with `stepId` and `parentStepId` set to the wait ID, and a command poll's
-own `live: true` keeps it real. `live` is refused in a step callback, and outside `--dry-run` it
-changes nothing. `workflow fixtures` exports these commands as `exec` rules keyed by the parent's
-ID, argv and digests: a step's latest attempt, or a poll's terminal check, with `call` only where
-the parent ran more than one matching command. See [command fixtures](rehearsal.md#command-fixtures)
-and the
+own `live: true` keeps it real. A dry run makes up to five checks of a poll in one process, each
+rehearsed this way; see [repeated poll checks](rehearsal.md#repeated-poll-checks). `live` is refused
+in a step callback, and outside `--dry-run` it changes nothing. `workflow fixtures` exports these
+commands as `exec` rules keyed by the parent's ID, argv and digests: a step's latest attempt, or a
+poll's terminal check, with `call` only where the parent ran more than one matching command. See
+[command fixtures](rehearsal.md#command-fixtures) and the
 [verified cookbook](../plugins/agents/quiet-choir/skills/quiet-choir/references/patterns.md#commands-and-test-verdicts).

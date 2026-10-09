@@ -2,6 +2,19 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- A dry run now rehearses repeated poll checks instead of suspending at the first nonterminal one
+  (#323,
+  [ADR 0016](docs/decisions/0016-workflow-rehearsal.md#amendment-rehearsed-repeated-poll-checks-323)).
+  Under `--dry-run` (or `RunOptions.rehearsal`) a poll, observer or command form, is checked back to
+  back in one process until a check is terminal, up to five checks per wait, so a `done` that turns
+  terminal on its second check completes deterministically and lists one `commands` entry per check
+  under the wait ID; before, whether that second check happened was a race. Checks run on a virtual
+  clock instead of sleeping the interval, so a deadline reached within them resolves the wait by
+  deadline as a live run would. A poll still nonterminal after five checks stops with a per-wait
+  rehearsal warning and the rehearsal suspends, now also under `--wait-mode block`, which used to
+  keep polling in real time. Every check reruns the observer, so a never-terminal poll makes five
+  observations. The new optional `RunOptions.rehearsal.onPollLimit({ waitId, checks })` hook reports
+  the limit to embedders. Live (non-rehearsal) poll timing is unchanged.
 - A poll callback's wait identity is documented as the callback's source text as the loader printed
   it, and a "wait changed" refusal caused only by a different `observe` (or command poll `done`)
   text now says so (#321,

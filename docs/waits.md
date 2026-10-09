@@ -298,8 +298,11 @@ unknown option or a missing `cwd` fails the wait before its first check. Observe
 Under `--dry-run` each check's command is synthesized from `output`, or answered by an exec fixture
 rule matching the wait ID, and listed in the rehearsal's `commands` with `stepId` and `parentStepId`
 set to the wait ID. With `live: true` it runs for real and is listed with `outputSource: 'live'`. A
-`--stub-steps` pattern matching the wait ID still completes the wait without running the command.
-`workflow pending` shows the command on the wait's row.
+`--stub-steps` pattern matching the wait ID still completes the wait without running the command. A
+dry run checks the poll up to five times in one process, on a virtual clock, so a `done` that is
+terminal only on a later check is rehearsed too; see
+[repeated poll checks](rehearsal.md#repeated-poll-checks). `workflow pending` shows the command on
+the wait's row.
 
 ## Suspension and tick
 
@@ -469,13 +472,18 @@ a tick to finish: a longer agent call is interrupted at the deadline and restart
 observation error with its `consecutive` count, or null), `command` (a command poll's command, or
 null), optional signal, answer command, and `runStatus`, `delivery` (null for a poll or deadline
 with no signal) and `next`; see the [pending row contract](cli-contract.md). A dry-run skips
-timing-only waits and performs a poll's initial read-only observation, unless a `--stub-steps`
-pattern matches the wait ID: then the observer never runs and the wait completes with a synthesized
-value parsed by the poll schema. The observer's `context.exec` commands, and a command poll's
-command, are synthesized (a command poll's from its `output` schema) or answered by exec fixture
-rules during that observation; a call or command poll with `live: true` runs the real read-only
-command and is listed in the rehearsal's `commands` with `outputSource: 'live'`. Unresolved external
-waits suspend. Rehearsals never fabricate signals and do not invoke notification commands.
+timing-only waits and checks a poll back to back until a check is terminal, up to five read-only
+checks per wait in one process, unless a `--stub-steps` pattern matches the wait ID: then the
+observer never runs and the wait completes with a synthesized value parsed by the poll schema. The
+checks run on a virtual clock that advances to each next check or the deadline without sleeping, so
+a deadline reached within them resolves the wait by deadline as a live run would. The observer's
+`context.exec` commands, and a command poll's command, are synthesized (a command poll's from its
+`output` schema) or answered by exec fixture rules on every check; a call or command poll with
+`live: true` runs the real read-only command each time and is listed in the rehearsal's `commands`
+with `outputSource: 'live'`. A poll still nonterminal after five checks adds a rehearsal warning and
+the rehearsal suspends, even under `--wait-mode block`; see
+[repeated poll checks](rehearsal.md#repeated-poll-checks). Unresolved external waits suspend.
+Rehearsals never fabricate signals and do not invoke notification commands.
 
 ## Operator notifications
 
