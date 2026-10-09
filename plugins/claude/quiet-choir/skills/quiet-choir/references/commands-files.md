@@ -76,7 +76,7 @@ ID, `worktree`, `retry` or `meta`. They go through the same runner as `ctx.exec`
 (`RunOptions.execRunner`, or `processRunner`), with the same five-minute and 1 MiB defaults,
 environment overlay, reserved `QUIET_CHOIR_` prefix, exit-code and JSON rules.
 
-These commands are **not durable**. They write no checkpoint and no step record, and they run again
+These commands are **not durable effects**. They are never replayed or reused, and they run again
 whenever the parent reruns: on a retry, on a resume of an unfinished step, and on every poll check.
 Treat them as at least once. The child gets the parent's metadata, so `QUIET_CHOIR_IDEMPOTENCY_KEY`
 equals the callback's `context.idempotencyKey` and `QUIET_CHOIR_STEP_ID` names the parent step or
@@ -86,13 +86,24 @@ resume. A command still running when the callback or observation settles is term
 step finishes; call `context.exec` only while the callback is active. An observer's commands are
 aborted with its observation signal, so `observeTimeoutMs` and the deadline bound them.
 
+The runtime does keep a record of them, for `workflow fixtures` only: the parent's step or wait
+record carries `innerCommands`, each command's argv or shell source, its `envSha256` and
+`inputSha256` digests (never environment values or stdin) and its raw result (exit code, signal,
+stdout and stderr), at most 256 commands and 1 MiB of output per attempt.
+
+> **Command output is retained.** Whatever a command prints, including secrets, can be stored in the
+> checkpoint and journal, whether the command succeeds or fails. For `context.exec.json` the
+> `schema` filters only the parsed value you get back, not the raw stdout that is kept. Do not print
+> credentials from these commands. See `docs/storage.md` (Revision 15) and
+> [rehearsal](rehearsal.md).
+
 A failure throws an `ExecError` into the parent attempt; left uncaught, it fails the step and the
 attempt history keeps its exit code and 1024-character output tails. `onError: 'return'` resolves to
-`{ ok: false, error }` with the same `ExecStepError` fields as a settled `ctx.exec`, but nothing is
-saved: a rerun of the parent runs the command again. Cancellation and a missing process adapter
-still reject. Sticky run policy rules (`RunOptions.policy`) do not apply to these commands; set
-`timeoutMs` and `maxOutputBytes` in the call. Nothing about them enters identity: a step is still
-identified by its callback source, and a wait by its observer.
+`{ ok: false, error }` with the same `ExecStepError` fields as a settled `ctx.exec`, but the failure
+is not a reusable result: a rerun of the parent runs the command again. Cancellation and a missing
+process adapter still reject. Sticky run policy rules (`RunOptions.policy`) do not apply to these
+commands; set `timeoutMs` and `maxOutputBytes` in the call. Nothing about them enters identity: a
+step is still identified by its callback source, and a wait by its observer.
 
 When a poll's check is one command, use the [command form of `ctx.poll`](waits.md#command-polls)
 (`{ command, output, done }`) instead of an observer. Each check runs the command through this same

@@ -118,8 +118,10 @@ export interface ExecFunction {
 
 /**
  * Options for a command a local step callback issues through `context.exec`: the options of
- * {@link ExecOptions} without `worktree`, `retry` and `meta`. The command is not a durable effect
- * and writes no step record, so `onError: 'return'` resolves to a failure value without saving it.
+ * {@link ExecOptions} without `worktree`, `retry` and `meta`. The command is not a durable effect:
+ * it is never replayed or reused, so `onError: 'return'` resolves to a failure value that a rerun
+ * of the parent produces again. The runtime does keep the command and its raw result on the
+ * parent's step record for fixture export; see {@link StepExecFunction}.
  */
 export type StepExecOptions = Omit<ExecOptions, 'worktree' | 'retry' | 'meta'>;
 
@@ -135,14 +137,22 @@ export interface PollExecOptions extends StepExecOptions {
 
 /**
  * Non-durable command API of a local step callback or poll observer (`context.exec`). A call takes
- * no step ID and writes no checkpoint or step record. Its child is owned by the parent step or
- * wait and attempt, so orphan recovery covers it, and it carries the parent's run metadata,
- * including `QUIET_CHOIR_IDEMPOTENCY_KEY`. Commands run at least once: every rerun of the parent
- * runs them again. Under a rehearsal they are synthesized or answered by exec fixture rules, like
- * `ctx.exec`. A command still running when the callback or observation settles is terminated.
+ * no step ID and is not an effect: it is never replayed or reused, and every rerun of the parent
+ * runs it again, so commands run at least once. Its child is owned by the parent step or wait and
+ * attempt, so orphan recovery covers it, and it carries the parent's run metadata, including
+ * `QUIET_CHOIR_IDEMPOTENCY_KEY`. Under a rehearsal they are synthesized or answered by exec fixture
+ * rules, like `ctx.exec`. A command still running when the callback or observation settles is
+ * terminated.
+ *
+ * The commands are still recorded, for `workflow fixtures` only. The parent's step or wait record
+ * keeps `innerCommands`: each command's argv or shell source, the `envSha256` and `inputSha256`
+ * digests (never environment values or stdin) and the raw process result (exit code, signal,
+ * stdout and stderr, up to 1 MiB per attempt), even when the call succeeds, fails or is
+ * schema-parsed by `json`. A secret a command prints is therefore stored in the checkpoint and
+ * journal, and a schema does not filter it out. Keep secrets out of command output.
  */
 export interface StepExecFunction<TOptions extends StepExecOptions = StepExecOptions> {
-  /** Run a command and return a failure as a value instead of throwing it; nothing is saved. */
+  /** Run a command and return a failure as a value instead of throwing it. It is not replayed. */
   (
     command: Command,
     options: TOptions & { readonly onError: 'return' },
@@ -152,7 +162,7 @@ export interface StepExecFunction<TOptions extends StepExecOptions = StepExecOpt
     command: Command,
     options?: TOptions & { readonly onError?: TMode | undefined },
   ): Promise<EffectResult<ExecResult, TMode, ExecStepError>>;
-  /** Parse and validate stdout, returning a failure as a value; nothing is saved. */
+  /** Parse and validate stdout, returning a failure as a value. The raw stdout is still recorded. */
   json<T>(
     command: Command,
     options: TOptions & { readonly schema: z.ZodType<T>; readonly onError: 'return' },

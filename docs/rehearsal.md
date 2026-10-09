@@ -132,7 +132,10 @@ are exported too. The runtime records them on the parent's step record (`innerCo
 step, the commands of its latest settled attempt, and for a wait, only those of the observation that
 completed it. Each rule's `step` is the parent's full ID, with the full argv as `argvPrefix`
 (omitted for a `{ shell }` command) and the recorded digests; environment values and stdin are never
-stored, only `envSha256` and `inputSha256`. The rule carries the raw result the process runner gave
+stored, only `envSha256` and `inputSha256`. The record does keep the raw stdout and stderr, up to 1
+MiB per attempt, even when an `exec.json` schema parsed only part of it, so output a command prints,
+including secrets, can be stored in the checkpoint and journal and exported into the fixture file;
+keep secrets out of command output. The rule carries the raw result the process runner gave
 (`stdout`, plus `stderr` and `code` when not empty or zero), so a replay sends it through the same
 `okExitCodes` and `exec.json` schema checks: successes, exit-code failures and schema failures,
 thrown, caught or returned with `onError: 'return'`, replay the same way. A rule gets `call` only
