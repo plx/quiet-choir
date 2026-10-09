@@ -435,8 +435,13 @@ export class WorktreeRehearsal {
     return commit;
   }
 
-  /** The cache root a real run would use, by path arithmetic only: nothing is created or resolved. */
+  /**
+   * The cache root a real run would use: the copied ledger's pinned root, which a real resume keeps
+   * whatever `worktrees.root` says, otherwise the policy's by path arithmetic only (nothing is
+   * created or resolved).
+   */
   private root(repo: string | null): string {
+    if (this.record.worktrees !== undefined) return this.record.worktrees.root;
     return this.policy.root === undefined
       ? defaultWorktreeRoot(repo ?? this.record.cwd)
       : resolve(this.record.cwd, this.policy.root);
@@ -510,10 +515,8 @@ export class WorktreeRehearsal {
     }
     const invocation = this.invocation(id, context);
     const repo = await this.repo(invocation);
+    // Checks the cache root only without a ledger: a real resume keeps the root its ledger pinned.
     if (repo !== null) await this.initialize(repo, invocation);
-    if (repo !== null && within(repo, await this.canonicalRoot(repo)))
-      throw new ConfigurationError(rootInsideCheckoutMessage);
-
     let base: string;
     let baseSource: 'resolved' | 'recorded' | 'placeholder';
     if (step.worktree?.base !== undefined) {

@@ -192,11 +192,11 @@ them in the global `--harness fixture:FILE`.
 
 Dry-run synthesizes fresh worktree isolation instead of refusing it. An isolated Claude or Codex
 call is planned and recorded in `calls` like any other, with `cwd` set to an absolute placeholder
-directory under the worktree cache root that is never created, and returns an unchanged change
-`{ base, commit: null, ref: null, files: [] }`; `worktrees.setup` does not run. `ctx.merge` over
-unchanged changes returns the no-op integration a real run would compute,
-`{ commit, merged: [], conflicts: [] }`, with `commit` the existing target branch or `HEAD`. Step
-IDs and fingerprints are those of the real run.
+directory under the worktree cache root (on a resume, the root the copied ledger pinned) that is
+never created, and returns an unchanged change `{ base, commit: null, ref: null, files: [] }`;
+`worktrees.setup` does not run. `ctx.merge` over unchanged changes returns the no-op integration a
+real run would compute, `{ commit, merged: [], conflicts: [] }`, with `commit` the existing target
+branch or `HEAD`. Step IDs and fingerprints are those of the real run.
 
 A dry-run resume or fork reaches `ctx.merge` with real inputs when it replays or reuses a completed
 isolated step that captured a commit, or replays a `ctx.worktree` handle (resolved from the copied
@@ -247,9 +247,10 @@ Before the run has a worktree ledger, the first isolated call or merge makes the
 makes when it creates one: Git older than 2.38 and a cache root inside the checkout (after existing
 symlinks are resolved, as a real run resolves them) fail with the real configuration error, and a
 source checkout with uncommitted or untracked changes records the real warning in
-`worktreeWarnings`. A dry-run resume of a run that already has a ledger skips them, as the real
-resume does. Every merge, a no-op included, first makes the real merge's target checks: a `branch`
-target with an invalid name, one checked out in any worktree (the current checkout included; use
+`worktreeWarnings`. A dry-run resume of a run that already has a ledger skips them and keeps the
+cache root the ledger pinned, whatever `worktrees.root` now says, as the real resume does. Every
+merge, a no-op included, first makes the real merge's target checks: a `branch` target with an
+invalid name, one checked out in any worktree (the current checkout included; use
 `target: 'checkout'` for it) or a symbolic ref, and a `checkout` target with uncommitted or
 untracked changes fail with the real run's error. The worktree listing waits only for other runs in
 the same process, not for the repository's lock file, so a `git worktree add` in another process can

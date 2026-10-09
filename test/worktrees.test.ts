@@ -2887,6 +2887,53 @@ it.each([
   },
 );
 
+it("keeps the copied ledger's pinned cache root in a dry-run resume, as the real resume does", async () => {
+  let stop = true;
+  const invoke = vi.fn<Harness['invoke']>(() => Promise.resolve(response));
+  const workflow = defineWorkflow({
+    name: 'pinned-root',
+    version: '1',
+    input: z.null(),
+    output: z.unknown(),
+    async run(ctx) {
+      await ctx.codex.text('first', { prompt: 'first', worktree: true });
+      if (stop) throw new Error('stopped after the first call');
+      return (await ctx.codex.text('second', { prompt: 'second', worktree: true })).output;
+    },
+  });
+  await expect(
+    runWorkflow(workflow, { ...options('pinned-root'), input: null, harness: { invoke } }),
+  ).rejects.toThrow('stopped after the first call');
+  const pinned = (await readRun({ stateDir, runId: 'pinned-root' })).worktrees?.root;
+  assert(pinned);
+  // A later worktrees.root that a symlink leads into the checkout: a run without a ledger refuses
+  // it, but a resume keeps the root its ledger pinned and never checks the new one.
+  await symlink(repo, join(directory, 'linked'), 'dir');
+  const override = { root: join(directory, 'linked', 'missing', 'caches') };
+  stop = false;
+  const before = await repositoryState();
+  const dry = await runWorkflow(workflow, {
+    ...dryRun('pinned-root', await copyRun('pinned-root'), [], processRunner),
+    worktrees: override,
+    harness: { kind: 'dry-run', invoke },
+    resume: true,
+  });
+  expect(dry.status).toBe('completed');
+  // The placeholder directory is planned under the pinned root, and nothing is created.
+  expect(dry.steps['second']?.worktree?.path).toContain(join(pinned, 'pinned-root-dry-run'));
+  expect(await exists(join(repo, 'missing'))).toBe(false);
+  expect(await repositoryState()).toEqual(before);
+  const real = await runWorkflow(workflow, {
+    ...options('pinned-root'),
+    worktrees: override,
+    input: null,
+    harness: { invoke },
+    resume: true,
+  });
+  expect(real.status).toBe('completed');
+  expect(real.steps['second']?.worktree?.path.startsWith(join(pinned, 'pinned-root-'))).toBe(true);
+});
+
 it('runs the dry-run status checks without rename detection, which reads blob contents', async () => {
   // A staged rename is a change either way; with rename detection Git would compare the blobs,
   // which Git older than 2.44 could lazy-fetch from a partial clone's promisor remote.
