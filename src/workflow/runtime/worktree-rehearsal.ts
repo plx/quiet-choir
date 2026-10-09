@@ -6,14 +6,14 @@
  * through a read-only {@link WorktreeGit} that refuses every command outside a short exact allowlist
  * before it reaches the process runner. Before a run has a worktree ledger, the first isolation or
  * merge also makes the real ledger's checks through it, with the real messages: Git older than 2.38
- * fails, a cache root inside the checkout fails, and a checkout with uncommitted changes records the
- * real warning. Every merge first makes the real merge's target checks (`checkMergeTarget`): an
- * invalid branch name, a branch checked out in a worktree or a symbolic-ref branch, and a dirty
- * `checkout` target fail as in a real run. The worktree listing they need waits only for the
- * in-process administration queue, never the repository's lock file. A fresh isolated agent call
- * is planned in an absolute placeholder directory that is never created and returns an unchanged
- * change; a merge whose inputs are all unchanged changes returns the real no-op integration
- * (`commit` is the target's current commit).
+ * fails, a cache root inside the checkout (once existing symlinks are resolved) fails, and a
+ * checkout with uncommitted changes records the real warning. Every merge first makes the real
+ * merge's target checks (`checkMergeTarget`): an invalid branch name, a branch checked out in a
+ * worktree or a symbolic-ref branch, and a dirty `checkout` target fail as in a real run. The
+ * worktree listing they need waits only for the in-process administration queue, never the
+ * repository's lock file. A fresh isolated agent call is planned in an absolute placeholder
+ * directory that is never created and returns an unchanged change; a merge whose inputs are all
+ * unchanged changes returns the real no-op integration (`commit` is the target's current commit).
  *
  * A merge over captured commits (a completed isolated step replayed by a dry-run resume or reused
  * by a dry-run fork, or a replayed `ctx.worktree` handle from the copied ledger) is previewed with
@@ -46,6 +46,7 @@ import { isAbsolute, join, relative, resolve } from 'node:path';
 import { WorktreeGit, commitId } from '../../worktrees/git.js';
 import { CheckpointError } from './checkpoint.js';
 import { ConfigurationError } from './configuration-error.js';
+import { filePath } from './files.js';
 import type { ProcessRunner } from './exec-model.js';
 import { digest } from './json.js';
 import type { HarnessInvocation, StepContext } from './model.js';
@@ -144,6 +145,8 @@ export class WorktreeRehearsal {
   private repository: Promise<string | null> | undefined;
   /** The real ledger's initialization checks (see {@link initialize}), memoized once they pass. */
   private initialization: Promise<void> | undefined;
+  /** The canonical cache root (see {@link canonicalRoot}). */
+  private canonical: Promise<string> | undefined;
   /** The canonical common Git directory, which keys the in-process administration queue. */
   private commonDir: Promise<string> | undefined;
   private readonly revisions = new Map<string, Promise<string | null>>();
@@ -238,7 +241,8 @@ export class WorktreeRehearsal {
       }
       const refusal = version === '' ? null : gitVersionRefusal(version);
       if (refusal !== null) throw new ConfigurationError(refusal);
-      if (within(repo, this.root(repo))) throw new ConfigurationError(rootInsideCheckoutMessage);
+      if (within(repo, await this.canonicalRoot(repo)))
+        throw new ConfigurationError(rootInsideCheckoutMessage);
       const status = await git.text(
         repo,
         ['status', '--porcelain', '--untracked-files=normal', '--no-renames'],
@@ -429,6 +433,24 @@ export class WorktreeRehearsal {
   }
 
   /**
+   * The cache root with existing symlinks resolved, as the real ledger canonicalizes it before its
+   * containment check (`filePath`, which only reads with `realpath` and `lstat` and creates
+   * nothing), so a root that reaches the checkout through a symlink fails and one that leaves it
+   * through a symlink passes, as in a real run. Memoized per run, cleared on failure.
+   */
+  private canonicalRoot(repo: string): Promise<string> {
+    this.canonical ??= filePath(
+      this.record.cwd,
+      this.policy.root ?? defaultWorktreeRoot(repo),
+      true,
+    ).catch((error: unknown) => {
+      this.canonical = undefined;
+      throw error;
+    });
+    return this.canonical;
+  }
+
+  /**
    * The accepted-replay probe's `ctx.worktree`: a placeholder handle recorded in the temporary
    * checkpoint, without Git. Its directory is never created; its base is a `{ commit }` base's
    * commit, otherwise the placeholder commit.
@@ -479,8 +501,7 @@ export class WorktreeRehearsal {
     const invocation = this.invocation(id, context);
     const repo = await this.repo(invocation);
     if (repo !== null) await this.initialize(repo, invocation);
-    const root = this.root(repo);
-    if (repo !== null && within(repo, root))
+    if (repo !== null && within(repo, await this.canonicalRoot(repo)))
       throw new ConfigurationError(rootInsideCheckoutMessage);
     let base: string;
     let baseSource: 'resolved' | 'recorded' | 'placeholder';
@@ -501,7 +522,7 @@ export class WorktreeRehearsal {
       inside = relative(repo, canonical);
     }
     const path = join(
-      root,
+      this.root(repo),
       `${this.record.id}-dry-run`,
       digest(`attempt:${id}:${String(context.attempt)}`),
     );

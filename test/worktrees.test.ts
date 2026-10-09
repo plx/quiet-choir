@@ -2820,6 +2820,70 @@ it.each([
   },
 );
 
+it.each([
+  {
+    direction: 'outside the checkout that a symlink leads into it',
+    setup: async () => {
+      await symlink(repo, join(directory, 'linked'), 'dir');
+      return join(directory, 'linked', 'missing', 'caches');
+    },
+    refused: true,
+  },
+  {
+    direction: 'inside the checkout that a symlink leads out of it',
+    setup: async () => {
+      await mkdir(join(directory, 'outside'));
+      await symlink(join(directory, 'outside'), join(repo, 'out'), 'dir');
+      return join(repo, 'out', 'caches');
+    },
+    refused: false,
+  },
+])(
+  'resolves symlinks in a cache root $direction under dry-run as the real run does',
+  async ({ setup, refused }) => {
+    const cacheRoot = await setup();
+    const invoke = vi.fn<Harness['invoke']>(() => Promise.resolve(response));
+    const workflow = defineWorkflow({
+      name: 'linked-root',
+      version: '1',
+      input: z.null(),
+      output: z.unknown(),
+      async run(ctx) {
+        return (await ctx.codex.text('edit', { prompt: 'edit', worktree: true })).output;
+      },
+    });
+    const before = await repositoryState();
+    const dryOptions = {
+      ...freshDryRun('linked-root', processRunner),
+      worktrees: { root: cacheRoot },
+      harness: { kind: 'dry-run', invoke },
+    };
+    const realOptions = {
+      ...options('linked-root'),
+      worktrees: { root: cacheRoot },
+      input: null,
+      harness: { invoke },
+    };
+    if (refused) {
+      const dry = await failureOf(runWorkflow(workflow, dryOptions));
+      expect(dry.message).toContain('worktrees.root must be outside the source checkout');
+      expect(dry.cause).toBe('ConfigurationError');
+      expect(invoke).not.toHaveBeenCalled();
+      expect(await exists(join(repo, 'missing'))).toBe(false);
+      expect(await repositoryState()).toEqual(before);
+      expect(await failureOf(runWorkflow(workflow, realOptions))).toEqual(dry);
+    } else {
+      const dry = await runWorkflow(workflow, dryOptions);
+      expect(dry.status).toBe('completed');
+      // The placeholder directory is planned under the root as given, and nothing is created.
+      expect(dry.steps['edit']?.worktree?.path).toContain(join(cacheRoot, 'linked-root-dry-run'));
+      expect(await exists(join(directory, 'outside', 'caches'))).toBe(false);
+      expect(await repositoryState()).toEqual(before);
+      expect((await runWorkflow(workflow, realOptions)).status).toBe('completed');
+    }
+  },
+);
+
 it('runs the dry-run status checks without rename detection, which reads blob contents', async () => {
   // A staged rename is a change either way; with rename detection Git would compare the blobs,
   // which Git older than 2.44 could lazy-fetch from a partial clone's promisor remote.

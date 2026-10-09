@@ -243,16 +243,17 @@ warning that the real run fails. A dry-run resume of an interrupted real attempt
 base.
 
 Before the run has a worktree ledger, the first isolated call or merge makes the checks a real run
-makes when it creates one: Git older than 2.38 and a cache root inside the checkout fail with the
-real configuration error, and a source checkout with uncommitted or untracked changes records the
-real warning in `worktreeWarnings`. A dry-run resume of a run that already has a ledger skips them,
-as the real resume does. Every merge, a no-op included, first makes the real merge's target checks:
-a `branch` target with an invalid name, one checked out in any worktree (the current checkout
-included; use `target: 'checkout'` for it) or a symbolic ref, and a `checkout` target with
-uncommitted or untracked changes fail with the real run's error. The worktree listing waits only for
-other runs in the same process, not for the repository's lock file, so a `git worktree add` in
-another process can rarely make it fail. Like the real check, `git status` may run a configured
-clean filter, such as git-lfs, on a file whose timestamps changed.
+makes when it creates one: Git older than 2.38 and a cache root inside the checkout (after existing
+symlinks are resolved, as a real run resolves them) fail with the real configuration error, and a
+source checkout with uncommitted or untracked changes records the real warning in
+`worktreeWarnings`. A dry-run resume of a run that already has a ledger skips them, as the real
+resume does. Every merge, a no-op included, first makes the real merge's target checks: a `branch`
+target with an invalid name, one checked out in any worktree (the current checkout included; use
+`target: 'checkout'` for it) or a symbolic ref, and a `checkout` target with uncommitted or
+untracked changes fail with the real run's error. The worktree listing waits only for other runs in
+the same process, not for the repository's lock file, so a `git worktree add` in another process can
+rarely make it fail. Like the real check, `git status` may run a configured clean filter, such as
+git-lfs, on a file whose timestamps changed.
 
 `ctx.worktree`, `ctx.exec` or `ctx.step` on a worktree handle, and an agent call isolated on a
 handle still fail before Git or agent invocation with a configuration error. Rehearse those with a
