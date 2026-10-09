@@ -20,7 +20,14 @@
   (omitted unless a non-negative safe integer). A `step.completed` line takes the step's warnings as
   `msg` (ADR 0037) from `step.warnings`, but only for the step's latest history entry while the step
   is completed: warnings are step-level and reset per attempt, so an earlier attempt's warnings are
-  unknowable and omitted rather than guessed. History-less steps get neither field.
+  unknowable and omitted rather than guessed. History-less steps get neither field. With
+  `transcripts: 'on-failure'` the runner saves a completion, then discards the transcript and saves
+  again, adding a `Could not remove successful transcript` warning when the discard fails, and emits
+  `step.completed` only after that second save. The follower therefore holds back that latest
+  `step.completed` line while the record shows the cleanup pending (the attempt's transcript receipt
+  still `retained`, no cleanup warning, and its execution the running one), and produces it under
+  the same identity on the first read after the cleanup lands, so a cleanup warning is never
+  dropped.
 
 ## Context
 

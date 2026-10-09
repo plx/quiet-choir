@@ -159,6 +159,25 @@ function runEventCandidates(record: RunRecord): Candidate[] {
   });
 }
 
+const cleanupWarning = 'Could not remove successful transcript';
+
+/**
+ * Whether a completed attempt's transcript cleanup is still pending. With `transcripts:
+ * 'on-failure'` the runner saves the completion, then discards the transcript and saves again,
+ * adding a warning when the discard fails; it emits `step.completed` only after that second save.
+ * Until it lands (the receipt still retained and no cleanup warning) while the attempt's execution
+ * is the running one, the line's warnings are not final, so the follower holds it back.
+ */
+function cleanupPending(record: RunRecord, step: StepRecord, attempt: AttemptRecord): boolean {
+  if (record.status !== 'running' || attempt.transcript?.retained !== true) return false;
+  if (attempt.policy.transcripts !== 'on-failure') return false;
+  // A later execution (a resume after a crash between the saves) never finishes this cleanup.
+  const latest = record.executions?.at(-1);
+  if (latest === undefined || latest.n !== attempt.execution || latest.endedAt !== null)
+    return false;
+  return !(step.warnings ?? []).some((warning) => warning.startsWith(cleanupWarning));
+}
+
 function stepCandidates(record: RunRecord, id: string, step: StepRecord): Candidate[] {
   // A fork copies reused records; `--events` drops them as step.reused, so the follower does too.
   if (step.reusedFrom) return [];
@@ -175,7 +194,10 @@ function stepCandidates(record: RunRecord, id: string, step: StepRecord): Candid
   };
   history.forEach((attempt, index) => {
     if (attempt.finishedAt === null) return;
-    if (attempt.status === 'completed')
+    const latest = index === history.length - 1;
+    if (attempt.status === 'completed') {
+      // Produced on a later read, under the same key, once its cleanup warning is final.
+      if (latest && step.status === 'completed' && cleanupPending(record, step, attempt)) return;
       result.push({
         key: `attempt\u0000${id}\u0000${String(attempt.attempt)}\u0000completed`,
         execution: attempt.execution,
@@ -190,14 +212,14 @@ function stepCandidates(record: RunRecord, id: string, step: StepRecord): Candid
           // step.warnings is reset per attempt, so it belongs only to the step's latest attempt.
           // Only agent steps carry them live (on agent.finished), so only they do here.
           msg:
-            harness !== undefined && index === history.length - 1 && step.status === 'completed'
+            harness !== undefined && latest && step.status === 'completed'
               ? warningsMessage(step.warnings)
               : undefined,
         },
       });
-    else if (attempt.status === 'failed') {
+    } else if (attempt.status === 'failed') {
       // The runner writes only step.settled for the final attempt of a settled failure.
-      const settled = step.status === 'settled-failed' && index === history.length - 1;
+      const settled = step.status === 'settled-failed' && latest;
       result.push({
         key: `attempt\u0000${id}\u0000${String(attempt.attempt)}\u0000${settled ? 'settled' : 'failed'}`,
         execution: attempt.execution,
@@ -279,7 +301,10 @@ function stepCandidates(record: RunRecord, id: string, step: StepRecord): Candid
  * recorded `diagnostics.toolUses` when its own recorded request names a harness, whatever kind the
  * step has now, and a `step.completed` line carries the step's warnings as its
  * `msg` only for the step's latest attempt, because the record keeps warnings per step, not per
- * attempt. Fork-reused steps and cancelled or
+ * attempt. That latest `step.completed` line is held back while its `transcripts: 'on-failure'`
+ * cleanup is pending in the running execution (the receipt still retained and no cleanup warning
+ * yet), and produced on the read after the cleanup save, as the runner emits it only then, so a
+ * cleanup warning is never lost. Fork-reused steps and cancelled or
  * interrupted attempts write nothing, and fields the record cannot supply are omitted. Lines are
  * deduplicated by identity, not position, so eviction past the 500-event cap neither repeats nor
  * hides newer lines. Each call returns the lines not yet accounted for in `cursor` (null on the

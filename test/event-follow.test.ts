@@ -316,6 +316,74 @@ describe('recordEventLines derivation', () => {
     ]);
   });
 
+  describe('transcript cleanup after the completion checkpoint', () => {
+    const cleanup = 'Could not remove successful transcript: EBUSY';
+    /** The agent step as each save records it: completed with its transcript, then cleaned up. */
+    const cleaned = (retained: boolean, warnings: string[] = []): StepRecord =>
+      step(
+        [
+          attempt(1, 'completed', 10, {
+            request: { harness: 'claude' } as RequestSummary,
+            diagnostics: { toolUses: 2 },
+            policy: { transcripts: 'on-failure' } as AttemptRecord['policy'],
+            transcript: { path: '/t', bytes: 10, truncated: false, retained },
+          }),
+        ],
+        { kind: 'claude', warnings },
+      );
+    const completed = (lines: readonly string[]): EventLine[] =>
+      parse(lines).filter((line) => line.ev === 'step.completed');
+
+    it('holds step.completed until a failed cleanup records its warning', () => {
+      const first = read(record({ steps: { agent: cleaned(true) } }), 'end');
+      const held = read(record({ steps: { agent: cleaned(true) } }), 'end', first.cursor);
+      expect(completed(held.lines)).toEqual([]);
+      const after = read(
+        record({ steps: { agent: cleaned(true, [cleanup]) } }),
+        'end',
+        held.cursor,
+      );
+      expect(completed(after.lines)).toEqual([
+        expect.objectContaining({ step: 'agent', toolUses: 2, msg: cleanup }),
+      ]);
+      const again = read(
+        record({ steps: { agent: cleaned(true, [cleanup]) } }),
+        'end',
+        after.cursor,
+      );
+      expect(again.lines).toEqual([]);
+    });
+
+    it('produces step.completed without a warning once cleanup succeeds', () => {
+      const held = read(record({ steps: { agent: cleaned(true) } }), 'all');
+      expect(completed(held.lines)).toEqual([]);
+      const after = read(record({ steps: { agent: cleaned(false) } }), 'all', held.cursor);
+      const lines = completed(after.lines);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).not.toHaveProperty('msg');
+      expect(read(record({ steps: { agent: cleaned(false) } }), 'all', after.cursor).lines).toEqual(
+        [],
+      );
+    });
+
+    it('releases a pending cleanup once its execution is no longer the running one', () => {
+      const ended = record({ status: 'failed', steps: { agent: cleaned(true) } });
+      expect(completed(read(ended).lines)).toHaveLength(1);
+      const resumed = record({
+        executions: [execution(1, 0, 20), execution(2, 30)],
+        steps: { agent: cleaned(true) },
+      });
+      expect(completed(read(resumed).lines)).toHaveLength(1);
+      const other = step([
+        attempt(1, 'completed', 10, {
+          policy: { transcripts: 'on' } as AttemptRecord['policy'],
+          transcript: { path: '/t', bytes: 10, truncated: false, retained: true },
+        }),
+      ]);
+      expect(completed(read(record({ steps: { other } })).lines)).toHaveLength(1);
+    });
+  });
+
   it('skips fork-reused steps and derives history-less settlements from the step', () => {
     const run = record({
       executions: [execution(1, 0, 10), execution(2, 20)],
