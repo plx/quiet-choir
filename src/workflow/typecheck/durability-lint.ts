@@ -632,9 +632,15 @@ class DurabilityLinter {
     }
   }
 
-  /** Whether a reference is the callee of a direct call inside the function it names. */
+  /**
+   * Whether a reference is the callee of a direct call in the body of the function it names. A call
+   * inside a closure nested in that function does not count: the closure can escape and outlive the step.
+   */
   #isRecursiveCall(reference: ts.Identifier, fn: ts.FunctionLikeDeclaration): boolean {
     if (!contains(fn, reference)) return false;
+    let owner: ts.Node = reference.parent;
+    while (!ts.isFunctionLike(owner)) owner = owner.parent;
+    if (owner !== fn) return false;
     let node: ts.Expression = reference;
     while (ts.isParenthesizedExpression(node.parent)) node = node.parent;
     const parent = node.parent;
@@ -805,7 +811,8 @@ class DurabilityLinter {
     const callee = skipParentheses(node.expression);
     if (!ts.isIdentifier(callee)) return;
     const target = this.#localFunction(callee);
-    if (!target) return;
+    // Calling a generator only creates an iterator, so its body does not run at the call.
+    if (!target || target.fn.asteriskToken) return;
     this.#walkInZone(target.fn, {
       ...state,
       via: state.via ?? `reached through ${callee.text}() from line ${String(lineOf(node))}`,

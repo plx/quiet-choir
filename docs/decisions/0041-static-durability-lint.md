@@ -133,14 +133,15 @@ today's behaviour for anything it cannot resolve. Neither can add a QC002 findin
   a body, or a `const` whose initializer is an arrow function or function expression. Imports,
   declarations in another file, `let`, `var`, parameters, destructuring, property accesses, call
   results and conditionals resolve to nothing. A bound function is exclusive when every other
-  same-file reference to it is a binding or a recursive call inside the function's own body; it then
-  gets the zone at its definition, so QC002 is skipped there. Any other reference (a call, an array,
-  `typeof`, an assignment or argument inside its own body, an export specifier or `export default`;
-  a named function expression's own name counts as a reference too) makes it shared: it keeps its
-  body findings at the definition, so a real QC002 still reports, and it is also walked in the zone
-  from its first binding, so a nested durable call reports QC003. An exported function whose only
-  same-file references are bindings counts as exclusive; the lint does not guess at uses in other
-  modules. If bindings give different zones, the first in source order names the zone.
+  same-file reference to it is a binding or a direct recursive call in the function's own body, not
+  in a nested function; it then gets the zone at its definition, so QC002 is skipped there. Any
+  other reference (a call, an array, `typeof`, an assignment or argument inside its own body, a call
+  inside a nested closure, an export specifier or `export default`; a named function expression's
+  own name counts as a reference too) makes it shared: it keeps its body findings at the definition,
+  so a real QC002 still reports, and it is also walked in the zone from its first binding, so a
+  nested durable call reports QC003. An exported function whose only same-file references are
+  bindings counts as exclusive; the lint does not guess at uses in other modules. If bindings give
+  different zones, the first in source order names the zone.
 - **Following helpers.** A direct call from a zone whose callee is a bare identifier naming a
   same-file function, resolved the same way, walks that function's body in the zone, so a durable
   call in it reports QC003, also through a chain of helpers. The body, not the function node, is
@@ -155,7 +156,8 @@ today's behaviour for anything it cannot resolve. Neither can add a QC002 findin
   also sees; duplicate findings at one position and rule are collapsed, keeping the first report.
 
 Limits: same file only; direct identifier calls only, not method calls, imported functions or
-callbacks passed as arguments (`items.map(helper)`); `const` and function declarations only; QC002
-is still judged at a helper's definition; an untyped options object stored in a variable
-(`const options = { run }`) is still not a zone; and inside a followed helper, a nested function
-with a `WorkflowContext` parameter starts a workflow body as before, ending the zone.
+callbacks passed as arguments (`items.map(helper)`); generator and async generator helpers, whose
+call only creates an iterator; `const` and function declarations only; QC002 is still judged at a
+helper's definition; an untyped options object stored in a variable (`const options = { run }`) is
+still not a zone; and inside a followed helper, a nested function with a `WorkflowContext` parameter
+starts a workflow body as before, ending the zone.

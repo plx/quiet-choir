@@ -67,6 +67,18 @@ export default defineWorkflow({
       schema: z.number(),
       run: countdown,
     });
+    // A closure nested in the callback that calls it can escape and outlive the step: shared, so
+    // its Date.now() is reported.
+    let later: (() => number) | undefined;
+    const nested = (): number => {
+      later = () => nested();
+      return Date.now();
+    };
+    const viaClosure = await ctx.step('via-closure', {
+      input: {},
+      schema: z.number(),
+      run: nested,
+    });
     const outcome = polled.by === 'deadline' ? 0 : polled.value;
     return (
       first +
@@ -80,6 +92,8 @@ export default defineWorkflow({
       escaped +
       selfLeak +
       recursive +
+      viaClosure +
+      (later?.() ?? 0) +
       (leaked?.() ?? 0) +
       (saved?.() ?? 0)
     );

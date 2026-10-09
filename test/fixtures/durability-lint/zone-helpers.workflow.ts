@@ -25,6 +25,11 @@ function odd(ctx: WorkflowContext, n: number): Promise<number> {
   return n === 0 ? Promise.resolve(1) : even(ctx, n - 1);
 }
 
+// Calling a generator only creates an iterator: its body does not run in the callback's zone.
+function* steps(ctx: WorkflowContext): Generator<Promise<number>> {
+  yield ctx.now('generated');
+}
+
 export default defineWorkflow({
   name: 'durability-zone-helpers',
   version: '1',
@@ -61,6 +66,11 @@ export default defineWorkflow({
         return local();
       },
     });
-    return a + (b.by === 'deadline' ? 0 : b.value) + c + d + e + f + g + h;
+    const i = await ctx.step('i', {
+      input: {},
+      schema: z.number(),
+      run: () => [...steps(ctx)].length,
+    });
+    return i + a + (b.by === 'deadline' ? 0 : b.value) + c + d + e + f + g + h;
   },
 });

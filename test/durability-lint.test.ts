@@ -159,13 +159,15 @@ describe('durability lint', () => {
     // its zone use reports the nested ctx.now. A callback that stores itself from its own body
     // (47-50) is shared as well, since only a recursive call keeps it exclusive. The same goes for a
     // named function expression that stores its own name (55-58); one that only calls itself (60-64)
-    // stays exclusive and clean.
+    // stays exclusive and clean. One whose nested closure calls it (73-76) is shared too, since a call
+    // in a closure can escape (75).
     expect(found('zone-identifier')).toEqual([
       'QC003@36',
       'QC002@37',
       'QC002@42',
       'QC002@49',
       'QC002@57',
+      'QC002@75',
     ]);
     expect(of('zone-identifier').find((finding) => finding.rule === 'QC003')?.message).toContain(
       'inside a StepDefinition.run callback (bound as shared at line 40) is a nested durable call',
@@ -175,24 +177,25 @@ describe('durability lint', () => {
   it('walks same-file helpers called from a callback in its zone, once each', () => {
     // A module-level helper with a context parameter from a poll observe (5), a two-level chain
     // (9), a mutually recursive pair called from two steps (21, reported once) and a body-level
-    // const (34). The Date.now() of a helper only called from a callback stays reported where it
-    // is written (36), the self-recursive countdown and the self-referencing bound tick are clean,
-    // and a helper written inside the callback keeps the plain message (60).
+    // const (39). The Date.now() of a helper only called from a callback stays reported where it
+    // is written (41), the self-recursive countdown and the self-referencing bound tick are clean,
+    // a generator helper's durable call is not followed, and a helper written inside the callback
+    // keeps the plain message (65).
     expect(found('zone-helpers')).toEqual([
       'QC003@5',
       'QC003@9',
       'QC003@21',
-      'QC003@34',
-      'QC002@36',
-      'QC003@60',
+      'QC003@39',
+      'QC002@41',
+      'QC003@65',
     ]);
     const message = (line: number) =>
       of('zone-helpers').find((finding) => finding.line === line)?.message;
     expect(message(5)).toContain(
-      'ctx.step(...) inside a PollSource.observe callback (reached through record() from line 43)',
+      'ctx.step(...) inside a PollSource.observe callback (reached through record() from line 48)',
     );
-    expect(message(9)).toContain('(reached through outer() from line 45)');
-    expect(message(60)).not.toContain('reached through');
+    expect(message(9)).toContain('(reached through outer() from line 50)');
+    expect(message(65)).not.toContain('reached through');
   });
 
   it('keeps the findings of callbacks it cannot resolve to a same-file function', () => {

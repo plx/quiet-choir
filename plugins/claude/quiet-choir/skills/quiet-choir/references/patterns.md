@@ -970,16 +970,16 @@ rejects, but the workflow never sees its result. Await it, or collect it in `Pro
 `crypto.randomUUID()`, `process.env` or an `fs` `*Sync` call in the workflow body, outside a step
 `run`, a poll `observe`/`done` and a poll `onError` callback. A callback passed by name (`{ run }`,
 `run: readClock`) counts as one when it is a same-file `const` arrow or function expression, or a
-function declaration, and the file uses it only as such a callback (apart from a recursive call
-inside the function's own body). Use `ctx.now`, `ctx.readFile`, `ctx.exec` or a `ctx.step`, or pass
-the value as workflow input.
+function declaration, and the file uses it only as such a callback (apart from a direct recursive
+call in the function's own body, not in a nested function). Use `ctx.now`, `ctx.readFile`,
+`ctx.exec` or a `ctx.step`, or pass the value as workflow input.
 
 #### QC003
 
 A durable call (`ctx.step`, `ctx.exec`, an agent call and the other effects) inside a step `run`, a
 poll `observe`/`done` or a poll `onError` callback: written in it, in a same-file function passed to
 it by name, or in a same-file helper it calls directly by name (`helper(ctx)`), through any chain of
-such calls. The message then names the entry point, such as
+such calls (generator helpers are not followed). The message then names the entry point, such as
 `(reached through record() from line 21)`. Use the callback's `context.exec`, or move the call into
 the body.
 
