@@ -12,10 +12,15 @@ Dry-run synthesizes fresh isolation instead of creating it. An isolated Claude o
 (`worktree: true` or `worktree: { base }`) is planned in an absolute placeholder directory under the
 cache root that is never created, runs no `worktrees.setup`, and returns an unchanged change
 `{ base, commit: null, ref: null, files: [] }`. The base is resolved with a read-only
-`git rev-parse`, the only Git command a rehearsal runs, so an unresolvable base or an isolated `cwd`
-outside the repository fails with the same configuration error as a real run. Outside a Git working
-tree a placeholder of forty zeros stands in, with a warning that the real run would fail.
-`ctx.merge` over unchanged changes returns the real no-op result
+`git rev-parse`, so an unresolvable base or an isolated `cwd` outside the repository fails with the
+same configuration error as a real run. A rehearsal runs only read-only Git: `rev-parse`,
+`--version`, `git status` of the source checkout, a merge target's `check-ref-format`,
+`worktree list` and `symbolic-ref -q`, configuration reads, and a merge preview's quarantined
+commands (below). Git older than 2.38, an invalid branch name, a `branch` target that is checked out
+in any worktree (the current checkout included) or is a symbolic ref, and a dirty `checkout` target
+fail as in a real run, and a dirty source checkout records the real uncommitted-changes warning.
+Outside a Git working tree a placeholder of forty zeros stands in, with a warning that the real run
+would fail. `ctx.merge` over unchanged changes returns the real no-op result
 `{ commit, merged: [], conflicts: [] }`, where `commit` is the existing target branch or `HEAD`. A
 dry-run resume or fork that reaches `ctx.merge` with captured commits (a replayed or reused isolated
 step) or a replayed `ctx.worktree` handle previews the merge with the real integration code, so

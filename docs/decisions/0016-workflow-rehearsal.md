@@ -240,13 +240,55 @@ computation, in a quarantined object store:
   `ref` target moves no ref and records no tip. No ref is written.
 - Nothing else of a real merge happens: no `step.merge` preparation, no pinned or published ref, no
   checkout update and no integration or handle locks, since the repository does not change. The
-  target-specific preflight checks (`check-ref-format`, a branch checked out elsewhere, a dirty
-  checkout target) and the Git version check stay with #312.
+  target checks and the Git version check are rehearsed since #312 (below).
 
 The merge event and the report's `merges` entries gain `merged` and `conflicts`. The pure replay
 decision is unchanged: its `kind === 'merge'` clause still refuses a merge that a caller does not
 synthesize, but the runner now synthesizes every merge under rehearsal, and the `rehearsal-git`
 message no longer lists merges. The accepted-replay probe keeps its Git-free placeholder merges.
+
+## Amendment: rehearsed merge target checks (#312)
+
+Before #312 a dry-run passed where the real run failed: a merge into an invalid branch name, a
+branch checked out in a worktree or a dirty `checkout` target, and any worktree effect on Git older
+than 2.38, while a dirty source checkout got no warning. The rehearsal now makes these checks with
+the real code and messages:
+
+- The real merge's target checks are one function, `checkMergeTarget`, that the real `integrate` and
+  the rehearsal's merge preview both call before anything else of the merge: for a `branch` target,
+  `git check-ref-format refs/heads/<branch>` (an `ExecError`), then the worktree listing (a branch
+  checked out in any worktree, the current checkout included) and `git symbolic-ref -q` (a
+  symbolic-ref branch); for a `checkout` target, `git status --porcelain --untracked-files=normal`.
+  Messages and error classes are shared by construction, and no-op merges are checked too, as the
+  real merge checks them. The real run's publish-time rechecks call the same helpers.
+- The checks the real `RunWorktrees.ledger()` makes when it creates a ledger are shared too: the
+  version refusal (`gitVersionRefusal`) and the dirty-source warning text. The rehearsal makes them,
+  with the cache-root check, once, at the first isolation or merge that resolves a repository, and
+  only while the record has no ledger, so a dry-run resume with a copied ledger skips them as the
+  real recovery path does. An empty `--version` answer or a failure to run Git leaves the existing
+  placeholder path in charge (the #148 decision); outside a working tree no version check runs.
+- The read-only driver gains four exact argument vectors and nothing else: `check-ref-format <ref>`,
+  `symbolic-ref -q <ref>` (one operand that is not an option; a second operand, or `-d`, would write
+  the ref), `worktree list --porcelain -z` and `status --porcelain --untracked-files=normal`. It
+  also fixes `GIT_OPTIONAL_LOCKS=0`, because `git status` otherwise refreshes stat data in the
+  index. Close variants are refused before they reach the runner.
+- The checks run through a read-only driver the rehearsal never replaces, so they still run after a
+  merge preview has switched rehearsal Git to the quarantined driver, which refuses them.
+- `git worktree list` is ordered against a concurrent `worktree add` only by the in-process
+  administration queue (keyed by the realpath of the common Git directory, as the real lock is). The
+  real merge also takes the interprocess lock, but that creates
+  `<common Git dir>/quiet-choir/worktree-admin.lock`, a write into the repository. A `worktree add`
+  in another process can still race the rehearsal's listing, which can then rarely fail.
+- Reading `<common Git dir>/worktrees/*/HEAD` instead of running `git worktree list` was rejected:
+  under the reftable backend that file is a stub, and it would re-implement Git's semantics instead
+  of sharing the real check.
+- Behaviour change: a dry-run that used to succeed now fails as the real run would, notably a
+  `branch` target naming the checked-out branch, which previously shared the `checkout` target's
+  preview tip, and a no-op merge into an invalid branch.
+- Known limit: like the real check, `git status` may run a configured clean filter (git-lfs, for
+  example) on a file whose stat data changed, and such a filter can write (to `.git/lfs`, say). The
+  rehearsal runs the identical command rather than refuse, since refusing would make `checkout`
+  dry-runs unusable in LFS repositories.
 
 ## Amendment: exec error rules and stale agent rules (#307)
 
