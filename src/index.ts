@@ -254,6 +254,7 @@ export type {
   PollReadonly,
   PollReadonlyArray,
   PollCallOptions,
+  PollCapturedResult,
   PollTimeBound,
   CommandPollSource,
   CommandPollOptions,

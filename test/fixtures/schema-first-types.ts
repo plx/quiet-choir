@@ -5,6 +5,7 @@ import {
   z,
   type DeadlineOutcome,
   type ErrorMode,
+  type PollContext,
   type PollOutcome,
   type Settled,
   type WorkflowContext,
@@ -151,6 +152,41 @@ export async function polls(ctx: WorkflowContext, ready: boolean): Promise<void>
     ...command,
     done: async (output) => (output.ok ? { done: true, value: 'green' } : { done: false }),
   });
+  // A callback that is not async may wrap its result in Promise.resolve, with or without a
+  // parameter, and a callback with a parameter may build its value with a nested generic call such
+  // as map: each keeps the schema's contextual literal types, as with the explicit overloads.
+  const resolved: Color = await ctx.poll('resolved', {
+    ...poll,
+    observe: () => Promise.resolve(ready ? { done: true, value: 'green' } : { done: false }),
+  });
+  const contextResolved: Color = await ctx.poll('context-resolved', {
+    ...poll,
+    observe: (context) =>
+      Promise.resolve(
+        context.previous.checks > 0 ? { done: true, value: 'green' } : { done: false },
+      ),
+  });
+  const outputResolved: Color = await ctx.poll('output-resolved', {
+    ...poll,
+    ...command,
+    done: (output) => Promise.resolve(output.ok ? { done: true, value: 'green' } : { done: false }),
+  });
+  const states = { ...poll, schema: z.array(z.object({ state: color })) };
+  const contextMapped = await ctx.poll('context-mapped', {
+    ...states,
+    observe: async (context) => ({
+      done: true,
+      value: [context.previous.checks].map(() => ({ state: 'green' })),
+    }),
+  });
+  const outputMapped = await ctx.poll('output-mapped', {
+    ...states,
+    ...command,
+    done: (output) => ({ done: true, value: [output.ok].map(() => ({ state: 'red' })) }),
+  });
+  const mapped: { state: 'green' | 'red' }[][] = [contextMapped, outputMapped].flatMap((outcome) =>
+    outcome.by === 'poll' ? [outcome.value] : [],
+  );
   // Each rejected call fits on one line: TypeScript 6 reports it at the call, TypeScript 7 at the
   // callback.
   const numeric = { ...poll, schema: z.number() };
@@ -163,6 +199,20 @@ export async function polls(ctx: WorkflowContext, ready: boolean): Promise<void>
   await ctx.poll('numeric', { ...numeric, observe: async () => ({ done: true, value: 'one' }) });
   // @ts-expect-error The note must match noteSchema.
   await ctx.poll('noted', { ...noted, observe: async () => ({ done: false, note: { seen: 1 } }) });
+  // A parameter annotation cannot supply the note type, which comes only from noteSchema. Both
+  // compilers report these at the callback.
+  type Seen = PollContext<{ seen: boolean }>;
+  await ctx.poll('seen', {
+    ...poll,
+    // @ts-expect-error Without noteSchema the context's note is any JSON value.
+    observe: async (context: Seen) => ({ done: false, note: context.previous.note }),
+  });
+  await ctx.poll('seen-done', {
+    ...poll,
+    ...command,
+    // @ts-expect-error Without noteSchema the previous note is any JSON value.
+    done: (_output, previous: Seen['previous']) => ({ done: false, note: previous.note }),
+  });
   // ctx.wait poll sources with zero-parameter conditional callbacks, written inline: under
   // TypeScript 7 a spread command source loses its contextual type in ctx.wait.
   const waited = await ctx.wait('waited', {
@@ -197,6 +247,10 @@ export async function polls(ctx: WorkflowContext, ready: boolean): Promise<void>
     outputConditional,
     outputStatements,
     asyncDone,
+    resolved,
+    contextResolved,
+    outputResolved,
+    mapped,
     waitedColor,
     waitedDoneColor,
   );

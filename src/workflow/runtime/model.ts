@@ -692,10 +692,13 @@ export interface WorkflowContext<
    * process runner, whose JSON stdout is validated with `output` before `done(output, previous)`
    * decides the outcome. `T` is inferred only from `schema`, `N` only from `noteSchema` (which
    * types and validates `previous.note` and the notes a check returns) and `O` only from `output`.
-   * The callback's result is captured as `R` and checked against them, so a literal terminal value
-   * such as `{ done: true, value: 'green' }` from a conditional expression or a statement return
+   * A callback's parameter annotations cannot supply `N` or `O`. A callback without parameters
+   * has its result captured as `R` and checked against them, so a literal terminal value such as
+   * `{ done: true, value: 'green' }` from a conditional expression or a statement return
    * type-checks against an enum or literal schema without `as const`. `R` is checked against
-   * {@link PollReadonly} views of them, because `const` makes an array literal a readonly tuple.
+   * {@link PollReadonly} views of them, because `const` makes an array literal a readonly tuple. A
+   * callback with parameters is typed exactly as in the overloads below, which already keep its
+   * literals, and the call resolves to one of them.
    */
   poll<
     T,

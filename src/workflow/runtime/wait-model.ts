@@ -359,12 +359,17 @@ export type CommandPollOptions<T, O = unknown, N extends JsonInput = JsonValue> 
 /**
  * The options of an inferred `ctx.poll` call, in either form: an observer {@link PollSource} or a
  * {@link CommandPollSource}, with a time bound. `T` comes only from `schema`, never from a
- * callback; `N` from `noteSchema` (or {@link JsonValue} without one) and `O` from `output`. `R` is
- * the callback's own result type, which `ctx.poll` captures as a `const` type parameter checked
- * against a {@link PollResult} of {@link PollReadonly} views of `T` and `N`; so an `observe` or
- * `done` callback, with or without parameters, keeps a literal terminal value such as `'green'`
- * from a conditional expression or a statement return without `as const`, and an array literal
- * still matches an array or tuple schema.
+ * callback; `N` from `noteSchema` (or {@link JsonValue} without one) and `O` from `output`. A
+ * callback's parameter annotations cannot supply `N` or `O`.
+ *
+ * Each callback is typed as two signatures at once. One takes the callback's parameters and gives
+ * them and its return the same types as the explicit-type-argument overloads, so a callback with
+ * parameters is typed exactly as it is there (it does not satisfy the other signature, so the call
+ * resolves to one of those overloads). The other takes no parameters and returns `R`, which
+ * `ctx.poll` captures as a `const` type parameter checked against a {@link PollResult} of
+ * {@link PollReadonly} views of `T` and `N`; so a zero-parameter callback keeps a literal terminal
+ * value such as `'green'` from a conditional expression or a statement return without `as const`,
+ * and an array literal still matches an array or tuple schema.
  */
 export type PollCallOptions<T, O, N extends JsonInput, R> = Omit<
   PollSource<T, N>,
@@ -374,17 +379,41 @@ export type PollCallOptions<T, O, N extends JsonInput, R> = Omit<
   (
     | {
         /** Read external state, as {@link PollSource.observe}. */
-        readonly observe: (context: PollContext<N>) => Promise<R>;
+        readonly observe: NoInfer<
+          (context: PollContext<N>) => Promise<PollResult<T, N> | PollCapturedResult<T, N, R>>
+        > &
+          (() => Promise<R>);
         /** Only a command poll runs a command. */
         readonly command?: never;
       }
     | (Pick<CommandPollSource<unknown, O, N>, 'command' | 'output' | 'commandOptions' | 'live'> & {
         /** Decide one check's outcome from the command's output, as {@link CommandPollSource.done}. */
-        readonly done: (output: NoInfer<O>, previous: PollContext<N>['previous']) => R | Promise<R>;
+        readonly done: NoInfer<
+          (
+            output: O,
+            previous: PollContext<N>['previous'],
+          ) =>
+            | PollResult<T, N>
+            | PollCapturedResult<T, N, R>
+            | Promise<PollResult<T, N> | PollCapturedResult<T, N, R>>
+        > &
+          (() => R | Promise<R>);
         /** Only an observer poll has `observe`. */
         readonly observe?: never;
       })
   );
+
+/**
+ * The result `R` a zero-parameter {@link PollCallOptions} callback returned, or `never` while `R`
+ * has no inference, as for a callback with parameters. `ctx.poll` would otherwise fall back to
+ * `R`'s constraint, whose {@link PollReadonly} views would then reach such a callback's
+ * contextual return type, for example through the type argument of `Promise.reject()`.
+ */
+export type PollCapturedResult<T, N extends JsonInput, R> = [
+  PollResult<PollReadonly<T>, PollReadonly<N>>,
+] extends [R]
+  ? never
+  : R;
 
 /** Validated, serializable polling identity. */
 export interface PollRequest {
