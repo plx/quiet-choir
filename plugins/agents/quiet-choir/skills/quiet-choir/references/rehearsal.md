@@ -225,26 +225,28 @@ missing object from a partial clone's promisor remote, but only Git 2.44 or late
 previews of captured commits in a partial clone (`extensions.partialClone` or a
 `remote.<name>.promisor` is configured) need Git 2.44 or later. So does any `git status` read (the
 dirty-source check or a `checkout` target's check), and since `git status` recurses into submodules,
-any of which can be a partial clone, so does that read whenever a submodule is initialized (a
-`submodule.<name>.url` is configured), whether or not the submodule is a partial clone; a merge
-preview is not refused for submodules, since `merge-tree` does not recurse into them. The rehearsal
-lists that configuration once and, when it is set, reads `git --version`, before the first
-`git status` read and before the first such preview looks up any input commit; on older Git, the
-read or preview fails with a configuration error and never runs.
+any of which can be a partial clone, so does that read whenever a submodule is populated (the index
+has a gitlink whose `<path>/.git` exists, whatever the submodule's configuration says), whether or
+not the submodule is a partial clone; a merge preview is not refused for submodules, since
+`merge-tree` does not recurse into them. The rehearsal lists that configuration (or, for submodules,
+the index with `git ls-files --stage -z`) once and, when it finds one, reads `git --version`, before
+the first `git status` read and before the first such preview looks up any input commit; on older
+Git, the read or preview fails with a configuration error and never runs.
 
 The base is resolved once per revision with `git rev-parse` through the real process runner. The
 runtime refuses every other Git command under rehearsal before it reaches the runner, apart from an
 exact list of reads (`git --version`;
 `git status --porcelain --untracked-files=normal --no-renames`, run with `GIT_OPTIONAL_LOCKS=0` so
-it never refreshes the index, and never in a partial clone or with an initialized submodule on Git
+it never refreshes the index, and never in a partial clone or with a populated submodule on Git
 older than 2.44; a merge target's `git check-ref-format`, `git worktree list --porcelain -z` and
-`git symbolic-ref -q`; the partial-clone and submodule configuration reads; and a merge preview's
-merge-driver and filter configuration reads) and a merge preview's quarantined commands, so a
-dry-run never creates refs, worktrees, cache directories, repository objects or lock files. An
-unresolvable base, a repository with no committed `HEAD`, or an isolated `cwd` outside the
-repository fails with the configuration error a real run reports. Outside a Git working tree, or
-when Git cannot run, a placeholder of forty zeros stands in for the base, with a warning that the
-real run fails. A dry-run resume of an interrupted real attempt reuses its recorded base.
+`git symbolic-ref -q`; the partial-clone configuration read and the `git ls-files --stage -z` index
+listing that finds submodules; and a merge preview's merge-driver and filter configuration reads)
+and a merge preview's quarantined commands, so a dry-run never creates refs, worktrees, cache
+directories, repository objects or lock files. An unresolvable base, a repository with no committed
+`HEAD`, or an isolated `cwd` outside the repository fails with the configuration error a real run
+reports. Outside a Git working tree, or when Git cannot run, a placeholder of forty zeros stands in
+for the base, with a warning that the real run fails. A dry-run resume of an interrupted real
+attempt reuses its recorded base.
 
 Before the run has a worktree ledger, the first isolated call or merge makes the checks a real run
 makes when it creates one: Git older than 2.38 and a cache root inside the checkout (after existing

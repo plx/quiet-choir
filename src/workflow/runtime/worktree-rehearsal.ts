@@ -12,7 +12,7 @@
  * worktree or a symbolic-ref branch, and a dirty `checkout` target fail as in a real run. The
  * worktree listing they need waits only for the in-process administration queue, never the
  * repository's lock file. Neither `status` read (the source checkout's, or a `checkout` target's)
- * runs in a partial clone, or with an initialized submodule (which `status` recurses into and
+ * runs in a partial clone, or with a populated submodule (which `status` recurses into and
  * which can itself be a partial clone), on Git older than 2.44, which ignores `GIT_NO_LAZY_FETCH`:
  * the rehearsal refuses instead. A fresh isolated agent call is planned in an absolute placeholder
  * directory that is never created and returns an unchanged change; a merge whose inputs are all
@@ -43,7 +43,7 @@
  * values, so low-fidelity placeholders (the forty-zero commit, uncreated paths) suffice; they can
  * still steer the copy onto a branch the real run would not take (ADR 0006's path-parity caveat).
  */
-import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { lstat, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { WorktreeGit, commitId } from '../../worktrees/git.js';
@@ -133,13 +133,34 @@ export function partialCloneGitMessage(version: string, read: 'preview' | 'statu
 
 /**
  * The refusal of a `git status` read of the source checkout (the ledger's dirty-source check or a
- * `checkout` target's check) with an initialized submodule on Git older than 2.44: `status`
+ * `checkout` target's check) with a populated submodule on Git older than 2.44: `status`
  * recurses into submodules, any of which can be a partial clone, and older Git ignores
  * `GIT_NO_LAZY_FETCH`, so a missing object would be fetched from a promisor remote into the
  * submodule's repository. @internal
  */
 export function submodulesGitMessage(version: string): string {
-  return `Dry-run cannot read the source checkout's status, which has initialized submodules, with ${version}: git status recurses into submodules, which can be partial clones, so it needs Git 2.44 or later, the first to honor GIT_NO_LAZY_FETCH, to keep the read from fetching missing objects from a promisor remote into a submodule's repository.`;
+  return `Dry-run cannot read the source checkout's status, which has populated submodules, with ${version}: git status recurses into submodules, which can be partial clones, so it needs Git 2.44 or later, the first to honor GIT_NO_LAZY_FETCH, to keep the read from fetching missing objects from a promisor remote into a submodule's repository.`;
+}
+
+/**
+ * Whether `ls-files --stage -z` output lists a gitlink (mode 160000) whose `<path>/.git` exists in
+ * the checkout at `repo`, as it does for a populated submodule, which `git status` recurses into.
+ */
+async function populatedSubmodule(repo: string, entries: string): Promise<boolean> {
+  const paths = new Set<string>();
+  for (const entry of entries.split('\0')) {
+    const tab = entry.indexOf('\t');
+    if (tab !== -1 && entry.startsWith('160000 ')) paths.add(entry.slice(tab + 1));
+  }
+  for (const path of paths)
+    if (
+      await lstat(join(repo, path, '.git')).then(
+        () => true,
+        () => false,
+      )
+    )
+      return true;
+  return false;
 }
 
 /** Whether `git --version` output names Git 2.44 or later, the first to honor `GIT_NO_LAZY_FETCH`. */
@@ -171,7 +192,7 @@ export class WorktreeRehearsal {
   private quarantine: Promise<WorktreeGit> | undefined;
   /** The run's partial-clone check (see {@link lazyFetches}), memoized once it answers. */
   private lazyFetch: Promise<string | null> | undefined;
-  /** The run's initialized-submodule check (see {@link submoduleLazyFetches}), memoized likewise. */
+  /** The run's populated-submodule check (see {@link submoduleLazyFetches}), memoized likewise. */
   private submoduleLazyFetch: Promise<string | null> | undefined;
   /** The quarantine's temporary object directory, removed by {@link dispose}. */
   private objects: string | undefined;
@@ -245,7 +266,7 @@ export class WorktreeRehearsal {
    * {@link uncommittedSourceWarning}). Only a run without a ledger makes them, since a real run with
    * one recovers it instead. An empty `--version` answer (a synthesizing runner) skips the version
    * check, and a failure to run it is left to the placeholder path that a missing Git already
-   * takes. The status read is refused instead in a partial clone or with an initialized submodule
+   * takes. The status read is refused instead in a partial clone or with a populated submodule
    * on Git older than 2.44 (see {@link refuseLazyFetch}). Memoized once it passes, so concurrent
    * effects share one check.
    */
@@ -309,7 +330,7 @@ export class WorktreeRehearsal {
    * The real merge's target checks (`checkMergeTarget`), through the read-only driver. The worktree
    * listing waits for the in-process administration queue only: the repository's lock file would
    * be a write, so a `worktree add` in another process can still race it. A `checkout` target's
-   * status read is refused instead in a partial clone or with an initialized submodule on Git older
+   * status read is refused instead in a partial clone or with a populated submodule on Git older
    * than 2.44 (see {@link refuseLazyFetch}); a `branch` target's checks read no objects.
    */
   private async checkTarget(
@@ -617,7 +638,7 @@ export class WorktreeRehearsal {
   /**
    * Refuse a merge preview or a `status` read in a partial clone when Git is older than 2.44 (see
    * {@link lazyFetches}), with the message for `read`; a `status` read is also refused with an
-   * initialized submodule (see {@link submoduleLazyFetches}), since `status` recurses into
+   * populated submodule (see {@link submoduleLazyFetches}), since `status` recurses into
    * submodules while `merge-tree` does not. It runs before the preview runs any other command, and
    * in place of the status read.
    */
@@ -653,21 +674,29 @@ export class WorktreeRehearsal {
   }
 
   /**
-   * The `git --version` output (or a stand-in when it is empty) when a submodule is initialized (a
-   * `submodule.<name>.url` is configured) and Git is older than 2.44, otherwise null: `status`
-   * recurses into submodules, any of which can be a partial clone, so this conservatively refuses
-   * without reading the submodules' own configuration. Memoized per run, cleared on failure.
+   * The `git --version` output (or a stand-in when it is empty) when a submodule is populated (the
+   * index has a gitlink whose `<path>/.git` exists, whatever the submodule's configuration says)
+   * and Git is older than 2.44, otherwise null: `status` recurses into populated submodules, any of
+   * which can be a partial clone, so this conservatively refuses without reading the submodules'
+   * own configuration. The index listing goes through the read-only driver on the run's signal;
+   * `--version` runs only when a submodule is populated. Memoized per run, cleared on failure.
    */
   private submoduleLazyFetches(
     repo: string,
     invocation: HarnessInvocation,
   ): Promise<string | null> {
-    this.submoduleLazyFetch ??= this.olderGitWith(repo, invocation, '^submodule\\..*\\.url$').catch(
-      (error: unknown) => {
-        this.submoduleLazyFetch = undefined;
-        throw error;
-      },
-    );
+    this.submoduleLazyFetch ??= (async () => {
+      const git = this.readOnly;
+      if (!git) return null;
+      const shared = { ...invocation, signal: this.runSignal ?? invocation.signal };
+      const index = await git.run(repo, ['ls-files', '--stage', '-z'], shared);
+      return (await populatedSubmodule(repo, index.stdout))
+        ? this.olderGit(git, repo, shared)
+        : null;
+    })().catch((error: unknown) => {
+      this.submoduleLazyFetch = undefined;
+      throw error;
+    });
     return this.submoduleLazyFetch;
   }
 
@@ -688,7 +717,16 @@ export class WorktreeRehearsal {
       codes: [0, 1],
     });
     if (names.code !== 0 || names.stdout.trim() === '') return null;
-    const version = await git.text(repo, ['--version'], shared);
+    return this.olderGit(git, repo, shared);
+  }
+
+  /** The `git --version` output (or a stand-in when it is empty) when Git is older than 2.44, otherwise null. */
+  private async olderGit(
+    git: WorktreeGit,
+    repo: string,
+    invocation: HarnessInvocation,
+  ): Promise<string | null> {
+    const version = await git.text(repo, ['--version'], invocation);
     return honorsNoLazyFetch(version) ? null : version || 'an unknown Git version';
   }
 

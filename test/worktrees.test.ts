@@ -1313,10 +1313,28 @@ const partialCloneListing = [
   '^(extensions\\.partialclone|remote\\..*\\.promisor)$',
 ];
 /**
- * The read-only listing that detects an initialized submodule, which a dry-run runs once, after the
- * partial-clone listing, before its first `status` read (but never before a merge preview).
+ * The read-only index listing that detects a populated submodule, which a dry-run runs once, after
+ * the partial-clone listing, before its first `status` read (but never before a merge preview).
  */
-const submoduleListing = ['config', '--name-only', '--get-regexp', '^submodule\\..*\\.url$'];
+const submoduleListing = ['ls-files', '--stage', '-z'];
+/**
+ * Populate a submodule at `lib`, active through `submodule.active` with no `submodule.lib.url` and
+ * no `.gitmodules`: a gitlink in the index (committed when `committed` is set) and a repository at
+ * `lib/.git`, which `git status` recurses into. The submodule is not a partial clone.
+ */
+async function populateSubmodule(committed = false): Promise<void> {
+  const lib = join(repo, 'lib');
+  await mkdir(lib);
+  await git.text(lib, ['init', '-q'], invocation);
+  const identity = ['-c', 'user.name=test', '-c', 'user.email=test@localhost'];
+  await git.text(lib, [...identity, 'commit', '--allow-empty', '-qm', 'lib'], invocation);
+  const head = await git.text(lib, ['rev-parse', 'HEAD'], invocation);
+  await command('update-index', '--add', '--cacheinfo', `160000,${head},lib`);
+  if (committed) await command(...identity, 'commit', '-qm', 'add lib');
+  await command('config', 'submodule.active', '.');
+  const urls = ['config', '--name-only', '--get-regexp', '^submodule\\..*\\.url$'];
+  expect((await git.run(repo, urls, invocation, { codes: [0, 1] })).stdout).toBe('');
+}
 /**
  * The reads besides rev-parse that a dry-run without a ledger makes first, as the real ledger's
  * initialization does: the Git version and the source checkout's status (#312), which the
@@ -3066,7 +3084,7 @@ it("refuses a dry-run 'checkout' target's status read in a partial clone on Git 
   expect(await repositoryState()).toEqual(before);
 });
 
-it('refuses the dry-run ledger status read with an initialized submodule on Git older than 2.44, without running it', async () => {
+it('refuses the dry-run ledger status read with a populated submodule on Git older than 2.44, without running it', async () => {
   const workflow = defineWorkflow({
     name: 'submodule-source',
     version: '1',
@@ -3076,9 +3094,9 @@ it('refuses the dry-run ledger status read with an initialized submodule on Git 
       return (await ctx.codex.text('edit', { prompt: 'edit', worktree: true })).output;
     },
   });
-  // A configured URL marks an initialized submodule, which status recurses into and which can
-  // itself be a partial clone; the parent repository is not one.
-  await command('config', 'submodule.lib.url', 'https://example.invalid/lib.git');
+  // A populated submodule, which status recurses into and which can itself be a partial clone; the
+  // parent repository is not one, and no submodule URL is configured.
+  await populateSubmodule();
   const before = await repositoryState();
   const index = await indexState();
   const old = objectSpy('git version 2.43.0');
@@ -3086,7 +3104,7 @@ it('refuses the dry-run ledger status read with an initialized submodule on Git 
     runWorkflow(workflow, freshDryRun('submodule-source', old.runner)),
   );
   expect(failure.message).toContain(
-    "Dry-run cannot read the source checkout's status, which has initialized submodules, with git version 2.43.0: git status recurses into submodules",
+    "Dry-run cannot read the source checkout's status, which has populated submodules, with git version 2.43.0: git status recurses into submodules",
   );
   expect(failure.cause).toBe('ConfigurationError');
   // The ledger's version read, the two listings and the submodule check's version read; no status.
@@ -3108,7 +3126,32 @@ it('refuses the dry-run ledger status read with an initialized submodule on Git 
   expect(await repositoryState()).toEqual(before);
 });
 
-it("refuses a dry-run 'checkout' target's status read with an initialized submodule on Git older than 2.44", async () => {
+it('reads the dry-run ledger status on Git older than 2.44 when no submodule is populated', async () => {
+  const workflow = defineWorkflow({
+    name: 'unpopulated-source',
+    version: '1',
+    input: z.null(),
+    output: z.unknown(),
+    async run(ctx) {
+      return (await ctx.codex.text('edit', { prompt: 'edit', worktree: true })).output;
+    },
+  });
+  // A configured URL and a gitlink without a checkout (an uninitialized clone of a submodule):
+  // status does not recurse into it, so the check issues no version read and the status runs.
+  await command('config', 'submodule.lib.url', 'https://example.invalid/lib.git');
+  await mkdir(join(repo, 'lib'));
+  await command('update-index', '--add', '--cacheinfo', `160000,${'1'.repeat(40)},lib`);
+  const before = await repositoryState();
+  const old = objectSpy('git version 2.43.0');
+  const dry = await runWorkflow(workflow, freshDryRun('unpopulated-source', old.runner));
+  expect(dry.status).toBe('completed');
+  expect(old.commands.map(({ args }) => args).filter((args) => args[0] !== 'rev-parse')).toEqual(
+    ledgerReads,
+  );
+  expect(await repositoryState()).toEqual(before);
+});
+
+it("refuses a dry-run 'checkout' target's status read with a populated submodule on Git older than 2.44", async () => {
   let stop = true;
   const workflow = defineWorkflow({
     name: 'submodule-checkout',
@@ -3129,7 +3172,8 @@ it("refuses a dry-run 'checkout' target's status read with an initialized submod
       harness: { invoke: () => Promise.resolve(response) },
     }),
   ).rejects.toThrow('stopped before the merge');
-  await command('config', 'submodule.lib.url', 'https://example.invalid/lib.git');
+  // Committed, so the checkout stays clean and the 2.44 run's target check passes.
+  await populateSubmodule(true);
   const before = await repositoryState();
   const index = await indexState();
   stop = false;
@@ -3141,7 +3185,7 @@ it("refuses a dry-run 'checkout' target's status read with an initialized submod
     }),
   );
   expect(failure.message).toContain(
-    "Dry-run cannot read the source checkout's status, which has initialized submodules, with git version 2.43.0",
+    "Dry-run cannot read the source checkout's status, which has populated submodules, with git version 2.43.0",
   );
   expect(failure.cause).toBe('ConfigurationError');
   expect(old.commands.map(({ args }) => args).filter((args) => args[0] !== 'rev-parse')).toEqual([
@@ -3165,7 +3209,7 @@ it("refuses a dry-run 'checkout' target's status read with an initialized submod
   expect(await repositoryState()).toEqual(before);
 });
 
-it('previews a merge into a branch with an initialized submodule on Git older than 2.44', async () => {
+it('previews a merge into a branch with a populated submodule on Git older than 2.44', async () => {
   // merge-tree does not recurse into submodules and a branch target reads no status, so neither
   // the submodule listing nor a version read runs.
   const gate: PreviewGate = { stop: true, options: { target: { branch: 'feature' } } };
@@ -3180,7 +3224,7 @@ it('previews a merge into a branch with an initialized submodule on Git older th
   const edit = (await readRun({ stateDir, runId: 'submodule-branch' })).steps['edit']?.worktree
     ?.commit;
   assert(edit);
-  await command('config', 'submodule.lib.url', 'https://example.invalid/lib.git');
+  await populateSubmodule();
   const before = await repositoryState();
   const quarantines = await temporaryParent();
   const old = objectSpy('git version 2.43.0');
@@ -3190,7 +3234,7 @@ it('previews a merge into a branch with an initialized submodule on Git older th
     resume: true,
   });
   expect(JSON.parse(dry.output ?? 'null')).toMatchObject({ merged: [edit], conflicts: [] });
-  expect(old.commands.some(({ args }) => args.includes('^submodule\\..*\\.url$'))).toBe(false);
+  expect(old.commands.some(({ args }) => args[0] === 'ls-files')).toBe(false);
   expect(old.commands.some(({ args }) => args[0] === '--version' || args[0] === 'status')).toBe(
     false,
   );
