@@ -150,6 +150,45 @@ send({type:'turn.completed',usage:{input_tokens:2,output_tokens:1}});
   assert.equal(unknownRun.stdout, '');
   assert.match(unknownRun.stderr, /missing-run/);
 
+  // Rewritten transcripts of the settled `denied` attempt drive the output-channel cases.
+  const entry = (text) =>
+    `${JSON.stringify({ stream: 'stdout', base64: Buffer.from(text).toString('base64') })}\n`;
+  const deniedPath = saved('denied').steps['scope/../../answer'].attemptHistory[0].transcript.path;
+  // A reader that closes the pipe early (`| head`) is a success, even past the pipe buffer.
+  writeFileSync(deniedPath, entry(`${'x'.repeat(1023)}\n`).repeat(2048));
+  const closedPipe = await new Promise((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      [
+        join(root, 'bin/run.js'),
+        'workflow',
+        'transcript',
+        'denied',
+        'scope/../../answer',
+        '--state-dir',
+        state,
+      ],
+      { cwd: directory, stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    let head = '',
+      stderr = '';
+    child.stdout.once('data', (chunk) => {
+      head += chunk;
+      child.stdout.destroy();
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk;
+    });
+    child.once('error', reject);
+    child.once('close', (code) => {
+      resolve({ code, head, stderr });
+    });
+  });
+  assert.equal(closedPipe.code, 0, closedPipe.stderr);
+  assert.ok(closedPipe.head.length > 0);
+  assert.doesNotMatch(closedPipe.head, /workflow\.error/);
+  assert.doesNotMatch(closedPipe.stderr, /unsettled top-level await/);
+
   for (const provider of ['claude', 'codex']) {
     const id = `hang-${provider}`;
     let stdout = '',

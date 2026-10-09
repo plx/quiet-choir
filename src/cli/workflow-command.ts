@@ -1,4 +1,5 @@
 import { resolveStateDir } from '../workflow/runtime/paths.js';
+import { Errors } from '@oclif/core';
 import { stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { BaseCommand } from './base-command.js';
@@ -67,6 +68,8 @@ export abstract class WorkflowCommand extends BaseCommand {
   }
 
   protected override async catch(cause: unknown): Promise<never> {
+    // A command's own exit() already chose its code and output.
+    if (cause instanceof Errors.ExitError) throw cause;
     let failure =
       cause instanceof WorkflowCommandError
         ? {

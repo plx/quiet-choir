@@ -72,7 +72,9 @@ export default class WorkflowTranscript extends WorkflowCommand {
       ...(flags.attempt === undefined ? {} : { attempt: flags.attempt }),
       stream: flags.stream === 'stderr' ? 'stderr' : 'stdout',
     });
-    if (closed.signal.aborted && !this.signal.aborted) return;
+    // A reader that went away is a success. Exit through ExitError so the launcher drains and exits
+    // instead of waiting on oclif's flush() for a stdout that will never drain.
+    if (closed.signal.aborted && !this.signal.aborted) this.exit(0);
     if (!result.ok) this.failResult(result);
     if (result.kind === 'workflow.transcript.result' && result.truncated)
       this.logToStderr(
