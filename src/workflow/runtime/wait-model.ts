@@ -362,14 +362,18 @@ export type CommandPollOptions<T, O = unknown, N extends JsonInput = JsonValue> 
  * callback; `N` from `noteSchema` (or {@link JsonValue} without one) and `O` from `output`. A
  * callback's parameter annotations cannot supply `N` or `O`.
  *
- * Each callback is typed as two signatures at once. One takes the callback's parameters and gives
- * them and its return the same types as the explicit-type-argument overloads, so a callback with
- * parameters is typed exactly as it is there (it does not satisfy the other signature, so the call
- * resolves to one of those overloads). The other takes no parameters and returns `R`, which
- * `ctx.poll` captures as a `const` type parameter checked against a {@link PollResult} of
- * {@link PollReadonly} views of `T` and `N`; so a zero-parameter callback keeps a literal terminal
+ * Only a callback without parameters is captured. Its signatures here take no parameters and
+ * return `R`, which `ctx.poll` captures as a `const` type parameter checked against a
+ * {@link PollResult} of {@link PollReadonly} views of `T` and `N`; so it keeps a literal terminal
  * value such as `'green'` from a conditional expression or a statement return without `as const`,
  * and an array literal still matches an array or tuple schema.
+ *
+ * A callback with parameters, a rest parameter included, resolves to the explicit-type-argument
+ * overloads and is typed as it is there. Without annotations it leaves `R` without an inference,
+ * which rejects these options before the callback is typed against them. With annotations it
+ * satisfies no zero-parameter signature, but it is typed once, here: an `observe` callback gets no
+ * contextual type (as when the command overload was tried first), and a `done` callback gets the
+ * signature of {@link CommandPollSource.done}.
  *
  * `R`'s constraint keeps those literals, but a result that fails it makes `R` fall back to the
  * constraint itself, and the callback's own check against an intersection member skips
@@ -386,9 +390,7 @@ export type PollCallOptions<T, O, N extends JsonInput, R, C = R> = Omit<
   (
     | {
         /** Read external state, as {@link PollSource.observe}. */
-        readonly observe: NoInfer<
-          (context: PollContext<N>) => Promise<PollResult<T, N> | PollCapturedResult<T, N, R>>
-        > &
+        readonly observe: NoInfer<() => Promise<PollResult<T, N> | PollCapturedResult<T, N, R>>> &
           (() => Promise<R>) &
           (() => Promise<C>);
         /** Only a command poll runs a command. */
@@ -411,6 +413,17 @@ export type PollCallOptions<T, O, N extends JsonInput, R, C = R> = Omit<
         readonly observe?: never;
       })
   ) &
+  // `R` keeps its constraint only when it has no inference (or a mismatched one): the callback has
+  // parameters and no annotations, so the call's first pass skipped it. A member no options object
+  // has rejects this overload before the callback is typed against it. `observe` or `done` cannot
+  // carry it: while `R` is still being inferred they are the callback's contextual type, and
+  // `never` there would widen a zero-parameter callback's literals.
+  ([PollResult<PollReadonly<T>, PollReadonly<N>>] extends [R]
+    ? {
+        /** Never present: a callback with parameters resolves to the explicit overloads. */
+        readonly zeroParameterCallback: never;
+      }
+    : unknown) &
   // A conditional type applies the weak-type check that the callback's own check skips.
   ([C] extends [PollResult<PollReadonly<T>, PollReadonly<N>>]
     ? unknown

@@ -187,6 +187,39 @@ export async function polls(ctx: WorkflowContext, ready: boolean): Promise<void>
   const mapped: { state: 'green' | 'red' }[][] = [contextMapped, outputMapped].flatMap((outcome) =>
     outcome.by === 'poll' ? [outcome.value] : [],
   );
+  // A rest parameter gets the explicit overloads' parameter types, also beside another callback
+  // without annotations. An annotated observer gets no contextual return type, so its
+  // Promise.reject result stays Promise<never>, as before the inferred overload existed; these calls
+  // are not assigned, because an annotated result type would supply `T` to Promise.reject.
+  const restObserved: Color = await ctx.poll('rest-observed', {
+    ...poll,
+    observe: async (...args) =>
+      args[0].previous.checks > 2 ? { done: true, value: 'green' } : { done: false },
+  });
+  const restDone: Color = await ctx.poll('rest-done', {
+    ...poll,
+    ...command,
+    done: (...[output, previous]) =>
+      output.ok && previous.checks > 0 ? { done: true, value: 'green' } : { done: false },
+  });
+  const restClassified: Color = await ctx.poll('rest-classified', {
+    ...poll,
+    ...command,
+    onError: {
+      tolerate: 1,
+      classify: (error) => (error instanceof TypeError ? 'fatal' : 'transient'),
+    },
+    done: async (...args) => (args[0].ok ? { done: true, value: 'red' } : { done: false }),
+  });
+  await ctx.poll('rejected', {
+    ...poll,
+    observe: (context: PollContext) => Promise.reject(new Error(String(context.previous.checks))),
+  });
+  await ctx.poll('async-rejected', {
+    ...poll,
+    observe: async (context: PollContext) =>
+      Promise.reject(new Error(String(context.previous.checks))),
+  });
   // Each rejected call fits on one line: TypeScript 6 reports it at the call, TypeScript 7 at the
   // callback.
   const numeric = { ...poll, schema: z.number() };
@@ -285,6 +318,9 @@ export async function polls(ctx: WorkflowContext, ready: boolean): Promise<void>
     contextResolved,
     outputResolved,
     mapped,
+    restObserved,
+    restDone,
+    restClassified,
     weakValues,
     waitedColor,
     waitedDoneColor,
