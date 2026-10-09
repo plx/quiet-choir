@@ -710,8 +710,10 @@ record without importing the workflow. `STEP` is the full step ID, as `inspect` 
 - `--json` only turns a failure into a `workflow.error` document on stdout (with the compact
   `summary`, never the whole record), and only while no transcript bytes have been written: once
   output has begun (a malformed entry after valid ones), the failure message goes to stderr with the
-  same exit code, so stdout holds only native bytes. Without `--json` the failure message goes to
-  stderr.
+  same exit code, so stdout holds only native bytes. A second interrupt signal that forces the
+  process to exit follows the same rule: the `workflow.error` document goes to stdout only while no
+  transcript bytes have been written, otherwise a one-line message goes to stderr. Without `--json`
+  the failure message goes to stderr.
 - An unknown run is `run.not_found` (exit 3, with candidate state directories, as for the other run
   commands).
 - A step or attempt that cannot be selected is `usage.flag` (exit 2; nothing changed) with

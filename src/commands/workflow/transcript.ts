@@ -1,5 +1,7 @@
 import { Args, Flags, type Interfaces } from '@oclif/core';
+import { writeAllSync } from '../../cli/signals.js';
 import { WorkflowCommand } from '../../cli/workflow-command.js';
+import { requestedJson } from '../../cli/workflow-errors.js';
 import { WorkflowExecutor } from '../../workflow/loader/executor.js';
 
 interface WorkflowTranscriptArgs {
@@ -14,6 +16,8 @@ interface WorkflowTranscriptFlags {
 }
 
 export default class WorkflowTranscript extends WorkflowCommand {
+  /** Whether transcript bytes reached stdout, where a failure document would corrupt them. */
+  #stdoutWritten = false;
   public static override readonly args: Interfaces.ArgInput<WorkflowTranscriptArgs> = {
     runId: Args.string({ description: 'Persisted run identifier', required: true }),
     stepId: Args.string({
@@ -37,7 +41,7 @@ export default class WorkflowTranscript extends WorkflowCommand {
     }),
     json: Flags.boolean({
       description:
-        'Report a failure as a workflow.error JSON document on stdout, unless transcript bytes were already written (then on stderr); the transcript itself is always the raw native bytes',
+        'Report a failure, or a forced interruption, as a workflow.error JSON document on stdout, unless transcript bytes were already written (then a message on stderr); the transcript itself is always the raw native bytes',
       default: false,
     }),
   };
@@ -51,8 +55,6 @@ export default class WorkflowTranscript extends WorkflowCommand {
     const stateDir = this.runContext(args.runId, flags['state-dir']);
     // A reader that went away (such as `| head`) stops the decode instead of reading on for nobody.
     const closed = new AbortController();
-    // Once transcript bytes are on stdout, a failure document there would corrupt them.
-    const output = { written: false };
     const executor = new WorkflowExecutor({
       logger: this.createExecutionLogger(flags),
       commandLauncher: this.commandLauncher,
@@ -60,8 +62,9 @@ export default class WorkflowTranscript extends WorkflowCommand {
       onTranscriptChunk: async (chunk) => {
         if (closed.signal.aborted) return;
         try {
+          // Set before the write: a forced exit during it may already have bytes on stdout.
+          if (chunk.length > 0) this.#stdoutWritten = true;
           await this.writeStdout(chunk);
-          if (chunk.length > 0) output.written = true;
         } catch (error) {
           closed.abort(error);
         }
@@ -79,7 +82,7 @@ export default class WorkflowTranscript extends WorkflowCommand {
     // instead of waiting on oclif's flush() for a stdout that will never drain.
     if (closed.signal.aborted && !this.signal.aborted) this.exit(0);
     if (!result.ok) {
-      if (output.written) this.failAfterStdout(result);
+      if (this.#stdoutWritten) this.failAfterStdout(result);
       this.failResult(result);
     }
     if (result.kind !== 'workflow.transcript.result') return;
@@ -91,6 +94,16 @@ export default class WorkflowTranscript extends WorkflowCommand {
       this.logToStderr(
         `Warning: attempt ${String(result.attempt)} of ${result.stepId} is still running or was interrupted; the output may end early.`,
       );
+  }
+
+  /** A forced exit after transcript bytes reached stdout reports on stderr, not as a document there. */
+  protected override forceInterrupted(): void {
+    if (!this.#stdoutWritten) {
+      super.forceInterrupted();
+      return;
+    }
+    if (requestedJson(this.argv))
+      writeAllSync(2, 'Workflow interrupted; forced process cleanup.\n');
   }
 
   /** Error documents carry the bounded summary, never the whole record. */

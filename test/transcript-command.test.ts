@@ -1,14 +1,24 @@
 import { cp, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, relative } from 'node:path';
 
-import { describe, expect } from 'vitest';
+import { describe, expect, vi } from 'vitest';
 
 import { defineWorkflow, readRun, z, type Harness, type PolicyOverride } from '../src/index.js';
+import type * as Signals from '../src/cli/signals.js';
+import { writeAllSync } from '../src/cli/signals.js';
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import type { WorkflowCommandResult } from '../src/workflow/loader/model.js';
 import { runDirectory } from '../src/workflow/runtime/paths.js';
+import WorkflowTranscript from '../src/commands/workflow/transcript.js';
+import { workflowFailure } from '../src/workflow/loader/failure.js';
 import { it } from './setup/cli-capture.js';
 import type { RunScope } from './setup/state-dir.js';
+
+// Record the forced-exit writes instead of putting them on the test process's real descriptors.
+vi.mock('../src/cli/signals.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof Signals>()),
+  writeAllSync: vi.fn(() => 'complete'),
+}));
 
 const usage = { inputTokens: 8, outputTokens: 2, costUsd: 0.01 };
 const native = [
@@ -413,5 +423,59 @@ describe('workflow.transcript', () => {
     expect(narrow.result).toMatchObject({ ok: false, code: 'run.unreadable' });
     if (narrow.result.ok) throw new Error('expected a failure');
     expect(narrow.result.message).toContain('is longer than 67108864 bytes');
+  });
+
+  describe('forced interruption', () => {
+    const message = 'Workflow interrupted; forced process cleanup.\n';
+    const forceExit = (): void => {
+      // Two signals in a row: the first drains, the second forces and exits the process.
+      process.emit('SIGINT');
+      process.emit('SIGINT');
+    };
+
+    it('writes a message on stderr, not a document on stdout, once transcript bytes were written', async ({
+      stateDir,
+      runs,
+      cli,
+    }) => {
+      await seed(runs, stateDir);
+      const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+      vi.spyOn(
+        WorkflowTranscript.prototype as unknown as {
+          writeStdout(chunk: Uint8Array): Promise<void>;
+        },
+        'writeStdout',
+      ).mockImplementation(() => {
+        forceExit();
+        return Promise.resolve();
+      });
+      await cli.run(WorkflowTranscript, ['source', 'task', '--state-dir', stateDir, '--json']);
+      expect(exit).toHaveBeenCalledWith(130);
+      const writes = vi.mocked(writeAllSync).mock.calls;
+      expect(writes.filter(([fd]) => fd === 1)).toEqual([]);
+      expect(writes).toEqual([[2, message]]);
+    });
+
+    it('writes the workflow.error document on stdout while no transcript bytes were written', async ({
+      stateDir,
+      runs,
+      cli,
+    }) => {
+      await seed(runs, stateDir);
+      const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+      vi.spyOn(WorkflowExecutor.prototype, 'execute').mockImplementation(() => {
+        forceExit();
+        return Promise.resolve(workflowFailure('workflow.interrupted', 'Cancelled'));
+      });
+      await cli.run(WorkflowTranscript, ['source', 'task', '--state-dir', stateDir, '--json']);
+      expect(exit).toHaveBeenCalledWith(130);
+      const writes = vi.mocked(writeAllSync).mock.calls;
+      expect(writes).toHaveLength(1);
+      expect(writes[0]?.[0]).toBe(1);
+      expect(JSON.parse(writes[0]?.[1] ?? '')).toMatchObject({
+        kind: 'workflow.error',
+        error: { code: 'workflow.interrupted', message: message.trim() },
+      });
+    });
   });
 });
