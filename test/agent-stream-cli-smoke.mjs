@@ -188,6 +188,12 @@ send({type:'turn.completed',usage:{input_tokens:2,output_tokens:1}});
   assert.ok(closedPipe.head.length > 0);
   assert.doesNotMatch(closedPipe.head, /workflow\.error/);
   assert.doesNotMatch(closedPipe.stderr, /unsettled top-level await/);
+  // Once transcript bytes are on stdout, a --json failure goes to stderr with its exit code.
+  writeFileSync(deniedPath, `${entry('first\n')}not json\n`);
+  const partial = transcript('denied', 'scope/../../answer', '--json');
+  assert.equal(partial.status, 3, partial.stderr);
+  assert.equal(partial.stdout, 'first\n');
+  assert.match(partial.stderr, /Transcript line 2 .* is not valid JSON/);
 
   for (const provider of ['claude', 'codex']) {
     const id = `hang-${provider}`;

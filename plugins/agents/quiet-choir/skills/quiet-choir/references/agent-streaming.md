@@ -49,10 +49,11 @@ each stream to recover raw bytes, including split UTF-8 characters. A capped fil
 `{ "type": "truncated", "reason": "maxTranscriptBytes" }`; this marker counts toward its cap.
 `workflow transcript RUN STEP [--attempt N] [--stream stderr]` does this for you: it writes the
 latest (or Nth) attempt's native bytes to stdout unchanged, ready for `jq`, and warns on stderr when
-the file was capped. An unknown run exits 3 (`run.not_found`); a wrong step, a non-agent step, an
-unknown attempt or a missing transcript (`transcripts: off`, or removed by `on-failure`) exits 2
-(`usage.flag` with `details.reason`); a missing, escaping or malformed file exits 3
-(`run.unreadable`).
+the file was capped. Under `--json`, a failure after output has begun goes to stderr instead of a
+document on stdout, with the same exit code. An unknown run exits 3 (`run.not_found`); a wrong step,
+a non-agent step, an unknown attempt or a missing transcript (`transcripts: off`, or removed by
+`on-failure`) exits 2 (`usage.flag` with `details.reason`); a missing, escaping or malformed file
+exits 3 (`run.unreadable`).
 
 | CLI flag / policy                               | Default | Purpose                                                      |
 | ----------------------------------------------- | ------- | ------------------------------------------------------------ |
