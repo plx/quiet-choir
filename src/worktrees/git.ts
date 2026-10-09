@@ -20,20 +20,48 @@ export interface GitQuarantine {
 const quarantinedCommands = new Set(['rev-parse', 'merge-tree', 'commit-tree', 'var']);
 
 /**
- * Whether a read-only driver runs `args`: `rev-parse`, exactly `--version`, exactly `config
- * --name-only --get-regexp <pattern>`, which lists configuration names, or exactly `config
- * --type=bool --get <name>`, which reads one boolean. None of them can write.
+ * Whether a read-only driver runs `args`, each form exactly as listed, with no extra argument:
+ * - `rev-parse` with any arguments, and `--version`.
+ * - `config --name-only --get-regexp <pattern>`, which lists configuration names, and
+ *   `config --type=bool --get <name>`, which reads one boolean.
+ * - The merge target checks a rehearsal shares with the real merge (#312): `check-ref-format <ref>`
+ *   and `symbolic-ref -q <ref>`, each with exactly one operand that is not an option (a second
+ *   `symbolic-ref` operand would write the ref, as would `-d`), `worktree list --porcelain -z`, and
+ *   `status --porcelain --untracked-files=normal`, which the driver's `GIT_OPTIONAL_LOCKS=0` keeps
+ *   from refreshing the index.
+ *
+ * None of them can write to the repository.
  */
 function readOnlyCommand(args: readonly string[]): boolean {
-  return (
-    args[0] === 'rev-parse' ||
-    (args.length === 1 && args[0] === '--version') ||
-    (args.length === 4 &&
-      args[0] === 'config' &&
-      ((args[1] === '--name-only' && args[2] === '--get-regexp') ||
-        (args[1] === '--type=bool' && args[2] === '--get')))
-  );
+  const [name, first, second, third] = args;
+  const operand = (value: string | undefined) => value !== undefined && !value.startsWith('-');
+  switch (name) {
+    case 'rev-parse':
+      return true;
+    case '--version':
+      return args.length === 1;
+    case 'check-ref-format':
+      return args.length === 2 && operand(first);
+    case 'symbolic-ref':
+      return args.length === 3 && first === '-q' && operand(second);
+    case 'status':
+      return args.length === 3 && first === '--porcelain' && second === '--untracked-files=normal';
+    case 'worktree':
+      return args.length === 4 && first === 'list' && second === '--porcelain' && third === '-z';
+    case 'config':
+      return (
+        args.length === 4 &&
+        ((first === '--name-only' && second === '--get-regexp') ||
+          (first === '--type=bool' && second === '--get'))
+      );
+    default:
+      return false;
+  }
 }
+
+/** The forms {@link readOnlyCommand} accepts, as its refusal names them. */
+const readOnlyForms =
+  'rev-parse, --version, check-ref-format <ref>, symbolic-ref -q <ref>, worktree list --porcelain -z, status --porcelain --untracked-files=normal, config --name-only --get-regexp and config --type=bool --get';
 
 /**
  * Quote one `GIT_ALTERNATE_OBJECT_DIRECTORIES` entry as a C-style string when Git would otherwise
@@ -60,13 +88,16 @@ export class WorktreeGit {
   private readonly fixedEnv: Readonly<Record<string, string>> | undefined;
 
   /**
-   * @param mode - `true` refuses every command except `rev-parse`, `--version`, a `config
-   * --name-only --get-regexp` listing and a `config --type=bool --get` read before it reaches the
-   * runner.
-   * Dry-run rehearsal resolves bases (and checks for custom merge drivers and renormalizing
-   * filters) through this mode, so it can never create refs, worktrees or objects, and it never
-   * fetches a missing object from a partial clone's promisor remote (`GIT_NO_LAZY_FETCH`, which
-   * Git honors from 2.44; the rehearsal refuses merge previews in a partial clone on older Git).
+   * @param mode - `true` refuses, before it reaches the runner, every command except `rev-parse`,
+   * `--version`, a `config --name-only --get-regexp` listing, a `config --type=bool --get` read and
+   * the exact merge target checks (`check-ref-format <ref>`, `symbolic-ref -q <ref>`, `worktree list
+   * --porcelain -z` and `status --porcelain --untracked-files=normal`).
+   * Dry-run rehearsal resolves bases, checks the Git version, merge targets and the source
+   * checkout, and checks for custom merge drivers and renormalizing filters through this mode, so
+   * it can never create refs, worktrees or objects. `GIT_OPTIONAL_LOCKS=0` keeps `status` from
+   * refreshing the index, and it never fetches a missing object from a partial clone's promisor
+   * remote (`GIT_NO_LAZY_FETCH`, which Git honors from 2.44; the rehearsal refuses merge previews
+   * in a partial clone on older Git). Both are fixed whatever the caller's environment sets.
    * `{ quarantine }` runs only `rev-parse`, `merge-tree`, `commit-tree` and `var`, and points every
    * command at the quarantine's object directory, after the caller's `GIT_*` variables are removed
    * and the per-call environment applied, so new objects land there, Git refuses ref updates and
@@ -78,7 +109,8 @@ export class WorktreeGit {
   ) {
     this.fixedEnv =
       mode === true
-        ? { GIT_NO_LAZY_FETCH: '1' }
+        ? // `status` would otherwise opportunistically rewrite the index to refresh stat data.
+          { GIT_NO_LAZY_FETCH: '1', GIT_OPTIONAL_LOCKS: '0' }
         : typeof mode === 'object'
           ? {
               GIT_OBJECT_DIRECTORY: mode.quarantine.objects,
@@ -104,7 +136,7 @@ export class WorktreeGit {
   ): Promise<ExecResult> {
     if (this.mode === true && !readOnlyCommand(args))
       throw new Error(
-        `Read-only Git refuses ${args[0] ?? 'an empty command'}; only rev-parse, --version, config --name-only --get-regexp and config --type=bool --get run.`,
+        `Read-only Git refuses ${args[0] ?? 'an empty command'}; only ${readOnlyForms} run.`,
       );
     if (typeof this.mode === 'object' && !quarantinedCommands.has(args[0] ?? ''))
       throw new Error(

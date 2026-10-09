@@ -160,35 +160,69 @@ async function revision(
   );
   return result.code === 0 ? commitId(result.stdout.trim()) : null;
 }
+/**
+ * What the merge target checks need: a Git driver, the repository, and a way to run the worktree
+ * listing without racing a concurrent `worktree add`. The real merge supplies its run driver and the
+ * repository administration lock; a dry-run preview supplies the read-only driver and only the
+ * in-process administration queue, so it writes nothing (#312). @internal
+ */
+export interface TargetCheckRuntime {
+  readonly git: WorktreeGit;
+  readonly repo: string;
+  /** Run a command that enumerates worktrees without racing another worktree add. */
+  administer<T>(work: () => Promise<T>): Promise<T>;
+}
+
 async function branchFree(
-  runtime: MergeRuntime,
+  runtime: TargetCheckRuntime,
   ref: string,
   invocation: HarnessInvocation,
 ): Promise<void> {
   const listed = await runtime.administer(() =>
-    runtime.git.run(runtime.ledger.repo, ['worktree', 'list', '--porcelain', '-z'], invocation),
+    runtime.git.run(runtime.repo, ['worktree', 'list', '--porcelain', '-z'], invocation),
   );
   if (listed.stdout.split('\0').includes(`branch ${ref}`))
     throw new Error(
       `Merge target ${ref} is checked out; use target: 'checkout' explicitly for this checkout.`,
     );
-  const symbolic = await runtime.git.run(
-    runtime.ledger.repo,
-    ['symbolic-ref', '-q', ref],
-    invocation,
-    { codes: [0, 1] },
-  );
+  const symbolic = await runtime.git.run(runtime.repo, ['symbolic-ref', '-q', ref], invocation, {
+    codes: [0, 1],
+  });
   if (symbolic.code === 0) throw new Error('Merge branch target cannot be a symbolic ref.');
 }
-async function cleanCheckout(runtime: MergeRuntime, invocation: HarnessInvocation): Promise<void> {
+async function cleanCheckout(
+  runtime: TargetCheckRuntime,
+  invocation: HarnessInvocation,
+): Promise<void> {
   if (
     await runtime.git.text(
-      runtime.ledger.repo,
+      runtime.repo,
       ['status', '--porcelain', '--untracked-files=normal'],
       invocation,
     )
   )
     throw new Error('Merge target checkout is dirty; commit or stash changes before integration.');
+}
+
+/**
+ * The checks a merge makes on its target before it prepares anything: a `branch` target's ref must
+ * be a valid ref name (`git check-ref-format`, which fails with an `ExecError`), not checked
+ * out in any worktree and not a symbolic ref; a `checkout` target must have no uncommitted or
+ * untracked changes. A `ref` target is checked by the merge itself. The real merge and the dry-run
+ * preview both run this function, so a rehearsal fails exactly as the real run would (#312).
+ * @internal
+ */
+export async function checkMergeTarget(
+  runtime: TargetCheckRuntime,
+  kind: 'ref' | 'branch' | 'checkout',
+  ref: string,
+  invocation: HarnessInvocation,
+): Promise<void> {
+  if (kind === 'branch') {
+    await runtime.git.run(runtime.repo, ['check-ref-format', ref], invocation);
+    await branchFree(runtime, ref, invocation);
+  }
+  if (kind === 'checkout') await cleanCheckout(runtime, invocation);
 }
 async function checkoutBranch(
   runtime: MergeRuntime,
@@ -299,6 +333,11 @@ export async function integrate(
   invocation: HarnessInvocation,
 ): Promise<MergeResult> {
   const { git, ledger } = runtime;
+  const checks: TargetCheckRuntime = {
+    git,
+    repo: ledger.repo,
+    administer: (work) => runtime.administer(work),
+  };
   let prepared = step.merge;
   if (!prepared) {
     const target = options.target ?? 'ref';
@@ -309,11 +348,7 @@ export async function integrate(
         : target === 'checkout'
           ? 'HEAD'
           : runtime.ref(`merge:${id}:${step.fingerprint}`);
-    if (kind === 'branch') {
-      await git.run(ledger.repo, ['check-ref-format', ref], invocation);
-      await branchFree(runtime, ref, invocation);
-    }
-    if (kind === 'checkout') await cleanCheckout(runtime, invocation);
+    await checkMergeTarget(checks, kind, ref, invocation);
     const expected = await revision(runtime, ref, invocation);
     if (kind === 'ref' && expected !== null)
       throw new Error('Unrecorded merge target already exists.');
@@ -363,10 +398,10 @@ export async function integrate(
   const result = prepared.result;
   await runtime.pin(runtime.ref(`integration:${id}:${step.fingerprint}`), result.commit);
   if (prepared.target === 'checkout') {
-    await cleanCheckout(runtime, invocation);
+    await cleanCheckout(checks, invocation);
     if ((await checkoutBranch(runtime, invocation)) !== prepared.checkoutBranch)
       throw new Error('Merge checkout branch changed since integration was prepared.');
-  } else if (prepared.target === 'branch') await branchFree(runtime, prepared.ref, invocation);
+  } else if (prepared.target === 'branch') await branchFree(checks, prepared.ref, invocation);
   const current = await revision(runtime, prepared.ref, invocation);
   if (current !== result.commit) {
     if (current !== prepared.expected)
