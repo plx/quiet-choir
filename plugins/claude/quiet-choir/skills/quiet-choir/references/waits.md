@@ -22,7 +22,11 @@ original timing, signal presentation/schema/subject, poll input/schema/spacing, 
 A command poll fingerprints its prepared command, `output` schema and `done` source instead.
 Captured values still belong in poll input. Waiting identities cannot change; use revision-specific
 IDs and immutable subjects. Never derive changing sleep durations from a body `Date.now()`.
-`observeTimeoutMs` and `onError` are policy, not identity, and may change on resume.
+`observeTimeoutMs` and `onError` are policy, not identity, and may change on resume. The `observe`
+(or `done`) digest is the source text as the loader prints it, so resuming under another loader (the
+CLI's `tsx`, Vitest, an embedder) or after a loader upgrade fails with "wait changed" without an
+edit; the refusal then says so. Resume under the starting loader, fork the run (`--fork-from`) to
+wait afresh, or use a new wait ID.
 
 `observe({ signal, idempotencyKey, attempt, cwd, exec, previous })` returns `{ done: true, value }`
 or `{ done: false, note? }`. Zod validates/project terminal values. `every` is a positive integer

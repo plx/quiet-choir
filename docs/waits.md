@@ -42,6 +42,30 @@ The poll's `observeTimeoutMs`, `onError` and `noteSchema` are execution policy, 
 is persisted in the wait request, and all may change on resume. A command poll fingerprints its
 prepared command and `done` in place of an observer; see [command polls](#command-polls).
 
+### Callback source and loaders
+
+A poll's `observe` (a command poll's `done`) enters the fingerprint as a digest of its source text
+as the loader that imported it prints it, not of the text you wrote. One callback printed three ways
+under `tsx` (the CLI), Vitest 4 and Node's type stripping, differing in quote style, `void 0`
+against `undefined`, folded constants and number spelling, so no whitespace or comment normalization
+makes them equal. The CLI always loads through `tsx`, so its runs agree with themselves. A waiting
+poll started under one loader and resumed under another (the CLI and an embedder or test runner), or
+after the bundled `tsx` or esbuild changes how it prints, fails with `wait changed` although nothing
+was edited. When that text is the only difference, the refusal appends that it is the poll's
+`observe` (or `done`) source text, hashed as the loader printed it, and names the ways out:
+
+- Resume under the loader that started the run.
+- Fork the run (`--fork-from`, or `RunOptions.forkFrom`). A fork waits afresh instead of copying the
+  wait, and reuses completed effects.
+- Use a new wait ID.
+
+A test that deliberately crosses loaders builds the callback from fixed text, such as
+`new Function('output', 'return { done: true, value: output };')`, so every loader prints it the
+same way (`test/step-exec-workflow.ts`). The built-in helpers, such as the GitHub waits, carry a
+versioned identity with no callback text and are unaffected. A real edit to the callback is still
+refused, and this is deliberate: identity keeps detecting it. See
+[ADR 0059](decisions/0059-keep-poll-callback-identity-as-loaded-source.md).
+
 ## Checks and outcomes
 
 `observe` receives `{ signal, idempotencyKey, attempt, cwd, exec, previous }` and returns either
@@ -266,10 +290,10 @@ canonical absolute working directory, SHA-256 digests of the `env` overlay and o
 "wait changed; use a new ID"; `live`, `observeTimeoutMs`, `onError` and `maxOutputBytes` are policy.
 The working directory is absolute, so moving the checkout under a waiting command poll is an
 identity change, as for `ctx.exec`. As with an observer, `done`'s digest is its source text as
-loaded, so it can differ between loaders. The command and its options are validated and its working
-directory resolved when the wait opens, so an invalid command, an unknown option or a missing `cwd`
-fails the wait before its first check. Observer polls never record `poll.command`, so their requests
-and identities are unchanged.
+loaded; see [callback source and loaders](#callback-source-and-loaders). The command and its options
+are validated and its working directory resolved when the wait opens, so an invalid command, an
+unknown option or a missing `cwd` fails the wait before its first check. Observer polls never record
+`poll.command`, so their requests and identities are unchanged.
 
 Under `--dry-run` each check's command is synthesized from `output`, or answered by an exec fixture
 rule matching the wait ID, and listed in the rehearsal's `commands` with `stepId` and `parentStepId`
