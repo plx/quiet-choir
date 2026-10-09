@@ -30,6 +30,91 @@ function count(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
+/** Longest tool target in a progress summary, in code points. */
+const maxTargetLength = 80;
+/** Characters of a native value examined for a target; the rest cannot reach the summary. */
+const targetScanLength = 4096;
+/** Minimum gap between thinking lines within one burst of consecutive thinking status lines. */
+const thinkingProgressIntervalMs = 10_000;
+/** Claude tool input keys a target may come from, in priority order; nothing else is read. */
+const claudeTargetKeys = [
+  'file_path',
+  'notebook_path',
+  'command',
+  'pattern',
+  'url',
+  'query',
+  'path',
+  'description',
+] as const;
+/** Keys whose values are paths: bounding keeps their tail so the filename survives. */
+const pathTargetKeys = new Set<string>(['file_path', 'notebook_path', 'path']);
+
+/**
+ * A short, bounded progress target, or null. Only the first line is kept, with control characters
+ * and runs of whitespace collapsed to one space. An http(s) URL loses its userinfo, query and
+ * fragment, so a token in it never reaches progress. Past {@link maxTargetLength} code points a
+ * path keeps its tail and anything else its head, marked with `…` where text was cut.
+ */
+function target(value: unknown, path = false): string | null {
+  if (typeof value !== 'string') return null;
+  let text = (
+    value
+      .slice(0, targetScanLength)
+      .trimStart()
+      .split(/\r\n|\r|\n/u, 1)[0] ?? ''
+  )
+    .replace(/\p{Cc}/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim();
+  if (/^https?:\/\//iu.test(text)) {
+    const url = URL.parse(text);
+    if (url === null) return null;
+    url.username = '';
+    url.password = '';
+    url.search = '';
+    url.hash = '';
+    text = url.href;
+  }
+  const points = Array.from(text);
+  if (points.length === 0) return null;
+  if (points.length <= maxTargetLength) return text;
+  return path
+    ? `…${points.slice(1 - maxTargetLength).join('')}`
+    : `${points.slice(0, maxTargetLength - 1).join('')}…`;
+}
+
+/** Strip one `sh`/`bash`/`zsh` `-c`/`-lc` wrapper and one level of matching quotes around it. */
+function unwrapShell(command: string): string {
+  const inner = /^\s*(?:\S*\/)?(?:bash|zsh|sh)\s+-l?c\s+([\s\S]+)$/u.exec(command)?.[1]?.trim();
+  if (inner === undefined) return command;
+  const quote = inner[0];
+  return (quote === "'" || quote === '"') && inner.length >= 2 && inner.endsWith(quote)
+    ? inner.slice(1, -1)
+    : inner;
+}
+
+/** A Codex command: a string, or an argv array of strings joined by spaces. */
+function codexCommand(value: unknown): string | null {
+  const command =
+    typeof value === 'string'
+      ? value
+      : Array.isArray(value) && value.every((part) => typeof part === 'string')
+        ? value.slice(0, 64).join(' ')
+        : null;
+  return command === null ? null : target(unwrapShell(command.slice(0, targetScanLength)));
+}
+
+/** A Claude `thinking_tokens` status line, which arrives about once a second while thinking. */
+function thinkingLine(data: Record<string, unknown>): boolean {
+  return data['type'] === 'system' && data['subtype'] === 'thinking_tokens';
+}
+
+/** Append a target to a summary, and ` (+N more)` for further calls in the same line. */
+function withTarget(summary: string, found: string | null, more = 0): string {
+  return `${summary}${found === null ? '' : ` ${found}`}${more > 0 ? ` (+${String(more)} more)` : ''}`;
+}
+
 /** Native JSONL state, bounded diagnostics and lossy progress; no filesystem ownership. @internal */
 export class HarnessStream {
   public readonly protocol: ClaudeProtocol | CodexProtocol;
@@ -47,6 +132,10 @@ export class HarnessStream {
   readonly #codexInFlight = new Set<string>();
   readonly #diagnostics: Record<string, JsonValue> = { model: null, cliVersion: null };
   #skippedLines = 0;
+  /** When the last thinking line was offered to progress (`performance.now()` clock). */
+  #thinkingReportedAt = -Infinity;
+  /** Whether the last progress-producing line was a thinking line. */
+  #inThinkingRun = false;
   #stdoutTail = '';
   #sawStdout = false;
 
@@ -169,6 +258,9 @@ export class HarnessStream {
       });
     }
     const progress = this.#harness === 'claude' ? this.#claude(data) : this.#codex(data);
+    // Thinking lines track their own run; every other progress-producing line ends it.
+    if (progress && !(this.#harness === 'claude' && thinkingLine(data)))
+      this.#inThinkingRun = false;
     if (
       this.protocol.retainedBytes + Buffer.byteLength(JSON.stringify(this.#diagnostics)) >
       this.#limit
@@ -231,9 +323,18 @@ export class HarnessStream {
         ? (content.find((item: unknown) => object(item)?.['type'] === 'tool_use') as unknown)
         : undefined;
       if (Array.isArray(content)) for (const item of content) this.#countClaudeTool(object(item));
-      return tool
-        ? { kind: 'tool', summary: `Claude tool: ${short(object(tool)?.['name']) ?? 'unknown'}` }
-        : { kind: 'message', summary: 'Claude assistant message' };
+      if (!tool) return { kind: 'message', summary: 'Claude assistant message' };
+      const name = short(object(tool)?.['name']);
+      const more =
+        (content as unknown[]).filter((item) => object(item)?.['type'] === 'tool_use').length - 1;
+      return {
+        kind: 'tool',
+        summary: withTarget(
+          `Claude tool: ${name ?? 'unknown'}`,
+          this.#claudeTarget(tool, name),
+          more,
+        ),
+      };
     }
     if (data['type'] === 'rate_limit_event') {
       // The latest valid event wins; a malformed or empty one keeps any earlier report and, like
@@ -241,6 +342,21 @@ export class HarnessStream {
       const report = parseClaudeRateLimitEvent(data);
       if (report) this.#diagnostics['rateLimit'] = report;
       return { kind: 'status', summary: `Claude: rate limit ${report?.status ?? 'event'}` };
+    }
+    if (thinkingLine(data)) {
+      // Collapse a burst: its first line, then at most one line per interval as a heartbeat.
+      const now = performance.now();
+      const report =
+        !this.#inThinkingRun || now - this.#thinkingReportedAt >= thinkingProgressIntervalMs;
+      this.#inThinkingRun = true;
+      if (!report) return undefined;
+      this.#thinkingReportedAt = now;
+      const tokens = count(data['estimated_tokens']);
+      return {
+        kind: 'status',
+        summary:
+          tokens === null ? 'Claude: thinking' : `Claude: thinking (~${String(tokens)} tokens)`,
+      };
     }
     if (data['type'] === 'system' && typeof data['subtype'] === 'string') {
       if (data['subtype'] === 'hook_started')
@@ -259,11 +375,52 @@ export class HarnessStream {
     if (type !== null)
       return {
         kind: type === 'agent_message' ? 'message' : 'tool',
-        summary: `Codex ${type}: ${short(data['type']) ?? 'activity'}`,
+        summary: this.#codexTarget(
+          type,
+          item,
+          `Codex ${type}: ${short(data['type']) ?? 'activity'}`,
+        ),
       };
     if (typeof data['type'] === 'string')
       return { kind: 'status', summary: `Codex: ${data['type'].slice(0, 128)}` };
     return undefined;
+  }
+
+  /**
+   * The target of a Claude tool_use block, read only through {@link claudeTargetKeys}: never file
+   * contents, edit strings, prompts or MCP arguments. StructuredOutput in a structured call has
+   * none, because its input is the result payload.
+   */
+  #claudeTarget(block: unknown, name: string | null): string | null {
+    if (this.#structured && name === 'StructuredOutput') return null;
+    const input = object(object(block)?.['input']);
+    if (!input) return null;
+    for (const key of claudeTargetKeys) {
+      const found = target(input[key], pathTargetKeys.has(key));
+      if (found !== null) return found;
+    }
+    return null;
+  }
+
+  /** A Codex tool item's target: a command, the first changed path, `server/tool` or a query. */
+  #codexTarget(type: string, item: Record<string, unknown> | undefined, summary: string): string {
+    if (type === 'command_execution') return withTarget(summary, codexCommand(item?.['command']));
+    if (type === 'file_change') {
+      const changes = item?.['changes'];
+      const path = Array.isArray(changes) ? target(object(changes[0])?.['path'], true) : null;
+      // The count of further files only means something next to the first one.
+      return path === null ? summary : withTarget(summary, path, (changes as unknown[]).length - 1);
+    }
+    if (type === 'mcp_tool_call') {
+      const server = target(item?.['server']);
+      const tool = target(item?.['tool']);
+      return withTarget(
+        summary,
+        server === null || tool === null ? (server ?? tool) : target(`${server}/${tool}`),
+      );
+    }
+    if (type === 'web_search') return withTarget(summary, target(item?.['query']));
+    return summary;
   }
 
   #countClaudeTool(block: Record<string, unknown> | undefined): void {

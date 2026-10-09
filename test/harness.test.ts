@@ -3,7 +3,7 @@ import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CliHarness } from '../src/harnesses/cli.js';
 import { ConfigurationError } from '../src/workflow/runtime/configuration-error.js';
@@ -564,5 +564,213 @@ describe('HarnessStream tool-use count', () => {
         item('reasoning', 'item.completed', 'i6'),
       ]),
     ).toBe(5);
+  });
+});
+
+describe('HarnessStream progress summaries', () => {
+  // The 100 ms progress throttle and the thinking collapse both read performance.now(); each line
+  // is fed alone with the fake clock advanced past the throttle unless a test sets the gap.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['performance'] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function summaries(
+    harness: 'claude' | 'codex',
+    lines: readonly object[],
+    { structured = false, gapMs = 200 }: { structured?: boolean; gapMs?: number } = {},
+  ): Promise<string[]> {
+    const seen: string[] = [];
+    const stream = new HarnessStream(harness, structured, 1024 * 1024, {
+      ...testInvocation(),
+      onProgress: (event) => seen.push(event.summary),
+    });
+    for (const line of lines) {
+      vi.advanceTimersByTime(gapMs);
+      await stream.stdout(Buffer.from(`${JSON.stringify(line)}\n`));
+    }
+    await stream.finish();
+    return seen;
+  }
+  const tool = (name: string, input: unknown, id = name) => ({
+    type: 'tool_use',
+    id,
+    name,
+    input,
+  });
+  const assistant = (...content: object[]) => ({ type: 'assistant', message: { content } });
+  const claude = async (...content: object[]) =>
+    (await summaries('claude', [assistant(...content)]))[0];
+
+  it('names the Claude tool target from allowlisted input keys only', async () => {
+    const longPath = `/work/${'deeply/nested/'.repeat(8)}src/harnesses/stream.ts`;
+    const edit = await claude(
+      tool('Edit', { file_path: longPath, old_string: 'SECRET-OLD', new_string: 'SECRET-NEW' }),
+    );
+    expect(edit).toMatch(/^Claude tool: Edit ….*\/src\/harnesses\/stream\.ts$/u);
+    expect(Array.from((edit ?? '').slice('Claude tool: Edit '.length))).toHaveLength(80);
+    expect(edit).not.toContain('SECRET');
+
+    const command = `npm run check -- ${'--flag '.repeat(30)}`;
+    const bash = await claude(tool('Bash', { command, description: 'Run the checks' }));
+    expect(bash).toMatch(/^Claude tool: Bash npm run check -- --flag .*…$/u);
+    expect(Array.from((bash ?? '').slice('Claude tool: Bash '.length))).toHaveLength(80);
+
+    expect(await claude(tool('Bash', { command: 'git status\nrm -rf /tmp/x\tz' }))).toBe(
+      'Claude tool: Bash git status',
+    );
+    expect(await claude(tool('Grep', { pattern: 'class\\s+Harness', path: 'src' }))).toBe(
+      'Claude tool: Grep class\\s+Harness',
+    );
+    expect(await claude(tool('Write', { file_path: 'a.txt', content: 'SECRET-CONTENT' }))).toBe(
+      'Claude tool: Write a.txt',
+    );
+    expect(await claude(tool('Write', { content: 'SECRET-CONTENT' }))).toBe('Claude tool: Write');
+    expect(
+      await claude(tool('mcp__db__query', { arguments: { token: 'SECRET' }, sql: 'SECRET' })),
+    ).toBe('Claude tool: mcp__db__query');
+    expect(await claude(tool('Task', { prompt: 'SECRET prompt', description: 'Explore' }))).toBe(
+      'Claude tool: Task Explore',
+    );
+  });
+
+  it('strips URL credentials, queries and fragments', async () => {
+    expect(
+      await claude(
+        tool('WebFetch', { url: 'https://user:pw@example.com/a/b?token=SECRET#frag', prompt: 'x' }),
+      ),
+    ).toBe('Claude tool: WebFetch https://example.com/a/b');
+    expect(await claude(tool('WebFetch', { url: 'https://[bad' }))).toBe('Claude tool: WebFetch');
+  });
+
+  it('omits the StructuredOutput payload and counts further tool calls', async () => {
+    expect(
+      (
+        await summaries('claude', [assistant(tool('StructuredOutput', { command: 'payload' }))], {
+          structured: true,
+        })
+      )[0],
+    ).toBe('Claude tool: StructuredOutput');
+    expect(
+      await claude(
+        { type: 'text', text: 'two tools' },
+        tool('Read', { file_path: 'README.md' }, 'a'),
+        tool('Grep', { pattern: 'x' }, 'b'),
+      ),
+    ).toBe('Claude tool: Read README.md (+1 more)');
+  });
+
+  it('ignores malformed Claude inputs without failing the call', async () => {
+    expect(await claude(tool('Bash', { command: 42, description: ['x'] }))).toBe(
+      'Claude tool: Bash',
+    );
+    expect(await claude(tool('Bash', 'not an object'))).toBe('Claude tool: Bash');
+    expect(await claude(tool('Bash', { command: ' \n ' }))).toBe('Claude tool: Bash');
+  });
+
+  it('names Codex command, file, MCP and search targets', async () => {
+    const item = (type: string, fields: object) => ({
+      type: 'item.started',
+      item: { id: type, type, ...fields },
+    });
+    expect(
+      await summaries('codex', [
+        item('command_execution', { command: "/bin/zsh -lc 'git status'" }),
+        item('command_execution', { command: ['bash', '-c', 'npm test'] }),
+        item('command_execution', { command: 'ls -la' }),
+        item('file_change', {
+          changes: [{ path: 'src/a.ts', kind: 'update' }, { path: 'b.ts' }, { path: 'c.ts' }],
+        }),
+        item('file_change', { changes: [{ path: 'only.ts', diff: 'SECRET' }] }),
+        item('mcp_tool_call', { server: 'github', tool: 'get_issue', arguments: { t: 'SECRET' } }),
+        item('web_search', { query: 'vitest fake performance' }),
+        item('reasoning', { text: 'SECRET' }),
+      ]),
+    ).toEqual([
+      'Codex command_execution: item.started git status',
+      'Codex command_execution: item.started npm test',
+      'Codex command_execution: item.started ls -la',
+      'Codex file_change: item.started src/a.ts (+2 more)',
+      'Codex file_change: item.started only.ts',
+      'Codex mcp_tool_call: item.started github/get_issue',
+      'Codex web_search: item.started vitest fake performance',
+      'Codex reasoning: item.started',
+    ]);
+  });
+
+  it('keeps the Codex summary unchanged when no target field is usable', async () => {
+    const item = (type: string, fields: object = {}) => ({
+      type: 'item.completed',
+      item: { type, ...fields },
+    });
+    expect(
+      await summaries('codex', [
+        item('command_execution'),
+        item('command_execution', { command: 7 }),
+        item('command_execution', { command: [{ argv: 'x' }] }),
+        item('file_change', { changes: [{ diff: 'x' }, { path: 'b.ts' }] }),
+        item('file_change', { changes: 'x' }),
+        item('mcp_tool_call', { arguments: { t: 'SECRET' } }),
+        item('web_search', { query: 5 }),
+      ]),
+    ).toEqual([
+      'Codex command_execution: item.completed',
+      'Codex command_execution: item.completed',
+      'Codex command_execution: item.completed',
+      'Codex file_change: item.completed',
+      'Codex file_change: item.completed',
+      'Codex mcp_tool_call: item.completed',
+      'Codex web_search: item.completed',
+    ]);
+  });
+
+  describe('thinking_tokens collapse', () => {
+    const thinking = (estimated?: number) => ({
+      type: 'system',
+      subtype: 'thinking_tokens',
+      ...(estimated === undefined ? {} : { estimated_tokens: estimated }),
+    });
+
+    it('reports the first line of a burst, then one per 10 s', async () => {
+      const lines = Array.from({ length: 21 }, (_, index) => thinking(100 * (index + 1)));
+      expect(await summaries('claude', lines, { gapMs: 1000 })).toEqual([
+        'Claude: thinking (~100 tokens)',
+        'Claude: thinking (~1100 tokens)',
+        'Claude: thinking (~2100 tokens)',
+      ]);
+      expect(
+        await summaries(
+          'claude',
+          Array.from({ length: 10 }, () => thinking(5)),
+          { gapMs: 1000 },
+        ),
+      ).toEqual(['Claude: thinking (~5 tokens)']);
+    });
+
+    it('starts a new burst after any other progress line', async () => {
+      expect(
+        await summaries(
+          'claude',
+          [thinking(1), thinking(2), assistant(tool('Read', { file_path: 'a' })), thinking(3)],
+          { gapMs: 1000 },
+        ),
+      ).toEqual([
+        'Claude: thinking (~1 tokens)',
+        'Claude tool: Read a',
+        'Claude: thinking (~3 tokens)',
+      ]);
+    });
+
+    it('falls back to a plain summary without a usable estimate', async () => {
+      expect(
+        await summaries('claude', [
+          thinking(),
+          { type: 'system', subtype: 'hook_started' },
+          { ...thinking(), estimated_tokens: -1 },
+        ]),
+      ).toEqual(['Claude: thinking', 'Claude: hook_started', 'Claude: thinking']);
+    });
   });
 });
