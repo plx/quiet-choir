@@ -968,14 +968,19 @@ rejects, but the workflow never sees its result. Await it, or collect it in `Pro
 
 `Date.now()`, an argument-less `new Date()` or `Date()`, `Math.random()`, `performance.now()`,
 `crypto.randomUUID()`, `process.env` or an `fs` `*Sync` call in the workflow body, outside a step
-`run`, a poll `observe`/`done` and a poll `onError` callback. Use `ctx.now`, `ctx.readFile`,
+`run`, a poll `observe`/`done` and a poll `onError` callback. A callback passed by name (`{ run }`,
+`run: readClock`) counts as one when it is a same-file `const` arrow or function expression, or a
+function declaration, and the file uses it only as such a callback. Use `ctx.now`, `ctx.readFile`,
 `ctx.exec` or a `ctx.step`, or pass the value as workflow input.
 
 #### QC003
 
-A durable call (`ctx.step`, `ctx.exec`, an agent call and the other effects) lexically inside a step
-`run`, a poll `observe`/`done` or a poll `onError` callback. Use the callback's `context.exec`, or
-move the call into the body.
+A durable call (`ctx.step`, `ctx.exec`, an agent call and the other effects) inside a step `run`, a
+poll `observe`/`done` or a poll `onError` callback: written in it, in a same-file function passed to
+it by name, or in a same-file helper it calls directly by name (`helper(ctx)`), through any chain of
+such calls. The message then names the entry point, such as
+`(reached through record() from line 21)`. Use the callback's `context.exec`, or move the call into
+the body.
 
 #### QC004
 
@@ -1001,8 +1006,12 @@ one.
 
 #### Limitations
 
-The lint is lexical and per function. It does not follow helpers across calls, so a hazard inside a
-function called from a callback is judged where it is written. It does not check literal `ctx.scope`
+The lint is lexical and per function, and resolves callbacks only within one file. It follows a
+callback passed by name and direct calls by name from a callback to same-file `const` functions and
+function declarations, but not imports, `let`/`var`, parameters, destructuring, method calls or
+callbacks passed on (`items.map(helper)`), and an options object stored in an untyped variable is
+not a callback zone. A `Date.now()` in a helper that only callbacks call is still reported where the
+helper is written; move it into the callback or suppress it. It does not check literal `ctx.scope`
 or `ctx.within` prefixes inside loops, IDs on a `ctx.within(...)` context, or reads through
 `fs/promises` and `child_process`. Runtime guards still catch duplicate IDs and nested effects when
 they execute.
