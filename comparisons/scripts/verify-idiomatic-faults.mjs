@@ -221,6 +221,7 @@ export async function extraContracts(root) {
       assert.equal(result.output.status, 'verification-failed');
       assert.equal(result.output.verification[0].code, 7);
       assert.equal(result.output.verification[0].failure, 'process');
+      assert.equal(result.output.verification[0].truncated, null);
       assert.equal(existsSync(join(env.cwd, 'setup.txt')), false);
     }
     if (mode === 'signal-verify') {
@@ -228,6 +229,7 @@ export async function extraContracts(root) {
       assert.equal(result.output.status, 'verification-failed');
       assert.equal(result.output.verification[0].code, null);
       assert.equal(typeof result.output.verification[0].failure, 'string');
+      assert.equal(result.output.verification[0].truncated, null);
       assert.equal(existsSync(join(env.cwd, 'setup.txt')), false);
       const settled = settledSteps(await readRun(opts), /^verify/u);
       assert.equal(settled.length, 1);

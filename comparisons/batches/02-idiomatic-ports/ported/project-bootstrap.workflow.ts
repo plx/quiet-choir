@@ -50,7 +50,7 @@ export default defineWorkflow({
       z.object({
         argv: Argv,
         code: z.number().int().nullable(),
-        truncated: z.boolean(),
+        truncated: z.boolean().nullable(),
         failure: z.string().nullable(),
       }),
     ),
@@ -122,14 +122,15 @@ export default defineWorkflow({
         worktree: tree,
         onError: 'return',
       });
-      // A settled failure carries no truncation flag; `failure` names its kind instead.
+      // A settled failure carries no truncation flag, so `truncated: null` means unknown;
+      // `failure` names its kind.
       verification.push(
         result.ok
           ? { argv, code: result.value.code, truncated: result.value.truncated, failure: null }
           : {
               argv,
               code: result.error.code ?? null,
-              truncated: false,
+              truncated: null,
               failure: result.error.kind,
             },
       );

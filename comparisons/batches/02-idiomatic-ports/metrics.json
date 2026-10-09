@@ -183,7 +183,7 @@
           }
         },
         "2": {
-          "formattedLines": 160,
+          "formattedLines": 161,
           "agentCalls": 4,
           "writeToolCalls": 2,
           "strictErrors": 0,
