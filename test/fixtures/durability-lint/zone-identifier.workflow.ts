@@ -42,7 +42,25 @@ export default defineWorkflow({
     const stored = () => Date.now();
     const callbacks = [stored];
     const kept = await ctx.step('stored', { input: {}, schema: z.number(), run: stored });
+    // Escapes from its own body: not a recursive call, so shared and its Date.now() is reported.
+    let saved: (() => number) | undefined;
+    const leak = (): number => {
+      saved = leak;
+      return Date.now();
+    };
+    const escaped = await ctx.step('escaped', { input: {}, schema: z.number(), run: leak });
     const outcome = polled.by === 'deadline' ? 0 : polled.value;
-    return first + home.length + wrapped + outcome + direct + bound + kept + callbacks.length;
+    return (
+      first +
+      home.length +
+      wrapped +
+      outcome +
+      direct +
+      bound +
+      kept +
+      callbacks.length +
+      escaped +
+      (saved?.() ?? 0)
+    );
   },
 });

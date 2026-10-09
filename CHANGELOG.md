@@ -7,13 +7,13 @@
   A step `run`, poll `observe`/`done` or `onError` callback passed by name (`{ run }`,
   `run: readClock`) that names a same-file `const` arrow or function expression, or a function
   declaration, is now checked as a callback, so `const run = () => Date.now()` passed as `{ run }`
-  no longer reports QC002; a function the file also uses another way keeps its QC002 findings and is
-  also checked in the callback. A direct call by name from a callback to a same-file helper is
-  followed, through chains and recursion, so a durable call nested in the helper reports QC003 once,
-  with a message that names the binding or first call (`(reached through record() from line 21)`).
-  Imports, `let`/`var`, parameters, destructuring, method calls and callbacks passed on
-  (`items.map(helper)`) keep today's findings, and a `Date.now()` in a helper only callbacks call is
-  still reported where the helper is written.
+  no longer reports QC002; a function the file also uses another way (a recursive call inside its
+  own body does not count) keeps its QC002 findings and is also checked in the callback. A direct
+  call by name from a callback to a same-file helper is followed, through chains and recursion, so a
+  durable call nested in the helper reports QC003 once, with a message that names the binding or
+  first call (`(reached through record() from line 21)`). Imports, `let`/`var`, parameters,
+  destructuring, method calls and callbacks passed on (`items.map(helper)`) keep today's findings,
+  and a `Date.now()` in a helper only callbacks call is still reported where the helper is written.
 - A dry run now rehearses repeated poll checks instead of suspending at the first nonterminal one
   (#323,
   [ADR 0016](docs/decisions/0016-workflow-rehearsal.md#amendment-rehearsed-repeated-poll-checks-323)).

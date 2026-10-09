@@ -970,8 +970,9 @@ rejects, but the workflow never sees its result. Await it, or collect it in `Pro
 `crypto.randomUUID()`, `process.env` or an `fs` `*Sync` call in the workflow body, outside a step
 `run`, a poll `observe`/`done` and a poll `onError` callback. A callback passed by name (`{ run }`,
 `run: readClock`) counts as one when it is a same-file `const` arrow or function expression, or a
-function declaration, and the file uses it only as such a callback. Use `ctx.now`, `ctx.readFile`,
-`ctx.exec` or a `ctx.step`, or pass the value as workflow input.
+function declaration, and the file uses it only as such a callback (apart from a recursive call
+inside the function's own body). Use `ctx.now`, `ctx.readFile`, `ctx.exec` or a `ctx.step`, or pass
+the value as workflow input.
 
 #### QC003
 

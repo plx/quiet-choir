@@ -271,7 +271,7 @@ interface Binding {
 
 /**
  * A function bound to at least one zone property. It is exclusive when every same-file reference
- * is a binding or a self-reference, so it only ever runs as a callback.
+ * is a binding or a recursive call inside its own body, so it only ever runs as a callback.
  */
 interface Bound {
   readonly zone: string;
@@ -543,7 +543,7 @@ class DurabilityLinter {
 
   /**
    * Find the zone properties bound to same-file functions and decide, for each bound function,
-   * whether it is exclusive (every same-file reference is a binding or a self-reference) or shared.
+   * whether it is exclusive (every same-file reference is a binding or a recursive call inside its own body) or shared.
    */
   #prepare(file: ts.SourceFile): void {
     this.#bindings.clear();
@@ -597,10 +597,19 @@ class DurabilityLinter {
           declarationNames.has(reference) ||
           !this.#refersTo(reference, target.symbol) ||
           bound.has(reference) ||
-          contains(target.fn, reference),
+          this.#isRecursiveCall(reference, target.fn),
       );
       this.#bound.set(target.fn, { zone, via, exclusive });
     }
+  }
+
+  /** Whether a reference is the callee of a direct call inside the function it names. */
+  #isRecursiveCall(reference: ts.Identifier, fn: ts.FunctionLikeDeclaration): boolean {
+    if (!contains(fn, reference)) return false;
+    let node: ts.Expression = reference;
+    while (ts.isParenthesizedExpression(node.parent)) node = node.parent;
+    const parent = node.parent;
+    return ts.isCallExpression(parent) && parent.expression === node;
   }
 
   /** Whether an identifier refers to a symbol; an identifier the checker cannot resolve might. */
