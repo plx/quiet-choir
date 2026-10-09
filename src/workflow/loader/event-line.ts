@@ -70,11 +70,18 @@ export interface EventLine {
   readonly ms?: number;
   /** Reported cost of a completed agent step. */
   readonly costUsd?: number;
+  /**
+   * The attempt's reported tool-call count (`diagnostics.toolUses`), on the `step.completed`,
+   * `step.failed` and `step.settled` lines of an agent step whose attempt reported a count. Absent
+   * when the count is unknown, such as for a registered adapter that does not count tools.
+   */
+  readonly toolUses?: number;
   /** Phase at the call site. */
   readonly phase?: string;
   /**
-   * Truncated message: the run error, the step error on `step.failed` and `step.settled`, phase
-   * title, log text plus data, the open question, or the tolerated poll error with its count.
+   * Truncated message: the run error, the step error on `step.failed` and `step.settled`, the
+   * step's warnings on `step.completed` (`no-tool-use:` first, joined with `; `), phase title, log
+   * text plus data, the open question, or the tolerated poll error with its count.
    */
   readonly msg?: string;
 }
@@ -100,9 +107,16 @@ export interface EventLineFields {
   readonly harness?: string | undefined;
   readonly ms?: number | undefined;
   readonly costUsd?: number | null | undefined;
+  /** Kept only on `step.completed`, `step.failed` and `step.settled`, and only as a non-negative safe integer. */
+  readonly toolUses?: number | null | undefined;
   readonly phase?: string | null | undefined;
   /** The untruncated message; see {@link eventMessage}. */
   readonly msg?: string | undefined;
+}
+
+/** Whether a recorded tool count is a usable non-negative safe integer. @internal */
+export function validToolUses(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 
 const ellipsis = '…';
@@ -173,10 +187,24 @@ function fit(line: Record<string, unknown>): string {
 }
 
 /**
+ * The step's warnings as one `msg`: `no-tool-use:` warnings first, then the rest in record order,
+ * joined with `; `. Undefined when there are none. A `no-tool-use` warning therefore survives the
+ * `msg` truncation however many other warnings precede it in the record. @internal
+ */
+export function warningsMessage(warnings: readonly string[] | undefined): string | undefined {
+  if (warnings === undefined || warnings.length === 0) return undefined;
+  const priority = (warning: string): boolean => warning.startsWith('no-tool-use:');
+  return [...warnings.filter(priority), ...warnings.filter((warning) => !priority(warning))].join(
+    '; ',
+  );
+}
+
+/**
  * The untruncated `msg` of an event: the compact JSON of `question` in a `wait.opened` payload,
  * the message plus the compact JSON of non-null data for `log`, `tolerated N/LIMIT: message` (with
  * ` [code]` after LIMIT when the error had a code) for `wait.tolerated`, the bounded step `error`
- * (or nothing) for `step.failed` and `step.settled`, and the message otherwise.
+ * (or nothing) for `step.failed` and `step.settled`, the step's {@link warningsMessage} (or nothing)
+ * for `step.completed`, and the message otherwise.
  * A `wait.tolerated` entry whose data lacks the counts falls back to its message.
  * @internal
  */
@@ -185,9 +213,11 @@ export function eventMessage(event: {
   readonly message?: string | null | undefined;
   readonly error?: string | null | undefined;
   readonly data?: JsonValue | undefined;
+  readonly warnings?: readonly string[] | undefined;
 }): string | undefined {
   if (event.type === 'step.failed' || event.type === 'step.settled')
     return event.error ?? undefined;
+  if (event.type === 'step.completed') return warningsMessage(event.warnings);
   if (event.type === 'wait.opened') {
     const data = event.data;
     const question =
@@ -211,12 +241,12 @@ export function eventMessage(event: {
 
 /**
  * Build one compact JSON line (without its newline) from raw fields: the ordered object
- * `{t, run, ev, step, attempt, errorKind, retryable, harness, ms, costUsd, phase, msg}` with absent
+ * `{t, run, ev, step, attempt, errorKind, retryable, harness, ms, costUsd, toolUses, phase, msg}` with absent
  * values omitted, `msg` cut to {@link EVENT_MESSAGE_BUDGET_BYTES}, and the whole line fitted to
  * {@link EVENT_LINE_MAX_BYTES} UTF-8 bytes. This is the only formatter of event lines. @internal
  */
 export function formatEventFields(fields: EventLineFields): string {
-  const { step, attempt, harness, ms, costUsd, msg } = fields;
+  const { step, attempt, harness, ms, costUsd, toolUses, msg } = fields;
   const kind =
     fields.ev === 'step.failed'
       ? failureKind(fields.errorKind ?? null)
@@ -241,6 +271,12 @@ export function formatEventFields(fields: EventLineFields): string {
     ...(harness === undefined ? {} : { harness }),
     ...(ms === undefined || !Number.isFinite(ms) ? {} : { ms }),
     ...(typeof costUsd === 'number' && Number.isFinite(costUsd) ? { costUsd } : {}),
+    ...((fields.ev === 'step.completed' ||
+      fields.ev === 'step.failed' ||
+      fields.ev === 'step.settled') &&
+    validToolUses(toolUses)
+      ? { toolUses }
+      : {}),
     ...(phase === undefined ? {} : { phase }),
     ...(msg ? { msg: truncateEnd(msg, EVENT_MESSAGE_BUDGET_BYTES) } : {}),
   };

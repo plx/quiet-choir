@@ -1,7 +1,7 @@
 import { closeSync, openSync, writeSync } from 'node:fs';
 import type { ExecutionLogger } from '../../application/execution.js';
 import type { WorkflowEvent } from '../runtime/runner.js';
-import { eventMessage, formatEventFields, isEventLineType } from './event-line.js';
+import { eventMessage, formatEventFields, isEventLineType, validToolUses } from './event-line.js';
 
 export {
   EVENT_LINE_MAX_BYTES,
@@ -17,11 +17,16 @@ const runTerminal = new Set(['run.completed', 'run.failed', 'run.cancelled', 'ru
 interface StepMemory {
   startedAt?: number;
   harness?: string;
+  /** From the step's latest `agent.finished`; cleared on `step.started` and on a terminal event. */
+  toolUses?: number;
+  warnings?: readonly string[];
 }
 
 /**
- * Per-process tracking for the derived `harness` and `ms` fields. Entries are deleted on terminal
- * step and run events, so a long run keeps only its in-flight steps. @internal
+ * Per-process tracking for the derived `harness`, `ms`, `toolUses` and warnings fields. `toolUses`
+ * and the warnings come from the step's `agent.finished`, which the runner emits just before the
+ * step's terminal event. Entries are deleted on terminal step and run events, so a long run keeps
+ * only its in-flight steps. @internal
  */
 export class EventLineMemory {
   readonly #runs = new Map<string, { startedAt?: number; steps: Map<string, StepMemory> }>();
@@ -46,7 +51,12 @@ export class EventLineMemory {
   }
 
   /** Record what later lines derive from, and return the derived fields for this event. */
-  public observe(event: WorkflowEvent): { harness?: string; ms?: number } {
+  public observe(event: WorkflowEvent): {
+    harness?: string;
+    ms?: number;
+    toolUses?: number;
+    warnings?: readonly string[];
+  } {
     const at = Date.parse(event.at);
     const runId = event.runId;
     if (event.type === 'run.started') {
@@ -68,9 +78,20 @@ export class EventLineMemory {
       const step = this.#step(runId, stepId);
       if (Number.isFinite(at)) step.startedAt = at;
       else delete step.startedAt;
+      // A new attempt must not inherit the previous attempt's count or warnings.
+      delete step.toolUses;
+      delete step.warnings;
     }
     if (event.harness !== undefined && event.type.startsWith('agent.'))
       this.#step(runId, stepId).harness = event.harness;
+    if (event.type === 'agent.finished') {
+      const step = this.#step(runId, stepId);
+      const toolUses = event.diagnostics?.['toolUses'];
+      if (validToolUses(toolUses)) step.toolUses = toolUses;
+      else delete step.toolUses;
+      if (event.warnings?.length) step.warnings = event.warnings;
+      else delete step.warnings;
+    }
     const known = this.#runs.get(runId)?.steps.get(stepId);
     const harness = event.harness ?? known?.harness;
     const startedAt = known?.startedAt;
@@ -84,6 +105,12 @@ export class EventLineMemory {
       ...(harness === undefined ? {} : { harness }),
       ...(stepTerminal.has(event.type) && startedAt !== undefined && Number.isFinite(at)
         ? { ms: Math.max(0, at - startedAt) }
+        : {}),
+      ...(stepTerminal.has(event.type) && known?.toolUses !== undefined
+        ? { toolUses: known.toolUses }
+        : {}),
+      ...(stepTerminal.has(event.type) && known?.warnings !== undefined
+        ? { warnings: known.warnings }
         : {}),
     };
   }
@@ -100,7 +127,8 @@ export class EventLineMemory {
  * Format one `WorkflowEvent` as a compact JSON line (without its newline), or return null for an
  * event the stream does not carry: any type outside `eventLineTypes`, and every replay echo
  * (`replayed: true`, `step.replayed`, `step.reused`), because an earlier execution already wrote
- * that transition. `memory` must see every event, written or not, to derive `harness` and `ms`.
+ * that transition. `memory` must see every event, written or not, to derive `harness`, `ms`,
+ * `toolUses` and the `step.completed` warnings message.
  * The line is at most `EVENT_LINE_MAX_BYTES` UTF-8 bytes. @internal
  */
 export function formatEventLine(event: WorkflowEvent, memory: EventLineMemory): string | null {
@@ -117,8 +145,9 @@ export function formatEventLine(event: WorkflowEvent, memory: EventLineMemory): 
     harness: derived.harness,
     ms: derived.ms,
     costUsd: event.usage?.costUsd,
+    toolUses: derived.toolUses,
     phase: event.phase,
-    msg: eventMessage(event),
+    msg: eventMessage({ ...event, warnings: derived.warnings }),
   });
 }
 

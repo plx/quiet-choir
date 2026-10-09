@@ -3,7 +3,13 @@ import type { RunEvent } from '../runtime/observability-model.js';
 import { windowSuspensionMessage } from '../runtime/rate-limit.js';
 import { stepEventError } from '../runtime/step-event-error.js';
 import type { AttemptRecord, RunRecord, StepRecord } from '../runtime/record.js';
-import { eventMessage, formatEventFields, type EventLineFields } from './event-line.js';
+import {
+  eventMessage,
+  formatEventFields,
+  validToolUses,
+  warningsMessage,
+  type EventLineFields,
+} from './event-line.js';
 import { attemptErrorKind, rootCauseErrorKind, stepErrorKind } from './failure-kind.js';
 import type { ErrorKind } from '../runtime/model.js';
 
@@ -160,6 +166,11 @@ function stepCandidates(record: RunRecord, id: string, step: StepRecord): Candid
   const common = { run: record.id, step: id, harness, phase: step.phase };
   const result: Candidate[] = [];
   const history: readonly AttemptRecord[] = step.attemptHistory ?? [];
+  const toolUsesOf = (attempt: AttemptRecord): { toolUses?: number } => {
+    // Only agent attempts report a count; live, only agent.finished supplies one.
+    const value = harness === undefined ? undefined : attempt.diagnostics?.['toolUses'];
+    return validToolUses(value) ? { toolUses: value } : {};
+  };
   history.forEach((attempt, index) => {
     if (attempt.finishedAt === null) return;
     if (attempt.status === 'completed')
@@ -173,6 +184,13 @@ function stepCandidates(record: RunRecord, id: string, step: StepRecord): Candid
           ev: 'step.completed',
           ms: attempt.durationMs ?? undefined,
           costUsd: attempt.usage?.costUsd,
+          ...toolUsesOf(attempt),
+          // step.warnings is reset per attempt, so it belongs only to the step's latest attempt.
+          // Only agent steps carry them live (on agent.finished), so only they do here.
+          msg:
+            harness !== undefined && index === history.length - 1 && step.status === 'completed'
+              ? warningsMessage(step.warnings)
+              : undefined,
         },
       });
     else if (attempt.status === 'failed') {
@@ -190,6 +208,7 @@ function stepCandidates(record: RunRecord, id: string, step: StepRecord): Candid
           // The kind this attempt recorded, which can differ from the step's last one.
           errorKind: settled ? undefined : attemptErrorKind(attempt),
           ms: attempt.durationMs ?? undefined,
+          ...toolUsesOf(attempt),
           msg: stepEventError(attempt.error),
         },
       });
@@ -254,7 +273,10 @@ function stepCandidates(record: RunRecord, id: string, step: StepRecord): Candid
  * attempt's recorded `errorKind`, null when it has none); a `run.failed` entry that names a root
  * effect carries the root cause's kind in the latest execution, or the kind of that step's last
  * failed attempt in an earlier execution, and no kind when the record has neither; and every
- * question that notified (`wait.opened`). Fork-reused steps and cancelled or
+ * question that notified (`wait.opened`). Completed and failed attempts also carry the attempt's
+ * recorded `diagnostics.toolUses`, and a `step.completed` line carries the step's warnings as its
+ * `msg` only for the step's latest attempt, because the record keeps warnings per step, not per
+ * attempt. Fork-reused steps and cancelled or
  * interrupted attempts write nothing, and fields the record cannot supply are omitted. Lines are
  * deduplicated by identity, not position, so eviction past the 500-event cap neither repeats nor
  * hides newer lines. Each call returns the lines not yet accounted for in `cursor` (null on the

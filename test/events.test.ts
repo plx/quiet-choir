@@ -262,6 +262,136 @@ describe('formatEventLine', () => {
     expect(memory.size).toEqual({ runs: 0, steps: 0 });
   });
 
+  describe('toolUses and warnings', () => {
+    const finished = (
+      stepId: string,
+      fields: Partial<WorkflowEvent> = {},
+    ): Partial<WorkflowEvent> & Pick<WorkflowEvent, 'type'> => ({
+      type: 'agent.finished',
+      stepId,
+      harness: 'claude',
+      ...fields,
+    });
+
+    it('writes toolUses after costUsd and the warnings as msg on step.completed', () => {
+      const memory = new EventLineMemory();
+      memory.observe(event({ type: 'step.started', stepId: 'a', at: at(0) }));
+      memory.observe(
+        event(
+          finished('a', {
+            diagnostics: { toolUses: 0 },
+            warnings: ['Other note', 'no-tool-use: expected tools, saw none'],
+          }),
+        ),
+      );
+      const text = formatEventLine(
+        event({
+          type: 'step.completed',
+          stepId: 'a',
+          at: at(5),
+          usage: { inputTokens: 1, outputTokens: 1, costUsd: 0.5 },
+        }),
+        memory,
+      );
+      expect(text).toBe(
+        `{"t":"${at(5)}","run":"r1","ev":"step.completed","step":"a","harness":"claude","ms":5,"costUsd":0.5,"toolUses":0,"msg":"no-tool-use: expected tools, saw none; Other note"}`,
+      );
+    });
+
+    it('keeps no-tool-use in msg when other warnings are long and the line within the cap', () => {
+      const memory = new EventLineMemory();
+      const long = 'x'.repeat(150);
+      memory.observe(
+        event(
+          finished('a', {
+            diagnostics: { toolUses: 0 },
+            warnings: [long, long, 'no-tool-use: expected tools'],
+          }),
+        ),
+      );
+      const text =
+        formatEventLine(
+          event({ type: 'step.completed', stepId: 'a', phase: 'p'.repeat(200) }),
+          memory,
+        ) ?? '';
+      expect(Buffer.byteLength(text)).toBeLessThanOrEqual(EVENT_LINE_MAX_BYTES);
+      expect((JSON.parse(text) as EventLine).msg?.startsWith('no-tool-use: expected tools; ')).toBe(
+        true,
+      );
+    });
+
+    it('writes toolUses but never warnings on step.failed and step.settled', () => {
+      const memory = new EventLineMemory();
+      for (const type of ['step.failed', 'step.settled'] as const) {
+        memory.observe(event({ type: 'step.started', stepId: 'a' }));
+        memory.observe(
+          event(finished('a', { diagnostics: { toolUses: 4 }, warnings: ['no-tool-use: x'] })),
+        );
+        const parsed = line(event({ type, stepId: 'a', error: 'boom' }), memory);
+        expect(parsed).toMatchObject({ ev: type, toolUses: 4, msg: 'boom' });
+      }
+    });
+
+    it.each([
+      ['null', null],
+      ['missing', undefined],
+      ['a string', '3'],
+      ['negative', -1],
+      ['fractional', 1.5],
+      ['infinite', Infinity],
+    ])('omits toolUses when the count is %s', (_name, value) => {
+      const memory = new EventLineMemory();
+      memory.observe(
+        event(finished('a', { diagnostics: { toolUses: value } as WorkflowEvent['diagnostics'] })),
+      );
+      expect(line(event({ type: 'step.completed', stepId: 'a' }), memory)).not.toHaveProperty(
+        'toolUses',
+      );
+    });
+
+    it('gives a step without agent.finished neither field', () => {
+      expect(line(event({ type: 'step.completed', stepId: 'a' }))).not.toHaveProperty('toolUses');
+      expect(line(event({ type: 'step.completed', stepId: 'a' }))).not.toHaveProperty('msg');
+      const memory = new EventLineMemory();
+      memory.observe(event(finished('a', { diagnostics: { toolUses: 2 } })));
+      expect(line(event({ type: 'wait.opened', stepId: 'a' }), memory)).not.toHaveProperty(
+        'toolUses',
+      );
+    });
+
+    it('ignores a message on step.completed', () => {
+      expect(line(event({ type: 'step.completed', message: 'Step done' }))).not.toHaveProperty(
+        'msg',
+      );
+    });
+
+    it('clears values on step.started and forgets them after the terminal event', () => {
+      const memory = new EventLineMemory();
+      memory.observe(
+        event(finished('a', { diagnostics: { toolUses: 5 }, warnings: ['no-tool-use: x'] })),
+      );
+      memory.observe(event({ type: 'step.started', stepId: 'a' }));
+      memory.observe(event({ type: 'agent.started', stepId: 'a', harness: 'claude' }));
+      expect(
+        line(event({ type: 'step.failed', stepId: 'a', error: 'e' }), memory),
+      ).not.toHaveProperty('toolUses');
+      memory.observe(event(finished('a', { diagnostics: { toolUses: 1 } })));
+      expect(line(event({ type: 'step.completed', stepId: 'a' }), memory)?.toolUses).toBe(1);
+      expect(line(event({ type: 'step.completed', stepId: 'a' }), memory)).not.toHaveProperty(
+        'toolUses',
+      );
+      expect(memory.size).toEqual({ runs: 0, steps: 0 });
+    });
+
+    it('writes nothing for a cancelled attempt and still releases its memory', () => {
+      const memory = new EventLineMemory();
+      memory.observe(event({ type: 'step.started', stepId: 'a' }));
+      memory.observe(event(finished('a', { diagnostics: { toolUses: 2 }, outcome: 'cancelled' })));
+      expect(formatEventLine(event({ type: 'step.cancelled', stepId: 'a' }), memory)).toBeNull();
+      expect(memory.size).toEqual({ runs: 0, steps: 0 });
+    });
+  });
+
   it('bounds its memory by deleting entries on terminal events', () => {
     const memory = new EventLineMemory();
     memory.observe(event({ type: 'run.started', stepId: null }));
@@ -419,6 +549,9 @@ describe('formatEventLine', () => {
   });
 });
 
+const noToolUse =
+  'no-tool-use: Profile readonly expects tool use, but the claude attempt completed without a tool call.';
+
 describe('shared formatter', () => {
   // The same transitions as the runner emits them live and as a follower reads them back from the
   // record: one formatter produces both lines.
@@ -498,6 +631,7 @@ describe('shared formatter', () => {
             error: 'boom',
             errorKind: 'rate-limit',
             execution: 1,
+            diagnostics: { toolUses: 3 },
           } as AttemptRecord,
         ],
       },
@@ -510,6 +644,7 @@ describe('shared formatter', () => {
         output: null,
         error: null,
         wakeAt: null,
+        warnings: [noToolUse],
         attemptHistory: [
           {
             attempt: 1,
@@ -521,6 +656,7 @@ describe('shared formatter', () => {
             error: null,
             execution: 1,
             usage: { inputTokens: 1, outputTokens: 1, costUsd: 0.5 },
+            diagnostics: { toolUses: 0 },
           } as AttemptRecord,
         ],
       },
@@ -542,6 +678,12 @@ describe('shared formatter', () => {
     event({ type: 'step.started', stepId: 'b', at: at(20), phase: 'review' }),
     event({ type: 'agent.started', stepId: 'b', at: at(20), harness: 'claude' }),
     event({
+      type: 'agent.finished',
+      stepId: 'a',
+      at: at(40),
+      diagnostics: { toolUses: 3 },
+    }),
+    event({
       type: 'step.failed',
       stepId: 'a',
       at: at(40),
@@ -549,6 +691,13 @@ describe('shared formatter', () => {
       attempt: 1,
       error: 'boom',
       errorKind: 'rate-limit',
+    }),
+    event({
+      type: 'agent.finished',
+      stepId: 'b',
+      at: at(50),
+      diagnostics: { toolUses: 0 },
+      warnings: [noToolUse],
     }),
     event({ type: 'step.completed', stepId: 'b', at: at(50), phase: 'review', usage }),
     event({
@@ -582,6 +731,12 @@ describe('shared formatter', () => {
       msg: 'boom',
       errorKind: 'rate-limit',
       retryable: true,
+      toolUses: 3,
+    });
+    expect(JSON.parse(fromLive[3] ?? '')).toMatchObject({
+      ev: 'step.completed',
+      toolUses: 0,
+      msg: noToolUse,
     });
     expect(JSON.parse(fromLive[4] ?? '')).toMatchObject({
       ev: 'run.failed',
@@ -603,6 +758,7 @@ describe('shared formatter', () => {
         'harness',
         'ms',
         'costUsd',
+        'toolUses',
         'phase',
         'msg',
       ];
