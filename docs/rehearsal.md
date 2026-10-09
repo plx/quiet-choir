@@ -246,19 +246,20 @@ longer exists afterwards; it is dated at the rehearsal attempt's start, so it al
 later real run's commit. A preview records no merge preparation and pins, publishes or locks
 nothing; target checks such as a branch checked out elsewhere are not rehearsed. Without a
 resolvable repository, a preview fails with a configuration error. So does a preview while any
-custom merge driver (`merge.<name>.driver`) is configured: `merge-tree` would run that command, and
-it could write outside the quarantine, so the first preview lists the drivers with a read-only
-`git config --get-regexp` before any merge and refuses instead of merging differently from the real
-run.
+custom merge driver (`merge.<name>.driver`) is configured, or while `merge.renormalize` is set and
+any clean, smudge or process filter (`filter.<name>.clean`, `.smudge` or `.process`) is configured:
+`merge-tree` would run that command, and it could write outside the quarantine, so the first preview
+reads this configuration with read-only `git config` before any merge and refuses instead of merging
+differently from the real run.
 
 The base is resolved once per revision with `git rev-parse` through the real process runner. The
 runtime refuses every other Git command under rehearsal before it reaches the runner, apart from a
-merge preview's merge-driver listing and quarantined commands, so a dry-run never creates refs,
-worktrees, cache directories or repository objects. An unresolvable base, a repository with no
-committed `HEAD`, or an isolated `cwd` outside the repository fails with the configuration error a
-real run reports. Outside a Git working tree, or when Git cannot run, a placeholder of forty zeros
-stands in for the base, with a warning that the real run fails. A dry-run resume of an interrupted
-real attempt reuses its recorded base.
+merge preview's merge-driver and filter configuration reads and quarantined commands, so a dry-run
+never creates refs, worktrees, cache directories or repository objects. An unresolvable base, a
+repository with no committed `HEAD`, or an isolated `cwd` outside the repository fails with the
+configuration error a real run reports. Outside a Git working tree, or when Git cannot run, a
+placeholder of forty zeros stands in for the base, with a warning that the real run fails. A dry-run
+resume of an interrupted real attempt reuses its recorded base.
 
 `ctx.worktree`, `ctx.exec` or `ctx.step` on a worktree handle, and an agent call isolated on a
 handle still fail before Git or agent invocation with a configuration error. Rehearse those with a

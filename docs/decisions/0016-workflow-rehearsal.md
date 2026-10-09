@@ -212,10 +212,16 @@ computation, in a quarantined object store:
   nothing) fails with a `ConfigurationError`: placeholders cannot represent `merged` or `conflicts`.
 - A custom merge driver (`merge.<name>.driver`) is an arbitrary command that `merge-tree` runs, and
   the object quarantine cannot stop it writing to the checkout or anywhere else. Before creating the
-  store, the preview lists the configured drivers with `git config --name-only --get-regexp`, the
-  one command besides `rev-parse` the read-only driver runs, and refuses with a `ConfigurationError`
-  if there is any. It does not override them: a text merge would report conflicts the real merge
-  would not, which is worse than no preview.
+  store, the preview lists the configured drivers with `git config --name-only --get-regexp` and
+  refuses with a `ConfigurationError` if there is any. It does not override them: a text merge would
+  report conflicts the real merge would not, which is worse than no preview.
+- With `merge.renormalize` set, `merge-tree` runs the clean and smudge filters
+  (`filter.<name>.clean`, `.smudge` or `.process`) on the blobs it renormalizes, and they are
+  arbitrary commands too. The preview reads `merge.renormalize` with `git config --type=bool --get`
+  and, when it is true, lists the configured filters the same way and refuses with a
+  `ConfigurationError` if there is any. It does not turn renormalization off, which would make the
+  preview diverge from the real merge. These configuration reads are the only commands besides
+  `rev-parse` the read-only driver runs.
 - The rehearsal keeps the tip each `branch` or `checkout` preview would leave, in memory, keyed by
   the ref the real merge moves (`refs/heads/<branch>`, or the checked-out branch's ref, or `HEAD`
   when detached, for `checkout`; a branch target naming the checked-out branch shares its key). A

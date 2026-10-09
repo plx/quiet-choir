@@ -16,7 +16,8 @@
  * objects as an alternate, runs only `rev-parse`, `merge-tree`, `commit-tree` and `var`, and makes
  * Git itself refuse ref updates. {@link WorktreeRehearsal.dispose} removes the directory when the
  * run ends, so a preview's commit exists only during the rehearsal. A configured custom merge
- * driver refuses the preview before any `merge-tree`, since Git would run it outside the quarantine. Everything else that touches
+ * driver, or a configured clean, smudge or process filter while `merge.renormalize` is set, refuses
+ * the preview before any `merge-tree`, since Git would run it outside the quarantine. Everything else that touches
  * Git (`ctx.worktree`, isolation on a handle) stays refused by the replay decision.
  *
  * The accepted-replay preflight's probe (#217) constructs this class with `synthesizeAll` and no
@@ -84,6 +85,15 @@ export const previewNeedsRepositoryMessage =
  */
 export function customMergeDriversMessage(names: readonly string[]): string {
   return `Dry-run cannot preview a merge of captured commits while custom merge drivers are configured (${names.join(', ')}): Git would run them, and they can write outside the preview's quarantine.`;
+}
+
+/**
+ * The refusal of a merge preview while `merge.renormalize` is set and clean, smudge or process
+ * filters are configured: `merge-tree` would run them on every renormalized blob, and a filter is
+ * an arbitrary command that can write outside the quarantine. @internal
+ */
+export function customMergeFiltersMessage(names: readonly string[]): string {
+  return `Dry-run cannot preview a merge of captured commits while merge.renormalize is set and filters are configured (${names.join(', ')}): Git would run them, and they can write outside the preview's quarantine.`;
 }
 
 /** Read-only base resolution and synthesis for one rehearsal run. @internal */
@@ -393,6 +403,24 @@ export class WorktreeRehearsal {
       const names = drivers.stdout.split('\n').filter((name) => name !== '');
       if (drivers.code === 0 && names.length)
         throw new ConfigurationError(customMergeDriversMessage(names));
+      // With merge.renormalize, merge-tree runs clean and smudge filters, which are commands too.
+      const renormalize = await git.run(
+        repo,
+        ['config', '--type=bool', '--get', 'merge.renormalize'],
+        shared,
+        { codes: [0, 1] },
+      );
+      if (renormalize.code === 0 && renormalize.stdout.trim() === 'true') {
+        const filters = await git.run(
+          repo,
+          ['config', '--name-only', '--get-regexp', '^filter\\..*\\.(clean|smudge|process)$'],
+          shared,
+          { codes: [0, 1] },
+        );
+        const commands = filters.stdout.split('\n').filter((name) => name !== '');
+        if (filters.code === 0 && commands.length)
+          throw new ConfigurationError(customMergeFiltersMessage(commands));
+      }
       const alternate = await git.text(
         repo,
         ['rev-parse', '--path-format=absolute', '--git-path', 'objects'],

@@ -20,16 +20,17 @@ export interface GitQuarantine {
 const quarantinedCommands = new Set(['rev-parse', 'merge-tree', 'commit-tree', 'var']);
 
 /**
- * Whether a read-only driver runs `args`: `rev-parse`, or exactly `config --name-only --get-regexp
- * <pattern>`, which lists configuration names and cannot write.
+ * Whether a read-only driver runs `args`: `rev-parse`, exactly `config --name-only --get-regexp
+ * <pattern>`, which lists configuration names, or exactly `config --type=bool --get <name>`, which
+ * reads one boolean. None of them can write.
  */
 function readOnlyCommand(args: readonly string[]): boolean {
   return (
     args[0] === 'rev-parse' ||
     (args.length === 4 &&
       args[0] === 'config' &&
-      args[1] === '--name-only' &&
-      args[2] === '--get-regexp')
+      ((args[1] === '--name-only' && args[2] === '--get-regexp') ||
+        (args[1] === '--type=bool' && args[2] === '--get')))
   );
 }
 
@@ -57,9 +58,10 @@ export class WorktreeGit {
   private readonly quarantine: Readonly<Record<string, string>> | undefined;
 
   /**
-   * @param mode - `true` refuses every command except `rev-parse` and a `config --name-only
-   * --get-regexp` listing before it reaches the runner. Dry-run rehearsal resolves bases (and lists
-   * custom merge drivers) through this mode, so it can never create refs, worktrees or objects.
+   * @param mode - `true` refuses every command except `rev-parse`, a `config --name-only
+   * --get-regexp` listing and a `config --type=bool --get` read before it reaches the runner.
+   * Dry-run rehearsal resolves bases (and checks for custom merge drivers and renormalizing
+   * filters) through this mode, so it can never create refs, worktrees or objects.
    * `{ quarantine }` runs only `rev-parse`, `merge-tree`, `commit-tree` and `var`, and points every
    * command at the quarantine's object directory, after the caller's `GIT_*` variables are removed
    * and the per-call environment applied, so new objects land there and Git refuses ref updates.
@@ -94,7 +96,7 @@ export class WorktreeGit {
   ): Promise<ExecResult> {
     if (this.mode === true && !readOnlyCommand(args))
       throw new Error(
-        `Read-only Git refuses ${args[0] ?? 'an empty command'}; only rev-parse and config --name-only --get-regexp run.`,
+        `Read-only Git refuses ${args[0] ?? 'an empty command'}; only rev-parse, config --name-only --get-regexp and config --type=bool --get run.`,
       );
     if (this.quarantine && !quarantinedCommands.has(args[0] ?? ''))
       throw new Error(

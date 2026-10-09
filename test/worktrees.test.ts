@@ -1715,8 +1715,8 @@ it('previews a merge of a captured commit in a dry-run resume like the real resu
       baseSource: 'resolved',
     }),
   ]);
-  // Only the merge-driver listing and the quarantined commands ran, and every object computation
-  // used the quarantine.
+  // Only the merge-driver listing, the merge.renormalize read and the quarantined commands ran, and
+  // every object computation used the quarantine.
   expect([...new Set(spy.commands.map(({ args }) => args[0]))].sort()).toEqual([
     'commit-tree',
     'config',
@@ -1728,6 +1728,7 @@ it('previews a merge of a captured commit in a dry-run resume like the real resu
       args: ['config', '--name-only', '--get-regexp', '^merge\\..*\\.driver$'],
       objects: undefined,
     },
+    { args: ['config', '--type=bool', '--get', 'merge.renormalize'], objects: undefined },
   ]);
   for (const { args, objects } of spy.commands)
     if (args[0] !== 'rev-parse' && args[0] !== 'config')
@@ -1971,6 +1972,43 @@ it('refuses to preview a merge while a custom merge driver is configured, before
   );
   expect((failure as Error).cause).toBeInstanceOf(ConfigurationError);
   expect(spy.commands.map(({ args }) => args[0]).filter((name) => name !== 'rev-parse')).toEqual([
+    'config',
+  ]);
+  expect(await exists(sentinel)).toBe(false);
+  expect(await repositoryState()).toEqual(before);
+  expect(await quarantines()).toEqual([]);
+});
+
+it('refuses to preview a merge while merge.renormalize would run a configured filter', async () => {
+  const gate: PreviewGate = { stop: true, options: {} };
+  const workflow = capturedMerge('filter', ['edit'], gate);
+  await expect(
+    runWorkflow(workflow, { ...options('filter'), harness: editingHarness(), input: null }),
+  ).rejects.toThrow('stopped before the merge');
+  const copy = await copyRun('filter');
+  // HEAD moves on, so the preview needs a content merge of file.txt, which renormalizes.
+  await writeFile(join(repo, 'file.txt'), 'top\nbase\n');
+  await commit('top');
+  // A clean filter that leaves a sentinel wherever merge-tree would renormalize through it.
+  const sentinel = join(directory, 'filter-ran');
+  await command('config', 'merge.renormalize', 'true');
+  await command('config', 'filter.sentinel.clean', `touch '${sentinel}'; cat`);
+  await writeFile(join(repo, '.git', 'info', 'attributes'), '* filter=sentinel\n');
+  const before = await repositoryState();
+  const quarantines = await temporaryParent();
+  const spy = objectSpy();
+  gate.stop = false;
+  const failure: unknown = await runWorkflow(workflow, {
+    ...dryRun('filter', copy, [], spy.runner),
+    resume: true,
+  }).catch((error: unknown) => error);
+  expect((failure as Error).message).toContain(
+    'Dry-run cannot preview a merge of captured commits while merge.renormalize is set and filters are configured (filter.sentinel.clean)',
+  );
+  expect((failure as Error).cause).toBeInstanceOf(ConfigurationError);
+  expect(spy.commands.map(({ args }) => args[0]).filter((name) => name !== 'rev-parse')).toEqual([
+    'config',
+    'config',
     'config',
   ]);
   expect(await exists(sentinel)).toBe(false);
