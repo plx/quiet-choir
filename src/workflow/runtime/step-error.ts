@@ -1,6 +1,7 @@
 import { ExecError } from './exec-error.js';
 import { z } from 'zod';
 
+import { ConfigurationError } from './configuration-error.js';
 import { CancelledError } from './fan-out.js';
 import { HarnessError } from './harness-error.js';
 import { outputLimitCode } from '../../processes/output-limit.js';
@@ -25,6 +26,7 @@ export const errorKindSchema = z.enum([
   'output-limit',
   'process',
   'protocol',
+  'configuration',
   'cancelled',
   'unknown',
 ]);
@@ -88,9 +90,30 @@ export function errorKind(error: unknown): ErrorKind {
   return 'unknown';
 }
 
+/**
+ * The kind a run's root cause records for its originating error. An error that no attempt of the
+ * effect attributed (`beforeAttempt`, so it was raised outside an attempt) is `configuration` when
+ * it is a {@link ConfigurationError}, including a missing grant, or wraps one through its cause
+ * chain, as the agent request preparation does. Every other error, and any error an attempt
+ * recorded, keeps {@link errorKind}, so attempt-recorded kinds are unchanged.
+ * @internal
+ */
+export function rootCauseKind(error: unknown, beforeAttempt: boolean): ErrorKind {
+  if (beforeAttempt) {
+    const seen = new Set<unknown>();
+    for (let link = error; link instanceof Error && !seen.has(link); link = link.cause) {
+      if (link instanceof ConfigurationError) return 'configuration';
+      seen.add(link);
+    }
+  }
+  return errorKind(error);
+}
+
+// `configuration` is reserved for a root cause raised before an attempt (rootCauseKind): an
+// attempt's own error claiming it stays `unknown`, so no attempt is retried or settled under it.
 function knownKind(kind: unknown): ErrorKind {
   const kinds: readonly unknown[] = errorKindSchema.options;
-  return kinds.includes(kind) ? (kind as ErrorKind) : 'unknown';
+  return kind !== 'configuration' && kinds.includes(kind) ? (kind as ErrorKind) : 'unknown';
 }
 
 /** Convert an effect failure to lossless data. @internal */

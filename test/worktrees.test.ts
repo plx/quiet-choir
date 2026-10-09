@@ -1,7 +1,7 @@
 import { FileRunStore } from '../src/workflow/runtime/run-store.js';
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import { ThresholdLogger } from '../src/application/execution.js';
-import { inspectRun } from '../src/workflow/loader/inspection.js';
+import { inspectRun, runFailureKind } from '../src/workflow/loader/inspection.js';
 import { formatRunSummary } from '../src/cli/inspection-view.js';
 import assert from 'node:assert/strict';
 import {
@@ -33,6 +33,7 @@ import {
   type ProcessRunner,
   type RunOptions,
   type WorkflowContext,
+  type WorkflowEvent,
   type MergeOptions,
   type MergeResult,
   type Settled,
@@ -1546,51 +1547,73 @@ it('merges into an existing branch target and reuses a recorded base under dry-r
 });
 
 it.each([
-  ['ctx.worktree', (ctx: WorkflowContext) => ctx.worktree('cache')],
+  ['ctx.worktree', 'cache', 'worktree', (ctx: WorkflowContext) => ctx.worktree('cache')],
   [
     'exec on a handle',
+    'probe',
+    'exec',
     (ctx: WorkflowContext, handle: WorktreeHandle) =>
       ctx.exec('probe', ['true'], { worktree: handle }),
   ],
   [
     'a local step on a handle',
+    'local',
+    'step',
     (ctx: WorkflowContext, handle: WorktreeHandle) =>
       ctx.step('local', { input: null, schema: z.null(), worktree: handle, run: () => null }),
   ],
   [
     'an agent on a handle',
+    'edit',
+    'codex',
     (ctx: WorkflowContext, handle: WorktreeHandle) =>
       ctx.codex.text('edit', { prompt: 'edit', worktree: handle }),
   ],
-])('still refuses %s under dry-run before any Git', async (_name, body) => {
-  const spy = spyRunner();
-  const invoke = vi.fn<Harness['invoke']>(() => Promise.resolve(response));
-  const handle = { id: 'foreign', path: join(directory, 'handle'), base: 'a'.repeat(40) };
-  const workflow = defineWorkflow({
-    name: 'dry-refused',
-    version: '1',
-    input: z.null(),
-    output: z.null(),
-    async run(ctx) {
-      await body(ctx, handle);
-      return null;
-    },
-  });
-  const failure: unknown = await runWorkflow(workflow, {
-    ...options('dry-refused'),
-    input: null,
-    rehearsal: {},
-    harness: { kind: 'dry-run', invoke },
-    processRunner: spy.runner,
-  }).catch((error: unknown) => error);
-  expect((failure as Error).cause).toBeInstanceOf(ConfigurationError);
-  expect((failure as Error).message).toContain(
-    'Dry-run does not simulate this Git worktree effect',
-  );
-  expect((failure as Error).message).toContain('fixture harness in a temporary repository');
-  expect(spy.commands).toEqual([]);
-  expect(invoke).not.toHaveBeenCalled();
-});
+] as const)(
+  'still refuses %s under dry-run before any Git',
+  async (_name, stepId, effect, body) => {
+    const spy = spyRunner();
+    const invoke = vi.fn<Harness['invoke']>(() => Promise.resolve(response));
+    const handle = { id: 'foreign', path: join(directory, 'handle'), base: 'a'.repeat(40) };
+    const workflow = defineWorkflow({
+      name: 'dry-refused',
+      version: '1',
+      input: z.null(),
+      output: z.null(),
+      async run(ctx) {
+        await body(ctx, handle);
+        return null;
+      },
+    });
+    const events: WorkflowEvent[] = [];
+    const failure: unknown = await runWorkflow(workflow, {
+      ...options('dry-refused'),
+      input: null,
+      rehearsal: {},
+      harness: { kind: 'dry-run', invoke },
+      processRunner: spy.runner,
+      onEvent: (event) => {
+        events.push(event);
+      },
+    }).catch((error: unknown) => error);
+    expect((failure as Error).cause).toBeInstanceOf(ConfigurationError);
+    expect((failure as Error).message).toContain(
+      'Dry-run does not simulate this Git worktree effect',
+    );
+    expect((failure as Error).message).toContain('fixture harness in a temporary repository');
+    expect(spy.commands).toEqual([]);
+    expect(invoke).not.toHaveBeenCalled();
+    // The refusal comes before any attempt, so the root cause, not an attempt, carries its kind (#311).
+    const saved = await readRun({ stateDir, runId: 'dry-refused' });
+    expect(saved.steps[stepId]?.attemptHistory ?? []).toEqual([]);
+    expect(saved.rootCause).toMatchObject({ stepId, errorKind: 'configuration', effect });
+    expect(events.filter((event) => event.type === 'run.failed')).toEqual([
+      expect.objectContaining({ stepId, errorKind: 'configuration' }),
+    ]);
+    const { summary } = await inspectRun(options('dry-refused'));
+    expect(runFailureKind(summary)).toEqual({ errorKind: 'configuration', retryable: false });
+  },
+);
 
 /** Loose and packed object counts, which any object written into the repository changes. */
 async function objectCounts(): Promise<string> {

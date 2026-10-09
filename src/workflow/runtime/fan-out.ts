@@ -149,12 +149,21 @@ export class FailureOrigins {
       path.delete(error);
     }
   }
-  private readonly failures: { error: unknown; stepId: string; effect: string }[] = [];
+  private readonly failures: {
+    error: unknown;
+    stepId: string;
+    effect: string;
+    beforeAttempt: boolean;
+  }[] = [];
 
-  /** Attribute an error to its effect; `effect` is the call-site label RootCause reports. */
-  public remember(error: unknown, stepId: string, effect: string): void {
+  /**
+   * Attribute an error to its effect; `effect` is the call-site label RootCause reports.
+   * `beforeAttempt` is true when the effect's launch remembers an error that no attempt of the
+   * effect attributed, so it was raised outside an attempt, such as a refusal before one starts.
+   */
+  public remember(error: unknown, stepId: string, effect: string, beforeAttempt = false): void {
     if (!this.failures.some((failure) => Object.is(failure.error, error)))
-      this.failures.push({ error, stepId, effect });
+      this.failures.push({ error, stepId, effect, beforeAttempt });
   }
 
   /** The effect remembered for exactly this error object, without following causes. */
@@ -162,11 +171,14 @@ export class FailureOrigins {
     return this.failures.find((failure) => Object.is(failure.error, error))?.stepId ?? null;
   }
 
-  /** The original error and effect behind a failure; `effect` is the remembered call-site label. */
+  /**
+   * The original error and effect behind a failure; `effect` is the remembered call-site label and
+   * `beforeAttempt` whether that error was remembered outside an attempt.
+   */
   public find(
     error: unknown,
     visited = new Set<unknown>(),
-  ): { error: unknown; stepId: string | null; effect?: string } {
+  ): { error: unknown; stepId: string | null; effect?: string; beforeAttempt?: boolean } {
     if (visited.has(error)) return { error, stepId: null };
     visited.add(error);
     const known = this.failures.find((failure) => Object.is(failure.error, error));
@@ -177,11 +189,12 @@ export class FailureOrigins {
         error.failures[0];
       if (first) {
         // The mapper may have wrapped the remembered error, so its label comes from the cause chain.
-        const effect = first.stepId === null ? undefined : this.find(first.error, visited).effect;
+        const nested = first.stepId === null ? undefined : this.find(first.error, visited);
         return {
           error: first.error,
           stepId: first.stepId,
-          ...(effect === undefined ? {} : { effect }),
+          ...(nested?.effect === undefined ? {} : { effect: nested.effect }),
+          ...(nested?.beforeAttempt === undefined ? {} : { beforeAttempt: nested.beforeAttempt }),
         };
       }
     }
@@ -193,15 +206,20 @@ export class FailureOrigins {
   }
 
   /**
-   * Attribute a run's failure. `classify` is the runtime's error classifier, passed in because
-   * step-error.ts imports this module.
+   * Attribute a run's failure. `classify` is the runtime's root-cause classifier, passed in because
+   * step-error.ts imports this module; it learns whether the originating error was remembered
+   * outside an attempt.
    */
-  public root(error: unknown, classify: (error: unknown) => ErrorKind): RootCause {
+  public root(
+    error: unknown,
+    classify: (error: unknown, beforeAttempt: boolean) => ErrorKind,
+  ): RootCause {
     const origin = this.find(error);
     return {
       stepId: origin.stepId,
       error: errorMessage(origin.error),
-      errorKind: origin.stepId === null ? null : classify(origin.error),
+      errorKind:
+        origin.stepId === null ? null : classify(origin.error, origin.beforeAttempt === true),
       effect: origin.stepId === null ? null : (origin.effect ?? null),
     };
   }

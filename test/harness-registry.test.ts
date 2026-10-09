@@ -510,6 +510,9 @@ it('rejects a failing adapter factory as configuration instead of settling it', 
   const failed = await readRun(options);
   expect(failed.steps['direct']).toMatchObject({ status: 'failed' });
   expect(failed.steps['direct']?.settledError).toBeUndefined();
+  // The attempt recorded this ConfigurationError, so its kinds stay unknown (#311).
+  expect(failed.steps['direct']?.attemptHistory?.at(-1)?.errorKind).toBe('unknown');
+  expect(failed.rootCause).toMatchObject({ stepId: 'direct', errorKind: 'unknown' });
 
   const mapped = defineWorkflow({
     ...base,

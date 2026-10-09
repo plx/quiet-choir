@@ -58,6 +58,10 @@ export type JsonInput =
  * the provider rejected as malformed (HTTP 400/404/422, an unknown model or an invalid option);
  * `overloaded` is a provider-side failure (HTTP 500/502/503/529). `idle-timeout` is an agent
  * attempt that produced no output for its `idleTimeoutMs`, distinct from the wall-clock `timeout`.
+ * `configuration` is a configuration refusal raised before an effect's attempt, such as a dry-run
+ * refusing a Git worktree effect or a missing access grant. It is never retried or settled and
+ * appears only on a run's root cause: a configuration failure inside an attempt, and an adapter or
+ * fixture error that claims this kind, are classified `unknown`.
  */
 export type ErrorKind =
   | 'timeout'
@@ -73,6 +77,7 @@ export type ErrorKind =
   | 'output-limit'
   | 'process'
   | 'protocol'
+  | 'configuration'
   | 'cancelled'
   | 'unknown';
 

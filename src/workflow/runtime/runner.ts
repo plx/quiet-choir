@@ -189,7 +189,7 @@ import { createMap, settledMapChange } from './map.js';
 import { ExecutionScopes } from './scopes.js';
 import { NameScopes } from './names.js';
 import { bindContext } from './context.js';
-import { execFailureFields, stepError, errorKind } from './step-error.js';
+import { execFailureFields, stepError, errorKind, rootCauseKind } from './step-error.js';
 import { stepEventError } from './step-event-error.js';
 import { ConfigurationError, GrantRequiredError } from './configuration-error.js';
 import type { RecoveryCause } from './recovery-hint.js';
@@ -1451,7 +1451,8 @@ export async function runWorkflow<
               !(error instanceof CheckpointError)
             ) {
               origins.markFatal(error);
-              origins.remember(error, id, effect);
+              // No attempt of this effect attributed the error: it was raised outside an attempt.
+              origins.remember(error, id, effect, true);
             }
             throw error;
           } finally {
@@ -3994,7 +3995,7 @@ export async function runWorkflow<
       const error: unknown = interrupted ? options.signal.reason : caught;
       record.rootCause = interrupted
         ? { stepId: null, error: message(error), errorKind: null, effect: null }
-        : origins.root(error, errorKind);
+        : origins.root(error, rootCauseKind);
       // Body failures stop new launches but preserve in-flight work. Only explicit cancellation
       // or checkpoint failure aborts a scope; draining here sends operations no signal. The one
       // exception is a read-only poll observation: questions.drain() aborts it, and it reruns on

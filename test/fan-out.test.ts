@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setImmediate as nextTurn, setTimeout as delay } from 'node:timers/promises';
 
-import { afterEach, beforeEach, expect, expectTypeOf, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 import {
   CancelledError,
   CheckpointError,
@@ -20,6 +20,9 @@ import {
   type WorkflowContext,
 } from '../src/index.js';
 import { validateRunRecord } from '../src/workflow/runtime/record.js';
+import { FailureOrigins } from '../src/workflow/runtime/fan-out.js';
+import { ConfigurationError } from '../src/workflow/runtime/configuration-error.js';
+import { rootCauseKind } from '../src/workflow/runtime/step-error.js';
 
 let stateDir: string;
 const options = () => ({ stateDir, runId: 'fanout', input: null });
@@ -774,7 +777,11 @@ it('rejects a missing harness inside a settled map instead of journaling it', as
     ),
   );
   await expect(runWorkflow(definition, options())).rejects.toThrow('No harness adapter configured');
-  expect((await readRun(options())).maps?.['items']?.items[0]?.status).toBe('running');
+  const saved = await readRun(options());
+  expect(saved.maps?.['items']?.items[0]?.status).toBe('running');
+  // The live attempt recorded the missing adapter, so neither kind becomes configuration (#311).
+  expect(saved.steps['items/0/ask']?.attemptHistory?.at(-1)?.errorKind).toBe('unknown');
+  expect(saved.rootCause).toMatchObject({ stepId: 'items/0/ask', errorKind: 'unknown' });
 });
 
 it('journals a domain error that reuses the CheckpointError class as a settled outcome', async () => {
@@ -1285,4 +1292,79 @@ it('aborts a resumed return + cancelSiblings map before scheduling after a commi
     cancelledBy(null, 0, null),
   ]);
   expect(calls).toEqual([0, 1]);
+});
+
+describe('FailureOrigins root-cause kinds (#311)', () => {
+  const refusal = () =>
+    new ConfigurationError('Dry-run does not simulate this Git worktree effect');
+
+  it('classifies a configuration error remembered before an attempt as configuration', () => {
+    const origins = new FailureOrigins();
+    const error = refusal();
+    origins.remember(error, 'cache', 'worktree', true);
+    expect(origins.root(error, rootCauseKind)).toEqual({
+      stepId: 'cache',
+      error: error.message,
+      errorKind: 'configuration',
+      effect: 'worktree',
+    });
+  });
+
+  it('keeps unknown for a configuration error an attempt remembered', () => {
+    const origins = new FailureOrigins();
+    const error = new ConfigurationError('No harness adapter configured for codex.');
+    origins.remember(error, 'edit', 'codex');
+    expect(origins.root(error, rootCauseKind)).toMatchObject({
+      stepId: 'edit',
+      errorKind: 'unknown',
+      effect: 'codex',
+    });
+  });
+
+  it('keeps unknown for a plain error remembered before an attempt', () => {
+    const origins = new FailureOrigins();
+    const error = new Error('closed');
+    origins.remember(error, 'cache', 'worktree', true);
+    expect(origins.root(error, rootCauseKind)).toMatchObject({ errorKind: 'unknown' });
+  });
+
+  it('carries the flag and the effect label through a fan-out failure', () => {
+    const origins = new FailureOrigins();
+    const error = refusal();
+    origins.remember(error, 'items/0/cache', 'worktree', true);
+    const direct = new FanOutError('drain', [{ index: 0, stepId: 'items/0/cache', error }], []);
+    expect(origins.root(direct, rootCauseKind)).toEqual({
+      stepId: 'items/0/cache',
+      error: error.message,
+      errorKind: 'configuration',
+      effect: 'worktree',
+    });
+    // A mapper that wrapped the error: the root cause reports the mapper's error, while the flag and
+    // the effect label come from the remembered error its cause chain reaches.
+    const wrapped = new Error('item failed', { cause: error });
+    const fanOut = new FanOutError(
+      'drain',
+      [{ index: 0, stepId: 'items/0/cache', error: wrapped }],
+      [],
+    );
+    expect(origins.root(fanOut, rootCauseKind)).toEqual({
+      stepId: 'items/0/cache',
+      error: 'item failed',
+      errorKind: 'configuration',
+      effect: 'worktree',
+    });
+  });
+
+  it('follows a cause chain to a configuration error remembered before an attempt', () => {
+    const origins = new FailureOrigins();
+    const error = refusal();
+    origins.remember(error, 'cache', 'worktree', true);
+    const outer = new Error('body wrapped it', { cause: new Error('middle', { cause: error }) });
+    expect(origins.root(outer, rootCauseKind)).toEqual({
+      stepId: 'cache',
+      error: error.message,
+      errorKind: 'configuration',
+      effect: 'worktree',
+    });
+  });
 });

@@ -1,6 +1,7 @@
 // Dry-run synthesis of worktree isolation and merges (#148): the shipped worktrees pattern rehearses
 // to completion from a Git repository without creating refs, worktrees or cache directories, and a
-// ctx.worktree rehearsal still fails with the documented configuration error and no resume advice.
+// ctx.worktree rehearsal still fails with the documented configuration error, a configuration error
+// kind and no resume advice.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -93,6 +94,8 @@ export default defineWorkflow({ name: 'handle', version: '1', input: z.null(), o
   assert.equal(refused.status, 1, refused.stderr);
   const failure = refused.value;
   assert.equal(failure.error.code, 'workflow.failed');
+  // Refused before any attempt, so the failure is a configuration kind, never retryable (#311).
+  assert.deepEqual(failure.error.details, { errorKind: 'configuration', retryable: false });
   assert.match(failure.error.message, /Dry-run does not simulate this Git worktree effect/u);
   assert.match(failure.error.message, /fixture harness in a temporary repository/u);
   assert.doesNotMatch(failure.error.message, /--resume|--accept-code-change/u);
