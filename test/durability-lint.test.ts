@@ -157,8 +157,16 @@ describe('durability lint', () => {
     // shorthand and an onError classify are clean. A callback also called in the body (36-37) or
     // stored in an array (42) is shared: its Date.now() is still reported at the definition, and
     // its zone use reports the nested ctx.now. A callback that stores itself from its own body
-    // (47-50) is shared as well, since only a recursive call keeps it exclusive.
-    expect(found('zone-identifier')).toEqual(['QC003@36', 'QC002@37', 'QC002@42', 'QC002@49']);
+    // (47-50) is shared as well, since only a recursive call keeps it exclusive. The same goes for a
+    // named function expression that stores its own name (55-58); one that only calls itself (60-64)
+    // stays exclusive and clean.
+    expect(found('zone-identifier')).toEqual([
+      'QC003@36',
+      'QC002@37',
+      'QC002@42',
+      'QC002@49',
+      'QC002@57',
+    ]);
     expect(of('zone-identifier').find((finding) => finding.rule === 'QC003')?.message).toContain(
       'inside a StepDefinition.run callback (bound as shared at line 40) is a nested durable call',
     );

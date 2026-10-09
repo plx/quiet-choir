@@ -262,6 +262,11 @@ interface LocalFunction {
   readonly symbol: ts.Symbol;
 }
 
+/** The name of a named function expression, which is in scope only inside its own body. */
+function selfNameOf(fn: ts.FunctionLikeDeclaration): ts.Identifier | undefined {
+  return ts.isFunctionExpression(fn) ? fn.name : undefined;
+}
+
 /** A zone property whose value is an identifier naming a same-file function. */
 interface Binding {
   readonly fn: ts.FunctionLikeDeclaration;
@@ -573,6 +578,10 @@ class DurabilityLinter {
     if (bindings.length === 0) return;
     const references = new Map<string, ts.Identifier[]>();
     const names = new Set(bindings.map((binding) => binding.identifier.text));
+    for (const { target } of bindings) {
+      const selfName = selfNameOf(target.fn);
+      if (selfName) names.add(selfName.text);
+    }
     const gather = (node: ts.Node): void => {
       if (ts.isIdentifier(node) && names.has(node.text)) {
         const list = references.get(node.text) ?? [];
@@ -599,7 +608,27 @@ class DurabilityLinter {
           bound.has(reference) ||
           this.#isRecursiveCall(reference, target.fn),
       );
-      this.#bound.set(target.fn, { zone, via, exclusive });
+      // A named function expression's own name is a second way to reach it from inside its body.
+      const selfName = selfNameOf(target.fn);
+      const selfSymbol = selfName ? this.#symbolAt(selfName) : undefined;
+      const selfExclusive =
+        selfName === undefined ||
+        (references.get(selfName.text) ?? []).every(
+          (reference) =>
+            reference === selfName ||
+            (selfSymbol !== undefined && !this.#refersTo(reference, selfSymbol)) ||
+            this.#isRecursiveCall(reference, target.fn),
+        );
+      this.#bound.set(target.fn, { zone, via, exclusive: exclusive && selfExclusive });
+    }
+  }
+
+  /** The symbol at an identifier, or undefined when the checker cannot resolve it. */
+  #symbolAt(identifier: ts.Identifier): ts.Symbol | undefined {
+    try {
+      return this.#checker.getSymbolAtLocation(identifier);
+    } catch {
+      return undefined;
     }
   }
 

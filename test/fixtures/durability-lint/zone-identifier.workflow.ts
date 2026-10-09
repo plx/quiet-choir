@@ -49,6 +49,24 @@ export default defineWorkflow({
       return Date.now();
     };
     const escaped = await ctx.step('escaped', { input: {}, schema: z.number(), run: leak });
+    // A named function expression whose own name escapes is shared too; one that only calls itself
+    // stays exclusive and clean.
+    let leaked: (() => number) | undefined;
+    const named = function tick(): number {
+      leaked = tick;
+      return Date.now();
+    };
+    const selfLeak = await ctx.step('self-leak', { input: {}, schema: z.number(), run: named });
+    let left = 3;
+    const countdown = function count(): number {
+      left -= 1;
+      return left <= 0 ? performance.now() : count();
+    };
+    const recursive = await ctx.step('self-recursive', {
+      input: {},
+      schema: z.number(),
+      run: countdown,
+    });
     const outcome = polled.by === 'deadline' ? 0 : polled.value;
     return (
       first +
@@ -60,6 +78,9 @@ export default defineWorkflow({
       kept +
       callbacks.length +
       escaped +
+      selfLeak +
+      recursive +
+      (leaked?.() ?? 0) +
       (saved?.() ?? 0)
     );
   },

@@ -135,12 +135,12 @@ today's behaviour for anything it cannot resolve. Neither can add a QC002 findin
   results and conditionals resolve to nothing. A bound function is exclusive when every other
   same-file reference to it is a binding or a recursive call inside the function's own body; it then
   gets the zone at its definition, so QC002 is skipped there. Any other reference (a call, an array,
-  `typeof`, an assignment or argument inside its own body, an export specifier or `export default`)
-  makes it shared: it keeps its body findings at the definition, so a real QC002 still reports, and
-  it is also walked in the zone from its first binding, so a nested durable call reports QC003. An
-  exported function whose only same-file references are bindings counts as exclusive; the lint does
-  not guess at uses in other modules. If bindings give different zones, the first in source order
-  names the zone.
+  `typeof`, an assignment or argument inside its own body, an export specifier or `export default`;
+  a named function expression's own name counts as a reference too) makes it shared: it keeps its
+  body findings at the definition, so a real QC002 still reports, and it is also walked in the zone
+  from its first binding, so a nested durable call reports QC003. An exported function whose only
+  same-file references are bindings counts as exclusive; the lint does not guess at uses in other
+  modules. If bindings give different zones, the first in source order names the zone.
 - **Following helpers.** A direct call from a zone whose callee is a bare identifier naming a
   same-file function, resolved the same way, walks that function's body in the zone, so a durable
   call in it reports QC003, also through a chain of helpers. The body, not the function node, is
