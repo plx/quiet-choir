@@ -214,7 +214,8 @@ it('runs a quarantined driver only for object computations, after the GIT_* scru
       'Quarantined Git refuses',
     );
   expect(run).not.toHaveBeenCalled();
-  // The read-only mode runs rev-parse and one config listing, and nothing that could write.
+  // The read-only mode runs rev-parse, --version, one config listing, one boolean read and the exact
+  // merge target checks (tested below), and nothing that could write.
   const readOnly = new WorktreeGit({ run }, true);
   for (const args of [
     ['var'],
@@ -222,13 +223,130 @@ it('runs a quarantined driver only for object computations, after the GIT_* scru
     ['config', '--name-only', '--get-regexp'],
     ['config', '--name-only', '--get-regexp', 'merge', 'value'],
     ['config', '--get-regexp', '--name-only', 'merge'],
+    ['config', '--type=bool', '--get', 'merge.renormalize', 'true'],
+    ['config', '--type=bool', 'merge.renormalize', 'true'],
+    ['config', '--get', '--type=bool', 'merge.renormalize'],
+    ['--version', '--build-options'],
+    ['--exec-path=/tmp', '--version'],
   ])
     await expect(readOnly.run(directory, args, invocation)).rejects.toThrow(
-      `Read-only Git refuses ${args[0] ?? ''}; only rev-parse and config --name-only --get-regexp run.`,
+      `Read-only Git refuses ${args[0] ?? ''}; only ${readOnlyForms} run.`,
     );
   expect(run).not.toHaveBeenCalled();
   await readOnly.run(directory, ['config', '--name-only', '--get-regexp', '^merge\\.'], invocation);
-  expect(run).toHaveBeenCalledTimes(1);
+  await readOnly.run(
+    directory,
+    ['config', '--type=bool', '--get', 'merge.renormalize'],
+    invocation,
+  );
+  await readOnly.run(directory, ['--version'], invocation);
+  expect(run).toHaveBeenCalledTimes(3);
+});
+
+const readOnlyForms =
+  'rev-parse, --version, check-ref-format <ref>, symbolic-ref -q <ref>, worktree list --porcelain -z, status --porcelain --untracked-files=normal --no-renames, config --name-only --get-regexp and config --type=bool --get';
+
+it('runs exactly the merge target checks through a read-only driver, and no close variant', async () => {
+  const run = vi.fn<ProcessRunner['run']>(() =>
+    Promise.resolve({
+      code: 0,
+      signal: null,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      durationMs: 0,
+    }),
+  );
+  const readOnly = new WorktreeGit({ run }, true);
+  for (const args of [
+    // A second operand, or -d, makes symbolic-ref write the ref.
+    ['symbolic-ref', '-q', 'HEAD', 'refs/heads/x'],
+    ['symbolic-ref', '-q', '-d'],
+    ['symbolic-ref', '-q', '--delete'],
+    ['symbolic-ref', 'refs/heads/x'],
+    ['symbolic-ref', '-d', 'refs/heads/x'],
+    ['symbolic-ref', '-q'],
+    ['status'],
+    ['status', '--porcelain'],
+    ['status', '--porcelain', '--untracked-files=all'],
+    ['status', '--porcelain', '--untracked-files=normal', '-z'],
+    // Rename detection reads blob contents, which older Git could lazy-fetch in a partial clone.
+    ['status', '--porcelain', '--untracked-files=normal'],
+    ['status', '--porcelain', '--untracked-files=normal', '--find-renames'],
+    ['status', '--porcelain', '--untracked-files=normal', '--no-renames', '-z'],
+    ['status', '--short', '--untracked-files=normal'],
+    ['worktree', 'add', 'x'],
+    ['worktree', 'list'],
+    ['worktree', 'list', '--porcelain'],
+    ['worktree', 'prune', '--porcelain', '-z'],
+    ['worktree', 'list', '--porcelain', '-z', '--expire=now'],
+    ['check-ref-format', '--normalize', 'x', 'y'],
+    ['check-ref-format', '--normalize'],
+    ['check-ref-format'],
+    ['check-ref-format', 'refs/heads/x', 'y'],
+  ])
+    await expect(readOnly.run(directory, args, invocation)).rejects.toThrow(
+      `Read-only Git refuses ${args[0] ?? ''}; only ${readOnlyForms} run.`,
+    );
+  expect(run).not.toHaveBeenCalled();
+  const accepted = [
+    ['check-ref-format', 'refs/heads/feature'],
+    ['symbolic-ref', '-q', 'refs/heads/feature'],
+    ['worktree', 'list', '--porcelain', '-z'],
+    ['status', '--porcelain', '--untracked-files=normal', '--no-renames'],
+  ];
+  for (const args of accepted) await readOnly.run(directory, args, invocation);
+  expect(
+    run.mock.calls.map(([request]) => {
+      const argv: readonly string[] = 'shell' in request.command ? [] : request.command;
+      return argv.slice(argv.indexOf('-C') + 2);
+    }),
+  ).toEqual(accepted);
+});
+
+it('never lazy-fetches through a read-only driver, whatever the caller sets', async () => {
+  vi.stubEnv('GIT_NO_LAZY_FETCH', '0');
+  const run = vi.fn<ProcessRunner['run']>(() =>
+    Promise.resolve({
+      code: 0,
+      signal: null,
+      stdout: 'ok\n',
+      stderr: '',
+      truncated: false,
+      durationMs: 0,
+    }),
+  );
+  await new WorktreeGit({ run }, true).run(directory, ['rev-parse', 'HEAD'], invocation, {
+    env: { GIT_NO_LAZY_FETCH: '0', GIT_AUTHOR_NAME: 'kept' },
+  });
+  expect(run.mock.calls[0]?.[0].env).toMatchObject({
+    GIT_NO_LAZY_FETCH: '1',
+    GIT_AUTHOR_NAME: 'kept',
+  });
+});
+
+it('keeps a read-only status from refreshing the index, whatever the caller sets', async () => {
+  vi.stubEnv('GIT_OPTIONAL_LOCKS', '1');
+  const run = vi.fn<ProcessRunner['run']>(() =>
+    Promise.resolve({
+      code: 0,
+      signal: null,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      durationMs: 0,
+    }),
+  );
+  await new WorktreeGit({ run }, true).run(
+    directory,
+    ['status', '--porcelain', '--untracked-files=normal', '--no-renames'],
+    invocation,
+    { env: { GIT_OPTIONAL_LOCKS: '1' } },
+  );
+  expect(run.mock.calls[0]?.[0].env).toMatchObject({ GIT_OPTIONAL_LOCKS: '0' });
+  // A read-write driver leaves optional locks to Git.
+  await new WorktreeGit({ run }).run(directory, ['status'], invocation);
+  expect(run.mock.calls[1]?.[0].env).not.toHaveProperty('GIT_OPTIONAL_LOCKS');
 });
 
 it('quotes an alternate object directory Git would split or unquote', () => {
@@ -271,14 +389,20 @@ it('writes quarantined objects outside the repository, reads it through the alte
     codes: [0, 1, 128],
   });
   expect(plain.code).not.toBe(0);
-  // Even if a ref update slipped past the allowlist, Git itself refuses it in the quarantine.
+  // Even if a ref update slipped past the allowlist, Git itself refuses it in the quarantine. The
+  // alternate keeps the target commit readable, so older Git cannot refuse it as a missing object
+  // before it checks the quarantine.
   const unsafe = await new WorktreeGit(new NodeProcessRunner()).run(
     repo,
     ['update-ref', 'refs/heads/preview', base],
     invocation,
     {
       codes: [0, 1, 128],
-      env: { GIT_OBJECT_DIRECTORY: quarantine, GIT_QUARANTINE_PATH: quarantine },
+      env: {
+        GIT_OBJECT_DIRECTORY: quarantine,
+        GIT_ALTERNATE_OBJECT_DIRECTORIES: alternateEntry(objects),
+        GIT_QUARANTINE_PATH: quarantine,
+      },
     },
   );
   expect(unsafe.code).not.toBe(0);
