@@ -62,8 +62,8 @@ was edited. When that text is the only difference, the refusal appends that it i
 A test that deliberately crosses loaders builds the callback from fixed text, such as
 `new Function('output', 'return { done: true, value: output };')`, so every loader prints it the
 same way (`test/step-exec-workflow.ts`). The built-in helpers, such as the GitHub waits, carry a
-versioned identity with no callback text and are unaffected. A real edit to the callback is still
-refused, and this is deliberate: identity keeps detecting it. See
+versioned identity with no callback text and are unaffected. Their refusals never carry this hint. A
+real edit to the callback is still refused, and this is deliberate: identity keeps detecting it. See
 [ADR 0059](decisions/0059-keep-poll-callback-identity-as-loaded-source.md).
 
 ## Checks and outcomes

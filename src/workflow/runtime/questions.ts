@@ -36,12 +36,16 @@ const CALLBACK_SOURCE_HINT =
  * Whether restoring the prior wait's recorded `observe` digest into the new request reproduces the
  * prior fingerprint, so the callback's printed source is the only difference. It rebuilds the
  * identity exactly as the live check does and compares whole fingerprints, so no field is listed.
+ * A built-in helper's poll never gets the hint: its digest is a versioned identity, not printed
+ * source text, so a difference there is not a loader effect.
  */
 function onlyCallbackSourceChanged(
   prior: StepRecord,
   request: ReturnType<typeof waitRequest>['request'],
   question: ReturnType<typeof waitRequest>['question'],
+  observeFromHelper: boolean,
 ): boolean {
+  if (observeFromHelper) return false;
   const priorPoll = prior.kind === 'wait' ? prior.wait?.request.poll : undefined;
   if (!priorPoll || !request.poll || priorPoll.observe === request.poll.observe) return false;
   const restored = stepIdentity({
@@ -328,7 +332,7 @@ export class RunQuestions {
         sources.poll !== undefined && isCommandPoll(sources.poll)
           ? await commandPollIdentity(sources.poll, record.cwd)
           : undefined;
-      const { request, question } = waitRequest(sources, command);
+      const { request, question, observeFromHelper } = waitRequest(sources, command);
       const identity = stepIdentity(
         kind === 'ask'
           ? { kind: 'ask', ...(jsonValue(question) as Record<string, JsonValue>) }
@@ -343,7 +347,8 @@ export class RunQuestions {
       if (prior && (prior.kind !== kind || prior.fingerprint !== fingerprint))
         throw new Error(
           `Step ${id}: ${kind === 'ask' ? 'question' : 'wait'} changed; use a new ID for a different decision, dependency, or deadline.` +
-            (kind === 'wait' && onlyCallbackSourceChanged(prior, request, question)
+            (kind === 'wait' &&
+            onlyCallbackSourceChanged(prior, request, question, observeFromHelper)
               ? CALLBACK_SOURCE_HINT
               : ''),
         );

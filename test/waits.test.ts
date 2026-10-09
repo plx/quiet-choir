@@ -465,6 +465,33 @@ describe('poll callback source in wait identity', () => {
     expect(await resume(edited)).toContain(sentence);
   });
 
+  it('gives no hint when a built-in helper poll changes its identity version', async () => {
+    const clock = new Clock();
+    const options = { stateDir, runId: 'helper-version', input: null, clock };
+    const helperDefinition = (version: number) =>
+      defineWorkflow({
+        name: 'callback-source',
+        version: '1',
+        input: z.null(),
+        output: z.unknown(),
+        run: (ctx) =>
+          ctx.wait('ready', {
+            timeoutMs: 600_000,
+            poll: {
+              input: null,
+              schema: z.number(),
+              every: 30_000,
+              observe: minified,
+              [pollIdentityKey]: { helper: 'test.helper', version },
+            },
+          }),
+      });
+    expect((await runWorkflow(helperDefinition(1), options)).status).toBe('suspended');
+    const message = await messageOf(runWorkflow(helperDefinition(2), { ...options, resume: true }));
+    expect(message).toContain(sentence);
+    expect(message).not.toContain(hint);
+  });
+
   it('keeps the plain message for a changed deadline on a plain wait', async () => {
     const clock = new Clock();
     const options = { stateDir, runId: 'deadline', input: null, clock };
