@@ -114,6 +114,13 @@ avoid non-idempotent transforms; to migrate a changed shape accept the old one (
 `.catch(null)`, else use a new wait ID. It is policy, not identity. Without it `previous.note` is
 `JsonValue`: narrow or parse it.
 
+`ctx.poll` infers `T` only from `schema` (`N` from `noteSchema`, a command poll's output from
+`output`). An `observe` or `done` callback, with or without parameters, may return a literal from a
+conditional or from `if`/`return` statements without `as const`: against `z.enum(['green', 'red'])`,
+`observe: async () => (ok() ? { done: true, value: 'green' } : { done: false })` type-checks. A
+non-`async` callback without parameters that returns `Promise.resolve(…)` can still widen it (write
+it `async`), and so can a call with explicit type arguments; prefer `noteSchema` to type arguments.
+
 `onError: { tolerate, classify?, retryAfterMs? }` tolerates transient observation errors. Candidates
 are a rejected observation and an `observeTimeoutMs` expiry (code
 `QUIET_CHOIR_POLL_OBSERVE_TIMEOUT`). `classify` returns `'transient'` (the default) or `'fatal'`. A

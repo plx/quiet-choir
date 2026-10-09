@@ -32,7 +32,10 @@ canonical bytes and semantic fingerprints. No checkpoint epoch change is needed.
 Wrap the whole workflow/local-step callback type in `NoInfer`. Schemas alone infer their contracts,
 while callbacks are checked against them. This placement preserves contextual enum returns in
 workflow callbacks with context parameters. Zero-parameter callbacks can still widen literals and
-need `as const` or a return annotation. Do not cast output schemas to invent a stronger type.
+need `as const` or a return annotation. `ctx.poll` adds an inferred first overload that captures the
+`observe` or `done` callback's result in a `const` type parameter checked against `NoInfer<T>` (and
+`NoInfer<N>` for the note), so poll callbacks, with or without parameters, keep literals while `T`
+still comes only from `schema` (#320). Do not cast output schemas to invent a stronger type.
 
 Use `z.object` as the default, with local unknown-key stripping and closed generated schemas.
 Reserve `z.looseObject` for intentional unknown-key retention, subject to the existing Codex wire

@@ -303,7 +303,7 @@ export type WaitOutcome<S> =
       : never);
 
 /** The finite time bound a `ctx.poll` call must include: `timeoutMs` or `deadline`, not both. */
-type PollTimeBound =
+export type PollTimeBound =
   | {
       /** Relative duration, pinned on first open. */
       readonly timeoutMs: number;

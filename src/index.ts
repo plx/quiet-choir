@@ -252,6 +252,7 @@ export type {
   PollOptions,
   PollResult,
   PollCallOptions,
+  PollTimeBound,
   CommandPollSource,
   CommandPollOptions,
   PollCommandExecOptions,

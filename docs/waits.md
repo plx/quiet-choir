@@ -99,6 +99,27 @@ undefined members are dropped when the note is saved.
 `noteSchema` callbacks (refinements and transforms) run under the same guard as observers and must
 not call `ctx` operations; one that does fails the wait with the nested-operation error.
 
+`ctx.poll` infers `T` only from `schema`, `N` only from `noteSchema` and a command poll's output
+type only from `output`; a callback's return never widens or narrows them. An `observe` or `done`
+callback, with or without parameters, may return a literal terminal value from a conditional
+expression or from `if`/`return` statements without `as const`, and the value is checked against the
+schema's type:
+
+```ts
+const color = await ctx.poll('ci', {
+  input: { pr },
+  schema: z.enum(['green', 'red']),
+  every: 30_000,
+  timeoutMs: 3_600_000,
+  observe: async () => ((await ciPassed(pr)) ? { done: true, value: 'green' } : { done: false }),
+}); // PollOutcome<'green' | 'red'> | DeadlineOutcome
+```
+
+Two shapes can still widen a literal. A callback that is not `async` and wraps its result in
+`Promise.resolve(…)` without taking a parameter loses it inside the nested call: write it `async`. A
+call with explicit type arguments (`ctx.poll<T, N>(…)`) uses the older overloads, where a callback
+without parameters can widen; prefer `noteSchema` to explicit type arguments.
+
 `every` is a positive integer interval, or `{ initialMs, maxMs, factor? }` with factor defaulting to
 two. Spacing grows after nonterminal checks up to `maxMs`, measured from check completion. It is a
 minimum interval, not scheduler latency. `ctx.poll` requires a finite time bound. General `ctx.wait`
