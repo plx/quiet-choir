@@ -154,39 +154,29 @@ send({type:'turn.completed',usage:{input_tokens:2,output_tokens:1}});
   const entry = (text) =>
     `${JSON.stringify({ stream: 'stdout', base64: Buffer.from(text).toString('base64') })}\n`;
   const deniedPath = saved('denied').steps['scope/../../answer'].attemptHistory[0].transcript.path;
-  // A reader that closes the pipe early (`| head`) is a success, even past the pipe buffer.
+  // A reader that closes the pipe early (`| head`) is a success, even past the pipe buffer. A shell
+  // pipeline gives the command a real pipe, as at a terminal.
   writeFileSync(deniedPath, entry(`${'x'.repeat(1023)}\n`).repeat(2048));
-  const closedPipe = await new Promise((resolve, reject) => {
-    const child = spawn(
+  const closedPipe = spawnSync(
+    '/bin/sh',
+    [
+      '-c',
+      '{ "$0" "$@"; echo "exit=$?" >&2; } | head -c 100',
       process.execPath,
-      [
-        join(root, 'bin/run.js'),
-        'workflow',
-        'transcript',
-        'denied',
-        'scope/../../answer',
-        '--state-dir',
-        state,
-      ],
-      { cwd: directory, stdio: ['ignore', 'pipe', 'pipe'] },
-    );
-    let head = '',
-      stderr = '';
-    child.stdout.once('data', (chunk) => {
-      head += chunk;
-      child.stdout.destroy();
-    });
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk;
-    });
-    child.once('error', reject);
-    child.once('close', (code) => {
-      resolve({ code, head, stderr });
-    });
-  });
-  assert.equal(closedPipe.code, 0, closedPipe.stderr);
-  assert.ok(closedPipe.head.length > 0);
-  assert.doesNotMatch(closedPipe.head, /workflow\.error/);
+      join(root, 'bin/run.js'),
+      'workflow',
+      'transcript',
+      'denied',
+      'scope/../../answer',
+      '--state-dir',
+      state,
+    ],
+    { cwd: directory, encoding: 'utf8', timeout: 30_000 },
+  );
+  assert.equal(closedPipe.status, 0, closedPipe.stderr);
+  assert.match(closedPipe.stderr, /^exit=0$/m, closedPipe.stderr);
+  assert.equal(closedPipe.stdout.length, 100);
+  assert.doesNotMatch(closedPipe.stdout, /workflow\.error/);
   assert.doesNotMatch(closedPipe.stderr, /unsettled top-level await/);
   // Once transcript bytes are on stdout, a --json failure goes to stderr with its exit code.
   writeFileSync(deniedPath, `${entry('first\n')}not json\n`);
