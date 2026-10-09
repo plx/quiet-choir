@@ -426,10 +426,12 @@ export interface RunOptions extends WorkflowCodeOptions {
   /**
    * Process integration for worktree Git (provisioning, snapshots, merges), always, and for
    * commands when `execRunner` is unset; the core never spawns. Under `rehearsal` it serves only
-   * the read-only `git rev-parse` that resolves a synthesized base, a merge preview's `git
-   * merge-tree`, `git commit-tree` and `git var` against a temporary object directory, plus an
-   * observer's or command poll's `live: true` command; every other Git command is refused before
-   * it reaches the runner.
+   * read-only Git (the `git rev-parse` that resolves a synthesized base, `git --version`, a
+   * `git status` of the source checkout, a merge target's `git check-ref-format`, `git worktree
+   * list` and `git symbolic-ref -q`, and configuration reads), a merge preview's `git merge-tree`,
+   * `git commit-tree` and `git var` against a temporary object directory, plus an observer's or
+   * command poll's `live: true` command; every other Git command is refused before it reaches the
+   * runner.
    */
   readonly processRunner?: ProcessRunner;
   /**
@@ -1648,8 +1650,8 @@ export async function runWorkflow<
       signal,
       options.rehearsal !== undefined,
     );
-    // Dry-run synthesizes fresh isolation with read-only rev-parse only, and previews merges in a
-    // quarantined temporary object store (#310). The accepted-replay probe synthesizes every Git
+    // Dry-run synthesizes fresh isolation with read-only Git only, makes the real ledger and merge
+    // target checks (#312), and previews merges in a quarantined temporary object store (#310). The accepted-replay probe synthesizes every Git
     // effect and gets no runner, so it runs no Git.
     const probe = isPreflightProbe(options.rehearsal);
     const rehearsalWorktrees =

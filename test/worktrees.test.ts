@@ -14,6 +14,7 @@ import {
   realpath,
   rm,
   symlink,
+  utimes,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -47,7 +48,9 @@ import {
   RunWorktrees,
   cleanupAdminWait,
   defaultWorktreeRoot,
+  uncommittedSourceWarning,
 } from '../src/workflow/runtime/worktrees.js';
+import { worktreeAdminLockPath } from '../src/workflow/runtime/worktree-admin-lock.js';
 import { repairWorktreeRegistrations } from '../src/workflow/runtime/worktree-recovery.js';
 import { cleanWorktrees } from '../src/workflow/runtime/worktree-clean.js';
 import { rehearsalState } from '../src/workflow/loader/rehearsal.js';
@@ -1298,6 +1301,11 @@ function spyRunner() {
   return { runner, commands };
 }
 type WorktreeEvent = Parameters<NonNullable<NonNullable<RunOptions['rehearsal']>['onWorktree']>>[0];
+/**
+ * The reads besides rev-parse that a dry-run without a ledger makes first, as the real ledger's
+ * initialization does: the Git version and the source checkout's status (#312).
+ */
+const ledgerReads = [['--version'], ['status', '--porcelain', '--untracked-files=normal']];
 async function exists(path: string): Promise<boolean> {
   return lstat(path).then(
     () => true,
@@ -1305,7 +1313,7 @@ async function exists(path: string): Promise<boolean> {
   );
 }
 
-it('synthesizes isolated calls and their merge under dry-run with read-only rev-parse only', async () => {
+it('synthesizes isolated calls and their merge under dry-run with read-only Git reads only', async () => {
   const head = await command('rev-parse', 'HEAD');
   const refs = await command('for-each-ref');
   const registered = await command('worktree', 'list', '--porcelain');
@@ -1346,8 +1354,9 @@ it('synthesizes isolated calls and their merge under dry-run with read-only rev-
       change: { base: head, commit: null, ref: null, files: [] },
       merged: { commit: head, merged: [], conflicts: [] },
     });
-    // Only rev-parse ran, and concurrent calls shared one repository and HEAD resolution.
-    expect(spy.commands.every((args) => args[0] === 'rev-parse')).toBe(true);
+    // Besides rev-parse, only the real ledger's version and status reads ran (#312), once: concurrent
+    // calls shared them, and one repository and HEAD resolution.
+    expect(spy.commands.filter((args) => args[0] !== 'rev-parse')).toEqual(ledgerReads);
     expect(spy.commands.filter((args) => args.includes('--show-toplevel'))).toHaveLength(1);
     expect(spy.commands.filter((args) => args.includes('HEAD^{commit}'))).toHaveLength(1);
     const cacheRoot = 'root' in policy ? root : defaultWorktreeRoot(repo);
@@ -2358,7 +2367,10 @@ it('fails a preview over a commit missing from the repository like the real merg
       processRunner: spy.runner,
     }),
   ).rejects.toThrow('Merge input commit is unavailable in this repository.');
-  expect(spy.commands.filter((args) => args[0] !== 'rev-parse')).toEqual([partialCloneListing]);
+  expect(spy.commands.filter((args) => args[0] !== 'rev-parse')).toEqual([
+    ...ledgerReads,
+    partialCloneListing,
+  ]);
   expect(await quarantines()).toEqual([]);
 });
 
@@ -2407,6 +2419,300 @@ it.each([
   // The handle check is pure; the repository lookup is the only command either case issues.
   expect(run.mock.calls.length).toBeLessThanOrEqual(1);
 });
+
+/** A run's failure as a parity check compares it: its class, message and cause's class. */
+async function failureOf(
+  run: Promise<unknown>,
+): Promise<{ type: string; message: string; cause: string | undefined }> {
+  const error: unknown = await run.then(
+    () => {
+      throw new Error('the run completed');
+    },
+    (rejection: unknown) => rejection,
+  );
+  assert(error instanceof Error);
+  const cause: unknown = error.cause;
+  return {
+    type: error.constructor.name,
+    message: error.message,
+    cause: cause instanceof Error ? cause.constructor.name : undefined,
+  };
+}
+/** The source checkout's index bytes and modification time, which a refreshing status rewrites. */
+async function indexState(): Promise<{ bytes: string; mtime: number }> {
+  const index = join(repo, '.git', 'index');
+  return {
+    bytes: (await readFile(index)).toString('base64'),
+    mtime: (await lstat(index)).mtimeMs,
+  };
+}
+/** Fresh dry-run options in a separate state directory, so the real run can reuse the run ID. */
+function freshDryRun(runId: string, runner: ProcessRunner) {
+  return {
+    ...options(runId),
+    stateDir: join(directory, 'dry-state'),
+    input: null,
+    rehearsal: {},
+    harness: { kind: 'dry-run', invoke: () => Promise.resolve(response) } satisfies Harness,
+    processRunner: runner,
+  };
+}
+const checkRef = (ref: string) => ['check-ref-format', ref];
+const listWorktrees = ['worktree', 'list', '--porcelain', '-z'];
+const status = ['status', '--porcelain', '--untracked-files=normal'];
+
+it.each([
+  {
+    name: 'an invalid branch name',
+    setup: () => Promise.resolve({ branch: 'bad..name' }),
+    text: 'Git check-ref-format failed',
+    reads: () => [checkRef('refs/heads/bad..name')],
+  },
+  {
+    name: 'a branch checked out in another worktree',
+    setup: async () => {
+      await command('worktree', 'add', '-q', '-b', 'occupied', join(directory, 'other'));
+      return { branch: 'occupied' };
+    },
+    text: 'Merge target refs/heads/occupied is checked out',
+    reads: () => [checkRef('refs/heads/occupied'), listWorktrees],
+  },
+  {
+    name: 'the checked-out branch as a branch target',
+    setup: async () => ({ branch: await command('branch', '--show-current') }),
+    text: "is checked out; use target: 'checkout' explicitly",
+    reads: (branch: string) => [checkRef(`refs/heads/${branch}`), listWorktrees],
+  },
+  {
+    name: 'a symbolic-ref branch',
+    setup: async () => {
+      const current = await command('branch', '--show-current');
+      await command('symbolic-ref', 'refs/heads/alias', `refs/heads/${current}`);
+      return { branch: 'alias' };
+    },
+    text: 'Merge branch target cannot be a symbolic ref.',
+    reads: () => [
+      checkRef('refs/heads/alias'),
+      listWorktrees,
+      ['symbolic-ref', '-q', 'refs/heads/alias'],
+    ],
+  },
+  {
+    name: "a dirty 'checkout' target",
+    setup: async () => {
+      await writeFile(join(repo, 'file.txt'), 'dirty\n');
+      // Stale stat data on an unchanged tracked file: a status that may lock would refresh the index.
+      await utimes(join(repo, '.gitignore'), new Date(2001, 0, 1), new Date(2001, 0, 1));
+      return 'checkout' as const;
+    },
+    text: 'Merge target checkout is dirty',
+    reads: () => [status],
+  },
+])(
+  'fails a dry-run merge into $name with the real error, writing nothing',
+  async ({ setup, text, reads }) => {
+    const target = await setup();
+    const workflow = defineWorkflow({
+      name: 'target-check',
+      version: '1',
+      input: z.null(),
+      output: z.unknown(),
+      async run(ctx) {
+        return ctx.merge('publish', [], { target });
+      },
+    });
+    const before = await repositoryState();
+    const index = await indexState();
+    const spy = spyRunner();
+    const dry = await failureOf(runWorkflow(workflow, freshDryRun('target-check', spy.runner)));
+    // Only allowlisted reads ran (besides rev-parse), and nothing changed: no ref, object, worktree,
+    // cache, index refresh or administration lock file.
+    expect(spy.commands.filter((args) => args[0] !== 'rev-parse')).toEqual([
+      ...ledgerReads,
+      ...reads(typeof target === 'object' ? target.branch : ''),
+    ]);
+    expect(await repositoryState()).toEqual(before);
+    expect(await indexState()).toEqual(index);
+    expect(await exists(worktreeAdminLockPath(join(repo, '.git')))).toBe(false);
+    const real = await failureOf(
+      runWorkflow(workflow, { ...options('target-check'), input: null }),
+    );
+    expect(dry).toEqual(real);
+    expect(dry.message).toContain(text);
+  },
+);
+
+const afterQuarantine: [string, () => Promise<NonNullable<MergeOptions['target']>>, string][] = [
+  ['an invalid branch', () => Promise.resolve({ branch: 'bad..name' }), 'check-ref-format failed'],
+  [
+    "a dirty 'checkout' target",
+    async () => {
+      await writeFile(join(repo, 'file.txt'), 'dirty\n');
+      return 'checkout';
+    },
+    'Merge target checkout is dirty',
+  ],
+];
+it.each(afterQuarantine)(
+  'fails a dry-run merge into %s after a captured-commit preview, as the real resume does',
+  async (_name, setup, text) => {
+    let target: NonNullable<MergeOptions['target']> = 'ref';
+    const gate = { stop: true };
+    const workflow = previewParity('after-quarantine', gate, async (ctx, [one]) => {
+      // The first preview creates the quarantine, whose driver refuses the target checks.
+      await ctx.merge('first', [one], { target: 'ref' });
+      return ctx.merge('second', [], { target });
+    });
+    const harness = editingHarness();
+    await expect(
+      runWorkflow(workflow, { ...options('after-quarantine'), harness, input: null }),
+    ).rejects.toThrow('stopped before the merge');
+    const copy = await copyRun('after-quarantine');
+    target = await setup();
+    gate.stop = false;
+    const before = await repositoryState();
+    const quarantines = await temporaryParent();
+    const spy = objectSpy();
+    const events: WorktreeEvent[] = [];
+    const dry = await failureOf(
+      runWorkflow(workflow, {
+        ...dryRun('after-quarantine', copy, events, spy.runner),
+        resume: true,
+      }),
+    );
+    expect(events).toEqual([expect.objectContaining({ kind: 'merge', stepId: 'first' })]);
+    // The quarantine existed, yet the target checks ran through the read-only driver.
+    expect(spy.commands.some(({ objects }) => objects?.includes(quarantinePrefix))).toBe(true);
+    const checks = spy.commands.filter(
+      ({ args }) => args[0] === 'check-ref-format' || args[0] === 'status',
+    );
+    expect(checks).toHaveLength(1);
+    expect(checks[0]?.objects).toBeUndefined();
+    expect(await repositoryState()).toEqual(before);
+    expect(await quarantines()).toEqual([]);
+    const real = await failureOf(
+      runWorkflow(workflow, { ...options('after-quarantine'), harness, resume: true }),
+    );
+    expect(dry).toEqual(real);
+    expect(dry.message).toContain(text);
+  },
+  // Three runs over real Git, like the conflict cases above.
+  20_000,
+);
+
+it.each([
+  [
+    'an isolated call',
+    (ctx: WorkflowContext) => ctx.codex.text('edit', { prompt: 'edit', worktree: true }),
+  ],
+  ['a merge', (ctx: WorkflowContext) => ctx.merge('publish', [])],
+] as const)(
+  'refuses Git older than 2.38 for %s under dry-run like the real run',
+  async (_name, body) => {
+    const invoke = vi.fn<Harness['invoke']>(() => Promise.resolve(response));
+    const workflow = defineWorkflow({
+      name: 'old-git',
+      version: '1',
+      input: z.null(),
+      output: z.unknown(),
+      async run(ctx) {
+        return body(ctx);
+      },
+    });
+    const before = await repositoryState();
+    const dry = await failureOf(
+      runWorkflow(workflow, {
+        ...freshDryRun('old-git', objectSpy('git version 2.37.1').runner),
+        harness: { kind: 'dry-run', invoke },
+      }),
+    );
+    expect(await repositoryState()).toEqual(before);
+    expect(await exists(worktreeAdminLockPath(join(repo, '.git')))).toBe(false);
+    const real = await failureOf(
+      runWorkflow(workflow, {
+        ...options('old-git'),
+        input: null,
+        harness: { invoke },
+        processRunner: objectSpy('git version 2.37.1').runner,
+      }),
+    );
+    expect(dry).toEqual(real);
+    expect(dry.cause).toBe('ConfigurationError');
+    expect(dry.message).toContain(
+      'Worktree isolation requires Git 2.38 or newer; found git version 2.37.1.',
+    );
+    expect(invoke).not.toHaveBeenCalled();
+  },
+);
+
+it('skips the ledger checks on a dry-run resume with a copied ledger, as the real recovery does', async () => {
+  const gate: PreviewGate = { stop: true, options: {} };
+  const workflow = capturedMerge('recovered', ['edit'], gate);
+  const harness = editingHarness();
+  await expect(
+    runWorkflow(workflow, { ...options('recovered'), harness, input: null }),
+  ).rejects.toThrow('stopped before the merge');
+  const copy = await copyRun('recovered');
+  // Neither an old Git nor a dirty source checkout matters once the ledger exists.
+  await writeFile(join(repo, 'untracked.txt'), 'untracked\n');
+  gate.stop = false;
+  const old = objectSpy('git version 2.37.1');
+  const dry = await runWorkflow(workflow, {
+    ...dryRun('recovered', copy, [], old.runner),
+    resume: true,
+  });
+  expect(
+    old.commands
+      .map(({ args }) => args)
+      .filter((args) => args[0] === '--version' || args[0] === 'status'),
+  ).toEqual([]);
+  expect(dry.worktreeWarnings ?? []).not.toContain(uncommittedSourceWarning);
+  const real = await runWorkflow(workflow, {
+    ...options('recovered'),
+    harness,
+    resume: true,
+    processRunner: objectSpy('git version 2.37.1').runner,
+  });
+  expect(real.worktreeWarnings ?? []).not.toContain(uncommittedSourceWarning);
+});
+
+it.each([
+  [
+    'an isolated call',
+    (ctx: WorkflowContext) => ctx.codex.text('edit', { prompt: 'edit', worktree: true }),
+  ],
+  ['a merge', (ctx: WorkflowContext) => ctx.merge('publish', [])],
+] as const)(
+  'records the real uncommitted-changes warning for %s under dry-run, and none when clean',
+  async (_name, body) => {
+    const workflow = defineWorkflow({
+      name: 'dirty-source',
+      version: '1',
+      input: z.null(),
+      output: z.null(),
+      async run(ctx) {
+        await body(ctx);
+        return null;
+      },
+    });
+    const clean = await runWorkflow(workflow, freshDryRun('clean', processRunner));
+    expect(clean.worktreeWarnings ?? []).not.toContain(uncommittedSourceWarning);
+    await writeFile(join(repo, 'untracked.txt'), 'untracked\n');
+    const before = await repositoryState();
+    const index = await indexState();
+    const dry = await runWorkflow(workflow, freshDryRun('dirty', processRunner));
+    expect(dry.worktreeWarnings).toEqual([uncommittedSourceWarning]);
+    expect(await repositoryState()).toEqual(before);
+    expect(await indexState()).toEqual(index);
+    expect(await exists(worktreeAdminLockPath(join(repo, '.git')))).toBe(false);
+    const real = await runWorkflow(workflow, {
+      ...options('dirty'),
+      input: null,
+      harness: { invoke: () => Promise.resolve(response) },
+    });
+    expect(real.worktreeWarnings).toEqual(dry.worktreeWarnings);
+  },
+);
 
 /** Every checkpoint file of a run, by name, so a refusal can prove it wrote nothing. */
 async function runFiles(runId: string): Promise<Record<string, string>> {

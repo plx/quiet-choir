@@ -1497,18 +1497,30 @@ export default defineWorkflow({
     return { result, rehearsal: result.rehearsal, commands, head, git, root };
   }
 
+  /**
+   * Every command is Git: rev-parse, plus the real ledger's version and status reads, once (#312).
+   * The merge targets a ref, so no merge target check runs.
+   */
+  function expectReadOnlyGit(commands: readonly string[][]): void {
+    expect(commands.length).toBeGreaterThan(0);
+    const reads = commands.map((argv) => {
+      expect(argv[0]).toBe('git');
+      return argv.slice(argv.indexOf('-C') + 2);
+    });
+    expect(reads.filter((args) => args[0] !== 'rev-parse')).toEqual([
+      ['--version'],
+      ['status', '--porcelain', '--untracked-files=normal'],
+    ]);
+  }
+
   it('sends ctx.exec to the synthesizing runner and only read-only Git to the injected runner', async () => {
     const { result, rehearsal, commands, head, git, root } = await dryRun(() => ({
       kind: 'cli',
       config: {},
     }));
     expect(result.run.output).toBe(head);
-    // The command never reached the injected runner; Git did, and only for rev-parse.
-    expect(commands.length).toBeGreaterThan(0);
-    for (const argv of commands) {
-      expect(argv[0]).toBe('git');
-      expect(argv[argv.indexOf('-C') + 2]).toBe('rev-parse');
-    }
+    // The command never reached the injected runner; Git did, and only for read-only reads.
+    expectReadOnlyGit(commands);
     expect(rehearsal.commands).toEqual([
       expect.objectContaining({ stepId: 'probe', outputSource: 'synthesized' }),
     ]);
@@ -1570,11 +1582,7 @@ export default defineWorkflow({
       base: head,
       baseSource: 'resolved',
     });
-    expect(commands.length).toBeGreaterThan(0);
-    for (const argv of commands) {
-      expect(argv[0]).toBe('git');
-      expect(argv[argv.indexOf('-C') + 2]).toBe('rev-parse');
-    }
+    expectReadOnlyGit(commands);
     expect(rehearsal.commands).toEqual([
       expect.objectContaining({ stepId: 'probe', outputSource: 'fixture', fixtureIndex: 0 }),
     ]);

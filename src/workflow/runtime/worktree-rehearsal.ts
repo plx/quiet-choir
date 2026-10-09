@@ -1,12 +1,19 @@
 /**
- * Dry-run synthesis of worktree isolation and integration (ADR 0016, #148, #310).
+ * Dry-run synthesis of worktree isolation and integration (ADR 0016, #148, #310, #312).
  *
  * A rehearsal never creates refs, worktrees or cache directories, and writes no object into the
  * repository. It resolves the repository and the base commit a real run would pin with `rev-parse`,
- * through a read-only {@link WorktreeGit} that refuses every other command before it reaches the
- * process runner. A fresh isolated agent call is planned in an absolute placeholder directory that
- * is never created and returns an unchanged change; a merge whose inputs are all unchanged changes
- * returns the real no-op integration (`commit` is the target's current commit).
+ * through a read-only {@link WorktreeGit} that refuses every command outside a short exact allowlist
+ * before it reaches the process runner. Before a run has a worktree ledger, the first isolation or
+ * merge also makes the real ledger's checks through it, with the real messages: Git older than 2.38
+ * fails, a cache root inside the checkout fails, and a checkout with uncommitted changes records the
+ * real warning. Every merge first makes the real merge's target checks (`checkMergeTarget`): an
+ * invalid branch name, a branch checked out in a worktree or a symbolic-ref branch, and a dirty
+ * `checkout` target fail as in a real run. The worktree listing they need waits only for the
+ * in-process administration queue, never the repository's lock file. A fresh isolated agent call
+ * is planned in an absolute placeholder directory that is never created and returns an unchanged
+ * change; a merge whose inputs are all unchanged changes returns the real no-op integration
+ * (`commit` is the target's current commit).
  *
  * A merge over captured commits (a completed isolated step replayed by a dry-run resume or reused
  * by a dry-run fork, or a replayed `ctx.worktree` handle from the copied ledger) is previewed with
@@ -42,7 +49,12 @@ import { ConfigurationError } from './configuration-error.js';
 import type { ProcessRunner } from './exec-model.js';
 import { digest } from './json.js';
 import type { HarnessInvocation, StepContext } from './model.js';
-import { commitTree, computeIntegration, resolveCommit } from './worktree-merge.js';
+import {
+  checkMergeTarget,
+  commitTree,
+  computeIntegration,
+  resolveCommit,
+} from './worktree-merge.js';
 import type { AttemptRecord, RunRecord, StepRecord } from './record.js';
 import type { RunOptions } from './runner.js';
 import type {
@@ -57,10 +69,13 @@ import type { ResolvedWorktree, WorktreeStep } from './worktree-schema.js';
 import { resolveWorktree } from './worktree-schema.js';
 import {
   defaultWorktreeRoot,
+  gitVersionRefusal,
   handleChange,
   isolatedCwdOutsideMessage,
   ownedHandle,
+  queueAdministration,
   rootInsideCheckoutMessage,
+  uncommittedSourceWarning,
   unresolvedBaseMessage,
   within,
   type WorktreeLease,
@@ -119,9 +134,18 @@ function honorsNoLazyFetch(version: string): boolean {
 
 /** Read-only base resolution and synthesis for one rehearsal run. @internal */
 export class WorktreeRehearsal {
+  /**
+   * The read-only driver, never replaced: the ledger and merge target checks run through it even
+   * after a merge preview has swapped {@link git} for the quarantined driver, which refuses them.
+   */
+  private readonly readOnly: WorktreeGit | undefined;
   /** The read-only driver, replaced by the quarantined one once a merge preview creates it. */
   private git: WorktreeGit | undefined;
   private repository: Promise<string | null> | undefined;
+  /** The real ledger's initialization checks (see {@link initialize}), memoized once they pass. */
+  private initialization: Promise<void> | undefined;
+  /** The canonical common Git directory, which keys the in-process administration queue. */
+  private commonDir: Promise<string> | undefined;
   private readonly revisions = new Map<string, Promise<string | null>>();
   /** The run's quarantined driver, created by the first merge preview that needs one. */
   private quarantine: Promise<WorktreeGit> | undefined;
@@ -163,7 +187,8 @@ export class WorktreeRehearsal {
     private readonly synthesizeAll = false,
   ) {
     this.runner = runner;
-    this.git = runner === undefined ? undefined : new WorktreeGit(runner, true);
+    this.readOnly = runner === undefined ? undefined : new WorktreeGit(runner, true);
+    this.git = this.readOnly;
   }
 
   /**
@@ -189,6 +214,97 @@ export class WorktreeRehearsal {
       throw error;
     });
     return this.repository;
+  }
+
+  /**
+   * The checks the real `RunWorktrees.ledger()` makes when it creates a run's ledger, in its order:
+   * the Git version (with the shared {@link gitVersionRefusal}), the cache root (outside the
+   * checkout) and the source checkout's status (any output records the shared
+   * {@link uncommittedSourceWarning}). Only a run without a ledger makes them, since a real run with
+   * one recovers it instead. An empty `--version` answer (a synthesizing runner) skips the version
+   * check, and a failure to run it is left to the placeholder path that a missing Git already
+   * takes. Memoized once it passes, so concurrent effects share one check.
+   */
+  private initialize(repo: string, invocation: HarnessInvocation): Promise<void> {
+    const git = this.readOnly;
+    if (!git || this.record.worktrees !== undefined) return Promise.resolve();
+    const shared = { ...invocation, signal: this.runSignal ?? invocation.signal };
+    this.initialization ??= (async () => {
+      let version = '';
+      try {
+        version = await git.text(this.record.cwd, ['--version'], shared);
+      } catch (cause) {
+        if (cause instanceof CheckpointError || shared.signal.aborted) throw cause;
+      }
+      const refusal = version === '' ? null : gitVersionRefusal(version);
+      if (refusal !== null) throw new ConfigurationError(refusal);
+      if (within(repo, this.root(repo))) throw new ConfigurationError(rootInsideCheckoutMessage);
+      const status = await git.text(
+        repo,
+        ['status', '--porcelain', '--untracked-files=normal'],
+        shared,
+      );
+      if (status) {
+        this.record.worktreeWarnings = [
+          ...new Set([...(this.record.worktreeWarnings ?? []), uncommittedSourceWarning]),
+        ];
+        await this.save();
+      }
+    })().catch((error: unknown) => {
+      this.initialization = undefined;
+      throw error;
+    });
+    return this.initialization;
+  }
+
+  /**
+   * The canonical common Git directory, resolved as the real run resolves the key of its
+   * administration lock, so the rehearsal's listing queues behind the same in-process entry.
+   * Memoized per run, cleared on failure.
+   */
+  private commonGitDir(repo: string, invocation: HarnessInvocation): Promise<string> {
+    const git = this.readOnly;
+    if (!git) return Promise.reject(new Error('Dry-run merge check requires a process runner.'));
+    this.commonDir ??= (async () =>
+      realpath(
+        await git.text(
+          repo,
+          ['rev-parse', '--path-format=absolute', '--git-common-dir'],
+          invocation,
+        ),
+      ))().catch((error: unknown) => {
+      this.commonDir = undefined;
+      throw error;
+    });
+    return this.commonDir;
+  }
+
+  /**
+   * The real merge's target checks (`checkMergeTarget`), through the read-only driver. The worktree
+   * listing waits for the in-process administration queue only: the repository's lock file would
+   * be a write, so a `worktree add` in another process can still race it.
+   */
+  private async checkTarget(
+    repo: string,
+    target: NonNullable<MergeOptions['target']>,
+    invocation: HarnessInvocation,
+  ): Promise<void> {
+    const git = this.readOnly;
+    if (!git) return;
+    const shared = { ...invocation, signal: this.runSignal ?? invocation.signal };
+    const kind = typeof target === 'object' ? 'branch' : target;
+    const ref = typeof target === 'object' ? `refs/heads/${target.branch}` : 'HEAD';
+    await checkMergeTarget(
+      {
+        git,
+        repo,
+        administer: async (work) =>
+          queueAdministration(await this.commonGitDir(repo, shared), shared.signal, work),
+      },
+      kind,
+      ref,
+      shared,
+    );
   }
 
   /** The commit `revision` names, or null when it does not resolve. Memoized per revision. */
@@ -360,6 +476,7 @@ export class WorktreeRehearsal {
     }
     const invocation = this.invocation(id, context);
     const repo = await this.repo(invocation);
+    if (repo !== null) await this.initialize(repo, invocation);
     const root = this.root(repo);
     if (repo !== null && within(repo, root))
       throw new ConfigurationError(rootInsideCheckoutMessage);
@@ -453,7 +570,7 @@ export class WorktreeRehearsal {
    * clone. Memoized per run once it passes.
    */
   private refuseLazyFetch(repo: string, invocation: HarnessInvocation): Promise<void> {
-    const git = this.git;
+    const git = this.readOnly;
     if (!git) return Promise.resolve();
     const shared = { ...invocation, signal: this.runSignal ?? invocation.signal };
     this.lazyFetch ??= (async () => {
@@ -553,7 +670,10 @@ export class WorktreeRehearsal {
   }
 
   /**
-   * The integration a real merge would compute. Unchanged inputs return the no-op result: nothing
+   * The integration a real merge would compute, after the real merge's checks: the ledger checks
+   * of a run without a ledger (see {@link initialize}) and the target checks (`checkMergeTarget`),
+   * for a no-op merge too, so an invalid, checked-out or symbolic branch target and a dirty
+   * `checkout` target fail with the real error. Unchanged inputs return the no-op result: nothing
    * merged, no conflicts, and the target's current commit (an existing branch target, otherwise
    * HEAD). A `branch` or `checkout` target's current commit is the last preview into it in this
    * rehearsal, if any, and a resolved preview into one (a no-op included, which creates a missing
@@ -563,7 +683,8 @@ export class WorktreeRehearsal {
    * handles (resolved from the copied ledger as a real merge does) are previewed with the real
    * integration in the run's quarantine, dated `date` (the attempt's start, as in a real run), so
    * `merged` and `conflicts` match a real merge while the commit is discarded after the rehearsal.
-   * Nothing is pinned, recorded in `step.merge` or published, and no repository lock is taken.
+   * Nothing is pinned, recorded in `step.merge` or published, and no repository lock is taken: the
+   * target check's worktree listing waits only for this process's administration queue.
    * Under `synthesizeAll`, any inputs merge cleanly onto the placeholder commit: every captured
    * commit is reported merged, in order, and a handle contributes nothing, since its latest commit
    * is unknown without Git.
@@ -637,11 +758,15 @@ export class WorktreeRehearsal {
         throw new ConfigurationError(previewNeedsRepositoryMessage);
       return [{ commit: placeholderCommit, merged: [], conflicts: [] }, 'placeholder'];
     }
+    // The real merge's ledger and target checks come first, in its order, whatever the inputs.
+    await this.initialize(repo, invocation);
+    await this.checkTarget(repo, target, invocation);
     // Before the preview resolves anything: older Git could lazy-fetch a captured commit.
     if (changes.some((change) => change.commit !== null))
       await this.refuseLazyFetch(repo, invocation);
-    // The ref a real merge would move. A checkout target and a branch target naming the checked-out
-    // branch share one key, so each sees the other's previews.
+    // The ref a real merge would move. A checkout target on a branch uses the branch's ref, so a
+    // fresh isolation based on that branch's name sees the preview (a branch target naming the
+    // checked-out branch fails the target check above, as in a real run).
     const moved =
       typeof target === 'object'
         ? `refs/heads/${target.branch}`
