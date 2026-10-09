@@ -55,9 +55,25 @@ export interface FixtureExecCall {
   readonly attempt?: number;
   /**
    * Restrict this rule to the nth distinct step ID (one-based) that meets its step, argv and digest
-   * filters in this process. Retries of one step keep their occurrence.
+   * filters in this process. Retries of one step keep their occurrence. A step ID is the parent's
+   * for a command a callback or observer issues through `context.exec`, so all of one parent's
+   * commands share an occurrence: use {@link FixtureExecCall.call} to choose among them.
    */
   readonly occurrence?: number;
+  /**
+   * Restrict this rule to the nth command (one-based) of one parent. For a command a callback or
+   * observer issues through `context.exec`, it is the command's position among those that meet
+   * this rule's step, argv and digest filters for the same parent ID and attempt, in this process.
+   * The count is per rule, so it never depends on the rules before it, and `argvPrefix` makes it
+   * count only the matching commands. A retry reruns the callback, so its first command is call 1
+   * again; poll observations always run as attempt 1, so a wait's count keeps growing across its
+   * checks in one process. A `ctx.exec` effect runs exactly one command per attempt, so its call is
+   * always 1: `call: 1` matches it and `call: 2` never does. Steps replayed from a checkpoint are
+   * not counted, concurrent commands count in the order they reach the process runner, and a poll
+   * that suspends and resumes in a new process starts again at call 1. Combines with `occurrence`
+   * (which parent) and `attempt`.
+   */
+  readonly call?: number;
   /** Structured stdout, serialized as JSON and parsed by the step's own schema. */
   readonly json?: JsonValue;
   /** Raw stdout text. */
@@ -154,6 +170,7 @@ const execRule = z
     inputSha256: sha256.optional(),
     attempt: z.number().int().positive().optional(),
     occurrence: z.number().int().positive().optional(),
+    call: z.number().int().positive().optional(),
     json: z.json().optional(),
     stdout: z.string().optional(),
     stderr: z.string().optional(),

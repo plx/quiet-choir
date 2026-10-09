@@ -410,6 +410,44 @@ describe('step callbacks', () => {
     expect(unused.seen).toEqual([]);
   });
 
+  it('answers identical inner commands of one step differently by call, and per attempt', async () => {
+    const real = recorder(() => reply('real'));
+    const fixtures = new FixtureProcessRunner(
+      {
+        version: 1,
+        calls: [],
+        exec: [
+          { step: 'parent', attempt: 2, call: 1, stdout: 'retry' },
+          { step: 'parent', call: 1, stdout: 'a' },
+          { step: 'parent', call: 2, stdout: 'b' },
+        ],
+        commands: 'fixture',
+      },
+      real.runner,
+    );
+    let attempts = 0;
+    const run = await runWorkflow(
+      definition((ctx) =>
+        ctx.step('parent', {
+          input: null,
+          schema: z.unknown(),
+          retry: { maxAttempts: 2, delayMs: 1 },
+          run: async (context) => {
+            const first = (await context.exec(['gh', 'pr', 'checks'])).stdout;
+            const second = (await context.exec(['gh', 'pr', 'checks'])).stdout;
+            if (++attempts === 1) throw new Error('retry once');
+            return { first, second };
+          },
+        }),
+      ),
+      { ...setup(), processRunner: recorder().runner, execRunner: fixtures },
+    );
+    // The retry reruns the callback, so attempt 2 restarts at call 1.
+    expect(attempts).toBe(2);
+    expect(run.output).toEqual({ first: 'retry', second: 'b' });
+    expect(real.seen).toEqual([]);
+  });
+
   it('records an uncaught inner failure as ExecError with bounded tails in the attempt history', async () => {
     const failing = node(
       `process.stdout.write('o'.repeat(3000));process.stderr.write('e'.repeat(3000));process.exit(3)`,
@@ -620,6 +658,71 @@ describe('poll observers', () => {
     // and then it never ran long enough to matter.
     const pid = await readFile(pidFile, 'utf8').catch(() => null);
     if (pid !== null) expect(() => process.kill(Number(pid), 0)).toThrow();
+  });
+
+  it('answers the repeated identical command of a block-mode poll differently on each check', async () => {
+    const State = z.object({ state: z.string() });
+    const fixtures = () =>
+      new FixtureProcessRunner(
+        {
+          version: 1,
+          calls: [],
+          exec: [
+            { step: 'ci', call: 1, json: { state: 'pending' } },
+            { step: 'ci', call: 2, json: { state: 'success' } },
+          ],
+          commands: 'fixture',
+        },
+        recorder().runner,
+      );
+    let observed = 0;
+    const observer = await runWorkflow(
+      definition((ctx) =>
+        poll(ctx, 'ci', z.object({ state: z.literal('success') }), async (context) => {
+          observed++;
+          const checks = await context.exec.json(['gh', 'pr', 'checks'], { schema: State });
+          return checks.state === 'success'
+            ? { done: true, value: { state: 'success' as const } }
+            : { done: false };
+        }),
+      ),
+      {
+        ...setup('observer'),
+        processRunner: recorder().runner,
+        execRunner: fixtures(),
+        waitMode: 'block',
+      },
+    );
+    expect(observed).toBe(2);
+    expect(observer.output).toMatchObject({ by: 'poll', value: { state: 'success' } });
+
+    let done = 0;
+    const command = await runWorkflow(
+      definition((ctx) =>
+        ctx.poll('ci', {
+          input: null,
+          schema: z.literal('success'),
+          every: 1,
+          timeoutMs: 60_000,
+          command: ['gh', 'pr', 'checks'],
+          output: State,
+          done: (output) => {
+            done++;
+            return output.state === 'success'
+              ? { done: true, value: 'success' as const }
+              : { done: false };
+          },
+        }),
+      ),
+      {
+        ...setup('command'),
+        processRunner: recorder().runner,
+        execRunner: fixtures(),
+        waitMode: 'block',
+      },
+    );
+    expect(done).toBe(2);
+    expect(command.output).toMatchObject({ by: 'poll', value: 'success' });
   });
 
   it('uses execRunner for live outside a rehearsal and never spawns in an accepted-change preflight', async () => {

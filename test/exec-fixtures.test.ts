@@ -68,6 +68,11 @@ function request(
   };
 }
 const at = (stepId: string, attempt = 1) => ({ stepId, attempt });
+/** A command a callback or observer issues through `context.exec`. */
+const nestedRequest = (command: Command): ProcessRunRequest => ({
+  ...request(command),
+  nested: true,
+});
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
 function rules(exec: HarnessFixtures['exec'], commands?: 'fixture') {
   const parsed = parseHarnessFixtures({
@@ -106,6 +111,10 @@ describe('exec fixture rules', () => {
     expect(() => parse({ step: 'x', stdout: '', argvPrefix: [] })).toThrow();
     expect(() => parse({ step: 'x', stdout: '', code: 256 })).toThrow();
     expect(() => parse({ step: 'x', stdout: '', occurrence: 0 })).toThrow();
+    for (const call of [0, -1, 1.5]) expect(() => parse({ step: 'x', stdout: '', call })).toThrow();
+    expect(parse({ step: 'x', stdout: '', call: 1 }).exec).toEqual([
+      { step: 'x', stdout: '', call: 1 },
+    ]);
     expect(() => parseHarnessFixtures({ version: 1, calls: [], commands: 'synthesize' })).toThrow();
     expect(
       parse({
@@ -198,6 +207,79 @@ describe('exec fixture rules', () => {
     }
     expect(shadowed.stale()).toEqual([1]);
     expect(plain.stale()).toEqual([]);
+  });
+
+  it('counts the nested commands of one parent as calls, per rule and independent of earlier rules', () => {
+    const checks = [
+      { step: 'parent', call: 1, stdout: 'a' },
+      { step: 'parent', call: 2, stdout: 'b' },
+      { step: 'parent', stdout: 'fallback' },
+    ];
+    const plain = rules(checks);
+    const argv = ['gh', 'pr', 'checks'] as const;
+    expect(plain.match(nestedRequest(argv), at('parent'))?.index).toBe(0);
+    expect(plain.match(nestedRequest(argv), at('parent'))?.index).toBe(1);
+    expect(plain.match(nestedRequest(argv), at('parent'))?.index).toBe(2);
+    expect(plain.stale()).toEqual([]);
+    // An earlier rule that wins a command does not stop the call rules from counting it.
+    const shadowed = rules([{ step: 'parent', argvPrefix: ['gh'], stdout: 'special' }, ...checks]);
+    expect(shadowed.match(nestedRequest(argv), at('parent'))?.index).toBe(0);
+    expect(shadowed.stale()).toEqual([1, 2, 3]);
+    const unshadowed = rules([
+      { step: 'parent', argvPrefix: ['other'], stdout: 'special' },
+      ...checks,
+    ]);
+    expect(unshadowed.match(nestedRequest(argv), at('parent'))?.index).toBe(1);
+    expect(unshadowed.match(nestedRequest(argv), at('parent'))?.index).toBe(2);
+  });
+
+  it('counts only the commands an argv prefix admits, separately per attempt and per parent', () => {
+    const entries = rules([
+      { step: '*', argvPrefix: ['gh', 'pr', 'checks'], call: 2, stdout: 'second checks' },
+      { step: '*', argvPrefix: ['gh', 'pr', 'checks'], call: 1, stdout: 'first checks' },
+      { step: '*', stdout: 'other' },
+    ]);
+    const checks = nestedRequest(['gh', 'pr', 'checks']);
+    const view = nestedRequest(['gh', 'pr', 'view']);
+    expect(entries.match(checks, at('a'))?.index).toBe(1);
+    // Other commands in between do not advance the count of the checks rules.
+    expect(entries.match(view, at('a'))?.index).toBe(2);
+    expect(entries.match(view, at('a'))?.index).toBe(2);
+    expect(entries.match(checks, at('a'))?.index).toBe(0);
+    expect(entries.match(checks, at('a'))?.index).toBe(2);
+    // A retry reruns the callback, so its first command is call 1 again.
+    expect(entries.match(checks, at('a', 2))?.index).toBe(1);
+    expect(entries.match(checks, at('a', 2))?.index).toBe(0);
+    // A different parent counts separately.
+    expect(entries.match(checks, at('b'))?.index).toBe(1);
+    expect(entries.match(checks, at('b'))?.index).toBe(0);
+    expect(entries.stale()).toEqual([]);
+  });
+
+  it('combines call with attempt and occurrence, which still counts distinct parents', () => {
+    const entries = rules([
+      { step: 'p-*', occurrence: 2, call: 2, stdout: 'second parent, second command' },
+      { step: 'p-*', attempt: 2, call: 1, stdout: 'retry, first command' },
+      { step: 'p-*', stdout: 'fallback' },
+    ]);
+    const command = nestedRequest(['gh']);
+    expect(entries.match(command, at('p-a'))?.index).toBe(2);
+    expect(entries.match(command, at('p-a'))?.index).toBe(2);
+    expect(entries.match(command, at('p-b'))?.index).toBe(2);
+    expect(entries.match(command, at('p-b'))?.index).toBe(0);
+    expect(entries.match(command, at('p-a', 2))?.index).toBe(1);
+  });
+
+  it('gives a ctx.exec effect call 1 always, so call 2 never matches it and is stale', () => {
+    const entries = rules([
+      { step: 'x', call: 2, stdout: 'second' },
+      { step: 'x', call: 1, stdout: 'first' },
+    ]);
+    expect(entries.match(request(['a']), at('x', 1))?.index).toBe(1);
+    expect(entries.match(request(['a']), at('x', 2))?.index).toBe(1);
+    expect(entries.match(request(['a']), at('y'))).toBeUndefined();
+    expect(entries.match(request(['a']), at('x', 3))?.index).toBe(1);
+    expect(entries.stale()).toEqual([0]);
   });
 
   it('builds results, refuses unmatched commands with step, argv and attempt, and reports stale rules', () => {
@@ -371,6 +453,39 @@ describe('dry-run command fixtures', () => {
     expect(report.warnings).toContainEqual(
       expect.stringContaining('Exec fixture rules 1 matched no command'),
     );
+    expect(report.warnings).toContainEqual(
+      expect.stringContaining('check their step, argvPrefix, digests, occurrence and call.'),
+    );
+  });
+
+  it('answers two identical inner commands of one step from different call rules (AC1)', async () => {
+    const { harness, run } = rehearsal({
+      exec: [
+        { step: 'parent', call: 1, stdout: 'pending' },
+        { step: 'parent', call: 2, stdout: 'success' },
+        { step: 'parent', call: 3, stdout: 'never reached' },
+      ],
+    });
+    const result = await runWorkflow(
+      definition(z.array(z.string()), (ctx) =>
+        ctx.step('parent', {
+          input: null,
+          schema: z.array(z.string()),
+          run: async (context) => [
+            (await context.exec(['gh', 'pr', 'checks'])).stdout,
+            (await context.exec(['gh', 'pr', 'checks'])).stdout,
+          ],
+        }),
+      ),
+      { ...options(), ...run },
+    );
+    expect(result.output).toEqual(['pending', 'success']);
+    const report = harness.report(result);
+    expect(report.commands).toEqual([
+      expect.objectContaining({ stepId: 'parent', outputSource: 'fixture', fixtureIndex: 0 }),
+      expect.objectContaining({ stepId: 'parent', outputSource: 'fixture', fixtureIndex: 1 }),
+    ]);
+    expect(report.staleExecFixtures).toEqual([2]);
   });
 });
 

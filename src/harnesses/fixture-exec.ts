@@ -17,14 +17,19 @@ export interface FixtureExecMatch {
 }
 
 /**
- * First-match command rules with per-rule occurrence counting and stale-rule tracking. The state is
- * per process: completed steps replay without reaching a process runner, so they are never counted.
+ * First-match command rules with per-rule occurrence and call counting and stale-rule tracking. The
+ * state is per process: completed steps replay without reaching a process runner, so they are never counted.
  * @internal
  */
 export class FixtureExecRules {
   readonly #rules: readonly FixtureExecCall[];
   /** Per rule, the distinct step IDs that met its step, argv and digest filters, in arrival order. */
   readonly #seen: string[][];
+  /**
+   * Per rule, the commands of each parent and attempt (keyed by step ID and attempt) that met its
+   * filters, for nested commands only; a top-level command is always call 1 and is not counted.
+   */
+  readonly #calls: Map<string, number>[];
   readonly #used = new Set<number>();
 
   /** Rules in first-match order; `commands: 'fixture'` makes an unmatched command fatal. */
@@ -34,6 +39,7 @@ export class FixtureExecRules {
   ) {
     this.#rules = rules;
     this.#seen = rules.map(() => []);
+    this.#calls = rules.map(() => new Map<string, number>());
   }
 
   /** Whether any rule or the fixture-only mode can affect a command. */
@@ -42,8 +48,10 @@ export class FixtureExecRules {
   }
 
   /**
-   * Record this command against every rule's occurrence list, then return the first rule that
-   * matches it. Every list is updated, so a rule's occurrence never depends on the rules before it.
+   * Record this command against every rule's occurrence list and call counter, then return the
+   * first rule that matches it. Every rule is updated, so a rule's occurrence and call never depend
+   * on the rules before it. A command issued through `context.exec` (`request.nested`) is counted
+   * per parent ID and attempt; a `ctx.exec` effect is always call 1.
    */
   public match(
     request: ProcessRunRequest,
@@ -58,10 +66,18 @@ export class FixtureExecRules {
       const seen = this.#seen[index] ?? [];
       if (!seen.includes(invocation.stepId)) seen.push(invocation.stepId);
       const occurrence = seen.indexOf(invocation.stepId) + 1;
+      let call = 1;
+      if (request.nested === true) {
+        const calls = this.#calls[index] ?? new Map<string, number>();
+        const key = `${invocation.stepId}\u0000${String(invocation.attempt)}`;
+        call = (calls.get(key) ?? 0) + 1;
+        calls.set(key, call);
+      }
       if (
         found === undefined &&
         (rule.attempt === undefined || rule.attempt === invocation.attempt) &&
-        (rule.occurrence === undefined || rule.occurrence === occurrence)
+        (rule.occurrence === undefined || rule.occurrence === occurrence) &&
+        (rule.call === undefined || rule.call === call)
       )
         found = { rule, index };
     });
