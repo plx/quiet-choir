@@ -710,8 +710,8 @@ record without importing the workflow. `STEP` is the full step ID, as `inspect` 
   successful attempt).
 - The recorded receipt path counts only through its
   `RUN/attempts/<sha256 of STEP>/<attempt>.<harness>.jsonl` tail, which is read under the current
-  state directory, so a state directory reached through a symlink or moved elsewhere still works;
-  the result's `path` is still the recorded one.
+  state directory, so a state directory reached through a symlink or moved elsewhere still works; a
+  failure's `details.path` still names the recorded path.
 - A retained receipt whose path lacks that tail for this run and step (a step reused in a fork
   points into its source run), or whose file is missing or unreadable, resolves outside the run's
   `attempts/` directory, is a symlink, or holds a malformed entry is `run.unreadable` (exit 3, with
