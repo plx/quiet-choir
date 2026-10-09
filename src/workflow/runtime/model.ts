@@ -31,6 +31,7 @@ import type {
   PollOptions,
   CommandPollOptions,
   PollCallOptions,
+  PollReadonly,
   PollResult,
   PollOutcome,
   DeadlineOutcome,
@@ -693,9 +694,15 @@ export interface WorkflowContext<
    * types and validates `previous.note` and the notes a check returns) and `O` only from `output`.
    * The callback's result is captured as `R` and checked against them, so a literal terminal value
    * such as `{ done: true, value: 'green' }` from a conditional expression or a statement return
-   * type-checks against an enum or literal schema without `as const`.
+   * type-checks against an enum or literal schema without `as const`. `R` is checked against
+   * {@link PollReadonly} views of them, because `const` makes an array literal a readonly tuple.
    */
-  poll<T, const R extends PollResult<NoInfer<T>, NoInfer<N>>, O, N extends JsonInput = JsonValue>(
+  poll<
+    T,
+    const R extends PollResult<NoInfer<PollReadonly<T>>, NoInfer<PollReadonly<N>>>,
+    O,
+    N extends JsonInput = JsonValue,
+  >(
     id: string,
     options: PollCallOptions<T, O, N, R>,
   ): Promise<PollOutcome<T> | DeadlineOutcome>;

@@ -251,6 +251,8 @@ export type {
   DeadlineOutcome,
   PollOptions,
   PollResult,
+  PollReadonly,
+  PollReadonlyArray,
   PollCallOptions,
   PollTimeBound,
   CommandPollSource,

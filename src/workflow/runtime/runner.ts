@@ -96,6 +96,7 @@ import type {
   PollOptions,
   CommandPollOptions,
   PollCallOptions,
+  PollReadonly,
   PollResult,
   PollOutcome,
   SignalOutcome,
@@ -3718,7 +3719,7 @@ export async function runWorkflow<
         settings:
           | PollOptions<T, N>
           | CommandPollOptions<T, unknown, N>
-          | PollCallOptions<T, unknown, N, PollResult<T, N>>,
+          | PollCallOptions<T, unknown, N, PollResult<PollReadonly<T>, PollReadonly<N>>>,
       ) =>
         waitOperation(
           id,

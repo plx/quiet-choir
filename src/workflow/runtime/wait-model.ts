@@ -114,6 +114,31 @@ export type PollResult<T, N extends JsonInput = JsonValue> =
       readonly note?: N | null;
     };
 
+/**
+ * `X` with readonly arrays, tuples and object properties at every depth; primitives, literals and
+ * functions are unchanged. The inferred `ctx.poll` overload captures a callback's result as a
+ * `const` type parameter, which turns an array literal such as `[1, 2]` into `readonly [1, 2]`, so
+ * that result is checked against `PollResult<PollReadonly<T>, PollReadonly<N>>`: an array literal
+ * still matches `z.array(...)`, a tuple schema or a `noteSchema` array. The outcome keeps the
+ * schema's own type `T`, because the runtime parses the value with `schema`.
+ */
+export type PollReadonly<X> = X extends (...args: never[]) => unknown
+  ? X
+  : X extends readonly unknown[]
+    ? X[number][] extends X
+      ? PollReadonlyArray<X[number]>
+      : { readonly [K in keyof X]: PollReadonly<X[K]> }
+    : X extends object
+      ? { readonly [K in keyof X]: PollReadonly<X[K]> }
+      : X;
+
+/**
+ * A {@link PollReadonly} array. An interface rather than a mapped array type, so that a recursive
+ * element type such as {@link JsonValue} is expanded only as deep as a check needs.
+ */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface PollReadonlyArray<E> extends ReadonlyArray<PollReadonly<E>> {}
+
 /** One read-only check; only its final value becomes a workflow branch decision. */
 export interface PollSource<T, N extends JsonInput = JsonValue> {
   /** Explicit dependencies, included in durable identity. */
@@ -336,9 +361,10 @@ export type CommandPollOptions<T, O = unknown, N extends JsonInput = JsonValue> 
  * {@link CommandPollSource}, with a time bound. `T` comes only from `schema`, never from a
  * callback; `N` from `noteSchema` (or {@link JsonValue} without one) and `O` from `output`. `R` is
  * the callback's own result type, which `ctx.poll` captures as a `const` type parameter checked
- * against {@link PollResult}; so an `observe` or `done` callback, with or without parameters,
- * keeps a literal terminal value such as `'green'` from a conditional expression or a statement
- * return without `as const`.
+ * against a {@link PollResult} of {@link PollReadonly} views of `T` and `N`; so an `observe` or
+ * `done` callback, with or without parameters, keeps a literal terminal value such as `'green'`
+ * from a conditional expression or a statement return without `as const`, and an array literal
+ * still matches an array or tuple schema.
  */
 export type PollCallOptions<T, O, N extends JsonInput, R> = Omit<
   PollSource<T, N>,

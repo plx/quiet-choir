@@ -347,6 +347,17 @@ describe('command poll types', () => {
           return result.ok ? { done: true, value: 'green' } : { done: false, note: { seen: 1 } };
         },
       });
+      // An array literal is accepted against an array schema, and T stays the schema's own type.
+      expectTypeOf(
+        await ctx.poll('observe-array', {
+          input: null,
+          schema: z.array(z.number()),
+          every: 1,
+          timeoutMs: 1,
+          // eslint-disable-next-line @typescript-eslint/require-await -- the shape under test.
+          observe: async () => (ready ? { done: true, value: [1, 2] } : { done: false }),
+        }),
+      ).toEqualTypeOf<PollOutcome<number[]> | DeadlineOutcome>();
       // A prebuilt source is still accepted.
       const prebuilt: PollOptions<'green' | 'red'> = {
         input: null,

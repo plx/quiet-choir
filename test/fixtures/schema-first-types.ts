@@ -201,3 +201,89 @@ export async function polls(ctx: WorkflowContext, ready: boolean): Promise<void>
     waitedDoneColor,
   );
 }
+
+type Numbers = PollOutcome<number[]> | DeadlineOutcome;
+
+/**
+ * Compile-only poll assertions for array and tuple results: the inferred overload captures a
+ * callback's result as a `const` type parameter, which makes an array literal a readonly tuple, and
+ * still accepts it against array and tuple schemas and an array `noteSchema`, in both forms. A
+ * wrong element type is still rejected. Never execute this function.
+ */
+export async function pollArrays(ctx: WorkflowContext, ready: boolean): Promise<void> {
+  const poll = { input: null, every: 1_000, timeoutMs: 60_000 };
+  const argv: [string, ...string[]] = ['gh', 'pr', 'checks'];
+  const command = { command: argv, output: z.object({ ok: z.boolean() }) };
+  const numbers = { ...poll, schema: z.array(z.number()) };
+  const nested = { ...poll, schema: z.object({ ids: z.array(z.string()) }) };
+  const pair = { ...poll, schema: z.tuple([z.string(), z.number()]) };
+  const listed = { ...poll, schema: z.number(), noteSchema: z.array(z.string()) };
+  const observedArray: Numbers = await ctx.poll('observed-array', {
+    ...numbers,
+    observe: async () => (ready ? { done: true, value: [1, 2] } : { done: false }),
+  });
+  const doneArray: Numbers = await ctx.poll('done-array', {
+    ...numbers,
+    ...command,
+    done: () => (ready ? { done: true, value: [1, 2] } : { done: false }),
+  });
+  const contextArray: Numbers = await ctx.poll('context-array', {
+    ...numbers,
+    observe: async (context) => ({ done: true, value: [context.previous.checks] }),
+  });
+  const observedNested = await ctx.poll('observed-nested', {
+    ...nested,
+    observe: async () => {
+      if (ready) return { done: true, value: { ids: ['a', 'b'] } };
+      return { done: false };
+    },
+  });
+  const doneNested = await ctx.poll('done-nested', {
+    ...nested,
+    ...command,
+    done: (output) => (output.ok ? { done: true, value: { ids: ['a'] } } : { done: false }),
+  });
+  const observedPair = await ctx.poll('observed-pair', {
+    ...pair,
+    observe: async () => ({ done: true, value: ['a', 1] }),
+  });
+  const donePair = await ctx.poll('done-pair', {
+    ...pair,
+    ...command,
+    done: () => ({ done: true, value: ['a', 1] }),
+  });
+  await ctx.poll('observed-note', {
+    ...listed,
+    observe: async () => (ready ? { done: true, value: 1 } : { done: false, note: ['a', 'b'] }),
+  });
+  await ctx.poll('done-note', {
+    ...listed,
+    ...command,
+    done: () => (ready ? { done: true, value: 1 } : { done: false, note: ['a', 'b'] }),
+  });
+  // Without noteSchema a note is any JSON value, readonly literals included.
+  await ctx.poll('json-note', {
+    ...numbers,
+    observe: async () => ({ done: false, note: [1, { ids: ['a'] }] }),
+  });
+  // The outcome keeps the schema's own (mutable) types: the runtime parses the value with schema.
+  const ids: { ids: string[] } | undefined =
+    observedNested.by === 'poll' ? observedNested.value : undefined;
+  const pairs: [string, number] | undefined = donePair.by === 'poll' ? donePair.value : undefined;
+  // Each rejected call fits on one line, as in polls().
+  // @ts-expect-error A string element does not match a number array schema.
+  await ctx.poll('strings', { ...numbers, observe: async () => ({ done: true, value: ['x'] }) });
+  // @ts-expect-error A string element does not match a number array schema.
+  await ctx.poll('str', { ...numbers, ...command, done: () => ({ done: true, value: ['x'] }) });
+  // @ts-expect-error A nested element must match its array schema.
+  await ctx.poll('nest', { ...nested, observe: async () => ({ done: true, value: { ids: [1] } }) });
+  // @ts-expect-error A tuple's elements must match in order.
+  await ctx.poll('pair-wrong', { ...pair, observe: async () => ({ done: true, value: [1, 'a'] }) });
+  // @ts-expect-error A tuple's length must match.
+  await ctx.poll('pair', { ...pair, observe: async () => ({ done: true, value: ['a', 1, 2] }) });
+  // @ts-expect-error The note's elements must match noteSchema.
+  await ctx.poll('note-wrong', { ...listed, observe: async () => ({ done: false, note: [1] }) });
+  // @ts-expect-error The note's elements must match noteSchema.
+  await ctx.poll('note', { ...listed, ...command, done: () => ({ done: false, note: [1] }) });
+  keep(observedArray, doneArray, contextArray, doneNested, observedPair, ids, pairs);
+}
