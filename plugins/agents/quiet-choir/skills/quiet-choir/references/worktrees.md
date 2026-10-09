@@ -98,9 +98,9 @@ await ctx.claude.text('edit', {
   profile: 'editor',
   worktree: tree,
 });
-const test = await ctx.exec('test', ['npm', 'test'], { worktree: tree, okExitCodes: 'any' });
+const test = await ctx.exec('test', ['npm', 'test'], { worktree: tree, onError: 'return' });
 await ctx.step('inspect', {
-  input: { testCode: test.code },
+  input: { passed: test.ok, testCode: test.ok ? test.value.code : (test.error.code ?? null) },
   worktree: tree,
   schema: z.null(),
   run: async ({ cwd }) => {
@@ -109,6 +109,12 @@ await ctx.step('inspect', {
 });
 const merged = await ctx.merge('integrate', [tree]);
 ```
+
+With `onError: 'return'` a failing test (a nonzero exit, a signal or a timeout) settles as
+`{ ok: false, error }` instead of rejecting. The error keeps the exit code and output tails and
+replays on resume without rerunning the command, so later steps can branch on `test.ok`; a caught
+throwing command would rerun on resume. A settled failure, like any failed effect, does not advance
+the handle's snapshot. See [command effects](commands-files.md).
 
 Effects on one handle serialize through result validation, snapshot capture, and checkpoint save.
 Before each live attempt the cache resets to its latest completed snapshot and cleans untracked
