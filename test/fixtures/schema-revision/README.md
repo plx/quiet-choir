@@ -373,6 +373,32 @@ paths are scrubbed to `/fixture/...` and the file was formatted with Prettier; i
 in `test/record-schema-revision.test.ts` was computed on the same unmodified main from this file. No
 harness was invoked.
 
+`revision-thirteen-checkpoint.json` was generated the same way at origin/main `ac17712`, before the
+configuration error kind (#311) widened the nested `rootCause.errorKind` and step attempt
+`errorKind` shapes in revision 14. Its run ID is `revision-thirteen`, and it ran this definition
+once, with no grants and a custom harness whose `invoke` throws if called:
+
+```ts
+defineWorkflow({
+  name: 'schema-revision',
+  version: '1',
+  input: z.null(),
+  output: z.null(),
+  async run(ctx) {
+    await ctx.now('prepare');
+    await ctx.claude.text('edit', { prompt: 'x', profile: 'edit' });
+    return null;
+  },
+});
+```
+
+It carries `schemaRevision: 13`, the completed `ctx.now` effect `prepare`, no record for `edit`, and
+the grant refusal raised before that call's attempt as the root cause, with `errorKind: 'unknown'`,
+`effect: 'claude'` and a `grant` recovery cause. The journal was empty, so only `run.json` is
+checked in. Stack paths are scrubbed to `/fixture/...` and the file was formatted with Prettier; its
+read-view digest in `test/record-schema-revision.test.ts` was computed on the same unmodified main
+from this file. No harness was invoked.
+
 `record-keys.json` lists the top-level run-record keys of each schema revision. Adding or changing a
 persisted run-level field adds a revision there and bumps `SUPPORTED_SCHEMA_REVISION`; a revision
 that only changes a nested shape repeats the previous key list. See `docs/storage.md`.

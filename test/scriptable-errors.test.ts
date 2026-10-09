@@ -558,6 +558,54 @@ export default defineWorkflow({
   },
 );
 
+// One real compiler pass, like the neighbouring signal cases.
+it(
+  'reports a dry-run worktree refusal before any attempt with a configuration kind',
+  { timeout: 15_000 },
+  async () => {
+    const root = join(stateDir, 'workflow-dry-worktree');
+    await mkdir(root);
+    await writeFile(join(root, 'package.json'), '{"type":"module"}');
+    await symlink(join(projectRoot, 'node_modules'), join(root, 'node_modules'));
+    const file = join(root, 'workflow.ts');
+    await writeFile(
+      file,
+      `import { z } from 'zod';
+import { defineWorkflow } from ${JSON.stringify(join(projectRoot, 'src/workflow/runtime/model.js'))};
+export default defineWorkflow({
+  name: 'dry-worktree', version: '1', input: z.null(), output: z.string(),
+  run: async (ctx) => (await ctx.worktree('cache')).path,
+});`,
+    );
+    const analysis = analyzeTypecheckEntrypoint(file, projectRoot);
+    if (!analysis.ok) throw new Error(analysis.error.message);
+    const result = await new WorkflowExecutor({ typecheckCache, logger: { log: vi.fn() } }).execute(
+      {
+        kind: 'workflow.execute',
+        typecheck: analysis.plan,
+        runId: 'dry-worktree',
+        stateDir: join(stateDir, 'state'),
+        cwd: root,
+        resume: false,
+        input: null,
+        dryRun: true,
+      },
+    );
+    if (result.ok) throw new Error('expected a failure');
+    expect(result.message).toContain('Dry-run does not simulate this Git worktree effect');
+    // The refusal comes before any attempt record exists (#311).
+    expect(result.run?.steps['cache']?.attemptHistory ?? []).toEqual([]);
+    expect(result.run?.rootCause).toMatchObject({ stepId: 'cache', errorKind: 'configuration' });
+    expect(workflowErrorDocument(result)).toMatchObject({
+      exitCode: 1,
+      error: {
+        code: 'workflow.failed',
+        details: { errorKind: 'configuration', retryable: false },
+      },
+    });
+  },
+);
+
 // measured: 0.5 s alone; the same real compiler pass as the neighbouring signal case dominates
 // (1.7-3.6 s in local full coverage runs, 5.1 s on the Node 22.13 CI leg)
 it('maps a saved interrupted suspension to workflow.interrupted', { timeout: 15_000 }, async () => {

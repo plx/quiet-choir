@@ -2,6 +2,16 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- A configuration refusal raised before an effect's attempt, such as a dry-run refusing a
+  `ctx.worktree` effect or a call missing its grant, now reports the error kind `configuration`
+  instead of `unknown` (behavior change, #311). `ErrorKind` gains the public member `configuration`,
+  so an exhaustive `switch` over it needs a new case. The kind appears in the run's
+  `rootCause.errorKind`, the `workflow.failed` document's `error.details` (with `retryable: false`),
+  the `run.failed` event line and `workflow list` rows. Kinds recorded by an attempt are unchanged:
+  a configuration failure inside an attempt, such as a missing harness adapter, stays `unknown`, and
+  an adapter or fixture error that claims `configuration` is classified `unknown`, so no attempt is
+  ever retried or settled under it. The record schema revision is now 14; revision-13 records read
+  and resume unchanged, keeping the `unknown` they recorded.
 - A dry-run resume or fork now previews `ctx.merge` over captured commits and replayed
   `ctx.worktree` handles instead of refusing it (behavior change, #310). The preview runs the real
   integration code, so `merged`, `conflicts` and the `onConflict: 'fail'` error match a real merge,

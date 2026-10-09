@@ -412,7 +412,14 @@ default fork prefix reuse reads to treat source steps under a key the fork dropp
 ([ADR 0006](decisions/0006-code-change-recovery.md#amendment-removed-named-map-keys-302)). Step
 identity is unchanged. Revision-12 records read and resume unchanged; a fork from one keeps the
 earlier, conservative behavior for removed keys. A revision-12 build reads a revision-13 record, but
-its parse strips `mapItems`, so it refuses to rewrite it.
+its parse strips `mapItems`, so it refuses to rewrite it. Revision 14 (#311) is nested-only:
+`rootCause.errorKind` and a step attempt's `errorKind` accept the error kind `configuration`, which
+the runtime records only on the root cause of a configuration refusal raised before the effect's
+attempt ([observability](observability.md)). Revision-13 records read and resume unchanged and keep
+the `unknown` kind they recorded for such a refusal. A revision-13 build cannot parse a record whose
+root cause holds `configuration` (its kind enum rejects it), so every read of that record is the
+`run.incompatible` upgrade refusal described below; it refuses to rewrite any other revision-14
+record.
 
 **Refusals.** A build must not rewrite a record it cannot fully read: its parse strips unknown
 top-level fields, and the next compaction would write the record back without them. When a record

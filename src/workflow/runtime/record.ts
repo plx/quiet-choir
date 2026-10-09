@@ -1291,9 +1291,11 @@ export function withProjectInstructions(
  * nested shape: the optional structured `issues` of a rejection in `question.rejections`.
  * Revision 12 (#300) changed only a nested shape: the step field `failureHistory` in `steps`.
  * Revision 13 (#302) changed only a nested shape: the step field `mapItems` in `steps`.
+ * Revision 14 (#311) changed only a nested shape: the error kind `configuration` in
+ * `rootCause.errorKind` and step attempt `errorKind`.
  * @internal
  */
-export const SUPPORTED_SCHEMA_REVISION = 13;
+export const SUPPORTED_SCHEMA_REVISION = 14;
 
 /**
  * Whether a run recorded any work: at least one step or settled map. A failed run without any gets

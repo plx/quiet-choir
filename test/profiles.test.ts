@@ -288,7 +288,12 @@ it('advises a grant, not a code change, for a grant failure and names the agent 
   expect(grant).toMatchObject({ profile: 'edit', access: 'write' });
   const saved = await readRun(setup());
   expect(saved.steps['edit']).toBeUndefined();
-  expect(saved.rootCause).toMatchObject({ stepId: 'edit', effect: 'claude' });
+  // Refused before any attempt, so the root cause names a configuration kind (#311).
+  expect(saved.rootCause).toMatchObject({
+    stepId: 'edit',
+    effect: 'claude',
+    errorKind: 'configuration',
+  });
   expect(saved.recoveryHint).toContain('--resume --grant edit');
   expect(saved.recoveryHint).not.toContain('accept-code-change');
   expect(saved.recoveryCause).toEqual({ kind: 'grant', profile: 'edit', access: 'write' });

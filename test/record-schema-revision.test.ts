@@ -24,6 +24,7 @@ import {
   type RunStore,
   type WorkflowClock,
 } from '../src/index.js';
+import { rootCauseErrorKind } from '../src/workflow/loader/failure-kind.js';
 import { runNextCommands } from '../src/workflow/loader/next-commands.js';
 import { rehearsalState } from '../src/workflow/loader/rehearsal.js';
 import { JournalWriter } from '../src/workflow/runtime/journal.js';
@@ -68,6 +69,8 @@ const revisionDigests: Readonly<Record<string, string>> = {
   '12': '01979d40f27afb4d663d424a519d1b89a7d840c34dfdb7f4d206d99bc60a27a5',
   // Revision 13 (#302) changed only the nested steps shape (mapItems), so it repeats 12.
   '13': '01979d40f27afb4d663d424a519d1b89a7d840c34dfdb7f4d206d99bc60a27a5',
+  // Revision 14 (#311) changed only nested shapes (the configuration error kind), so it repeats 13.
+  '14': '01979d40f27afb4d663d424a519d1b89a7d840c34dfdb7f4d206d99bc60a27a5',
 };
 // digest(readRun(...)) of the installed pre-revision fixture, computed on unmodified main 91a6d2f.
 const preRevisionReadDigest = '714b6cb068de5c933b7ba04a26d1f931f589f7c9910f76f0e5c8cc493eb13016';
@@ -95,6 +98,9 @@ const revisionTenReadDigest = 'ef509d5e971ee33147455addee4c139aae9ca0d60b7bc2029
 const revisionElevenReadDigest = 'b18862e839b487aa050160ae3b4eeea08bbc73c9d9a126634de4e9ceb6b0ffa8';
 // digest(readRun(...)) of the installed revision-twelve fixture, computed on unmodified main b3ff960.
 const revisionTwelveReadDigest = '2cb7aab642b978a2ed6fcceb5d0d139f8da680c27d83b17a4302d00a89e8f372';
+// digest(readRun(...)) of the installed revision-thirteen fixture, computed on unmodified main ac17712.
+const revisionThirteenReadDigest =
+  'b05872c6c0627eb16e45d7b8b4eb649a7eceefef0878f8962aa638eca35e78f3';
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex');
 
@@ -1502,7 +1508,7 @@ describe('revision-nine records (a grant failure before recoveryCause, #284)', (
     expect(saved.recoveryCause).toBeUndefined();
     expect(recordSchemaDrift(saved)).toBeUndefined();
     expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
-    expect(SUPPORTED_SCHEMA_REVISION).toBe(13);
+    expect(SUPPORTED_SCHEMA_REVISION).toBe(14);
   });
 
   it('round-trip every recovery cause through the record parser', async () => {
@@ -1764,5 +1770,64 @@ describe('revision-twelve records (named-map steps before mapItems, #302)', () =
       { item: 'review/b/', invocation: expect.stringMatching(/^[0-9a-f]{64}$/u) as string },
     ]);
     expect(fork.forkedFrom).toMatchObject({ cursor: 1 });
+  });
+});
+
+describe('revision-thirteen records (a pre-attempt grant refusal classified unknown, #311)', () => {
+  const runId = 'revision-thirteen';
+  async function install(): Promise<void> {
+    const fixture = await readFile(
+      new URL('./fixtures/schema-revision/revision-thirteen-checkpoint.json', import.meta.url),
+      'utf8',
+    );
+    await mkdir(join(stateDir, runId));
+    await writeFile(paths(runId).snapshot, fixture);
+    await writeFile(paths(runId).journal, '');
+  }
+  const granted = defineWorkflow({
+    name: 'schema-revision',
+    version: '1',
+    input: z.null(),
+    output: z.null(),
+    async run(ctx) {
+      await ctx.now('prepare');
+      await ctx.claude.text('edit', { prompt: 'x', profile: 'edit' });
+      return null;
+    },
+  });
+
+  it('read exactly as on main, keeping the recorded unknown root-cause kind', async () => {
+    await install();
+    const record = await readRun({ stateDir, runId });
+    expect(record.schemaRevision).toBe(13);
+    expect(recordSchemaDrift(record)).toBeUndefined();
+    expect(digest(record)).toBe(revisionThirteenReadDigest);
+    expect(record.steps['edit']).toBeUndefined();
+    // Nothing is rewritten: the kind main recorded stays, and readers report it as saved.
+    expect(record.rootCause).toMatchObject({ stepId: 'edit', errorKind: 'unknown' });
+    expect(rootCauseErrorKind(record)).toBe('unknown');
+  });
+
+  it('resume at the current revision: the same refusal now records a configuration kind', async () => {
+    await install();
+    const invoke = () => Promise.reject(new Error('fixture harness must not be invoked'));
+    await expect(
+      runWorkflow(granted, {
+        ...options,
+        stateDir,
+        runId,
+        input: null,
+        resume: true,
+        harness: { invoke },
+      }),
+    ).rejects.toThrow('--grant edit');
+    const saved = await readRun({ stateDir, runId });
+    expect(saved.rootCause).toMatchObject({
+      stepId: 'edit',
+      errorKind: 'configuration',
+      effect: 'claude',
+    });
+    expect(recordSchemaDrift(saved)).toBeUndefined();
+    expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
   });
 });
