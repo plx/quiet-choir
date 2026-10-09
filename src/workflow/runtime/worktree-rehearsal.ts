@@ -17,8 +17,10 @@
  * Git itself refuse ref updates. {@link WorktreeRehearsal.dispose} removes the directory when the
  * run ends, so a preview's commit exists only during the rehearsal. A configured custom merge
  * driver, or a configured clean, smudge or process filter while `merge.renormalize` is set, refuses
- * the preview before any `merge-tree`, since Git would run it outside the quarantine. Everything else that touches
- * Git (`ctx.worktree`, isolation on a handle) stays refused by the replay decision.
+ * the preview before any `merge-tree`, since Git would run it outside the quarantine. Previews into
+ * a `branch` or `checkout` target leave an in-memory tip that later previews start from, as they
+ * would after the real merge moved the target. Everything else that touches Git (`ctx.worktree`,
+ * isolation on a handle) stays refused by the replay decision.
  *
  * The accepted-replay preflight's probe (#217) constructs this class with `synthesizeAll` and no
  * process runner, so it never resolves a repository and issues no Git command at all. It also
@@ -116,6 +118,11 @@ export class WorktreeRehearsal {
   private readonly tips = new Map<string, string>();
   /** The checked-out branch's ref, or `HEAD` when detached; resolved once per run. */
   private checkout: Promise<string> | undefined;
+  /**
+   * The tail of the run's merge previews, which run one at a time in call order, as real merges do
+   * under the run's integration lock, so concurrent previews into one target chain like them.
+   */
+  private integration: Promise<void> = Promise.resolve();
 
   /**
    * @param synthesizeAll - Set only for the accepted-replay probe: also synthesize `ctx.worktree`,
@@ -459,13 +466,15 @@ export class WorktreeRehearsal {
    * merged, no conflicts, and the target's current commit (an existing branch target, otherwise
    * HEAD). A `branch` or `checkout` target's current commit is the last preview into it in this
    * rehearsal, if any, and a resolved preview into one becomes its tip for later previews, as the
-   * real merge would move it; a `ref` target moves nothing, so it reads but never sets a tip. Captured commits and handles (resolved from the copied ledger as a real merge does) are
-   * previewed with the real integration in the run's quarantine, dated `date` (the attempt's start,
-   * as in a real run), so `merged` and `conflicts` match a real merge while the commit is discarded
-   * after the rehearsal. Nothing is pinned, recorded in `step.merge` or published, and no lock is
-   * taken. Under `synthesizeAll`, any inputs merge cleanly onto the placeholder commit: every
-   * captured commit is reported merged, in order, and a handle contributes nothing, since its
-   * latest commit is unknown without Git.
+   * real merge would move it; a `ref` target moves nothing, so it reads but never sets a tip. Previews run one at a
+   * time in call order, as real merges do under the run's integration lock. Captured commits and
+   * handles (resolved from the copied ledger as a real merge does) are previewed with the real
+   * integration in the run's quarantine, dated `date` (the attempt's start, as in a real run), so
+   * `merged` and `conflicts` match a real merge while the commit is discarded after the rehearsal.
+   * Nothing is pinned, recorded in `step.merge` or published, and no repository lock is taken.
+   * Under `synthesizeAll`, any inputs merge cleanly onto the placeholder commit: every captured
+   * commit is reported merged, in order, and a handle contributes nothing, since its latest commit
+   * is unknown without Git.
    */
   public async merge(
     id: string,
@@ -502,6 +511,28 @@ export class WorktreeRehearsal {
       );
       return event({ commit: placeholderCommit, merged, conflicts: [] }, 'placeholder');
     }
+    const previous = this.integration;
+    let done = (): void => undefined;
+    this.integration = new Promise<void>((resolve) => {
+      done = resolve;
+    });
+    try {
+      await previous;
+      return event(...(await this.preview(id, inputs, options, context, date, target)));
+    } finally {
+      done();
+    }
+  }
+
+  /** {@link merge} without `synthesizeAll`, run in its turn: the result and its base source. */
+  private async preview(
+    id: string,
+    inputs: readonly (WorktreeChange | WorktreeHandle)[],
+    options: MergeOptions,
+    context: Omit<StepContext, 'exec'>,
+    date: string,
+    target: NonNullable<MergeOptions['target']>,
+  ): Promise<[MergeResult, 'resolved' | 'placeholder']> {
     // The same ownership check and mapping as a real merge; a dry-run never creates a handle, so
     // the copied ledger holds exactly what a real resume would merge.
     const changes = inputs.map((input) =>
@@ -512,7 +543,7 @@ export class WorktreeRehearsal {
     if (repo === null) {
       if (inputs.some((input) => 'id' in input || input.commit !== null))
         throw new ConfigurationError(previewNeedsRepositoryMessage);
-      return event({ commit: placeholderCommit, merged: [], conflicts: [] }, 'placeholder');
+      return [{ commit: placeholderCommit, merged: [], conflicts: [] }, 'placeholder'];
     }
     // The ref a real merge would move. A checkout target and a branch target naming the checked-out
     // branch share one key, so each sees the other's previews.
@@ -535,7 +566,7 @@ export class WorktreeRehearsal {
       )
         throw new Error('Merge input commit is unavailable in this repository.');
     if (changes.every((change) => change.commit === null))
-      return event({ commit: head, merged: [], conflicts: [] }, 'resolved');
+      return [{ commit: head, merged: [], conflicts: [] }, 'resolved'];
     const git = await this.quarantined(repo, invocation);
     const custom = options.commit
       ? await resolveCommit(git, repo, options.commit, invocation)
@@ -556,6 +587,6 @@ export class WorktreeRehearsal {
       invocation,
     );
     if (moved !== null) this.tips.set(moved, result.commit);
-    return event(result, 'resolved');
+    return [result, 'resolved'];
   }
 }

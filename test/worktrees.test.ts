@@ -27,6 +27,7 @@ import {
   readRun,
   runWorkflow,
   type Harness,
+  type WorktreeChange,
   type WorktreeHandle,
   type WorktreeLedger,
   type ProcessRunner,
@@ -2118,6 +2119,92 @@ it('does not chain previews into ref targets, which move no ref', async () => {
   vi.useRealTimers();
   expect(JSON.parse(real.output ?? 'null')).toEqual(preview);
 });
+
+/**
+ * Two isolated edits `one` and `two` (both append to file.txt, so they conflict once either is on a
+ * target), then, once `gate.stop` is cleared, `body` with their captured changes.
+ */
+function previewParity(
+  name: string,
+  gate: { stop: boolean },
+  body: (ctx: WorkflowContext, changes: [WorktreeChange, WorktreeChange]) => Promise<unknown>,
+) {
+  return defineWorkflow({
+    name,
+    version: '1',
+    input: z.null(),
+    output: z.string(),
+    async run(ctx) {
+      const capture = async (edit: string) => {
+        const result = await ctx.codex.text(edit, { prompt: edit, worktree: true });
+        if (!result.worktree?.commit) throw new Error('missing captured change');
+        return result.worktree;
+      };
+      const changes: [WorktreeChange, WorktreeChange] = [
+        await capture('one'),
+        await capture('two'),
+      ];
+      if (gate.stop) throw new Error('stopped before the merge');
+      return JSON.stringify(await body(ctx, changes));
+    },
+  });
+}
+/**
+ * Run `workflow` until its gate, then a dry-run resume and a real resume at the same instant, and
+ * return both outputs and the captured commits, checking that the dry-run changed nothing.
+ */
+async function dryAndReal(
+  runId: string,
+  workflow: ReturnType<typeof previewParity>,
+  gate: { stop: boolean },
+) {
+  const harness = editingHarness();
+  await expect(runWorkflow(workflow, { ...options(runId), harness, input: null })).rejects.toThrow(
+    'stopped before the merge',
+  );
+  const steps = (await readRun({ stateDir, runId })).steps;
+  const [one, two] = ['one', 'two'].map((id) => steps[id]?.worktree?.commit);
+  assert(one && two);
+  const copy = await copyRun(runId);
+  const before = await repositoryState();
+  const quarantines = await temporaryParent();
+  gate.stop = false;
+  vi.useFakeTimers({ toFake: ['Date'], now: new Date('2030-01-02T03:04:05.678Z') });
+  const dry = await runWorkflow(workflow, {
+    ...dryRun(runId, copy, [], processRunner),
+    harness: { kind: 'dry-run', invoke: () => Promise.resolve(response) },
+    resume: true,
+  });
+  expect(await repositoryState()).toEqual(before);
+  expect(await quarantines()).toEqual([]);
+  const real = await runWorkflow(workflow, { ...options(runId), harness, resume: true });
+  vi.useRealTimers();
+  return {
+    dry: JSON.parse(dry.output ?? 'null') as unknown,
+    real: JSON.parse(real.output ?? 'null') as unknown,
+    one,
+    two,
+  };
+}
+
+it('chains concurrent previews into one branch in call order, as the real merges do', async () => {
+  const gate = { stop: true };
+  const workflow = previewParity('concurrent', gate, (ctx, [one, two]) =>
+    Promise.all([
+      ctx.merge('first', [one], { target: { branch: 'feature' } }),
+      ctx.merge('second', [two], { target: { branch: 'feature' } }),
+    ]),
+  );
+  const { dry, real, one, two } = await dryAndReal('concurrent', workflow, gate);
+  const [first, second] = dry as MergeResult[];
+  expect(first).toMatchObject({ merged: [one], conflicts: [] });
+  expect(second).toEqual({
+    commit: first?.commit,
+    merged: [],
+    conflicts: [{ commit: two, files: ['file.txt'] }],
+  });
+  expect(real).toEqual(dry);
+}, 20_000);
 
 it('fails a preview over a commit missing from the repository like the real merge', async () => {
   const head = await command('rev-parse', 'HEAD');
