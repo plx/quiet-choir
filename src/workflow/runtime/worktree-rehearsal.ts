@@ -291,6 +291,8 @@ export class WorktreeRehearsal {
   ): Promise<void> {
     const git = this.readOnly;
     if (!git) return;
+    // The memoized common directory is shared by every merge, so it runs on the run's signal; the
+    // checks themselves follow the merge's scope signal, as the real merge's do.
     const shared = { ...invocation, signal: this.runSignal ?? invocation.signal };
     const kind = typeof target === 'object' ? 'branch' : target;
     const ref = typeof target === 'object' ? `refs/heads/${target.branch}` : 'HEAD';
@@ -299,11 +301,11 @@ export class WorktreeRehearsal {
         git,
         repo,
         administer: async (work) =>
-          queueAdministration(await this.commonGitDir(repo, shared), shared.signal, work),
+          queueAdministration(await this.commonGitDir(repo, shared), invocation.signal, work),
       },
       kind,
       ref,
-      shared,
+      invocation,
     );
   }
 

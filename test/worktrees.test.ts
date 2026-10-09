@@ -48,6 +48,7 @@ import {
   RunWorktrees,
   cleanupAdminWait,
   defaultWorktreeRoot,
+  queueAdministration,
   uncommittedSourceWarning,
 } from '../src/workflow/runtime/worktrees.js';
 import { worktreeAdminLockPath } from '../src/workflow/runtime/worktree-admin-lock.js';
@@ -2543,6 +2544,108 @@ it.each([
     expect(dry).toEqual(real);
     expect(dry.message).toContain(text);
   },
+);
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+it.each(['a delayed check-ref-format', 'a blocked administration queue'] as const)(
+  'cancels a dry-run merge waiting on %s when its map scope aborts, as the real run does',
+  async (blocked) => {
+    const queue = blocked === 'a blocked administration queue';
+    let reached = deferred();
+    const workflow = defineWorkflow({
+      name: 'scoped-check',
+      version: '1',
+      input: z.null(),
+      output: z.unknown(),
+      async run(ctx) {
+        return ctx.map('items', [0, 1], { concurrency: 2, cancelSiblings: true }, (index) =>
+          index === 0
+            ? ctx.step('failure', {
+                input: null,
+                schema: z.null(),
+                run: async () => {
+                  await reached.promise;
+                  // Give the merge time to queue behind the held administration entry.
+                  if (queue) await new Promise((resolve) => setTimeout(resolve, 200));
+                  throw new Error('root failure');
+                },
+              })
+            : ctx.merge('publish', [], { target: { branch: 'feature' } }),
+        );
+      },
+    });
+    /** Reaches the merge's check-ref-format; a delayed one waits for its scope or two seconds. */
+    const runner: ProcessRunner = {
+      run: async (request, call) => {
+        const argv = Array.isArray(request.command) ? [...(request.command as string[])] : [];
+        if (argv[argv.indexOf('-C') + 2] !== 'check-ref-format')
+          return processRunner.run(request, call);
+        if (queue) {
+          const result = await processRunner.run(request, call);
+          reached.resolve();
+          return result;
+        }
+        reached.resolve();
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, 2_000);
+          call.signal.addEventListener(
+            'abort',
+            () => {
+              clearTimeout(timer);
+              reject(call.signal.reason as Error);
+            },
+            { once: true },
+          );
+        });
+        return processRunner.run(request, call);
+      },
+    };
+    /** Runs `start` while this process's administration queue entry is held, if `queue` is set. */
+    async function held<T>(start: () => Promise<T>): Promise<T> {
+      if (!queue) return start();
+      const release = deferred();
+      const holder = queueAdministration(
+        await realpath(join(repo, '.git')),
+        new AbortController().signal,
+        () => release.promise,
+      );
+      // A merge that ignored its scope would wait here until this releases it.
+      const timer = setTimeout(release.resolve, 2_000);
+      try {
+        return await start();
+      } finally {
+        clearTimeout(timer);
+        release.resolve();
+        await holder;
+      }
+    }
+    const dryOptions = freshDryRun('scoped-check', runner);
+    const dry = await held(() => failureOf(runWorkflow(workflow, dryOptions)));
+    const dryRecord = await readRun({ stateDir: dryOptions.stateDir, runId: 'scoped-check' });
+    reached = deferred();
+    const real = await held(() =>
+      failureOf(
+        runWorkflow(workflow, { ...options('scoped-check'), input: null, processRunner: runner }),
+      ),
+    );
+    const realRecord = await readRun({ stateDir, runId: 'scoped-check' });
+    expect(dry).toEqual(real);
+    for (const record of [dryRecord, realRecord]) {
+      expect(record.steps['items/0/failure']?.status).toBe('failed');
+      expect(record.steps['items/1/publish']).toMatchObject({
+        status: 'cancelled',
+        cancelledBy: 'items/0/failure',
+      });
+    }
+  },
+  // Two runs over real Git, one of which may wait out the two-second fallback when it regresses.
+  20_000,
 );
 
 const afterQuarantine: [string, () => Promise<NonNullable<MergeOptions['target']>>, string][] = [
