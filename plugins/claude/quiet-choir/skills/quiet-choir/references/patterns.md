@@ -939,7 +939,7 @@ marked with a rule code are also reported before the run by the [durability lint
 | Return a wider type than the schema                                                         | Schema-first typing now rejects wider callbacks before import; local validation still matters                                     | [Typed extraction](#work-then-extract) and [rehearsal](#rehearse-for-free); use the actual output schema, not casts                                                 |
 | Start `void` chains or ignore a durable promise ([QC001](#qc001))                           | Owned operations drain, ignored failures reject, and new operations after closure are refused; unowned async chains remain unsafe | Await each stage as in the [per-item pipeline](#per-item-pipeline)                                                                                                  |
 | Call `ctx.step`/`ctx.exec` inside a step `run` or a poll `observe`/`done` ([QC003](#qc003)) | The runtime rejects the nested durable call when the callback runs, after earlier effects already ran                             | The callback's own `context.exec`/`context.exec.json`, or move the call into the workflow body                                                                      |
-| Reuse a literal effect ID, or put one in a loop ([QC005](#qc005))                           | `Duplicate step ID` at the second use                                                                                             | Unique IDs, `ctx.id(...)` per item, `ctx.within`/`ctx.scope`, or a named `ctx.map` as in the [per-item pipeline](#per-item-pipeline)                                |
+| Reuse a literal effect ID or prefix, or put one in a loop ([QC005](#qc005))                 | `Duplicate step ID` at the second use                                                                                             | Unique IDs, `ctx.id(...)` per item, `ctx.within`/`ctx.scope`, or a named `ctx.map` as in the [per-item pipeline](#per-item-pipeline)                                |
 | Raise limits by changing completed semantic inputs/model/tool grants                        | Limits/retry are now policy; semantic changes still invalidate terminal identity                                                  | Keep the [bounded loop](#bounded-reviewrevise), raise authorized sticky limits, and use [fork reuse](#salvage-an-old-run) for semantic edits                        |
 | Run parallel editing calls in one checkout                                                  | Filesystem edits race and checkpoints cannot roll them back                                                                       | [Worktree per item](#worktree-per-item), with explicit ownership and grants                                                                                         |
 
@@ -990,13 +990,20 @@ from them. Use one [`ctx.wait`](#polling-and-deadlines) for a durable choice.
 
 #### QC005
 
-A literal effect ID (a string or plain template literal) on the root context (`ctx`, `ctx.claude`,
-`ctx.codex`, `ctx.agent(name)`, `ctx.exec`, `ctx.exec.json`) used twice in one ID namespace, or
-inside a loop: `for`, `while`, `do`, an array callback (`map`, `forEach`, `reduce`, `sort`, ...), or
-`Array.from` with a mapper. The workflow function, a `ctx.scope` callback, a named-map mapper and a
-child workflow each start a namespace. Reuse in different branches of one `if`/`else`, `?:` or
-`switch`, or in an `if` branch that ends in `return`/`throw` versus code after it, is not reported.
-Use `ctx.id(...)`, `ctx.within`, `ctx.scope` or a named map.
+A literal effect ID (a string or plain template literal) used twice in one ID namespace, or inside a
+loop of it: `for`, `while`, `do`, an array callback (`map`, `forEach`, `reduce`, `sort`, ...), or
+`Array.from` with a mapper. The receiver is the context (`ctx`, `ctx.claude`, `ctx.codex`,
+`ctx.agent(name)`, `ctx.exec`, `ctx.exec.json`), a `const a = ctx.within('a')` view or an inline
+`ctx.within('a')`. The namespace is the literal prefix path, as the runtime builds it:
+`ctx.scope('a', ...)` and `ctx.within('a')` both give `a/`, so `a/x` and `b/x` are distinct while
+two `ctx.scope('s', ...)` blocks share `s/`. The workflow function, a named-map mapper, a child
+workflow and a non-literal prefix (`ctx.within(ctx.id('item', item))`) each start a separate
+namespace. A view keeps its own path, except inside a scope or named map launched through it, where
+it uses that callback's path. A literal `ctx.scope('x', ...)` or `ctx.within('x')` created inside a
+loop is reported at the prefix when a literal-ID effect runs under it. Reuse in different branches
+of one `if`/`else`, `?:` or `switch`, or in an `if` branch that ends in `return`/`throw` versus code
+after it, is not reported. Use `ctx.id(...)` for the ID or the prefix, or a named map. Views stored
+in `let`/`var`, destructured or passed to a helper are not checked.
 
 #### Suppress a finding
 

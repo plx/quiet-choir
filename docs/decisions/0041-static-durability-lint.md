@@ -1,7 +1,7 @@
 # 0041: Static durability lint at load time
 
-- Status: accepted; amended by #339 (QC006 retired) and #326 (identifier-bound zones and same-file
-  helpers)
+- Status: accepted; amended by #339 (QC006 retired), #326 (identifier-bound zones and same-file
+  helpers) and #327 (literal prefixes and within receivers)
 - Issue: #154
 
 ## Context
@@ -58,15 +58,18 @@ check with no errors and before import.
   - QC004: `Promise.race` or `Promise.any` (the global `PromiseConstructor`) whose argument contains
     a durable call or an identifier initialized from one.
   - QC005: a literal ID (string or no-substitution template) as the first argument of an effect on a
-    root receiver (the `WorkflowContext` parameter, or `.claude`, `.codex`, `.agent(x)`, `.exec`,
-    `.exec.json` on it; never through `.within(...)`), either inside a loop of its ID namespace
-    (`for`, `for-in`, `for-of`, `while`, `do`, an array iteration or `sort`/`toSorted` callback,
-    `Array.from` with a mapper, and until #339 a positional `ctx.map` mapper) or reused in that
-    namespace. The workflow function, a `ctx.scope` callback, a named-map mapper and a child
-    workflow each start a namespace. Different branches of one `if`/`else`, `?:` or `switch` (when
-    the earlier clause ends in `break`, `continue`, `return` or `throw`), and an `if` branch ending
-    in `return` or `throw` versus code after that `if`, are exclusive and not reuse. Every
-    occurrence after the first is reported.
+    resolved receiver (the `WorkflowContext` parameter, and since #327 a `const` view from
+    `ctx.within(...)` or an inline `.within(...)` call; or `.claude`, `.codex`, `.agent(x)`,
+    `.exec`, `.exec.json` on one), either inside a loop of its ID namespace (`for`, `for-in`,
+    `for-of`, `while`, `do`, an array iteration or `sort`/`toSorted` callback, `Array.from` with a
+    mapper, and until #339 a positional `ctx.map` mapper) or reused in that namespace. Since #327 a
+    literal `ctx.scope` or `ctx.within` prefix created inside a loop is also reported, at the
+    prefix, when a literal-ID effect runs under it (see the amendment below). The workflow function,
+    a named-map mapper, a non-literal prefix and a child workflow each start a namespace; literal
+    `ctx.scope` and `ctx.within` prefixes extend it to a path. Different branches of one
+    `if`/`else`, `?:` or `switch` (when the earlier clause ends in `break`, `continue`, `return` or
+    `throw`), and an `if` branch ending in `return` or `throw` versus code after that `if`, are
+    exclusive and not reuse. Every occurrence after the first is reported.
   - QC006: a call resolving to a `@deprecated` `WorkflowContext.map` overload, detected through the
     JSDoc tag, so the rule disappears when #158 removes the positional overloads. Retired by #339;
     see the amendment below.
@@ -103,10 +106,11 @@ run whose source has a finding still resumes. A workflow that validated before c
 The analysis is lexical and per function, with the same-file zone resolution of the
 [#326 amendment](#amendment-identifier-bound-zones-and-same-file-helpers-326): it does not track
 helpers across modules, and a nondeterministic read in a helper is still judged where the helper is
-written. It does not check literal `ctx.scope` or `ctx.within` prefixes inside loops or IDs on a
-`ctx.within(...)` context, and does not cover `fs/promises` or `child_process` reads. Runtime guards
-(duplicate IDs, nested effects, tracked-operation draining) remain the backstop. Unused suppressions
-are not reported.
+written. Since the [#327 amendment](#amendment-literal-prefixes-and-within-receivers-327) it checks
+IDs on `const` within views and literal prefixes in loops, but not views passed to helpers or stored
+in `let`, `var` or destructuring, and it does not cover `fs/promises` or `child_process` reads.
+Runtime guards (duplicate IDs, nested effects, tracked-operation draining) remain the backstop.
+Unused suppressions are not reported.
 
 ## Amendment: QC006 retired (#339)
 
@@ -161,3 +165,47 @@ call only creates an iterator; `const` and function declarations only; QC002 is 
 helper's definition; an untyped options object stored in a variable (`const options = { run }`) is
 still not a zone; and inside a followed helper, a nested function with a `WorkflowContext` parameter
 starts a workflow body as before, ending the zone.
+
+## Amendment: literal prefixes and within receivers (#327)
+
+QC005 used to check only the root context: each workflow function, `ctx.scope` callback and
+named-map mapper had an anonymous namespace, so a reused ID on a `ctx.within('a')` view and a
+literal `ctx.within('x')` or `ctx.scope('x')` prefix inside a loop passed the lint and failed at run
+time with `Duplicate step ID`. The lint now names namespaces the way the runtime names effects.
+
+- **Namespace keys.** A namespace is a literal prefix path (`''`, `'a/'`, `'a/b/'`) in a tree.
+  `ctx.scope('a', ...)` and `ctx.within('a')` compose the same path, as the runtime's name scopes
+  do, so they share keys: sibling `ctx.scope('s', ...)` blocks, or a scope and a within with the
+  same literal prefix, are one namespace, while `a/x` and `b/x`, or `a/c/x` and `a/x`, are not. The
+  workflow function, a named-map item callback and any prefix that is not a string literal or
+  no-substitution template start a fresh tree, which is unknown and never compared with anything
+  outside it. A per-item prefix such as `ctx.within(ctx.id('item', item))` is therefore silent.
+- **Receivers.** An effect's receiver resolves to a namespace when it is a root context parameter,
+  an inline `X.within('a')` call on a resolved receiver, or a `const` initialized directly from a
+  `within` call in the same visit of the same workflow function. A bound view follows the runtime's
+  `NameScopes.bound`: its own calls use the path it was created with, except inside a scope or
+  named-map callback launched through that view or a view derived from it, where they use the
+  ambient (callback) path, as the descendant prefixes of `panel.map('people', ...)` do. Root
+  receivers always use the ambient path.
+- **Loops.** Loop depth grows lexically: loop bodies, standard-library iteration callbacks and
+  named-map item callbacks each add one. An effect is in a loop of its namespace when it is deeper
+  than the depth its space was entered at. A `const` view created before a loop and used inside it,
+  or a fixed-path view used in a root named-map callback, therefore reports the effect. A literal
+  prefix created deeper than its receiver's space is a loop origin, inherited by literal
+  descendants.
+- **Report only when a literal ID runs under it.** A loop-origin prefix is reported once, at the
+  scope or within call, when at least one literal-ID effect is recorded under it, with the message
+  `Literal prefix 'x' in ctx.within(...) is inside a loop, so every iteration reuses the literal IDs under it (such as 'step' at line N)`.
+  The ticket proposed flagging every literal prefix in a loop, but
+  `for (item) ctx.scope('x', () => ctx.step(ctx.id(item), ...))` cannot collide, and this ADR keeps
+  the lint silent on shapes it cannot prove hazardous. One finding on the prefix, rather than one
+  per inner effect, keeps one suppression line and points at the fix. The in-loop message now reads
+  "inside a loop of its ID namespace", since the receiver need not be the root context.
+
+Limits: views are tracked only through `const` declarations initialized directly from a `within`
+call, registered at their first visit outside a callback zone; `let`, `var`, destructuring,
+parameters, reassignment, views passed to a helper and views used inside a nested function with its
+own `WorkflowContext` parameter stay unknown and silent. A non-literal prefix is never compared with
+its siblings, even when it is loop-invariant. The early-return exclusivity of #330 can now hide a
+duplicate between two sibling literal scopes when the first callback returns early; that is a false
+negative only.
