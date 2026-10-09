@@ -113,8 +113,9 @@ import type {
 
 /**
  * The progress-log line of a run event: its message, or the step, attempt, harness and agent
- * progress or wait fields. A finished agent attempt that recorded subscription rate-limit windows
- * appends ` rate-limit: 5h window 22%, 7d 67%`; every other line is unchanged. @internal
+ * progress or wait fields. A finished agent attempt shows ` durationMs=<n>` after its outcome, and
+ * one that recorded subscription rate-limit windows appends ` rate-limit: 5h window 22%, 7d 67%`;
+ * every other line is unchanged. @internal
  */
 export function formatAgentEventDetail(event: WorkflowEvent): string {
   const agentProgress =
@@ -125,7 +126,7 @@ export function formatAgentEventDetail(event: WorkflowEvent): string {
   const windows = limit === undefined ? null : formatRateLimitWindows(limit);
   return (
     event.message ??
-    `${event.stepId ?? ''} (attempt ${String(event.attempt)})${event.harness === undefined ? '' : ` harness=${event.harness}`}${agentProgress ? ` ${event.progress?.summary ?? event.outcome ?? 'started'}${event.sessionId ? ` session=${event.sessionId}` : ''}${windows === null ? '' : ` rate-limit: ${windows}`}` : event.waitedMs === undefined ? '' : ` waitedMs=${String(event.waitedMs)} inFlight=${JSON.stringify(event.inFlight)} queued=${String(event.queued)}`}`
+    `${event.stepId ?? ''} (attempt ${String(event.attempt)})${event.harness === undefined ? '' : ` harness=${event.harness}`}${agentProgress ? ` ${event.progress?.summary ?? event.outcome ?? 'started'}${event.type === 'agent.finished' && typeof event.durationMs === 'number' ? ` durationMs=${String(event.durationMs)}` : ''}${event.sessionId ? ` session=${event.sessionId}` : ''}${windows === null ? '' : ` rate-limit: ${windows}`}` : event.waitedMs === undefined ? '' : ` waitedMs=${String(event.waitedMs)} inFlight=${JSON.stringify(event.inFlight)} queued=${String(event.queued)}`}`
   );
 }
 
