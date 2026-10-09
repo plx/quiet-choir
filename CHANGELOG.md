@@ -2,6 +2,14 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `--events` JSONL and `workflow events` now carry tool-use evidence (#333). The `step.completed`,
+  `step.failed` and `step.settled` lines of an agent step gain `toolUses` (after `costUsd`) when the
+  attempt reported a count, and a `step.completed` line carries the step's warnings as `msg` with
+  `no-tool-use:` warnings first, so `grep --line-buffered no-tool-use` finds an attempt that
+  expected tools and used none. No new line type is written. `step.completed` lines that had no
+  `msg` can now have one; `workflow events` writes the warnings only for a step's latest attempt.
+  See [ADR 0037](docs/decisions/0037-compact-event-stream.md) and
+  [the event stream](docs/observability.md#event-stream).
 - Agent progress lines are easier to follow (#332). Claude and Codex tool summaries end with a short
   target taken only from allowlisted input fields (a file path, the head of a command, a pattern, a
   URL without its query, an MCP `server/tool` or a search query), at most 80 code points, with

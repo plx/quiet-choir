@@ -121,8 +121,11 @@ type, reset time and window utilizations (see
 [subscription rate-limit windows](usage-and-budgets.md#subscription-rate-limit-windows)); Codex
 attempts have none. Missing native fields remain absent or null; a version or model found by
 discovery is kept when the stream reports none. The completed `agent.finished` event also carries
-the step's `warnings` (such as `no-tool-use`) when there are any. Full initialization paths/socket
-details are not copied into diagnostics; raw transcripts can contain them.
+the step's `warnings` (such as `no-tool-use`) when there are any. The compact `--events` lines and
+`workflow events` carry the same evidence without `agent.finished`: `toolUses` on an agent step's
+terminal line and the warnings as `msg` on `step.completed`
+([event stream](observability.md#event-stream)). Full initialization paths/socket details are not
+copied into diagnostics; raw transcripts can contain them.
 
 Failed attempts retain session, usage, error/stack/category, diagnostics, and available rejected
 response text (up to 256 KiB, with `responseTruncated`). Local Zod failures also retain

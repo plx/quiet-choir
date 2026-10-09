@@ -15,6 +15,12 @@
   last failed attempt recorded in that execution, writing no pair when there is none. The event line
   modules may import values from `failure-kind.js`, which itself imports only the pure transient-set
   lookup, so the follower stays code-free.
+- Amended by #333: the follower writes `toolUses` on an agent attempt's `step.completed`,
+  `step.failed` and `step.settled` lines from that attempt's `attemptHistory[].diagnostics.toolUses`
+  (omitted unless a non-negative safe integer). A `step.completed` line takes the step's warnings as
+  `msg` (ADR 0037) from `step.warnings`, but only for the step's latest history entry while the step
+  is completed: warnings are step-level and reset per attempt, so an earlier attempt's warnings are
+  unknowable and omitted rather than guessed. History-less steps get neither field.
 
 ## Context
 

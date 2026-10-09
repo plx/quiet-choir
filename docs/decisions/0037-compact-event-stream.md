@@ -14,6 +14,16 @@
   the runner from the stored attempt kind and `rootCause.errorKind`, so nothing classifies again;
   `retryable` is computed only by `failureKind`, in the line formatter. `step.settled` and every
   other line are unchanged.
+- Amended by #333: the line shape gains `toolUses` after `costUsd`, on the `step.completed`,
+  `step.failed` and `step.settled` lines of an agent attempt that reported a count (a non-negative
+  safe integer; an unknown, missing or non-numeric count is omitted, so `errorKind` stays the only
+  nullable field). `step.completed` also carries the step's warnings as `msg`, `no-tool-use:`
+  warnings first and the rest in record order, joined with `; `, so the warning survives the `msg`
+  budget; `step.failed` and `step.settled` keep the error text. The sink derives both from the
+  step's `agent.finished` in this process, as it does `harness`. `agent.finished` (and a new
+  `agent.warning`) stays out of the written set: every finished attempt already writes exactly one
+  terminal step line, and a separate agent line would double the lines per attempt and break "one
+  line per transition". `WorkflowEvent` is unchanged.
 
 ## Context
 
@@ -35,12 +45,13 @@ appends one JSON line per event to FILE, or writes it to stdout for `-`. A pure 
 small best-effort sink in `src/workflow/loader/events.ts` observe the executor's existing `onEvent`
 callback, beside rehearsal and the notification hook.
 
-- **Line shape.** An ordered object `{t, run, ev, step, attempt, harness, ms, costUsd, phase, msg}`;
-  absent or null fields are omitted. `attempt` appears only on `step.failed` and `step.settled`, so
-  retries stay distinguishable. `harness` is the event's own, or the one last seen on an `agent.*`
-  event for that step in this process. `costUsd` is `usage.costUsd` when it is a number. `msg` is
-  the event message when non-empty; for `log` it is the message plus the compact JSON of its data,
-  and for `wait.opened` the compact JSON of the question.
+- **Line shape.** An ordered object `{t, run, ev, step, attempt, harness, ms, costUsd, phase, msg}`
+  (see the #333 amendment for `toolUses`); absent or null fields are omitted. `attempt` appears only
+  on `step.failed` and `step.settled`, so retries stay distinguishable. `harness` is the event's
+  own, or the one last seen on an `agent.*` event for that step in this process. `costUsd` is
+  `usage.costUsd` when it is a number. `msg` is the event message when non-empty; for `log` it is
+  the message plus the compact JSON of its data, and for `wait.opened` the compact JSON of the
+  question.
 - **Event set.** `run.started`, `run.completed`, `run.failed`, `run.cancelled`, `run.suspended`,
   `step.completed`, `step.failed`, `step.settled`, `wait.opened`, `phase` and `log`. No `agent.*`,
   `child.*`, `step.started` or `step.cancelled` lines.

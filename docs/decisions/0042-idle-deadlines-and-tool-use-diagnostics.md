@@ -4,6 +4,9 @@
 - Issue: #109 (carried over from #45; builds on #61 streaming)
 - Amends: [0007](0007-durable-failure-outcomes.md) (a new kind in the transient set) and
   [0010](0010-agent-profiles-and-grants.md) (`expectsToolUse` default, `idleTimeoutMs`)
+- Amended by #333: the compact `--events` stream and `workflow events` carry the count as `toolUses`
+  on agent step terminal lines and the warnings as `msg` on `step.completed`
+  ([0037](0037-compact-event-stream.md), [0038](0038-code-free-event-follower.md)).
 
 ## Context
 
@@ -99,8 +102,9 @@ on resume and is not part of grant pins, so the change needs no migration.
   rejected until now, so no record contains it.
 - Persisted manifests for `text` (and profiles that only restate the text baseline) now show
   `expectsToolUse: false`; manifests are rewritten on every execution and never compared.
-- The compact `--events` stream and `workflow events` do not carry tool counts or warnings yet;
-  `agent.finished` is not a stream event type there.
+- The compact `--events` stream and `workflow events` carry the count and the warnings on the
+  terminal step lines (#333); `agent.finished` is still not a stream event type there. A wrapper can
+  `grep --line-buffered no-tool-use` the stream instead of running `inspect` afterwards.
 - Idle deadlines cover agent attempts only, not `ctx.exec`, poll commands or step callbacks. There
   is no per-call `expectsToolUse` and no mode that fails on zero tool use.
 - Codex item type names come from codex-cli 0.157.1; `mcp_tool_call` and `web_search` have no
