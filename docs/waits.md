@@ -121,10 +121,11 @@ result is checked against a readonly view of the schema's type (`PollReadonly<T>
 `noteSchema`, while a wrong element type is still rejected. The outcome keeps the schema's own type,
 such as `number[]`, because the runtime parses the value with `schema`.
 
-A callback with parameters is typed exactly as with explicit type arguments, against the schema's
-type, so a literal it builds through a nested generic call such as `Promise.resolve(…)` or `.map(…)`
-is kept too. A parameter annotation never supplies the note type: without `noteSchema`,
-`previous.note` is `JsonValue`.
+A callback with parameters, a rest parameter included, is typed exactly as with explicit type
+arguments, against the schema's type, so a literal it builds through a nested generic call such as
+`Promise.resolve(…)` or `.map(…)` is kept too, and an annotated observer that returns
+`Promise.reject(…)` still type-checks. A parameter annotation never supplies the note type: without
+`noteSchema`, `previous.note` is `JsonValue`.
 
 Two shapes can still widen a literal. A callback without parameters loses one created inside a
 nested callback, such as `items.map(() => ({ state: 'green' }))`: give the outer callback its
