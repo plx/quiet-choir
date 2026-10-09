@@ -271,14 +271,20 @@ it('writes quarantined objects outside the repository, reads it through the alte
     codes: [0, 1, 128],
   });
   expect(plain.code).not.toBe(0);
-  // Even if a ref update slipped past the allowlist, Git itself refuses it in the quarantine.
+  // Even if a ref update slipped past the allowlist, Git itself refuses it in the quarantine. The
+  // alternate keeps the target commit readable, so older Git cannot refuse it as a missing object
+  // before it checks the quarantine.
   const unsafe = await new WorktreeGit(new NodeProcessRunner()).run(
     repo,
     ['update-ref', 'refs/heads/preview', base],
     invocation,
     {
       codes: [0, 1, 128],
-      env: { GIT_OBJECT_DIRECTORY: quarantine, GIT_QUARANTINE_PATH: quarantine },
+      env: {
+        GIT_OBJECT_DIRECTORY: quarantine,
+        GIT_ALTERNATE_OBJECT_DIRECTORIES: alternateEntry(objects),
+        GIT_QUARANTINE_PATH: quarantine,
+      },
     },
   );
   expect(unsafe.code).not.toBe(0);
