@@ -2,6 +2,17 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Agent progress lines are easier to follow (#332). Claude and Codex tool summaries end with a short
+  target taken only from allowlisted input fields (a file path, the head of a command, a pattern, a
+  URL without its query, an MCP `server/tool` or a search query), at most 80 code points, with
+  ` (+N more)` for further tool calls or changed files: `Claude tool: Edit …/src/app.ts`,
+  `Codex command_execution: item.started git status`. Claude `thinking_tokens` status lines now read
+  `Claude: thinking (~N tokens)` instead of `Claude: thinking_tokens`, and a burst of them shows its
+  first line and then at most one per 10 s. `agent.finished` carries `durationMs`, the monotonic
+  attempt duration from `attemptHistory`, shown as `completed durationMs=1234` on its progress line.
+  The new `workflow transcript RUN STEP [--attempt N] [--stream stderr]` prints an agent attempt's
+  decoded private transcript (native stream-json or JSONL) without importing the workflow; see
+  [the CLI contract](docs/cli-contract.md#workflow-transcript).
 - QC005 no longer treats a `return` or `throw` inside a nested function (a closure, a function
   declaration or a scope callback) as making later code in the outer function exclusive (#330).
   `workflow validate` can therefore fail (exit 4) on workflows that passed before but can hit

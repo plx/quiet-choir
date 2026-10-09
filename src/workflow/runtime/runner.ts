@@ -264,6 +264,12 @@ export type WorkflowEvent = {
   readonly cliVersion?: string | null;
   /** Attempt outcome after local output validation. */
   readonly outcome?: 'completed' | 'failed' | 'cancelled';
+  /**
+   * Monotonic duration of the attempt on agent.finished, in milliseconds, including any admission
+   * wait: the same value as the step's `attemptHistory[].durationMs`. It is not
+   * `diagnostics.durationMs`, which is the duration the native CLI reported.
+   */
+  readonly durationMs?: number | null;
   /** Extensible bounded native evidence on agent.finished. */
   readonly diagnostics?: AgentDiagnostics;
   /** The step's warnings (such as `no-tool-use`) on a completed agent.finished, when any. */
@@ -2326,6 +2332,7 @@ export async function runWorkflow<
                 emit('agent.finished', id, step, {
                   harness: step.harness ?? kind,
                   outcome: classification.status,
+                  durationMs: attemptRecord.durationMs,
                   sessionId: attemptRecord.sessionId ?? attemptRecord.requestedSessionId ?? null,
                   ...(attemptRecord.usage ? { usage: attemptRecord.usage } : {}),
                   diagnostics: attemptRecord.diagnostics ?? {},
@@ -2429,6 +2436,7 @@ export async function runWorkflow<
               emit('agent.finished', id, step, {
                 harness: step.harness ?? kind,
                 outcome: 'completed',
+                durationMs: attemptRecord.durationMs,
                 sessionId: metadata.sessionId,
                 usage: metadata.usage,
                 diagnostics: metadata.diagnostics ?? {},

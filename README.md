@@ -637,8 +637,9 @@ owner liveness. Add `--json --summary` for the same compact data, `-v` for saved
 `watch.timeout`; the run keeps running), `--wait-created 30s` waits for a record that is about to
 appear (exit 66, `watch.record_not_created`, when it never does), and `--final` prints only the last
 line. `workflow list --status stale --json` finds abandoned runs without importing their source.
-Read [run observability](docs/observability.md) for replay, retention, partial usage, prompt-preview
-privacy, and watch semantics.
+`workflow transcript ID STEP` prints an agent attempt's decoded private transcript (native
+stream-json or JSONL, ready for `jq`). Read [run observability](docs/observability.md) for replay,
+retention, partial usage, prompt-preview privacy, and watch semantics.
 
 ## CLI and development
 

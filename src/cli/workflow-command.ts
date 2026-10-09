@@ -1,4 +1,5 @@
 import { resolveStateDir } from '../workflow/runtime/paths.js';
+import { Errors } from '@oclif/core';
 import { stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { BaseCommand } from './base-command.js';
@@ -67,6 +68,8 @@ export abstract class WorkflowCommand extends BaseCommand {
   }
 
   protected override async catch(cause: unknown): Promise<never> {
+    // A command's own exit() already chose its code and output.
+    if (cause instanceof Errors.ExitError) throw cause;
     let failure =
       cause instanceof WorkflowCommandError
         ? {
@@ -104,6 +107,12 @@ export abstract class WorkflowCommand extends BaseCommand {
       if (failure.run?.errorStack) this.logToStderr(failure.run.errorStack);
     }
     const exit = workflowExitCodes[failure.code];
+    const human = [failure.message, ...formatNextCommands(failure.next)].join('\n');
+    // Checked before --json: stdout already carries other output, which a document would corrupt.
+    if (cause instanceof WorkflowCommandError && cause.stdoutClaimed) {
+      this.logToStderr(human);
+      this.exit(exit);
+    }
     if (requestedJson(this.argv)) {
       this.logToStderr(failure.message);
       this.#render(
@@ -112,7 +121,6 @@ export abstract class WorkflowCommand extends BaseCommand {
       );
       this.exit(exit);
     }
-    const human = [failure.message, ...formatNextCommands(failure.next)].join('\n');
     if (cause instanceof WorkflowCommandError && cause.humanExitOnly) {
       this.logToStderr(human);
       this.exit(exit);
@@ -156,6 +164,21 @@ export abstract class WorkflowCommand extends BaseCommand {
   }
 
   /**
+   * Write raw bytes to the real stdout, the writer `init` saved when `--json` redirected
+   * `process.stdout`, resolving once the stream has taken them so a large output keeps
+   * backpressure. A write error, such as `EPIPE` from a reader that went away, rejects. @internal
+   */
+  protected writeStdout(chunk: Uint8Array): Promise<void> {
+    const write = this.#stdoutWrite ?? process.stdout.write.bind(process.stdout);
+    return new Promise((resolve, reject) => {
+      write.call(process.stdout, chunk, undefined, (error?: Error | null) => {
+        if (error) reject(error);
+        else resolve();
+      });
+    });
+  }
+
+  /**
    * Whether failure and suspension documents carry a compact `summary` instead of the whole `run`.
    * The run commands turn this on unless `--full` was requested. @internal
    */
@@ -176,6 +199,14 @@ export abstract class WorkflowCommand extends BaseCommand {
 
   protected failResult(failure: WorkflowFailure, humanExitOnly = false): never {
     throw new WorkflowCommandError(failure, humanExitOnly);
+  }
+
+  /**
+   * Fail with `failure` after the command already wrote other output to stdout: the message and next
+   * commands go to stderr even under `--json`, whose document would corrupt that output. @internal
+   */
+  protected failAfterStdout(failure: WorkflowFailure): never {
+    throw new WorkflowCommandError(failure, true, true);
   }
 
   protected runContext(runId: string, stateDir?: string): string {

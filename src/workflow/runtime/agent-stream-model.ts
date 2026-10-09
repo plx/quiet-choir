@@ -10,7 +10,12 @@ export type AgentDiagnostics = Readonly<Record<string, JsonValue>>;
 export interface AgentProgress {
   /** Native initialization, tool activity, message, or status. */
   readonly kind: 'init' | 'tool' | 'message' | 'status';
-  /** Short description, without full tool inputs or command output. */
+  /**
+   * Short description, without full tool inputs or command output. A tool summary may end with a
+   * short, bounded target, such as a file path, the head of a command, a search pattern or query,
+   * or an MCP `server/tool` name; built-in adapters take it only from allowlisted input fields,
+   * bound it to 80 code points and strip URL queries. Treat it as lossy free text.
+   */
   readonly summary: string;
   /** Native model name, when reported. */
   readonly model?: string;

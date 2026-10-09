@@ -545,6 +545,54 @@ it.each(['on', 'on-failure', 'off'] as const)(
   },
 );
 
+it('reports the monotonic attempt duration on agent.finished for failed and completed attempts', async () => {
+  let calls = 0;
+  const events: WorkflowEvent[] = [];
+  const harness: Harness = {
+    invoke() {
+      calls++;
+      return Promise.resolve({
+        text: calls === 1 ? '{"answer":42}' : '{"answer":"ok"}',
+        sessionId: `timed-${String(calls)}`,
+        usage,
+      });
+    },
+  };
+  const definition = defineWorkflow({
+    ...base,
+    async run(ctx) {
+      return (
+        await ctx.codex.value('timed', {
+          prompt: 'respond',
+          schema: z.object({ answer: z.string() }),
+          retry: { maxAttempts: 2, delayMs: 0 },
+        })
+      ).answer;
+    },
+  });
+  const run = await runWorkflow(definition, {
+    ...setup('timed'),
+    harness,
+    onEvent: (event) => {
+      events.push(event);
+    },
+  });
+  const history = required(run.steps['timed']?.attemptHistory);
+  const finished = events.filter((event) => event.type === 'agent.finished');
+  expect(finished.map((event) => event.outcome)).toEqual(['failed', 'completed']);
+  finished.forEach((event, index) => {
+    expect(Number.isInteger(event.durationMs)).toBe(true);
+    expect(event.durationMs).toBeGreaterThanOrEqual(0);
+    expect(event.durationMs).toBe(history[index]?.durationMs);
+    expect(formatAgentEventDetail(event)).toMatch(
+      new RegExp(
+        ` ${String(event.outcome)} durationMs=${String(event.durationMs)} session=timed-`,
+        'u',
+      ),
+    );
+  });
+});
+
 it('retains bounded raw response and usage when local JSON parsing fails', async () => {
   const text = `bad ${'🙂'.repeat(100_000)}`;
   const definition = defineWorkflow({
@@ -1118,7 +1166,7 @@ describe('subscription rate-limit windows', () => {
     expect(finished).toHaveLength(1);
     expect(finished[0]?.diagnostics?.['rateLimit']).toEqual(expected);
     expect(formatAgentEventDetail(required(finished[0]))).toMatch(
-      / completed session=\S+ rate-limit: 5h window 1%, 7d 84%$/u,
+      / completed durationMs=\d+ session=\S+ rate-limit: 5h window 1%, 7d 84%$/u,
     );
   });
 
@@ -1174,6 +1222,20 @@ describe('subscription rate-limit windows', () => {
         ...event,
         type: 'agent.progress',
         diagnostics: { rateLimit: limit },
+      } as unknown as WorkflowEvent),
+    ).toBe('task (attempt 2) harness=claude completed session=abc');
+    // The attempt duration follows the outcome on agent.finished only.
+    expect(formatAgentEventDetail({ ...event, durationMs: 1234 })).toBe(
+      'task (attempt 2) harness=claude completed durationMs=1234 session=abc',
+    );
+    expect(formatAgentEventDetail({ ...event, durationMs: null })).toBe(
+      'task (attempt 2) harness=claude completed session=abc',
+    );
+    expect(
+      formatAgentEventDetail({
+        ...event,
+        type: 'agent.started',
+        durationMs: 5,
       } as unknown as WorkflowEvent),
     ).toBe('task (attempt 2) harness=claude completed session=abc');
     // A custom adapter's invalid report is ignored rather than printed.

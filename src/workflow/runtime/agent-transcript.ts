@@ -6,6 +6,15 @@ import type { AgentTranscript, AgentTranscriptWriter } from './agent-stream-mode
 import { syncDirectory, syncHandle } from './storage-io.js';
 
 const marker = `${JSON.stringify({ type: 'truncated', reason: 'maxTranscriptBytes' })}\n`;
+/** Longest transcript line {@link readAttemptTranscript} accepts by default, in bytes. @internal */
+export const maxTranscriptLineBytes = 64 * 1024 * 1024;
+/** Base64 alphabet with up to two trailing `=`: one flat class, so a long line cannot overflow. */
+const base64Characters = /^[A-Za-z0-9+/]*={0,2}$/u;
+
+/** Padded base64, checked without a repeated group (which backtracks per quantum). */
+function isBase64(text: string): boolean {
+  return text.length % 4 === 0 && base64Characters.test(text);
+}
 
 async function privateDirectory(path: string): Promise<void> {
   try {
@@ -17,6 +26,11 @@ async function privateDirectory(path: string): Promise<void> {
   if (!stat.isDirectory() || stat.isSymbolicLink())
     throw new Error(`Transcript directory is not a real directory: ${path}`);
   await chmod(path, 0o700);
+}
+
+/** The directory under a run's `attempts/` that holds a step's transcripts. @internal */
+export function transcriptDirectoryName(stepId: string): string {
+  return createHash('sha256').update(stepId).digest('hex');
 }
 
 /** Runtime-owned raw byte transcript, bounded independently of protocol parsing. @internal */
@@ -46,7 +60,7 @@ export class AttemptTranscript implements AgentTranscriptWriter {
     if (!Number.isSafeInteger(cap) || cap < 128)
       throw new Error('maxTranscriptBytes must be a safe integer of at least 128.');
     const parent = join(runDirectory, 'attempts');
-    const directory = join(parent, createHash('sha256').update(stepId).digest('hex'));
+    const directory = join(parent, transcriptDirectoryName(stepId));
     await privateDirectory(parent);
     await privateDirectory(directory);
     await syncDirectory(runDirectory);
@@ -119,5 +133,110 @@ export class AttemptTranscript implements AgentTranscriptWriter {
     await rm(this.#path, { force: true });
     await syncDirectory(dirname(this.#path));
     this.#retained = false;
+  }
+}
+
+/** What {@link readAttemptTranscript} decoded. @internal */
+export interface TranscriptReadResult {
+  /** Decoded bytes of the selected stream passed to the callback. */
+  readonly bytes: number;
+  /** Whether the transcript ends with the `maxTranscriptBytes` truncation marker. */
+  readonly truncated: boolean;
+}
+
+/**
+ * Decode one stream of an {@link AttemptTranscript} file, in order, passing each entry's raw bytes
+ * to `onChunk` (awaited, so a slow writer applies backpressure). Bytes are not re-encoded, so a
+ * UTF-8 character split across two chunks arrives intact. The file is opened without following a
+ * symlink and read line by line; a line longer than `maxLineBytes`, an entry that is neither
+ * `{stream, base64}` nor the final truncation marker, or anything after that marker throws an
+ * Error naming the line. An aborted `signal` stops the read before it opens the file and before each
+ * block read from it, even when no entry of the selected stream reaches `onChunk`, throwing its
+ * reason. With `tolerateTornTail`, for a file whose writer may still be appending, a final line
+ * without its newline is dropped instead of decoded; complete lines are still checked. @internal
+ */
+export async function readAttemptTranscript(
+  path: string,
+  stream: 'stdout' | 'stderr',
+  onChunk: (chunk: Uint8Array) => void | Promise<void>,
+  maxLineBytes = maxTranscriptLineBytes,
+  signal?: AbortSignal,
+  options: { readonly tolerateTornTail?: boolean } = {},
+): Promise<TranscriptReadResult> {
+  signal?.throwIfAborted();
+  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  let bytes = 0;
+  let truncated = false;
+  let lineNumber = 0;
+  const consume = async (line: Buffer): Promise<void> => {
+    lineNumber++;
+    const where = `Transcript line ${String(lineNumber)} of ${path}`;
+    if (truncated) throw new Error(`${where} follows the truncation marker.`);
+    let entry: unknown;
+    try {
+      entry = JSON.parse(line.toString('utf8'));
+    } catch {
+      throw new Error(`${where} is not valid JSON.`);
+    }
+    const fields =
+      typeof entry === 'object' && entry !== null && !Array.isArray(entry)
+        ? (entry as Record<string, unknown>)
+        : undefined;
+    const keys = fields === undefined ? [] : Object.keys(fields).sort().join(',');
+    if (
+      keys === 'base64,stream' &&
+      (fields?.['stream'] === 'stdout' || fields?.['stream'] === 'stderr') &&
+      typeof fields['base64'] === 'string' &&
+      isBase64(fields['base64'])
+    ) {
+      if (fields['stream'] !== stream) return;
+      const chunk = Buffer.from(fields['base64'], 'base64');
+      bytes += chunk.length;
+      if (chunk.length > 0) await onChunk(chunk);
+      return;
+    }
+    if (
+      keys === 'reason,type' &&
+      fields?.['type'] === 'truncated' &&
+      fields['reason'] === 'maxTranscriptBytes'
+    ) {
+      truncated = true;
+      return;
+    }
+    throw new Error(`${where} is not a transcript entry.`);
+  };
+  try {
+    if (!(await file.stat()).isFile()) throw new Error(`Transcript is not a regular file: ${path}`);
+    let pending: Buffer[] = [];
+    let pendingBytes = 0;
+    for await (const data of file.createReadStream({ autoClose: false, start: 0 })) {
+      signal?.throwIfAborted();
+      let chunk = data as Buffer;
+      for (let end = chunk.indexOf(10); end !== -1; end = chunk.indexOf(10)) {
+        if (pendingBytes + end > maxLineBytes)
+          throw new Error(
+            `Transcript line ${String(lineNumber + 1)} of ${path} is longer than ${String(maxLineBytes)} bytes.`,
+          );
+        pending.push(chunk.subarray(0, end));
+        await consume(Buffer.concat(pending));
+        pending = [];
+        pendingBytes = 0;
+        chunk = chunk.subarray(end + 1);
+      }
+      pendingBytes += chunk.length;
+      if (pendingBytes > maxLineBytes)
+        throw new Error(
+          `Transcript line ${String(lineNumber + 1)} of ${path} is longer than ${String(maxLineBytes)} bytes.`,
+        );
+      if (chunk.length > 0) pending.push(chunk);
+    }
+    // A final line without a newline is still an entry; a torn one fails as malformed, unless the
+    // writer may still be appending it.
+    if (pendingBytes > 0 && options.tolerateTornTail !== true)
+      await consume(Buffer.concat(pending));
+    signal?.throwIfAborted();
+    return { bytes, truncated };
+  } finally {
+    await file.close();
   }
 }
