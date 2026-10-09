@@ -102,6 +102,29 @@ export default defineWorkflow({
       const inner = ctx.within('in');
       await inner.scope('u', async () => r.step('y', text));
     });
+    // Clean: an unresolved (aliased) scope, phase or map receiver may switch to another view's
+    // frame, so an outer view's calls in its callback are unknown rather than on the ambient path.
+    const ua = ctx.within('ua');
+    const ub = ctx.within('ub');
+    const alias = ub;
+    await ua.scope('s', async () =>
+      alias.scope('t', async () => {
+        await ua.step('x', text);
+        await ctx.step('x', text);
+      }),
+    );
+    await ua.phase('p', async () =>
+      alias.phase('q', async () => {
+        await ua.step('y', text);
+        await ctx.step('y', text);
+      }),
+    );
+    await ua.scope('m', async () =>
+      alias.map('one', [input.name], { concurrency: 1 }, async () => {
+        await ua.step('z', text);
+        await ctx.step('z', text);
+      }),
+    );
     return 'done';
   },
 });

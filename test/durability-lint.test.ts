@@ -129,7 +129,8 @@ describe('durability lint', () => {
     // a loop and used in it (33) and a fixed-path view in a root named-map callback (38). Different
     // prefixes, nested scopes through a view, per-item, templated and variable prefixes, a literal
     // prefix whose effects use ctx.id, exclusive branches, a view's calls inside its own named
-    // maps (the item path) and root calls in a view's phase body (the view's path) are clean.
+    // maps (the item path), root calls in a view's phase body (the view's path) and an outer
+    // view's calls under an unresolved scope, phase or map receiver (unknown) are clean.
     expect(found('qc005-prefixes')).toEqual([
       'QC005@15',
       'QC005@17',

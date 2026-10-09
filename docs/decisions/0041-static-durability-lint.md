@@ -191,7 +191,10 @@ time with `Duplicate step ID`. The lint now names namespaces the way the runtime
   `within` call ran under, so an unrelated outer view's calls inside it return to its fixed path.
   Root receivers always use the ambient path. A `phase(title, body)` body also runs under its
   receiver's frame, so root calls in `a.phase(...)` use `a/`; an unresolved phase or scope receiver
-  starts a fresh tree.
+  starts a fresh tree. An unresolved scope, phase or named-map receiver (an alias such as
+  `const alias = b`) may be any view, so the frame inside its callback is unknown: views registered
+  outside it resolve to nothing there and none are registered inside it, while root receivers keep
+  the fresh ambient path.
 - **Loops.** Loop depth grows lexically: loop bodies, standard-library iteration callbacks and
   named-map item callbacks each add one. An effect is in a loop of its namespace when it is deeper
   than the depth its space was entered at. A `const` view created before a loop and used inside it,
