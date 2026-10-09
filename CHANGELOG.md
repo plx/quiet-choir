@@ -2,6 +2,11 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Exec fixture rules gain a `call` filter (#318): the nth command of one parent, so identical
+  `context.exec` commands in one step callback or poll observer, and the repeated check of a command
+  poll, can get different answers. The count is per rule, per parent ID and attempt, in this
+  process; a `ctx.exec` effect is always call 1. `occurrence` is unchanged and still counts distinct
+  step IDs. The stale-rule warning now names `call`.
 - Workflow Lab Batch 02: the test-gap-filler, project-bootstrap and lifecycle ports now settle their
   test and verify commands with `onError: 'return'` instead of `okExitCodes: 'any'`. A timeout or
   signal therefore takes the `baseline-failed`, `verification-failed` or blocked-gate branch instead

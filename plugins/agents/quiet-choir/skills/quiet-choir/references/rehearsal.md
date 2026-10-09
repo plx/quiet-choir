@@ -145,14 +145,51 @@ Exec rules are first match, separate from agent `calls` and numbered in their ow
 rule matches a command when every filter it has holds: `step` (the same glob as agent rules),
 `argvPrefix` (leading argv elements, compared exactly; a rule with a prefix never matches a
 `{ shell }` command), `envSha256` and `inputSha256` (the digests the step's exec summary records),
-`attempt` (cumulative, so a retry can see a different answer), and `occurrence`. A rule's occurrence
-is the one-based position of the step among the distinct step IDs that met its step, argv and digest
-filters so far; every rule counts every command, so it does not depend on earlier rules, and retries
-keep their occurrence. Above, `gate-1` gets `failure` and `gate-2` `success`. Occurrences count only
-commands that reach the process runner in this process: steps replayed from a checkpoint never do,
-and concurrent commands count in launch order, so prefer full step IDs for a run you will resume. A
-command from a callback's or observer's `context.exec` matches by its parent step or wait ID. All of
-one parent's commands share its occurrence, so tell them apart with `argvPrefix`.
+`attempt` (cumulative, so a retry can see a different answer), `occurrence`, and `call`. A rule's
+occurrence is the one-based position of the step among the distinct step IDs that met its step, argv
+and digest filters so far; every rule counts every command, so it does not depend on earlier rules,
+and retries keep their occurrence. Above, `gate-1` gets `failure` and `gate-2` `success`.
+Occurrences count only commands that reach the process runner in this process: steps replayed from a
+checkpoint never do, and concurrent commands count in launch order, so prefer full step IDs for a
+run you will resume. A command from a callback's or observer's `context.exec` matches by its parent
+step or wait ID. All of one parent's commands share its occurrence, so tell them apart with `call`.
+
+`call` (a positive integer) selects the nth command of one parent. For a command issued through
+`context.exec` it is the one-based position among the commands that met the rule's step, argv and
+digest filters for the same parent ID and attempt, in this process. Like occurrence it is counted
+per rule, so it does not depend on earlier rules, and with `argvPrefix` it counts only the matching
+commands (the second `gh pr checks`, even with other commands in between). It is per attempt: a
+retry reruns the callback, so its first command is call 1 again; combine `call` with `attempt` to
+give a retry its own answers. A poll observation always runs as attempt 1, so a wait's count keeps
+growing across its checks, and each check of a command poll is one call. A `ctx.exec` effect runs
+exactly one command per attempt, so its call is always 1: `call: 1` matches it, `call: 2` never does
+(and is reported stale). `occurrence` still chooses the parent and combines with `call`. Like
+occurrences, calls count only in this process: concurrent commands count in the order they reach the
+process runner, a `live: true` command kept real under `--dry-run` is not counted, and a poll that
+suspends and is checked again in a new process (`tick`, `resume`) starts again at call 1. A dry run
+performs a poll's first observation only, so to rehearse several checks of one poll in one process
+use `--harness fixture:FILE` with `--wait-mode block`:
+
+```json
+{
+  "exec": [
+    {
+      "step": "ci",
+      "argvPrefix": ["gh", "pr", "checks"],
+      "call": 1,
+      "json": { "state": "pending" }
+    },
+    {
+      "step": "ci",
+      "argvPrefix": ["gh", "pr", "checks"],
+      "call": 2,
+      "json": { "state": "success" }
+    }
+  ]
+}
+```
+
+Here the poll `ci` sees `pending` on its first check and `success` on its second.
 
 Exactly one of `json` (serialized as stdout), `stdout` and `error` is required. A result rule takes
 `stderr`, default empty, and `code` (0-255), default 0; the result then goes through the step's
@@ -161,9 +198,9 @@ usual checks: a code outside `okExitCodes` fails like a real exit (kind `process
 
 An error rule (`error`: the message, plus an optional `kind` that requires `error`; `stderr` and
 `code` are refused beside it) simulates a command with no result, such as a missing binary or a
-timeout. It matches like any rule (filters, first match, occurrence counting) and the command
-rejects immediately with an `ExecError` of that `kind` (default `process`, not the `unknown` of
-agent rules, because the real runner reports unclassified failures as `process`) whose message is
+timeout. It matches like any rule (filters, first match, occurrence and call counting) and the
+command rejects immediately with an `ExecError` of that `kind` (default `process`, not the `unknown`
+of agent rules, because the real runner reports unclassified failures as `process`) whose message is
 the `error` text verbatim, with no `Step <id>: ` prefix. Like a real spawn failure it has no process
 result: `error.diagnostics` has a null `code` and `signal`, empty tails, `truncated: false` and a
 duration of 0. A real timeout's signal and partial output are not reproduced. `retry.on`
