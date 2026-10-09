@@ -1651,8 +1651,8 @@ export async function runWorkflow<
       options.rehearsal !== undefined,
     );
     // Dry-run synthesizes fresh isolation with read-only Git only, makes the real ledger and merge
-    // target checks (#312), and previews merges in a quarantined temporary object store (#310). The accepted-replay probe synthesizes every Git
-    // effect and gets no runner, so it runs no Git.
+    // target checks (#312), and previews merges in a quarantined temporary object store (#310).
+    // The accepted-replay probe synthesizes every Git effect and gets no runner, so it runs no Git.
     const probe = isPreflightProbe(options.rehearsal);
     const rehearsalWorktrees =
       options.rehearsal === undefined
