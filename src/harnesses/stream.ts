@@ -388,10 +388,12 @@ export class HarnessStream {
 
   /**
    * The target of a Claude tool_use block, read only through {@link claudeTargetKeys}: never file
-   * contents, edit strings, prompts or MCP arguments. StructuredOutput in a structured call has
+   * contents, edit strings or prompts. An MCP tool (`mcp__server__tool`) has none, whatever its
+   * argument names, since the summary already names it; StructuredOutput in a structured call has
    * none, because its input is the result payload.
    */
   #claudeTarget(block: unknown, name: string | null): string | null {
+    if (name?.startsWith('mcp__') === true) return null;
     if (this.#structured && name === 'StructuredOutput') return null;
     const input = object(object(block)?.['input']);
     if (!input) return null;

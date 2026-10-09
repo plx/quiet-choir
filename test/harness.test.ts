@@ -631,6 +631,18 @@ describe('HarnessStream progress summaries', () => {
     expect(
       await claude(tool('mcp__db__query', { arguments: { token: 'SECRET' }, sql: 'SECRET' })),
     ).toBe('Claude tool: mcp__db__query');
+    // MCP arguments never reach progress, even under a key a built-in tool's target comes from.
+    for (const input of [
+      { query: 'SELECT secret' },
+      { command: 'SECRET command', file_path: '/SECRET/path', url: 'https://SECRET.example' },
+    ])
+      expect(await claude(tool('mcp__db__query', input))).toBe('Claude tool: mcp__db__query');
+    expect(await claude(tool('WebSearch', { query: 'vitest fake timers' }))).toBe(
+      'Claude tool: WebSearch vitest fake timers',
+    );
+    expect(await claude(tool('Read', { file_path: 'src/index.ts' }))).toBe(
+      'Claude tool: Read src/index.ts',
+    );
     expect(await claude(tool('Task', { prompt: 'SECRET prompt', description: 'Explore' }))).toBe(
       'Claude tool: Task Explore',
     );

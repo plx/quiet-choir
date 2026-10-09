@@ -10,14 +10,14 @@ successful process exit and local JSON/Zod validation. Events after a native res
 A tool summary ends with a short target when the native input has one, such as
 `Claude tool: Edit …/src/app.ts` or `Codex command_execution: item.started git status`. Claude reads
 only the first tool call's `file_path`, `notebook_path`, `command`, `pattern`, `url`, `query`,
-`path` or `description` (adding ` (+N more)` for further calls; never for structured
-`StructuredOutput`); Codex uses the command (one `sh -c`/`-lc` wrapper stripped), the first changed
-file (` (+N more)`), the MCP `server/tool` or the search query. Targets keep their first line, at
-most 80 code points (a path keeps its tail, anything else its head, cut with `…`), and URLs lose
-userinfo, query and fragment. File contents, edit strings, prompts, MCP arguments and command output
-never appear, but a command's first 80 characters can, so keep secrets out of inline commands.
-Claude `thinking_tokens` lines read `Claude: thinking (~N tokens)`; a burst of them shows its first
-line and then at most one per 10 seconds.
+`path` or `description` (adding ` (+N more)` for further calls; never for an `mcp__` tool or
+structured `StructuredOutput`); Codex uses the command (one `sh -c`/`-lc` wrapper stripped), the
+first changed file (` (+N more)`), the MCP `server/tool` or the search query. Targets keep their
+first line, at most 80 code points (a path keeps its tail, anything else its head, cut with `…`),
+and URLs lose userinfo, query and fragment. File contents, edit strings, prompts, MCP arguments and
+command output never appear, but a command's first 80 characters can, so keep secrets out of inline
+commands. Claude `thinking_tokens` lines read `Claude: thinking (~N tokens)`; a burst of them shows
+its first line and then at most one per 10 seconds.
 
 Both `agent.finished` and `step.completed` can carry the same usage; do not sum across event types.
 `agent.finished` also has `durationMs`, the attempt's monotonic duration including admission waiting

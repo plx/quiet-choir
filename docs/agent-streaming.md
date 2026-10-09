@@ -18,16 +18,17 @@ A tool summary names the tool and, when the native input has one, a short target
 `Claude tool: Edit …/src/harnesses/stream.ts`, `Codex command_execution: item.started git status`.
 Claude targets come only from the first tool call's `file_path`, `notebook_path`, `command`,
 `pattern`, `url`, `query`, `path` or `description` input, in that order, with ` (+N more)` when the
-message carries further tool calls; `StructuredOutput` in a structured call has none, because its
-input is the result. Codex targets are a `command_execution` command (one `bash`/`zsh`/`sh` `-c` or
-`-lc` wrapper is stripped), a `file_change`'s first path with ` (+N more)` for further files, an
-`mcp_tool_call`'s `server/tool`, or a `web_search` query. A target keeps only its first line, with
-control characters and whitespace runs collapsed, and is at most 80 code points: a path keeps its
-tail after a leading `…`, anything else its head before a trailing `…`. An http(s) URL loses its
-userinfo, query and fragment. File contents, edit strings, prompts, MCP arguments and command output
-are never read, but the first 80 characters of a command can appear, so an inline secret there can
-reach the progress line. Progress stays lossy stderr/`onEvent` output and is never journaled. Lines
-without a usable target keep their plain summary.
+message carries further tool calls; an MCP tool (`mcp__server__tool`) has none, since its summary
+names it, and neither has `StructuredOutput` in a structured call, because its input is the result.
+Codex targets are a `command_execution` command (one `bash`/`zsh`/`sh` `-c` or `-lc` wrapper is
+stripped), a `file_change`'s first path with ` (+N more)` for further files, an `mcp_tool_call`'s
+`server/tool`, or a `web_search` query. A target keeps only its first line, with control characters
+and whitespace runs collapsed, and is at most 80 code points: a path keeps its tail after a leading
+`…`, anything else its head before a trailing `…`. An http(s) URL loses its userinfo, query and
+fragment. File contents, edit strings, prompts, MCP arguments and command output are never read, but
+the first 80 characters of a command can appear, so an inline secret there can reach the progress
+line. Progress stays lossy stderr/`onEvent` output and is never journaled. Lines without a usable
+target keep their plain summary.
 
 Claude reports `thinking_tokens` status lines about once a second while it thinks. They read
 `Claude: thinking (~N tokens)` (or `Claude: thinking` without an estimate), and a burst of
