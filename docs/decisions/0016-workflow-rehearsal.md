@@ -192,7 +192,9 @@ computation, in a quarantined object store:
   2.44 or later honors that variable, so merge previews in a partial clone need Git 2.44 or later:
   before a preview over captured commits looks up any input, it lists `extensions.partialclone` and
   `remote.<name>.promisor` with `git config --name-only --get-regexp` and, if either is set, reads
-  `git --version` and refuses with a `ConfigurationError` on older (or unrecognized) Git. One store
+  `git --version` and refuses with a `ConfigurationError` on older (or unrecognized) Git. The same
+  memoized check runs before the rehearsal's first `git status` read (the ledger's dirty-source
+  check or a `checkout` target's check), which is refused the same way instead of running. One store
   per run, not per merge, keeps a preview's commit resolvable by later rehearsal steps, such as an
   isolation with `base: { commit }` or a stacked merge; real commits still resolve through the
   alternate. The runner removes the directory when the execution ends, on every path, after its
@@ -274,9 +276,10 @@ the real code and messages:
   `status --porcelain --untracked-files=normal --no-renames`. It also fixes `GIT_OPTIONAL_LOCKS=0`,
   because `git status` otherwise refreshes stat data in the index. The shared status check (the real
   ledger's, the real `checkout` target check and the rehearsal's) runs without rename detection:
-  whether its output is empty does not depend on renames, and rename detection reads blob contents,
-  which Git older than 2.44 (it ignores `GIT_NO_LAZY_FETCH`) could fetch from a partial clone's
-  promisor remote. Close variants are refused before they reach the runner.
+  whether its output is empty does not depend on renames, and rename detection reads blob contents.
+  The rehearsal still refuses its `status` reads in a partial clone on Git older than 2.44 (it
+  ignores `GIT_NO_LAZY_FETCH`), since `status` without rename detection is not known to read no
+  missing object there. Close variants are refused before they reach the runner.
 - The checks run through a read-only driver the rehearsal never replaces, so they still run after a
   merge preview has switched rehearsal Git to the quarantined driver, which refuses them.
 - `git worktree list` is ordered against a concurrent `worktree add` only by the in-process

@@ -1303,11 +1303,23 @@ function spyRunner() {
 }
 type WorktreeEvent = Parameters<NonNullable<NonNullable<RunOptions['rehearsal']>['onWorktree']>>[0];
 /**
+ * The read-only listing that detects a partial clone, which a dry-run runs once before its first
+ * `status` read or merge preview over captured commits.
+ */
+const partialCloneListing = [
+  'config',
+  '--name-only',
+  '--get-regexp',
+  '^(extensions\\.partialclone|remote\\..*\\.promisor)$',
+];
+/**
  * The reads besides rev-parse that a dry-run without a ledger makes first, as the real ledger's
- * initialization does: the Git version and the source checkout's status (#312).
+ * initialization does: the Git version and the source checkout's status (#312), which the
+ * partial-clone listing precedes.
  */
 const ledgerReads = [
   ['--version'],
+  partialCloneListing,
   ['status', '--porcelain', '--untracked-files=normal', '--no-renames'],
 ];
 async function exists(path: string): Promise<boolean> {
@@ -1640,13 +1652,6 @@ async function repositoryState(): Promise<Record<string, unknown>> {
   return { ...(await gitState()), objects: await objectCounts() };
 }
 const quarantinePrefix = 'quiet-choir-rehearsal-objects-';
-/** The read-only listing a merge preview over captured commits runs first to detect a partial clone. */
-const partialCloneListing = [
-  'config',
-  '--name-only',
-  '--get-regexp',
-  '^(extensions\\.partialclone|remote\\..*\\.promisor)$',
-];
 /** Point os.tmpdir() at a fresh directory, so a test sees the rehearsal's quarantine directories. */
 async function temporaryParent(): Promise<() => Promise<string[]>> {
   const parent = join(directory, 'tmp');
@@ -2371,10 +2376,8 @@ it('fails a preview over a commit missing from the repository like the real merg
       processRunner: spy.runner,
     }),
   ).rejects.toThrow('Merge input commit is unavailable in this repository.');
-  expect(spy.commands.filter((args) => args[0] !== 'rev-parse')).toEqual([
-    ...ledgerReads,
-    partialCloneListing,
-  ]);
+  // The ledger's status read already ran the partial-clone listing, which the preview reuses.
+  expect(spy.commands.filter((args) => args[0] !== 'rev-parse')).toEqual(ledgerReads);
   expect(await quarantines()).toEqual([]);
 });
 
@@ -2913,6 +2916,101 @@ it('runs the dry-run status checks without rename detection, which reads blob co
   );
   expect(dry).toEqual(real);
   expect(dry.message).toContain('Merge target checkout is dirty');
+});
+
+it('refuses the dry-run ledger status read in a partial clone on Git older than 2.44, without running it', async () => {
+  const workflow = defineWorkflow({
+    name: 'partial-source',
+    version: '1',
+    input: z.null(),
+    output: z.unknown(),
+    async run(ctx) {
+      return (await ctx.codex.text('edit', { prompt: 'edit', worktree: true })).output;
+    },
+  });
+  // A promisor remote makes the repository a partial clone; GIT_NO_LAZY_FETCH keeps 2.44+ from it.
+  await command('config', 'remote.origin.promisor', 'true');
+  const before = await repositoryState();
+  const index = await indexState();
+  const old = objectSpy('git version 2.43.0');
+  const failure = await failureOf(runWorkflow(workflow, freshDryRun('partial-source', old.runner)));
+  expect(failure.message).toContain(
+    "Dry-run cannot read the source checkout's status in a partial clone with git version 2.43.0: git status in a partial clone needs Git 2.44 or later",
+  );
+  expect(failure.cause).toBe('ConfigurationError');
+  // The ledger's version read, then the partial-clone listing and its version read; no status.
+  expect(old.commands.map(({ args }) => args).filter((args) => args[0] !== 'rev-parse')).toEqual([
+    ['--version'],
+    partialCloneListing,
+    ['--version'],
+  ]);
+  expect(await repositoryState()).toEqual(before);
+  expect(await indexState()).toEqual(index);
+  // Git 2.44 honors GIT_NO_LAZY_FETCH, so the same partial clone reads the status and proceeds.
+  const current = objectSpy('git version 2.44.0');
+  const dry = await runWorkflow(workflow, freshDryRun('partial-source-current', current.runner));
+  expect(dry.status).toBe('completed');
+  expect(
+    current.commands.map(({ args }) => args).filter((args) => args[0] !== 'rev-parse'),
+  ).toEqual([['--version'], partialCloneListing, ['--version'], status]);
+  expect(await repositoryState()).toEqual(before);
+});
+
+it("refuses a dry-run 'checkout' target's status read in a partial clone on Git older than 2.44, without running it", async () => {
+  let stop = true;
+  const workflow = defineWorkflow({
+    name: 'partial-checkout',
+    version: '1',
+    input: z.null(),
+    output: z.unknown(),
+    async run(ctx) {
+      const edit = await ctx.codex.text('edit', { prompt: 'edit', worktree: true });
+      if (stop) throw new Error('stopped before the merge');
+      return ctx.merge('publish', edit.worktree ? [edit.worktree] : [], { target: 'checkout' });
+    },
+  });
+  // The real run creates the ledger, so the dry-run resume skips the ledger's own status read.
+  await expect(
+    runWorkflow(workflow, {
+      ...options('partial-checkout'),
+      input: null,
+      harness: { invoke: () => Promise.resolve(response) },
+    }),
+  ).rejects.toThrow('stopped before the merge');
+  expect((await readRun({ stateDir, runId: 'partial-checkout' })).worktrees).toBeDefined();
+  await command('config', 'remote.origin.promisor', 'true');
+  const before = await repositoryState();
+  const index = await indexState();
+  stop = false;
+  const old = objectSpy('git version 2.43.0');
+  const failure = await failureOf(
+    runWorkflow(workflow, {
+      ...dryRun('partial-checkout', await copyRun('partial-checkout'), [], old.runner),
+      resume: true,
+    }),
+  );
+  expect(failure.message).toContain(
+    "Dry-run cannot read the source checkout's status in a partial clone with git version 2.43.0",
+  );
+  expect(failure.cause).toBe('ConfigurationError');
+  expect(old.commands.map(({ args }) => args).filter((args) => args[0] !== 'rev-parse')).toEqual([
+    partialCloneListing,
+    ['--version'],
+  ]);
+  expect(await repositoryState()).toEqual(before);
+  expect(await indexState()).toEqual(index);
+  // On Git 2.44 the target's status read runs, and the unchanged merge is the real no-op.
+  const current = objectSpy('git version 2.44.0');
+  const dry = await runWorkflow(workflow, {
+    ...dryRun('partial-checkout', await copyRun('partial-checkout'), [], current.runner),
+    resume: true,
+  });
+  expect(dry.status).toBe('completed');
+  expect(dry.output).toMatchObject({ commit: await command('rev-parse', 'HEAD'), merged: [] });
+  expect(
+    current.commands.map(({ args }) => args).filter((args) => args[0] !== 'rev-parse'),
+  ).toEqual([partialCloneListing, ['--version'], status]);
+  expect(await repositoryState()).toEqual(before);
 });
 
 /** Every checkpoint file of a run, by name, so a refusal can prove it wrote nothing. */

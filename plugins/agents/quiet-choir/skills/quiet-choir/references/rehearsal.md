@@ -223,24 +223,25 @@ configuration with read-only `git config` before any merge and refuses instead o
 differently from the real run. Rehearsal Git runs with `GIT_NO_LAZY_FETCH`, so it never fetches a
 missing object from a partial clone's promisor remote, but only Git 2.44 or later honors it: merge
 previews of captured commits in a partial clone (`extensions.partialClone` or a
-`remote.<name>.promisor` is configured) need Git 2.44 or later. The first such preview lists that
-configuration and, in a partial clone, reads `git --version`, and refuses with a configuration error
-on older Git before it looks up any input commit.
+`remote.<name>.promisor` is configured) need Git 2.44 or later. So does any `git status` read (the
+dirty-source check or a `checkout` target's check). The rehearsal lists that configuration once and,
+in a partial clone, reads `git --version`, before the first `git status` read and before the first
+such preview looks up any input commit; in a partial clone on older Git, the read or preview fails
+with a configuration error and never runs.
 
 The base is resolved once per revision with `git rev-parse` through the real process runner. The
 runtime refuses every other Git command under rehearsal before it reaches the runner, apart from an
 exact list of reads (`git --version`;
 `git status --porcelain --untracked-files=normal --no-renames`, run with `GIT_OPTIONAL_LOCKS=0` so
-it never refreshes the index, and without rename detection so it reads no blob contents to pair
-renames, which Git older than 2.44 could otherwise fetch in a partial clone; a merge target's
-`git check-ref-format`, `git worktree list --porcelain -z` and `git symbolic-ref -q`; and a merge
-preview's partial-clone, merge-driver and filter configuration reads) and a merge preview's
-quarantined commands, so a dry-run never creates refs, worktrees, cache directories, repository
-objects or lock files. An unresolvable base, a repository with no committed `HEAD`, or an isolated
-`cwd` outside the repository fails with the configuration error a real run reports. Outside a Git
-working tree, or when Git cannot run, a placeholder of forty zeros stands in for the base, with a
-warning that the real run fails. A dry-run resume of an interrupted real attempt reuses its recorded
-base.
+it never refreshes the index, and never in a partial clone on Git older than 2.44; a merge target's
+`git check-ref-format`, `git worktree list --porcelain -z` and `git symbolic-ref -q`; the
+partial-clone configuration read; and a merge preview's merge-driver and filter configuration reads)
+and a merge preview's quarantined commands, so a dry-run never creates refs, worktrees, cache
+directories, repository objects or lock files. An unresolvable base, a repository with no committed
+`HEAD`, or an isolated `cwd` outside the repository fails with the configuration error a real run
+reports. Outside a Git working tree, or when Git cannot run, a placeholder of forty zeros stands in
+for the base, with a warning that the real run fails. A dry-run resume of an interrupted real
+attempt reuses its recorded base.
 
 Before the run has a worktree ledger, the first isolated call or merge makes the checks a real run
 makes when it creates one: Git older than 2.38 and a cache root inside the checkout (after existing

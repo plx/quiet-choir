@@ -158,10 +158,10 @@ with the real `computeIntegration` through a quarantined driver (a temporary obj
 repository's objects as an alternate, no ref updates) that the runner removes after the run drains;
 neither driver lazy-fetches missing objects from a partial clone's promisor remote, and since only
 Git 2.44+ honors `GIT_NO_LAZY_FETCH`, a merge preview in a partial clone on older Git is refused
-before any input lookup, and the shared `status` check runs with `--no-renames`, so it reads no blob
-contents to pair renames; `RunWorktrees` refuses every command under rehearsal. Only the
-accepted-replay probe synthesizes every worktree effect, with no process runner at all. See
-[ADR 0022](../../../docs/decisions/0022-runtime-owned-worktree-isolation.md).
+before any input lookup, and so is a rehearsal `status` read (the ledger's dirty-source check or a
+`checkout` target's check) instead of running it; `RunWorktrees` refuses every command under
+rehearsal. Only the accepted-replay probe synthesizes every worktree effect, with no process runner
+at all. See [ADR 0022](../../../docs/decisions/0022-runtime-owned-worktree-isolation.md).
 
 Resolve restricted/inherit mode before agent identity and preserve it through checkout preparation.
 Host environment values never enter semantic identity; explicit edits do. Persist only environment

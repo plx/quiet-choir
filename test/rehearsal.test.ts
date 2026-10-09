@@ -1498,8 +1498,9 @@ export default defineWorkflow({
   }
 
   /**
-   * Every command is Git: rev-parse, plus the real ledger's version and status reads, once (#312).
-   * The merge targets a ref, so no merge target check runs.
+   * Every command is Git: rev-parse, plus the real ledger's version and status reads, once (#312),
+   * with the partial-clone listing before the status read. The merge targets a ref, so no merge
+   * target check runs.
    */
   function expectReadOnlyGit(commands: readonly string[][]): void {
     expect(commands.length).toBeGreaterThan(0);
@@ -1509,6 +1510,12 @@ export default defineWorkflow({
     });
     expect(reads.filter((args) => args[0] !== 'rev-parse')).toEqual([
       ['--version'],
+      [
+        'config',
+        '--name-only',
+        '--get-regexp',
+        '^(extensions\\.partialclone|remote\\..*\\.promisor)$',
+      ],
       ['status', '--porcelain', '--untracked-files=normal', '--no-renames'],
     ]);
   }

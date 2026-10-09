@@ -28,9 +28,9 @@ const quarantinedCommands = new Set(['rev-parse', 'merge-tree', 'commit-tree', '
  *   and `symbolic-ref -q <ref>`, each with exactly one operand that is not an option (a second
  *   `symbolic-ref` operand would write the ref, as would `-d`), `worktree list --porcelain -z`, and
  *   `status --porcelain --untracked-files=normal --no-renames`, which the driver's
- *   `GIT_OPTIONAL_LOCKS=0` keeps from refreshing the index. Without rename detection, `status`
- *   reads no blob contents to pair renames, so on Git older than 2.44, which ignores
- *   `GIT_NO_LAZY_FETCH`, it does not fetch them from a partial clone's promisor remote.
+ *   `GIT_OPTIONAL_LOCKS=0` keeps from refreshing the index. Git older than 2.44 ignores
+ *   `GIT_NO_LAZY_FETCH`, so the rehearsal never runs `status` in a partial clone on such Git: it
+ *   refuses with a configuration error instead.
  *
  * None of them can write to the repository.
  */
@@ -104,8 +104,8 @@ export class WorktreeGit {
    * it can never create refs, worktrees or objects. `GIT_OPTIONAL_LOCKS=0` keeps `status` from
    * refreshing the index, and it never fetches a missing object from a partial clone's promisor
    * remote (`GIT_NO_LAZY_FETCH`, which Git honors from 2.44; the rehearsal refuses merge previews
-   * in a partial clone on older Git, and `status` runs without rename detection, so it reads no
-   * blob contents to pair renames). Both are fixed whatever the caller's environment sets.
+   * and `status` reads in a partial clone on older Git instead of running them). Both are fixed
+   * whatever the caller's environment sets.
    * `{ quarantine }` runs only `rev-parse`, `merge-tree`, `commit-tree` and `var`, and points every
    * command at the quarantine's object directory, after the caller's `GIT_*` variables are removed
    * and the per-call environment applied, so new objects land there, Git refuses ref updates and
