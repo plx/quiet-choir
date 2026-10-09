@@ -2003,9 +2003,12 @@ it('refuses to preview a merge while merge.renormalize would run a configured fi
     ...dryRun('filter', copy, [], spy.runner),
     resume: true,
   }).catch((error: unknown) => error);
+  // The machine's own Git configuration may add filters (CI runners configure git-lfs), which the
+  // refusal also lists, so match the prefix and the sentinel filter apart.
   expect((failure as Error).message).toContain(
-    'Dry-run cannot preview a merge of captured commits while merge.renormalize is set and filters are configured (filter.sentinel.clean)',
+    'Dry-run cannot preview a merge of captured commits while merge.renormalize is set and filters are configured (',
   );
+  expect((failure as Error).message).toMatch(/\bfilter\.sentinel\.clean\b/);
   expect((failure as Error).cause).toBeInstanceOf(ConfigurationError);
   expect(spy.commands.map(({ args }) => args[0]).filter((name) => name !== 'rev-parse')).toEqual([
     'config',
