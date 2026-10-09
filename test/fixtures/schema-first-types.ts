@@ -199,6 +199,40 @@ export async function polls(ctx: WorkflowContext, ready: boolean): Promise<void>
   await ctx.poll('numeric', { ...numeric, observe: async () => ({ done: true, value: 'one' }) });
   // @ts-expect-error The note must match noteSchema.
   await ctx.poll('noted', { ...noted, observe: async () => ({ done: false, note: { seen: 1 } }) });
+  // An all-optional (weak) object schema or noteSchema still rejects a primitive, which matches no
+  // property: TypeScript skips its weak-type check where the callback meets the schema's type.
+  const weak = { ...poll, schema: z.object({ n: z.number().optional() }) };
+  const weakNoted = { ...poll, noteSchema: z.object({ seen: z.boolean().optional() }) };
+  // @ts-expect-error A string is not a value of an all-optional object schema.
+  await ctx.poll('weak', { ...weak, observe: async () => ({ done: true, value: 'x' }) });
+  // @ts-expect-error A string is not a value of an all-optional object schema.
+  await ctx.poll('weak-done', { ...weak, ...command, done: () => ({ done: true, value: 'x' }) });
+  // @ts-expect-error A number is not a note of an all-optional object noteSchema.
+  await ctx.poll('weak-note', { ...weakNoted, observe: async () => ({ done: false, note: 1 }) });
+  // @ts-expect-error A string is not a note of an all-optional object noteSchema.
+  await ctx.poll('wn-done', { ...weakNoted, ...command, done: () => ({ done: false, note: 'x' }) });
+  const weakValues: (PollOutcome<{ n?: number | undefined }> | DeadlineOutcome)[] = [
+    await ctx.poll('weak-full', {
+      ...weak,
+      observe: async () => ({ done: true, value: { n: 1 } }),
+    }),
+    await ctx.poll('weak-empty', { ...weak, observe: async () => ({ done: true, value: {} }) }),
+    await ctx.poll('weak-full-done', {
+      ...weak,
+      ...command,
+      done: () => (ready ? { done: true, value: { n: 1 } } : { done: true, value: {} }),
+    }),
+  ];
+  await ctx.poll('weak-noted', {
+    ...weakNoted,
+    observe: async () =>
+      ready ? { done: false, note: { seen: true } } : { done: false, note: {} },
+  });
+  await ctx.poll('weak-noted-done', {
+    ...weakNoted,
+    ...command,
+    done: () => ({ done: false, note: { seen: false } }),
+  });
   // A parameter annotation cannot supply the note type, which comes only from noteSchema. Both
   // compilers report these at the callback.
   type Seen = PollContext<{ seen: boolean }>;
@@ -251,6 +285,7 @@ export async function polls(ctx: WorkflowContext, ready: boolean): Promise<void>
     contextResolved,
     outputResolved,
     mapped,
+    weakValues,
     waitedColor,
     waitedDoneColor,
   );

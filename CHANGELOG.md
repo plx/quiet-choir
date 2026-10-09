@@ -15,12 +15,12 @@
   annotations cannot supply the note type. The capture makes array literals readonly tuples, so the
   result is checked against `PollReadonly<T>` and `PollReadonly<N>`: `[1, 2]` matches
   `z.array(z.number())`, a tuple schema or an array `noteSchema`, and the outcome keeps the schema's
-  type. New exported types: `PollResult<T, N>` (one check's result), `PollCallOptions<T, O, N, R>`
-  (the inferred options), `PollCapturedResult<T, N, R>` (the captured result), `PollTimeBound`
-  (`timeoutMs` or `deadline`), and `PollReadonly<X>` and `PollReadonlyArray<E>` (the readonly view).
-  A callback without parameters that creates a literal in a nested callback
-  (`.map(() => ({ state: 'green' }))`), and a call with explicit type arguments, can still widen it.
-  Runtime behavior is unchanged.
+  type. New exported types: `PollResult<T, N>` (one check's result),
+  `PollCallOptions<T, O, N, R, C>` (the inferred options), `PollCapturedResult<T, N, R>` (the
+  captured result), `PollTimeBound` (`timeoutMs` or `deadline`), and `PollReadonly<X>` and
+  `PollReadonlyArray<E>` (the readonly view). A callback without parameters that creates a literal
+  in a nested callback (`.map(() => ({ state: 'green' }))`), and a call with explicit type
+  arguments, can still widen it. Runtime behavior is unchanged.
 - `workflow fixtures` exports commands that step callbacks and poll observers run through
   `context.exec` (#317). The runtime records them on the parent step (`innerCommands`, schema
   revision 15: the raw result and only env and stdin digests, at most 256 commands and 1 MiB of

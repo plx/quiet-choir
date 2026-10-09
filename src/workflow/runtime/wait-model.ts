@@ -370,8 +370,15 @@ export type CommandPollOptions<T, O = unknown, N extends JsonInput = JsonValue> 
  * {@link PollReadonly} views of `T` and `N`; so a zero-parameter callback keeps a literal terminal
  * value such as `'green'` from a conditional expression or a statement return without `as const`,
  * and an array literal still matches an array or tuple schema.
+ *
+ * `R`'s constraint keeps those literals, but a result that fails it makes `R` fall back to the
+ * constraint itself, and the callback's own check against an intersection member skips
+ * TypeScript's weak-type check: a primitive would pass as the value or note of an all-optional
+ * object schema. So the zero-parameter signature also returns `C`, an unconstrained capture of the
+ * same result (it defaults to `R`), and a `C` that fails the schemas turns the options into a shape
+ * no callback satisfies.
  */
-export type PollCallOptions<T, O, N extends JsonInput, R> = Omit<
+export type PollCallOptions<T, O, N extends JsonInput, R, C = R> = Omit<
   PollSource<T, N>,
   'observe' | 'command'
 > &
@@ -382,7 +389,8 @@ export type PollCallOptions<T, O, N extends JsonInput, R> = Omit<
         readonly observe: NoInfer<
           (context: PollContext<N>) => Promise<PollResult<T, N> | PollCapturedResult<T, N, R>>
         > &
-          (() => Promise<R>);
+          (() => Promise<R>) &
+          (() => Promise<C>);
         /** Only a command poll runs a command. */
         readonly command?: never;
       }
@@ -397,11 +405,21 @@ export type PollCallOptions<T, O, N extends JsonInput, R> = Omit<
             | PollCapturedResult<T, N, R>
             | Promise<PollResult<T, N> | PollCapturedResult<T, N, R>>
         > &
-          (() => R | Promise<R>);
+          (() => R | Promise<R>) &
+          (() => C | Promise<C>);
         /** Only an observer poll has `observe`. */
         readonly observe?: never;
       })
-  );
+  ) &
+  // A conditional type applies the weak-type check that the callback's own check skips.
+  ([C] extends [PollResult<PollReadonly<T>, PollReadonly<N>>]
+    ? unknown
+    : {
+        /** No observer satisfies a mismatched result. */
+        readonly observe: never;
+        /** No `done` satisfies a mismatched result. */
+        readonly done: never;
+      });
 
 /**
  * The result `R` a zero-parameter {@link PollCallOptions} callback returned, or `never` while `R`

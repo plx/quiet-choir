@@ -696,18 +696,21 @@ export interface WorkflowContext<
    * has its result captured as `R` and checked against them, so a literal terminal value such as
    * `{ done: true, value: 'green' }` from a conditional expression or a statement return
    * type-checks against an enum or literal schema without `as const`. `R` is checked against
-   * {@link PollReadonly} views of them, because `const` makes an array literal a readonly tuple. A
-   * callback with parameters is typed exactly as in the overloads below, which already keep its
-   * literals, and the call resolves to one of them.
+   * {@link PollReadonly} views of them, because `const` makes an array literal a readonly tuple.
+   * `C` captures the same result without a constraint, so that a result failing `R`'s constraint
+   * (such as a string for an all-optional object schema) is still rejected; see
+   * {@link PollCallOptions}. A callback with parameters is typed exactly as in the overloads below,
+   * which already keep its literals, and the call resolves to one of them.
    */
   poll<
     T,
     const R extends PollResult<NoInfer<PollReadonly<T>>, NoInfer<PollReadonly<N>>>,
     O,
     N extends JsonInput = JsonValue,
+    const C = R,
   >(
     id: string,
-    options: PollCallOptions<T, O, N, R>,
+    options: PollCallOptions<T, O, N, R, C>,
   ): Promise<PollOutcome<T> | DeadlineOutcome>;
   /**
    * A command poll with explicit type arguments, `ctx.poll<T, O, N>(…)`; see the inferred form
