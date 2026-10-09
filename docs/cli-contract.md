@@ -704,6 +704,9 @@ record without importing the workflow. `STEP` is the full step ID, as `inspect` 
   output may end early. Its final line, when it lacks a newline, is skipped as a write in progress
   rather than reported as malformed, and so is an `interrupted` attempt's; complete lines are still
   checked.
+- The decoder accepts transcript lines up to 64 MiB, or up to the attempt's recorded
+  `maxTranscriptBytes` when that is larger (no line the writer produced can exceed its file cap); a
+  longer line is `run.unreadable`.
 - `--json` only turns a failure into a `workflow.error` document on stdout (with the compact
   `summary`, never the whole record), and only while no transcript bytes have been written: once
   output has begun (a malformed entry after valid ones), the failure message goes to stderr with the

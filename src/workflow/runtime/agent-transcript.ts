@@ -6,8 +6,8 @@ import type { AgentTranscript, AgentTranscriptWriter } from './agent-stream-mode
 import { syncDirectory, syncHandle } from './storage-io.js';
 
 const marker = `${JSON.stringify({ type: 'truncated', reason: 'maxTranscriptBytes' })}\n`;
-/** Longest transcript line {@link readAttemptTranscript} accepts by default, in bytes. */
-const maxTranscriptLineBytes = 64 * 1024 * 1024;
+/** Longest transcript line {@link readAttemptTranscript} accepts by default, in bytes. @internal */
+export const maxTranscriptLineBytes = 64 * 1024 * 1024;
 /** Base64 alphabet with up to two trailing `=`: one flat class, so a long line cannot overflow. */
 const base64Characters = /^[A-Za-z0-9+/]*={0,2}$/u;
 

@@ -1,7 +1,11 @@
 import { realpath } from 'node:fs/promises';
 import { isAbsolute, join, relative, sep } from 'node:path';
 
-import { readAttemptTranscript, transcriptDirectoryName } from '../runtime/agent-transcript.js';
+import {
+  maxTranscriptLineBytes,
+  readAttemptTranscript,
+  transcriptDirectoryName,
+} from '../runtime/agent-transcript.js';
 import { runDirectory } from '../runtime/paths.js';
 import { RunRefusedError } from '../runtime/run-errors.js';
 import type { AttemptRecord, RunRecord, StepRecord } from '../runtime/store.js';
@@ -158,6 +162,13 @@ export async function decodeStepTranscript(
   // such a dead attempt interrupted. Either way a torn final line is not damage.
   const inProgress = attempt.status === 'running';
   const tolerateTornTail = inProgress || attempt.status === 'interrupted';
+  // No line the writer produced can exceed the file cap it ran under, so a larger recorded cap
+  // raises the line limit; an older record without one keeps the default.
+  const cap = attempt.policy.maxTranscriptBytes;
+  const maxLineBytes =
+    typeof cap === 'number' && Number.isSafeInteger(cap)
+      ? Math.max(maxTranscriptLineBytes, cap)
+      : maxTranscriptLineBytes;
   let decoded: Awaited<ReturnType<typeof readAttemptTranscript>>;
   // A failing writer or an abort is not a damaged transcript; only read errors are.
   const writing = { now: false };
@@ -171,7 +182,7 @@ export async function decodeStepTranscript(
         await onChunk(chunk);
         writing.now = false;
       },
-      undefined,
+      maxLineBytes,
       signal,
       { tolerateTornTail },
     );

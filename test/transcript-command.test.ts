@@ -7,7 +7,8 @@ import { defineWorkflow, readRun, z, type Harness, type PolicyOverride } from '.
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import type { WorkflowCommandResult } from '../src/workflow/loader/model.js';
 import { runDirectory } from '../src/workflow/runtime/paths.js';
-import { it, type RunScope } from './setup/state-dir.js';
+import { it } from './setup/cli-capture.js';
+import type { RunScope } from './setup/state-dir.js';
 
 const usage = { inputTokens: 8, outputTokens: 2, costUsd: 0.01 };
 const native = [
@@ -369,5 +370,48 @@ describe('workflow.transcript', () => {
     expect(result).toMatchObject({ ok: false, code: 'run.unreadable' });
     if (result.ok) throw new Error('expected a failure');
     expect(result.message).toContain('line 2');
+  });
+  /** Set (or with undefined, remove) the policy cap recorded for the `task` attempt. */
+  async function recordCap(stateDir: string, cap: number | undefined): Promise<string> {
+    const recordPath = join(runDirectory(stateDir, 'source'), 'run.json');
+    const record = JSON.parse(await readFile(recordPath, 'utf8')) as {
+      steps: Record<
+        string,
+        {
+          attemptHistory: {
+            policy: { maxTranscriptBytes?: number };
+            transcript: { path: string };
+          }[];
+        }
+      >;
+    };
+    const attempt = record.steps['task']?.attemptHistory[0];
+    if (!attempt) throw new Error('expected an attempt');
+    if (cap === undefined) delete attempt.policy.maxTranscriptBytes;
+    else attempt.policy.maxTranscriptBytes = cap;
+    await writeFile(recordPath, JSON.stringify(record));
+    return attempt.transcript.path;
+  }
+
+  it('reads a line over the default limit when the recorded cap allows it, and keeps the default without a cap', async ({
+    stateDir,
+    runs,
+  }) => {
+    await seed(runs, stateDir);
+    const text = 'x'.repeat(50 * 1024 * 1024);
+    const path = await recordCap(stateDir, 128 * 1024 * 1024);
+    await writeFile(path, entry(text));
+    // The entry line is about 67 MiB of base64, past the 64 MiB default.
+    const wide = await transcript(stateDir, { stepId: 'task' });
+    expect(wide.result).toMatchObject({ ok: true, bytes: text.length, truncated: false });
+    expect(wide.output).toBe(text);
+
+    // A record from before the cap was recorded keeps the default.
+    await recordCap(stateDir, undefined);
+    const narrow = await transcript(stateDir, { stepId: 'task' });
+    expect(narrow.output).toBe('');
+    expect(narrow.result).toMatchObject({ ok: false, code: 'run.unreadable' });
+    if (narrow.result.ok) throw new Error('expected a failure');
+    expect(narrow.result.message).toContain('is longer than 67108864 bytes');
   });
 });
