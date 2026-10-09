@@ -95,6 +95,25 @@ export interface PollErrorPolicy {
   readonly retryAfterMs?: (error: unknown) => number | null;
 }
 
+/**
+ * The result of one poll check: terminal with a `value` the poll's `schema` validates, or
+ * nonterminal with an optional `note` that is saved for the next check (and validated with
+ * `noteSchema` when the poll has one).
+ */
+export type PollResult<T, N extends JsonInput = JsonValue> =
+  | {
+      /** The check found the awaited state. */
+      readonly done: true;
+      /** Terminal value, parsed by the poll's `schema`. */
+      readonly value: T;
+    }
+  | {
+      /** The check found nothing final yet. */
+      readonly done: false;
+      /** Progress for the next check's `previous.note`; omitted or null saves null. */
+      readonly note?: N | null;
+    };
+
 /** One read-only check; only its final value becomes a workflow branch decision. */
 export interface PollSource<T, N extends JsonInput = JsonValue> {
   /** Explicit dependencies, included in durable identity. */
@@ -140,14 +159,7 @@ export interface PollSource<T, N extends JsonInput = JsonValue> {
    * records nothing and reruns on resume. `context.previous` carries the persisted note and check
    * count from earlier checks.
    */
-  readonly observe: NoInfer<
-    (
-      context: PollContext<N>,
-    ) => Promise<
-      | { readonly done: true; readonly value: T }
-      | { readonly done: false; readonly note?: N | null }
-    >
-  >;
+  readonly observe: NoInfer<(context: PollContext<N>) => Promise<PollResult<T, N>>>;
   /** Only a {@link CommandPollSource} runs a command; an observer poll has none. */
   readonly command?: never;
 }
@@ -203,13 +215,7 @@ export interface CommandPollSource<T, O = unknown, N extends JsonInput = JsonVal
     (
       output: O,
       previous: PollContext<N>['previous'],
-    ) =>
-      | { readonly done: true; readonly value: T }
-      | { readonly done: false; readonly note?: N | null }
-      | Promise<
-          | { readonly done: true; readonly value: T }
-          | { readonly done: false; readonly note?: N | null }
-        >
+    ) => PollResult<T, N> | Promise<PollResult<T, N>>
   >;
   /** Only an observer {@link PollSource} has `observe`. */
   readonly observe?: never;
@@ -296,22 +302,23 @@ export type WaitOutcome<S> =
       ? DeadlineOutcome
       : never);
 
+/** The finite time bound a `ctx.poll` call must include: `timeoutMs` or `deadline`, not both. */
+type PollTimeBound =
+  | {
+      /** Relative duration, pinned on first open. */
+      readonly timeoutMs: number;
+      /** Mutually exclusive with the relative duration. */
+      readonly deadline?: never;
+    }
+  | {
+      /** Absolute epoch time from input or recorded data. */
+      readonly deadline: number;
+      /** Mutually exclusive with the absolute deadline. */
+      readonly timeoutMs?: never;
+    };
+
 /** A polling convenience call must include a finite time bound. */
-export type PollOptions<T, N extends JsonInput = JsonValue> = PollSource<T, N> &
-  (
-    | {
-        /** Relative duration, pinned on first open. */
-        readonly timeoutMs: number;
-        /** Mutually exclusive with the relative duration. */
-        readonly deadline?: never;
-      }
-    | {
-        /** Absolute epoch time from input or recorded data. */
-        readonly deadline: number;
-        /** Mutually exclusive with the absolute deadline. */
-        readonly timeoutMs?: never;
-      }
-  );
+export type PollOptions<T, N extends JsonInput = JsonValue> = PollSource<T, N> & PollTimeBound;
 
 /**
  * A command poll's time bound, like {@link PollOptions}: `ctx.poll` requires `timeoutMs` or
@@ -322,19 +329,35 @@ export type CommandPollOptions<T, O = unknown, N extends JsonInput = JsonValue> 
   O,
   N
 > &
+  PollTimeBound;
+
+/**
+ * The options of an inferred `ctx.poll` call, in either form: an observer {@link PollSource} or a
+ * {@link CommandPollSource}, with a time bound. `T` comes only from `schema`, never from a
+ * callback; `N` from `noteSchema` (or {@link JsonValue} without one) and `O` from `output`. `R` is
+ * the callback's own result type, which `ctx.poll` captures as a `const` type parameter checked
+ * against {@link PollResult}; so an `observe` or `done` callback, with or without parameters,
+ * keeps a literal terminal value such as `'green'` from a conditional expression or a statement
+ * return without `as const`.
+ */
+export type PollCallOptions<T, O, N extends JsonInput, R> = Omit<
+  PollSource<T, N>,
+  'observe' | 'command'
+> &
+  PollTimeBound &
   (
     | {
-        /** Relative duration, pinned on first open. */
-        readonly timeoutMs: number;
-        /** Mutually exclusive with the relative duration. */
-        readonly deadline?: never;
+        /** Read external state, as {@link PollSource.observe}. */
+        readonly observe: (context: PollContext<N>) => Promise<R>;
+        /** Only a command poll runs a command. */
+        readonly command?: never;
       }
-    | {
-        /** Absolute epoch time from input or recorded data. */
-        readonly deadline: number;
-        /** Mutually exclusive with the absolute deadline. */
-        readonly timeoutMs?: never;
-      }
+    | (Pick<CommandPollSource<unknown, O, N>, 'command' | 'output' | 'commandOptions' | 'live'> & {
+        /** Decide one check's outcome from the command's output, as {@link CommandPollSource.done}. */
+        readonly done: (output: NoInfer<O>, previous: PollContext<N>['previous']) => R | Promise<R>;
+        /** Only an observer poll has `observe`. */
+        readonly observe?: never;
+      })
   );
 
 /** Validated, serializable polling identity. */

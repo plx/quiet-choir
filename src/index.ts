@@ -250,6 +250,8 @@ export type {
   PollOutcome,
   DeadlineOutcome,
   PollOptions,
+  PollResult,
+  PollCallOptions,
   CommandPollSource,
   CommandPollOptions,
   PollCommandExecOptions,

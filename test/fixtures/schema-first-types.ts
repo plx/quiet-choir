@@ -3,7 +3,9 @@
 import {
   defineWorkflow,
   z,
+  type DeadlineOutcome,
   type ErrorMode,
+  type PollOutcome,
   type Settled,
   type WorkflowContext,
 } from '../../src/index.js';
@@ -81,4 +83,121 @@ export async function types(ctx: WorkflowContext, mode: ErrorMode): Promise<void
     onError: mode,
   });
   keep(step, object, text, settled, dynamic, settledText, dynamicText);
+}
+
+type Color = PollOutcome<'green' | 'red'> | DeadlineOutcome;
+
+/**
+ * Compile-only poll assertions (#320): observer and command callbacks, with and without
+ * parameters, keep literal terminal values from conditional and statement returns without
+ * `as const`, while `T` still comes only from `schema`. Never execute this function.
+ */
+export async function polls(ctx: WorkflowContext, ready: boolean): Promise<void> {
+  const color = z.enum(['green', 'red']);
+  const poll = { input: null, schema: color, every: 1_000, timeoutMs: 60_000 };
+  const argv: [string, ...string[]] = ['gh', 'pr', 'checks'];
+  const command = { command: argv, output: z.object({ ok: z.boolean() }) };
+  const observedConditional: Color = await ctx.poll('observed-conditional', {
+    ...poll,
+    observe: async () => (ready ? { done: true, value: 'green' } : { done: false }),
+  });
+  const observedStatements: Color = await ctx.poll('observed-statements', {
+    ...poll,
+    observe: async () => {
+      if (ready) return { done: true, value: 'green' };
+      return { done: false };
+    },
+  });
+  const contextConditional: Color = await ctx.poll('context-conditional', {
+    ...poll,
+    observe: async (context) =>
+      context.previous.checks > 2 ? { done: true, value: 'red' } : { done: false },
+  });
+  const contextStatements: Color = await ctx.poll('context-statements', {
+    ...poll,
+    observe: async (context) => {
+      if (context.previous.checks > 2) return { done: true, value: 'red' };
+      return { done: false, note: context.previous.checks };
+    },
+  });
+  const doneConditional: Color = await ctx.poll('done-conditional', {
+    ...poll,
+    ...command,
+    done: () => (ready ? { done: true, value: 'green' } : { done: false }),
+  });
+  const doneStatements: Color = await ctx.poll('done-statements', {
+    ...poll,
+    ...command,
+    done: () => {
+      if (ready) return { done: true, value: 'green' };
+      return { done: false };
+    },
+  });
+  const outputConditional: Color = await ctx.poll('output-conditional', {
+    ...poll,
+    ...command,
+    done: (output) => (output.ok ? { done: true, value: 'green' } : { done: false }),
+  });
+  const outputStatements: Color = await ctx.poll('output-statements', {
+    ...poll,
+    ...command,
+    done: (output) => {
+      if (output.ok) return { done: true, value: 'green' };
+      return { done: false };
+    },
+  });
+  const asyncDone: Color = await ctx.poll('async-done', {
+    ...poll,
+    ...command,
+    done: async (output) => (output.ok ? { done: true, value: 'green' } : { done: false }),
+  });
+  // Each rejected call fits on one line: TypeScript 6 reports it at the call, TypeScript 7 at the
+  // callback.
+  const numeric = { ...poll, schema: z.number() };
+  const noted = { ...poll, noteSchema: z.object({ seen: z.boolean() }) };
+  // @ts-expect-error 'blue' is not in the enum schema.
+  await ctx.poll('blue', { ...poll, observe: async () => ({ done: true, value: 'blue' }) });
+  // @ts-expect-error 'blue' is not in the enum schema.
+  await ctx.poll('blue-done', { ...poll, ...command, done: () => ({ done: true, value: 'blue' }) });
+  // @ts-expect-error A string value does not match a number schema.
+  await ctx.poll('numeric', { ...numeric, observe: async () => ({ done: true, value: 'one' }) });
+  // @ts-expect-error The note must match noteSchema.
+  await ctx.poll('noted', { ...noted, observe: async () => ({ done: false, note: { seen: 1 } }) });
+  // ctx.wait poll sources with zero-parameter conditional callbacks, written inline: under
+  // TypeScript 7 a spread command source loses its contextual type in ctx.wait.
+  const waited = await ctx.wait('waited', {
+    timeoutMs: 60_000,
+    poll: {
+      input: null,
+      schema: color,
+      every: 1_000,
+      observe: async () => (ready ? { done: true, value: 'green' } : { done: false }),
+    },
+  });
+  const waitedDone = await ctx.wait('waited-done', {
+    timeoutMs: 60_000,
+    poll: {
+      input: null,
+      schema: color,
+      every: 1_000,
+      command: argv,
+      output: z.object({ ok: z.boolean() }),
+      done: () => (ready ? { done: true, value: 'red' } : { done: false }),
+    },
+  });
+  const waitedColor: Color = waited;
+  const waitedDoneColor: Color = waitedDone;
+  keep(
+    observedConditional,
+    observedStatements,
+    contextConditional,
+    contextStatements,
+    doneConditional,
+    doneStatements,
+    outputConditional,
+    outputStatements,
+    asyncDone,
+    waitedColor,
+    waitedDoneColor,
+  );
 }

@@ -147,8 +147,8 @@ it('keeps one bounded wait record across hundreds of nonterminal observations', 
           observe: () =>
             Promise.resolve(
               ++checks >= count
-                ? { done: true as const, value: { answer: 42 } }
-                : { done: false as const, note: { ready: false } },
+                ? { done: true, value: { answer: 42 } }
+                : { done: false, note: { ready: false } },
             ),
         }),
     });
@@ -193,8 +193,8 @@ it.each(['signal', 'late-signal', 'late-poll'] as const)(
               observed++;
               return Promise.resolve(
                 ready
-                  ? { done: true as const, value: { passed: true } }
-                  : { done: false as const, note: { pending: 1 } },
+                  ? { done: true, value: { passed: true } }
+                  : { done: false, note: { pending: 1 } },
               );
             },
           },
@@ -1073,10 +1073,7 @@ it('keeps observeTimeoutMs out of wait identity and validates it', async () => {
           every: 30_000,
           timeoutMs: 600_000,
           observeTimeoutMs,
-          observe: () =>
-            Promise.resolve(
-              ready ? { done: true as const, value: null } : { done: false as const },
-            ),
+          observe: () => Promise.resolve(ready ? { done: true, value: null } : { done: false }),
         }),
     });
   const options = { stateDir, runId: 'observe-policy', input: null, clock };
