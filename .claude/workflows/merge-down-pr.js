@@ -1197,9 +1197,15 @@ If that JSON contains "done":false, run the exact same command again; repeat unt
 
 ${RELAY_RULES} The only id is "await": relay the output of the last run.`;
 
-async function waitForGate(sha, since, codex) {
-  // --stale-grace: GitHub may still report the pre-push head for a short while after publish.
-  const flags = `--sha ${sha} --since ${since} --codex ${codex ? 'required' : 'skip'} --stale-grace 90 --max-seconds 420`;
+async function waitForGate(sha, since, codex, previousHead) {
+  // --stale-grace: GitHub may still report the pre-push head for a short while after publish. An
+  // ancestor of the pushed head counts as that stale view; after a rebase the old head is not an
+  // ancestor, so --previous-head names it. It goes into a shell command, so only a sha passes.
+  const previous =
+    typeof previousHead === 'string' && /^[0-9a-f]{40}$/.test(previousHead) && previousHead !== sha
+      ? ` --previous-head ${previousHead}`
+      : '';
+  const flags = `--sha ${sha} --since ${since} --codex ${codex ? 'required' : 'skip'} --stale-grace 90${previous} --max-seconds 420`;
   for (let attempt = 1; attempt <= 3; attempt++) {
     const label = `await r${record.rounds}.${attempt}`;
     const gate = (await clerk(label, 'Gate', [step('await', 'await', flags)], AWAIT_LOOP)).await;
@@ -1243,7 +1249,13 @@ while (true) {
 
   const githubCodex = wantCodex && !LOCAL;
   let [gate, localReview] = await parallel([
-    () => waitForGate(head, githubCodex ? pub.review.since : pub.publish.at, githubCodex),
+    () =>
+      waitForGate(
+        head,
+        githubCodex ? pub.review.since : pub.publish.at,
+        githubCodex,
+        pub.publish.previousHead,
+      ),
     async () => (wantCodex && LOCAL ? localCodexReview(head, `r${record.rounds}`, 'Gate') : null),
   ]);
   if (!gate || gate.error) return blocked('gate', gate?.error ?? 'waiting produced no output');
@@ -1258,7 +1270,7 @@ while (true) {
     // The local review usually outlasts the CI wait, so the attention snapshot above can predate
     // threads that arrived meanwhile. CI is settled by now, so this returns after the settle delay
     // with fresh ci and attention.
-    const fresh = await waitForGate(head, pub.publish.at, false);
+    const fresh = await waitForGate(head, pub.publish.at, false, pub.publish.previousHead);
     if (!fresh || fresh.error)
       return blocked('gate', fresh?.error ?? 'refreshing the gate produced no output');
     if (fresh.headMoved)
@@ -1294,7 +1306,7 @@ while (true) {
       step('rerun', 'rerun', `--sha ${head}`),
     ]);
     if (!rerun.rerun.error && rerun.rerun.rerun.length) {
-      const again = await waitForGate(head, pub.publish.at, false);
+      const again = await waitForGate(head, pub.publish.at, false, pub.publish.previousHead);
       if (!again || again.error || again.headMoved || !again.done) {
         return blocked('gate', again?.error ?? 'waiting for re-run CI failed');
       }
