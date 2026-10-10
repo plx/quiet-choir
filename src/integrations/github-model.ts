@@ -1520,15 +1520,17 @@ export function codeScanningRead(
     // No `--slurp`: gh 2.100 (pkg/cmd/api) closes a slurped outer array even when a later page
     // fails, so alerts fetched before a dropped connection would parse as a complete list. Plain
     // `--paginate` merges REST array pages into one array and writes its closing `]` only after
-    // the last page; any failure after the first page leaves the array unclosed, and the JSON
-    // parse rejects it.
+    // the last page; any failure after the first page leaves the array unclosed. gh then exits
+    // 1, and exec.json classifies an accepted nonzero exit without JSON as kind `process` (#349),
+    // so the documented retry on ['process', 'timeout'] covers it, as it does an empty stdout.
     argv: apiArgv(
       repo,
       '--paginate',
       `repos/${repo.owner}/${repo.name}/code-scanning/alerts?ref=${encodeURIComponent(ref)}&state=${state}&per_page=100`,
     ),
     schema: codeScanningResponseSchema,
-    // gh exits 1 on an HTTP error and prints the body; the schema accepts only "unavailable".
+    // gh exits 1 on an HTTP error and prints the body; the schema accepts only "unavailable", so
+    // any other error body (a 404, a 401, a single-page 5xx body) is kind `schema`.
     okExitCodes: [0, 1],
     map: mapCodeScanning,
   };

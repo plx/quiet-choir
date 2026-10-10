@@ -307,11 +307,13 @@ export class IncompleteCollectionError extends Error {
 
 /**
  * Execution policy a read passes through to its exec; none of it enters identity. There is no
- * default retry, because telling a transient gh failure from a permanent one would mean guessing
- * from messages. Reads are safe to repeat, so a retry such as
- * `{ maxAttempts: 3, on: ['process', 'timeout'] }` is safe; a network failure that leaves no JSON
- * on stdout is kind `schema`. Raise `maxOutputBytes` (default 1048576) for large thread or comment
- * sets: an oversized read throws, it never shrinks.
+ * default retry (#349): telling a transient gh failure from a permanent one would mean guessing
+ * from messages, and kind `process` also covers a missing login or a GraphQL error. Reads are safe
+ * to repeat, so pass a retry such as `{ maxAttempts: 3, on: ['process', 'timeout'] }`. A dropped
+ * connection or other gh failure that leaves no JSON on stdout is kind `process` on every read, so
+ * that policy retries it; an incomplete collection is kind `schema` (an
+ * {@link IncompleteCollectionError}), so that policy never retries it. Raise `maxOutputBytes`
+ * (default 1048576) for large thread or comment sets: an oversized read throws, it never shrinks.
  */
 export interface GithubReadPolicy {
   /** Deadline in milliseconds, default 300000. */
@@ -326,7 +328,9 @@ export interface GithubReadPolicy {
  * Execution policy of a write, with the keys of {@link GithubReadPolicy}: `timeoutMs` and
  * `maxOutputBytes` apply to each gh command of the write, and `retry` is the step's retry policy.
  * None of it enters identity. There is no default retry; the reconciled ops are safe to repeat, so
- * a retry such as `{ maxAttempts: 3, on: ['process', 'timeout'] }` is recommended.
+ * a retry such as `{ maxAttempts: 3, on: ['process', 'timeout'] }` is recommended. As for reads, a
+ * gh failure that leaves no JSON on stdout is kind `process` and an incomplete collection is kind
+ * `schema`.
  */
 export type GithubWritePolicy = GithubReadPolicy;
 
