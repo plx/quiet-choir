@@ -129,8 +129,8 @@ const revisionSixteenReadDigest =
 const shapeDigests: Readonly<Record<string, { zod: string; run: string; steps: string }>> = {
   '17': {
     zod: '4.5.4',
-    run: 'b1bef4b3d2d466ebcd3b501d66fbd50648ebb50dcef0a633a99e839d2ad7f623',
-    steps: '2aaf636889e4efc673d5a5a44519dfb609d08d32457ad7349dad8a392d58fec5',
+    run: '563c2ce563e5f1fd7a6ac44d26f794fcf34701a74ef486cec88fffd3aa03cca0',
+    steps: 'b8c0698a4791f24bc30576a4258b7631cb2dea80a3a6ddd17d830fc9a120bc79',
   },
 };
 const FIRST_SHAPE_PIN = 17;
@@ -258,6 +258,88 @@ describe('record key snapshot', () => {
       budget: z.object({ unit: z.string(), limit: z.number() }),
     });
     expect(digest(recordSchemaJson(reordered))).toBe(baseline);
+  });
+
+  it('names generated definitions by structure, so reordering fields that need them is moot', () => {
+    // Recursive schemas (z.json(), z.lazy) become definitions whose generated names follow source
+    // order; the digest must not.
+    interface Tree {
+      label: string;
+      children: Tree[];
+    }
+    interface Ping {
+      pong: Pong | null;
+      at: number;
+    }
+    interface Pong {
+      ping: Ping | null;
+      by: string;
+    }
+    const recursive = (labelFirst: boolean, label: z.ZodType<string | number> = z.string()) => {
+      const tree: z.ZodType<Tree> = z.lazy(() =>
+        labelFirst
+          ? z.object({ label, children: z.array(tree) })
+          : z.object({ children: z.array(tree), label }),
+      ) as z.ZodType<Tree>;
+      const ping: z.ZodType<Ping> = z.lazy(() =>
+        labelFirst
+          ? z.object({ pong: pong.nullable(), at: z.number() })
+          : z.object({ at: z.number(), pong: pong.nullable() }),
+      );
+      const pong: z.ZodType<Pong> = z.lazy(() =>
+        labelFirst
+          ? z.object({ ping: ping.nullable(), by: z.string() })
+          : z.object({ by: z.string(), ping: ping.nullable() }),
+      );
+      return { tree, ping };
+    };
+    const forward = (variant: 'base' | 'jsonRemoved' | 'treeRetyped' | 'deepAddition' = 'base') => {
+      const { tree, ping } = recursive(true, variant === 'treeRetyped' ? z.number() : z.string());
+      return z.object({
+        input: z.json(),
+        nested: z.object({
+          meta: variant === 'jsonRemoved' ? z.string() : z.json(),
+          inner: z.object({
+            data: z.json(),
+            tree,
+            ...(variant === 'deepAddition' ? { extra: z.json() } : {}),
+          }),
+          ping,
+        }),
+        output: z.json(),
+        name: z.string(),
+      });
+    };
+    const reversed = () => {
+      const { tree, ping } = recursive(false);
+      return z.object({
+        name: z.string(),
+        output: z.json(),
+        nested: z.object({
+          ping,
+          inner: z.object({ tree, data: z.json() }),
+          meta: z.json(),
+        }),
+        input: z.json(),
+      });
+    };
+    const baseline = digest(recordSchemaJson(forward()));
+    expect(digest(recordSchemaJson(reversed()))).toBe(baseline);
+    for (const variant of ['jsonRemoved', 'treeRetyped', 'deepAddition'] as const)
+      expect(digest(recordSchemaJson(forward(variant))), variant).not.toBe(baseline);
+    // Every $ref still resolves to a renamed definition.
+    const json = recordSchemaJson(forward()) as { definitions: Record<string, unknown> };
+    const refs = new Set<string>();
+    JSON.stringify(json, (key, value: unknown) => {
+      if (key === '$ref' && typeof value === 'string') refs.add(value);
+      return value;
+    });
+    expect(refs.size).toBeGreaterThan(0);
+    expect([...refs].sort()).toEqual(
+      Object.keys(json.definitions)
+        .map((name) => `#/definitions/${name}`)
+        .sort(),
+    );
   });
 
   it('explains how to update a failing pin', () => {

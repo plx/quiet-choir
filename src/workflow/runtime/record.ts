@@ -1404,16 +1404,68 @@ function sortRequired(value: JsonValue): JsonValue {
   return result;
 }
 
+const DEFINITION_REF = '#/definitions/';
+
+/**
+ * Rename a draft-7 schema's root `definitions` to `d0`, `d1`, ... in the order a sorted-key walk
+ * first reaches a `$ref` to each, from the root (without `definitions`) and then through each
+ * renamed definition in turn, and rewrite every such `$ref`. Zod numbers generated definitions in
+ * source order, so this makes a field reorder moot. Definitions no `$ref` reaches are dropped.
+ */
+function canonicalDefinitions(schema: JsonValue): JsonValue {
+  if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) return schema;
+  const definitions = schema['definitions'];
+  if (definitions === undefined || definitions === null) return schema;
+  if (typeof definitions !== 'object' || Array.isArray(definitions)) return schema;
+  const names = new Map<string, string>();
+  const pending: [string, JsonValue][] = [];
+  const rename = (ref: string): string => {
+    if (!ref.startsWith(DEFINITION_REF)) return ref;
+    const name = ref.slice(DEFINITION_REF.length).replaceAll('~1', '/').replaceAll('~0', '~');
+    const body = Object.hasOwn(definitions, name) ? definitions[name] : undefined;
+    if (body === undefined) return ref;
+    let canonical = names.get(name);
+    if (canonical === undefined) {
+      canonical = `d${String(names.size)}`;
+      names.set(name, canonical);
+      pending.push([canonical, body]);
+    }
+    return `${DEFINITION_REF}${canonical}`;
+  };
+  const rewrite = (value: JsonValue): JsonValue => {
+    if (Array.isArray(value)) return value.map(rewrite);
+    if (value === null || typeof value !== 'object') return value;
+    const result: Record<string, JsonValue> = {};
+    const entries = Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    for (const [key, child] of entries)
+      result[key] = key === '$ref' && typeof child === 'string' ? rename(child) : rewrite(child);
+    return result;
+  };
+  const result = rewrite(
+    Object.fromEntries(Object.entries(schema).filter(([key]) => key !== 'definitions')),
+  ) as Record<string, JsonValue>;
+  const renamed: Record<string, JsonValue> = {};
+  // `pending` grows while it is walked (a definition's body can reach further definitions), and an
+  // array iterator visits elements pushed during the loop.
+  for (const [canonical, body] of pending) renamed[canonical] = rewrite(body);
+  result['definitions'] = renamed;
+  return result;
+}
+
 /**
  * The JSON Schema of any Zod schema as the schema-revision test pins it: draft-7, output side,
- * unrepresentable types rendered as `{}`, Zod's nonenumerable metadata dropped and every `required`
- * list sorted. Hash it with `digest` for a key-order-independent value. @internal
+ * unrepresentable types rendered as `{}`, Zod's nonenumerable metadata dropped, every `required`
+ * list sorted and the generated `definitions` renamed by where a sorted-key walk first refers to
+ * them (`d0`, `d1`, ...) with every `$ref` rewritten to match. Hash it with `digest` for a value
+ * that reordering fields in source does not move. @internal
  */
 export function recordSchemaJson(schema: z.ZodType): JsonValue {
-  return sortRequired(
-    jsonValue(
-      JSON.parse(
-        JSON.stringify(z.toJSONSchema(schema, { target: 'draft-7', unrepresentable: 'any' })),
+  return canonicalDefinitions(
+    sortRequired(
+      jsonValue(
+        JSON.parse(
+          JSON.stringify(z.toJSONSchema(schema, { target: 'draft-7', unrepresentable: 'any' })),
+        ),
       ),
     ),
   );
