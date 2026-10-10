@@ -247,7 +247,7 @@ export type CapabilityKeysOf<D> = D extends {
  * `TAddDirProfile` appears only as the checked type of conditional types, never in an `extends`
  * clause, so TypeScript measures contexts as contravariant in it: a context with fewer rooted
  * profiles stays assignable from the permissive default, which keeps typed definitions assignable
- * to unparameterized `WorkflowDefinition` parameters. @internal
+ * to unparameterized `WorkflowDefinition` parameters. A helper of {@link CallOptions}.
  */
 export type ClaudeAddDirSelection<TProfile extends string, TAddDirProfile> =
   | {
