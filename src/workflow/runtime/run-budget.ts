@@ -204,8 +204,9 @@ export class RunBudget {
 
   /**
    * Fold `stepId`'s attempts, as the record holds them now, into the window gate's projection.
-   * The runner calls it after an admitted attempt settles (through `enter`'s release, and before a
-   * retry's backoff) and after it rewrites a recorded step's kind, harness or request (redefinition
+   * The runner calls it after an admitted attempt settles (through `enter`'s release, before a
+   * retry's backoff, and after a success's completion save, ahead of any transcript discard that
+   * delays the release) and after it rewrites a recorded step's kind, harness or request (redefinition
    * and legacy migration). When a report the step held no longer stands, the projection is dropped
    * and the next window check rescans the record once. A no-op until the first window check.
    */

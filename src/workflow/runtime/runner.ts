@@ -2442,6 +2442,8 @@ export async function runWorkflow<
             await save(
               `Step ${id} completed but its checkpoint write failed; resume may repeat it unless a later save recovers the result`,
             );
+            // The release follows the transcript discard; the gate counts the saved report now.
+            if (admitted) budget.observe(id);
             if (transcript && execution.policy.transcripts === 'on-failure') {
               try {
                 await boundedTranscript(transcript, 'discard');

@@ -23,6 +23,7 @@ import {
   type WorkflowContext,
   type WorkflowEvent,
 } from '../src/index.js';
+import { AttemptTranscript } from '../src/workflow/runtime/agent-transcript.js';
 import { ThresholdLogger } from '../src/application/execution.js';
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import { TickWorkflowExecutor } from '../src/workflow/loader/tick.js';
@@ -548,6 +549,58 @@ describe('the gate in a run', () => {
       }
     },
   );
+
+  it('counts a committed report while its on-failure transcript discard is still pending', async () => {
+    const stateDir = await directory();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let discarding!: () => void;
+    const discardStarted = new Promise<void>((resolve) => {
+      discarding = resolve;
+    });
+    vi.spyOn(AttemptTranscript.prototype, 'discard').mockImplementation(async () => {
+      discarding();
+      await gate;
+    });
+    const agent = harness(() => reportAt(0.9));
+    const definition = defineWorkflow({
+      ...base,
+      async run(ctx) {
+        await ctx.map('items', [0, 1], { concurrency: 2 }, async (item) => {
+          if (item === 0) {
+            await ctx.claude.text('first', { prompt: 'first' });
+            return;
+          }
+          // The first attempt has committed and is discarding its transcript, still admitted.
+          await discardStarted;
+          // Settles the discard only after the sibling's admission check has run.
+          setTimeout(release, 50);
+          await ctx.claude.text('sibling', { prompt: 'sibling' });
+        });
+        return null;
+      },
+    });
+    const options = { stateDir, runId: 'discard', harness: agent, clock: clockAt(wake - hour) };
+    const result = await runWorkflow(definition, {
+      ...options,
+      input: null,
+      maxWindowUtilization: 0.5,
+      policy: [{ transcripts: 'on-failure' }],
+    });
+    release();
+    expect(result).toMatchObject({ status: 'suspended', nextWakeAt: wake });
+    expect(agent.calls).toEqual(['claude']);
+    const record = await readRun(options);
+    expect(record.steps['items/0/first']?.status).toBe('completed');
+    expect(record.steps['items/1/sibling']).toBeUndefined();
+    expect(record.budgetStop).toMatchObject({
+      stepId: 'items/1/sibling',
+      observed: 0.9,
+      resetsAt: T,
+    });
+  });
 
   it('wakes at an earlier wait deadline, so the gate does not delay a timeout', async () => {
     const stateDir = await directory();
