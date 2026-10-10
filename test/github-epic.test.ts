@@ -493,6 +493,27 @@ describe('headRefPrefix: pull requests linked by head branch', () => {
     expect(nextTicket(only).skipped.filter((entry) => entry.number === 164)).toEqual([]);
   });
 
+  it('keeps a same-numbered pull request of another repository beside the branch match', () => {
+    const foreign = {
+      ...pr(401, 'CLOSED'),
+      url: 'https://github.com/other/elsewhere/pull/401',
+    };
+    const snapshot = mapped(
+      both(
+        (raw) => {
+          node(raw, 164).closedByPullRequestsReferences.nodes.push(foreign);
+        },
+        withOpen(openPr(401, 'epic-99/164-work')),
+      ),
+    );
+    const pullRequests = snapshot.items.find((item) => item.number === 164)?.pullRequests;
+    expect(pullRequests?.map((entry) => entry.url)).toEqual([
+      'https://github.com/other/elsewhere/pull/401',
+      `https://github.com/${REPO}/pull/401`,
+    ]);
+    expect(nextTicket(snapshot).pick).toMatchObject({ number: 164, status: 'in-flight' });
+  });
+
   it('reports a branch-linked pull request of a skipped in-flight ticket', () => {
     const result = nextTicket(
       mapped(withOpen(openPr(900, 'epic-99/167-work'), openPr(901, 'epic-99/164-work'))),

@@ -218,7 +218,8 @@ number would be ambiguous); anything else throws before `gh` runs.
 
 - **Order and duplicates.** Each pull request appears once in an item's `pullRequests`: the
   closing-reference entries come first, as before, then the branch-only matches in ascending number.
-  A pull request found both ways keeps its closing-reference entry.
+  A pull request found both ways keeps its closing-reference entry; the same pull request is decided
+  by URL, so a same-numbered pull request of another repository stays beside it.
 - **Open, same-repository only.** Closed and merged pull requests are not linked by branch, and
   neither are pull requests from forks (`isCrossRepository`): anyone could otherwise park a ticket
   by naming a fork branch. Items of other repositories get no branch matches.

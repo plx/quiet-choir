@@ -1196,13 +1196,17 @@ const epicPullRequest = (pr: RawEpicPullRequestRef): GithubEpicPullRequest => ({
   headRefName: pr.headRefName,
 });
 
-/** `closing` as it is, then the `branch` matches it does not hold, so each number appears once. */
+/**
+ * `closing` as it is, then the `branch` matches it does not hold, so each pull request appears
+ * once. Identity is the URL: a closing reference can name a pull request of another repository
+ * with the same number.
+ */
 function mergePullRequests(
   closing: readonly GithubEpicPullRequest[],
   branch: readonly GithubEpicPullRequest[],
 ): GithubEpicPullRequest[] {
-  const seen = new Set(closing.map((pr) => pr.number));
-  return [...closing, ...branch.filter((pr) => !seen.has(pr.number))];
+  const seen = new Set(closing.map((pr) => pr.url));
+  return [...closing, ...branch.filter((pr) => !seen.has(pr.url))];
 }
 
 /**
