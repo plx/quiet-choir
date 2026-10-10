@@ -80,11 +80,13 @@ input, `meta` `{ integration: 'github', op }`, and every gh command through `Ste
   alone, a mapped ID that is not a run of the commit is ignored, and a run not in the map follows
   the scalar. The map is validated before the step opens and recorded in the input in ascending run
   ID order, so the identity moved to `/2`; a caller builds the next round's map from the previous
-  result (`run.attempt + 1` for each rerun run), since a `waitChecks` failure carries no run
-  attempt. The plan asked for exactly the baseline; at or below it also reruns a failed run no
-  earlier round saw, which no round can have rerun. The step then confirms, with the merge's bounds,
-  that every rerun run is queued, running or at a higher attempt, so a following `waitChecks` does
-  not read the stale failure; that is best effort and reported as `confirmed`.
+  result (`run.attempt + 1` for each rerun run and the reported `run.attempt` for each skipped run,
+  since a retried or resumed step reports its own committed reruns as skipped), since a `waitChecks`
+  failure carries no run attempt. The plan asked for exactly the baseline; at or below it also
+  reruns a failed run no earlier round saw, which no round can have rerun. The step then confirms,
+  with the merge's bounds, that every rerun run is queued, running or at a higher attempt, so a
+  following `waitChecks` does not read the stale failure; that is best effort and reported as
+  `confirmed`.
 - **Guarantee classes.** `docs/github.md` names a class for every op, 0046's included: reconciled,
   conditional (check-then-act), conditional (atomic, the merge's `sha`), or at-least-once.
 

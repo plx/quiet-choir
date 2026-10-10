@@ -788,7 +788,10 @@ export interface GithubRerunFailedOptions {
    * is left alone. A run not in the map follows `attempt`. A mapped ID that is not among the
    * commit's runs is ignored. Use it when runs failed at different attempts, so a crash between the
    * `POST` and the checkpoint can never rerun a run twice. For the next round, build the map from
-   * the previous result: `Object.fromEntries(previous.rerun.map((run) => [run.id, run.attempt + 1]))`.
+   * the previous result, carrying over both lists, because a retried or resumed step reports its own
+   * committed reruns as `skipped`: skipped runs at their reported attempt and rerun runs at
+   * `attempt + 1`, that is
+   * `Object.fromEntries([...previous.skipped.map((run) => [run.id, run.attempt]), ...previous.rerun.map((run) => [run.id, run.attempt + 1])])`.
    */
   readonly attempts?: Readonly<Record<number, number>>;
 }

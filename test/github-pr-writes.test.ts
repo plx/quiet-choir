@@ -308,6 +308,18 @@ const crashCases: Readonly<Record<string, CrashCase>> = {
         ],
         confirmed: true,
       });
+      // The retry reports its own committed reruns as skipped, so the next round's map carries both
+      // lists: skipped runs at their reported attempt, rerun runs at `attempt + 1`.
+      const previous = output as {
+        rerun: { id: number; attempt: number }[];
+        skipped: { id: number; attempt: number }[];
+      };
+      expect(
+        Object.fromEntries([
+          ...previous.skipped.map((run) => [run.id, run.attempt]),
+          ...previous.rerun.map((run) => [run.id, run.attempt + 1]),
+        ]),
+      ).toEqual({ 101: 2, 102: 3 });
     },
     writes: ['POST actions/runs/102/rerun-failed-jobs', 'POST actions/runs/101/rerun-failed-jobs'],
   },

@@ -683,10 +683,18 @@ a run of the commit is ignored. Keys must be canonical positive integer run IDs 
 `01` or `abc`) and values positive integers; anything else throws before the step opens.
 
 For the next round, build the map from the previous result: each rerun run will be at `attempt + 1`
-when you next see it fail, so
-`Object.fromEntries(previous.rerun.map((run) => [run.id, run.attempt + 1]))` is the following
-round's `attempts`. A map cannot be derived from `waitChecks`: its failures carry a run ID but no
-run attempt.
+when you next see it fail, and each skipped run already moved past the old baseline, so its reported
+attempt is the one you will see fail. A retried or resumed step can report its own committed reruns
+as skipped, so they must be carried over:
+
+```ts
+const next = Object.fromEntries([
+  ...previous.skipped.map((run) => [run.id, run.attempt]),
+  ...previous.rerun.map((run) => [run.id, run.attempt + 1]),
+]);
+```
+
+A map cannot be derived from `waitChecks`: its failures carry a run ID but no run attempt.
 
 Then the step reads the runs until every rerun one is queued, running or at a higher attempt, with
 the bounds of the merge confirmation, so a following `waitChecks` does not read the failure it just
