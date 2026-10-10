@@ -52,11 +52,12 @@ stays permissive and the runtime check remains the backstop. Runtime behavior is
    possibly present (a widened `AgentProfile` or `AgentDefaults`), a non-literal `extends` or
    `defaults.profile`, a non-literal role name, and a role that `TProfiles` does not describe.
 5. **Variance.** The parameter appears only as the checked type of conditional types, never in an
-   `extends` clause. TypeScript then measures contexts as contravariant in it, so typed definitions
+   `extends` clause, so TypeScript does not measure contexts as invariant in it. Typed definitions
    stay assignable to `WorkflowDefinition<I, O>`, `WorkflowDeclaration`, `runWorkflow` and
-   `ctx.workflow` parameters through the default. A draft that tested the parameter in an `extends`
-   clause measured as invariant, and the structural fallback then failed on the typed by-name
-   `ctx.workflow` overloads.
+   `ctx.workflow` parameters through the default, and a narrowed context still reaches a helper
+   typed `WorkflowContext<'role', BuiltInHarnesses, true>`. A draft that tested the parameter in an
+   `extends` clause measured as invariant, and the structural fallback then failed on the typed
+   by-name `ctx.workflow` overloads.
 6. **Unchanged sites.** `runWorkflow` and the typed-child `ctx.workflow` overloads keep inferring
    seven parameters and accept narrow definitions through the default. A child stays typed by its
    own definition; delegation is not narrowed at type level.

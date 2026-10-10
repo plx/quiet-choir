@@ -245,9 +245,10 @@ export type CapabilityKeysOf<D> = D extends {
  * with a rooted `profile`, and admits it without `profile` only when `undefined` is in the set.
  *
  * `TAddDirProfile` appears only as the checked type of conditional types, never in an `extends`
- * clause, so TypeScript measures contexts as contravariant in it: a context with fewer rooted
- * profiles stays assignable from the permissive default, which keeps typed definitions assignable
- * to unparameterized `WorkflowDefinition` parameters. A helper of {@link CallOptions}.
+ * clause, so TypeScript does not measure contexts as invariant in it: a context with fewer rooted
+ * profiles and the permissive default stay mutually assignable, which keeps typed definitions
+ * assignable to unparameterized `WorkflowDefinition` parameters and typed contexts to helper
+ * contracts. A helper of {@link CallOptions}.
  */
 export type ClaudeAddDirSelection<TProfile extends string, TAddDirProfile> =
   | {
