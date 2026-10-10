@@ -540,10 +540,22 @@ export interface GithubEpicReads {
    * checklist itself. Complete or throw: any truncated connection, or fewer sub-issues listed than
    * GitHub counts, throws `IncompleteCollectionError`. `maxOutputBytes` defaults to 8 MiB. Pass the
    * result to {@link nextTicket}.
+   *
+   * `headRefPrefix` links pull requests by head branch (off by default): an item N also gets every
+   * open pull request of this repository, not a fork, whose head branch is `headRefPrefix` + N or
+   * starts with `headRefPrefix` + N + `-`, such as `epic-172/357-slug` for `epic-172/`, with N
+   * written without leading zeros. Closing references come first, then the branch-only matches in
+   * ascending number, each pull request once, so {@link nextTicket} reports a ticket that has a
+   * branch-only pull request as in flight. The prefix must be nonempty, hold no NUL and not end in
+   * a digit, or the call throws before `gh` runs. It adds the repository's first 100 open pull
+   * requests to the one query, so a repository with more open pull requests throws
+   * `IncompleteCollectionError` for `repository.pullRequests`. The prefix filters in the mapper and
+   * is not part of the step identity; see
+   * [ADR 0048](../../docs/decisions/0048-epic-snapshot-and-next-ticket-selector.md).
    */
   snapshot(
     id: string,
-    args: { readonly number: number },
+    args: { readonly number: number; readonly headRefPrefix?: string },
     policy?: GithubReadPolicy,
   ): Promise<GithubEpicSnapshot>;
 }
@@ -859,7 +871,8 @@ export function github(
       alerts: async (id, args, policy) => read(id, codeScanningRead(repo, args), policy),
     },
     epic: {
-      snapshot: async (id, args, policy) => read(id, epicSnapshotRead(repo, args.number), policy),
+      snapshot: async (id, args, policy) =>
+        read(id, epicSnapshotRead(repo, args.number, args.headRefPrefix), policy),
     },
     comment: writes.comment,
     thread: writes.thread,
