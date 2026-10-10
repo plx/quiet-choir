@@ -149,11 +149,13 @@ too-small deadline turns `'transient'` retries into repeated failures.
 Each attempt's `diagnostics.toolUses` counts tool calls from the parsed stream (not from the lossy
 progress events): Claude assistant `tool_use` blocks by ID, without the `StructuredOutput` tool that
 carries structured output, and distinct Codex `command_execution`, `file_change`, `mcp_tool_call`
-and `web_search` items, counted from the header when the parser skips an oversized line. A skipped
-oversized Claude assistant line leaves a zero count unknown (`null`). When the profile's
-`expectsToolUse` is true and a completed attempt reports `toolUses: 0`, the step records a
-`no-tool-use` warning, which the completed `agent.finished` event carries in `warnings` and the CLI
-logs at warn level ([agent profiles](agent-profiles.md)). The warning never fails the attempt.
+and `web_search` items, counted from the header when the parser skips an oversized line. The
+`mcp_tool_call` and `web_search` item shapes are pinned by the captures in
+`test/fixtures/harness-tools/`. A skipped oversized Claude assistant line leaves a zero count
+unknown (`null`). When the profile's `expectsToolUse` is true and a completed attempt reports
+`toolUses: 0`, the step records a `no-tool-use` warning, which the completed `agent.finished` event
+carries in `warnings` and the CLI logs at warn level ([agent profiles](agent-profiles.md)). The
+warning never fails the attempt.
 
 Custom adapters own both features. A `HarnessRequest` carries the resolved `idleTimeoutMs` in its
 options when the adapter's option schema has that key (`defineHarness` adds it); pass it to
@@ -221,8 +223,9 @@ and fails unless every request carries the sentinel model and the bogus effort. 
 [ADR 0040](decisions/0040-grade-harness-versions-against-a-tested-range.md).
 
 To widen the range after a CLI update, run `npm run build && npm run test:contract` (and, for Codex,
-`npm run test:contract:doctor`) from a quiet-choir checkout, review the captures, then raise
-`testedHarnessVersions` `maximum` (or lower `minimum`) in `src/harnesses/tested-versions.ts`.
+`npm run test:contract -- --tools` and `npm run test:contract:doctor`) from a quiet-choir checkout,
+review the captures, then raise `testedHarnessVersions` `maximum` (or lower `minimum`) in
+`src/harnesses/tested-versions.ts`.
 
 `CliHarness` also reads `--version` on each provider's first live use in a run invocation. Saved
 `harnesses` record binary/version, and inspect shows them. Discovery failures and version changes on

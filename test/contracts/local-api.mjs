@@ -66,10 +66,34 @@ function anthropic(response, body, scenario, requestedTool) {
   event(response, { type: 'message_stop' });
   response.end();
 }
-function responses(response, scenario, count) {
+function responses(response, scenario, count, step) {
   response.writeHead(200, { 'content-type': 'text/event-stream' });
   const id = `resp_fixture_${count}`;
   event(response, { type: 'response.created', response: { id } });
+  if (scenario === 'codex-web-search-success') {
+    event(response, {
+      type: 'response.output_item.added',
+      item: { type: 'web_search_call', id: 'ws_fixture', status: 'in_progress' },
+    });
+    event(response, {
+      type: 'response.output_item.done',
+      item: {
+        type: 'web_search_call',
+        id: 'ws_fixture',
+        status: 'completed',
+        action: { type: 'search', query: 'quiet-choir contract fixture' },
+      },
+    });
+  }
+  if (step) {
+    event(response, { type: 'response.output_item.done', item: step });
+    event(response, {
+      type: 'response.completed',
+      response: { id, usage: { input_tokens: 10, output_tokens: 3, total_tokens: 13 } },
+    });
+    response.end();
+    return;
+  }
   if (scenario === 'codex-reconnect-success' && count === 1) {
     event(response, {
       type: 'response.output_item.added',
@@ -110,6 +134,66 @@ function responses(response, scenario, count) {
   response.end();
 }
 
+/** Function tools in a tool list, with the namespace each is nested in (if any). */
+function flattenTools(tools, namespace) {
+  return (Array.isArray(tools) ? tools : []).flatMap((tool) =>
+    tool?.type === 'namespace'
+      ? flattenTools(tool.tools, tool.name)
+      : typeof tool?.name === 'string'
+        ? [{ name: tool.name, ...(namespace === undefined ? {} : { namespace }) }]
+        : [],
+  );
+}
+
+/**
+ * The scripted model turn for the MCP scenario. Codex 0.160 defers MCP tools behind `tool_search`,
+ * so the model searches first, then calls the `echo` tool by the namespace and name that the
+ * request or the tool_search output offered, and answers once the call returned. Returns `{ item }`
+ * for a tool step, `{}` for the closing message, or `{ error }` when the tool is never offered so
+ * that drift fails loudly.
+ */
+function mcpStep(body) {
+  const input = Array.isArray(body.input) ? body.input : [];
+  if (input.some((item) => item?.type === 'function_call_output')) return {};
+  const offered = [
+    ...flattenTools(body.tools),
+    ...input.flatMap((item) =>
+      item?.type === 'tool_search_output' ? flattenTools(item.tools) : [],
+    ),
+  ].find((candidate) => /echo/iu.test(candidate.name));
+  if (offered)
+    return {
+      item: {
+        type: 'function_call',
+        id: 'fc_fixture',
+        call_id: 'call_fixture',
+        ...(offered.namespace === undefined ? {} : { namespace: offered.namespace }),
+        name: offered.name,
+        arguments: '{"text":"contract"}',
+      },
+    };
+  const search = (body.tools ?? []).some((candidate) => candidate?.type === 'tool_search');
+  if (search && !input.some((item) => item?.type === 'tool_search_call'))
+    return {
+      item: {
+        type: 'tool_search_call',
+        id: 'ts_fixture',
+        call_id: 'call_search_fixture',
+        execution: 'client',
+        arguments: { query: 'echo' },
+      },
+    };
+  return {
+    error: {
+      error: {
+        type: 'invalid_request_error',
+        code: 'fixture_tool_missing',
+        message: 'MCP fixture tool not offered (fake)',
+      },
+    },
+  };
+}
+
 export async function fakeApi(scenario, options = {}) {
   let count = 0;
   let claudeCalls = 0;
@@ -120,7 +204,22 @@ export async function fakeApi(scenario, options = {}) {
       for await (const bytes of request) text += bytes;
       const body = JSON.parse(text || '{}');
       // Record only shape diagnostics, never headers or credential values.
-      requests.push({ url: request.url, model: body.model ?? null, stream: body.stream ?? null });
+      requests.push({
+        url: request.url,
+        model: body.model ?? null,
+        stream: body.stream ?? null,
+        // Tool kinds, names and the web search access flag only: enough to assert what Codex
+        // offered, never its instructions.
+        tools: Array.isArray(body.tools)
+          ? body.tools.map((tool) => ({
+              type: tool?.type ?? null,
+              name: tool?.name ?? null,
+              ...(typeof tool?.external_web_access === 'boolean'
+                ? { externalWebAccess: tool.external_web_access }
+                : {}),
+            }))
+          : [],
+      });
       options.onRequest?.({ url: request.url, body });
       if (request.url.includes('count_tokens')) return json(response, 200, { input_tokens: 7 });
       if (request.url.startsWith('/v1/messages')) {
@@ -176,7 +275,13 @@ export async function fakeApi(scenario, options = {}) {
             },
             status: 404,
           });
-        responses(response, scenario, ++count);
+        let step;
+        if (scenario === 'codex-mcp-tool-success') {
+          step = mcpStep(body);
+          if (step.error) return json(response, 400, step.error);
+          step = step.item;
+        }
+        responses(response, scenario, ++count, step);
       } else
         json(response, 404, { error: { message: 'No upstream API: local contract server only.' } });
     } catch (error) {

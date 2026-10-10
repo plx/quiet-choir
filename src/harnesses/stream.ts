@@ -21,7 +21,11 @@ function names(value: unknown): string[] {
       })
     : [];
 }
-/** Codex item types that are tool calls (live 0.157.1 evidence in #109). */
+/**
+ * Codex item types that are tool calls (live 0.157.1 evidence in #109). The `mcp_tool_call` and
+ * `web_search` shapes are pinned by the captures in `test/fixtures/harness-tools/` (codex-cli
+ * 0.160.0, also reproduced on 0.157.1), which `npm run test:contract -- --tools` re-checks.
+ */
 const codexToolItems = new Set(['command_execution', 'file_change', 'mcp_tool_call', 'web_search']);
 /** Bound for deduplication sets; a protocol that exceeds it can only overcount, never warn. */
 const maxTrackedIds = 4096;

@@ -2,6 +2,11 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Contributors: `npm run test:contract -- --tools` captures real Codex `mcp_tool_call` and
+  `web_search` items against a local fake API and stdio MCP server, with no upstream cost (#334).
+  The checked-in captures (codex-cli 0.160.0) in `test/fixtures/harness-tools/` back unit tests that
+  pin the tool-use count and the progress target fields, so a change in Codex's item shapes fails
+  the contract run instead of silently producing `no-tool-use` warnings. No runtime change.
 - `--events` JSONL and `workflow events` now carry tool-use evidence (#333). The `step.completed`,
   `step.failed` and `step.settled` lines of an agent step gain `toolUses` (after `costUsd`) when the
   attempt reported a count, and a `step.completed` line carries the step's warnings as `msg` with
