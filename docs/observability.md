@@ -187,7 +187,7 @@ both from the step's `agent.finished` event in its own process, as it does `harn
 
 ```sh
 tail -n +1 -F /abs/review-42.events.jsonl | grep --line-buffered no-tool-use
-tail -n +1 -F /abs/review-42.events.jsonl | jq -c 'select(.msg|startswith("no-tool-use"))'
+tail -n +1 -F /abs/review-42.events.jsonl | jq -c 'select((.msg // "") | startswith("no-tool-use"))'
 ```
 
 Warnings are free text from the adapters and the runtime and can include paths; like error text,
