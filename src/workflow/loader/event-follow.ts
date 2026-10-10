@@ -166,10 +166,16 @@ const cleanupWarning = 'Could not remove successful transcript';
  * 'on-failure'` the runner saves the completion, then discards the transcript and saves again,
  * adding a warning when the discard fails; it emits `step.completed` only after that second save.
  * Until it lands (the receipt still retained and no cleanup warning) while the attempt's execution
- * is the running one, the line's warnings are not final, so the follower holds it back.
+ * is the running one, the line's warnings are not final, so the follower holds it back. A stale
+ * run's owner is gone and the cleanup will never land, so nothing is pending then.
  */
-function cleanupPending(record: RunRecord, step: StepRecord, attempt: AttemptRecord): boolean {
-  if (record.status !== 'running' || attempt.transcript?.retained !== true) return false;
+function cleanupPending(
+  record: RunRecord,
+  step: StepRecord,
+  attempt: AttemptRecord,
+  stale: boolean,
+): boolean {
+  if (stale || record.status !== 'running' || attempt.transcript?.retained !== true) return false;
   if (attempt.policy.transcripts !== 'on-failure') return false;
   // A later execution (a resume after a crash between the saves) never finishes this cleanup.
   const latest = record.executions?.at(-1);
@@ -178,7 +184,12 @@ function cleanupPending(record: RunRecord, step: StepRecord, attempt: AttemptRec
   return !(step.warnings ?? []).some((warning) => warning.startsWith(cleanupWarning));
 }
 
-function stepCandidates(record: RunRecord, id: string, step: StepRecord): Candidate[] {
+function stepCandidates(
+  record: RunRecord,
+  id: string,
+  step: StepRecord,
+  stale: boolean,
+): Candidate[] {
   // A fork copies reused records; `--events` drops them as step.reused, so the follower does too.
   if (step.reusedFrom) return [];
   const harness = agentKinds.has(step.kind) ? (step.harness ?? step.kind) : undefined;
@@ -197,7 +208,8 @@ function stepCandidates(record: RunRecord, id: string, step: StepRecord): Candid
     const latest = index === history.length - 1;
     if (attempt.status === 'completed') {
       // Produced on a later read, under the same key, once its cleanup warning is final.
-      if (latest && step.status === 'completed' && cleanupPending(record, step, attempt)) return;
+      if (latest && step.status === 'completed' && cleanupPending(record, step, attempt, stale))
+        return;
       result.push({
         key: `attempt\u0000${id}\u0000${String(attempt.attempt)}\u0000completed`,
         execution: attempt.execution,
@@ -304,7 +316,8 @@ function stepCandidates(record: RunRecord, id: string, step: StepRecord): Candid
  * attempt. That latest `step.completed` line is held back while its `transcripts: 'on-failure'`
  * cleanup is pending in the running execution (the receipt still retained and no cleanup warning
  * yet), and produced on the read after the cleanup save, as the runner emits it only then, so a
- * cleanup warning is never lost. Fork-reused steps and cancelled or
+ * cleanup warning is never lost; it is also released once `options.stale` says the run's owner is
+ * gone, as the cleanup can then never land. Fork-reused steps and cancelled or
  * interrupted attempts write nothing, and fields the record cannot supply are omitted. Lines are
  * deduplicated by identity, not position, so eviction past the 500-event cap neither repeats nor
  * hides newer lines. Each call returns the lines not yet accounted for in `cursor` (null on the
@@ -315,10 +328,13 @@ export function recordEventLines(
   record: RunRecord,
   cursor: EventFollowCursor | null,
   start: EventFollowStart,
+  options: { readonly stale?: boolean } = {},
 ): { readonly lines: readonly string[]; readonly cursor: EventFollowCursor } {
   const candidates = [
     ...runEventCandidates(record),
-    ...Object.entries(record.steps).flatMap(([id, step]) => stepCandidates(record, id, step)),
+    ...Object.entries(record.steps).flatMap(([id, step]) =>
+      stepCandidates(record, id, step, options.stale === true),
+    ),
   ];
   const after = typeof start === 'object' ? start.afterExecution : undefined;
   const print =

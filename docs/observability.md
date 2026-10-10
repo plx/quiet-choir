@@ -231,9 +231,9 @@ imports the workflow, and derives each line from what the record keeps:
   step omits them rather than guessing. With `transcripts: 'on-failure'` the runner saves a
   completion before removing its transcript, then saves any `Could not remove successful transcript`
   warning, and emits `step.completed` only after that; the follower likewise holds that line until a
-  read shows the cleanup done (the transcript no longer retained, the warning recorded, or the
-  execution no longer running), so the line keeps its warning. Questions and waits, which have no
-  attempt history, settle from the step itself.
+  read shows the cleanup done (the transcript no longer retained, the warning recorded, the
+  execution no longer running, or the run stale because its owner is gone), so the line keeps its
+  warning. Questions and waits, which have no attempt history, settle from the step itself.
 - **Questions.** A question whose notification was recorded becomes `wait.opened` at that time, with
   the question as `msg`.
 

@@ -27,7 +27,8 @@
   `step.completed` line while the record shows the cleanup pending (the attempt's transcript receipt
   still `retained`, no cleanup warning, and its execution the running one), and produces it under
   the same identity on the first read after the cleanup lands, so a cleanup warning is never
-  dropped.
+  dropped. It also releases the line once the run reads as stale (its owner gone), since the cleanup
+  can then never land.
 
 ## Context
 

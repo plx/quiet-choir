@@ -354,6 +354,16 @@ describe('recordEventLines derivation', () => {
       expect(again.lines).toEqual([]);
     });
 
+    it('releases a pending cleanup once the run is stale', () => {
+      const run = record({ steps: { agent: cleaned(true) } });
+      expect(completed(recordEventLines(run, null, 'all', { stale: false }).lines)).toEqual([]);
+      const stale = recordEventLines(run, null, 'all', { stale: true });
+      expect(completed(stale.lines)).toEqual([
+        expect.objectContaining({ step: 'agent', toolUses: 2 }),
+      ]);
+      expect(recordEventLines(run, stale.cursor, 'all', { stale: true }).lines).toEqual([]);
+    });
+
     it('produces step.completed without a warning once cleanup succeeds', () => {
       const held = read(record({ steps: { agent: cleaned(true) } }), 'all');
       expect(completed(held.lines)).toEqual([]);
