@@ -579,13 +579,14 @@ step: after a crash past the state change, the retry finds the issue already clo
 `acted: false` (and `comment: null`) although an earlier attempt of the same step closed it. Read
 the state fields (`state`, `stateReason`, `resolved`) for the outcome.
 
-`issue.create` reads the viewer, then one page of 100 of the viewer's issues per command, newest
-first, so the issue a crashed attempt just created is on the first page; pull requests in the list
-are skipped. A create that finds nothing reads every page: an account that has opened thousands of
-issues in the repository pays one command per hundred. Raise `maxOutputBytes` (1 MiB per command by
-default) when those issues have long bodies. The scan is limited to the viewer's issues because a
-miss would otherwise page through every issue and pull request in the repository; the price is that
-it assumes one `gh` account across attempts and resumes (see the table above).
+`issue.create` reads the parent's node ID when `parent` is given, then the viewer, then one page of
+100 of the viewer's issues per command, newest first, so the issue a crashed attempt just created is
+on the first page; pull requests in the list are skipped. A create that finds nothing reads every
+page: an account that has opened thousands of issues in the repository pays one command per hundred.
+Raise `maxOutputBytes` (1 MiB per command by default) when those issues have long bodies. The scan
+is limited to the viewer's issues because a miss would otherwise page through every issue and pull
+request in the repository; the price is that it assumes one `gh` account across attempts and resumes
+(see the table above).
 
 `alert.dismiss` sends GitHub's reason: an explicit `reason` (`false positive`, `used in tests` or
 `won't fix`) wins; otherwise it is `used in tests` when the alert's most recent instance is in a

@@ -451,15 +451,15 @@ full workflow context (`github(ctx, ...)` needs `exec`, `poll` and `step`).
 `gh.issue.create(id, { title, body, labels?, parent? })` append the marker
 `<!-- quiet-choir:RUN/STEP -->` and search for it before writing, so a retry or resume after a crash
 finds the earlier write; a reply resolves bot threads by default and human threads only with
-`resolve: true`, and a `parent` is read before the issue is created (a missing one throws) and its
-link looked up (another parent throws). `issue.create` searches only the viewer's issues, so keep
-one `gh` account across a retry or resume. `gh.issue.close(id, { number, comment?, reason? })`,
-`gh.issue.reopen(id, { number, comment? })` and `gh.alert.dismiss(id, { number, comment, reason? })`
-read the state and act only when it still needs to change, returning `acted: false` or
-`dismissed: false` otherwise; GitHub has no `If-Match`, so a concurrent change between the read and
-the write is not detected. Bodies go to gh on stdin. Pass `{ retry: { maxAttempts: 3 } }` as the
-third argument; the writes are safe to repeat. A fork re-posts writes its source left unfinished,
-and a rehearsed `issue.reopen` skips. See
+`resolve: true`, and a `parent` is read before the issue is created (a missing one throws), a new
+issue is linked at once, and a found issue's parent is looked up (another parent throws).
+`issue.create` searches only the viewer's issues, so keep one `gh` account across a retry or resume.
+`gh.issue.close(id, { number, comment?, reason? })`, `gh.issue.reopen(id, { number, comment? })` and
+`gh.alert.dismiss(id, { number, comment, reason? })` read the state and act only when it still needs
+to change, returning `acted: false` or `dismissed: false` otherwise; GitHub has no `If-Match`, so a
+concurrent change between the read and the write is not detected. Bodies go to gh on stdin. Pass
+`{ retry: { maxAttempts: 3 } }` as the third argument; the writes are safe to repeat. A fork
+re-posts writes its source left unfinished, and a rehearsed `issue.reopen` skips. See
 [GitHub writes](https://github.com/plx/quiet-choir/blob/main/docs/github.md#writes).
 
 Pull request writes use only `gh api`. `gh.pr.create(id, { head, base, title, body, draft? })`
