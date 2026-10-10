@@ -119,5 +119,8 @@ The new public types are `AddDirProfilesOf`, its helpers `AddDirRootedName`, `Ha
   value in both `comparisons/batches/*/batch.json` files is bumped to the new hash in the same
   change. No port changes: both batches compile unchanged, their imported `satisfies`-typed profiles
   have a non-literal `extends` and stay permissive.
+- `defineWorkflow` has two overloads, so a definition both reject (a wrong `run` return type, an
+  unknown profile key) reports TS2769 ("No overload matches this call") with each overload's
+  underlying error, instead of a bare TS2322.
 - Union-typed options can make some error messages name the `addDirs` selection instead of the
   offending key. Schema inference in `value` and `object` is unaffected.
