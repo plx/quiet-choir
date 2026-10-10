@@ -2,6 +2,21 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- A strict Claude call that passes `addDirs` under a profile without `claude.addDirRoots`, including
+  the implicit default `text`, now fails typecheck and `workflow validate` (`load.typecheck`)
+  instead of failing when the call runs (#385,
+  [ADR 0062](docs/decisions/0062-type-call-site-adddirs-by-profile-roots.md)). `defineWorkflow`
+  infers the literal `profiles` and `defaults`: a role that declares roots, inherits them through
+  `extends` or gets them from `defaults.claude` accepts `addDirs`, and so does a call that omits
+  `profile` under a rooted `defaults.profile`. The types stay permissive where they cannot see a
+  profile's shape (profiles typed `Record<string, AgentProfile>`, a non-literal `extends`, a bare
+  `WorkflowContext` helper, `strictProfiles: false`), and the runtime check is unchanged.
+  `WorkflowDefinition` gains a trailing defaulted type parameter, `WorkflowContext` and
+  `CallOptions` a fifth, and `defineWorkflow` two trailing inferred ones; the new public types are
+  `AddDirProfilesOf`, `AddDirRootedName`, `HasAddDirRoots` and `ClaudeAddDirSelection`. Explicit
+  `defineWorkflow` type arguments leave `profiles` and `defaults` uninferred, so a workflow that
+  relies on rooted defaults must drop them. Both Workflow Lab batches record the new `model.ts`
+  hash.
 - Fixture export and replay of failed steps inside `onError: 'return'` child frames are now covered
   by tests and documented (#383), with no behavior change. A replay, a `--dry-run` rehearsal and a
   fork rerun the frame body against the frame-prefixed rules and settle the same error kind, message

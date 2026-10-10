@@ -52,20 +52,29 @@ strictMcpConfig, settings, addDirs, extraArgs, env and isolation; Codex's are sa
 networkAccess, config, harnessProfile, addDirs, extraArgs, env and isolation. The same exported
 lists (`claudeCapabilityKeys`, `codexCapabilityKeys`) drive the runtime check. `isolation` stays
 available as `'restricted'` only, since strict profiles own `'inherit'`; `worktree` is not a
-capability key, so every checkout selection still compiles. Claude's `addDirs` also stays typed: a
-profile that declares `claude.addDirRoots` accepts
-[root-bounded call-site directories](#bounded-call-site-directories), and for any other profile the
-runtime rejects them when the call runs. Codex `addDirs` stay removed. A registered harness's
-literal `capabilityKeys` are removed the same way. The removed keys are typed as optional `never`
-properties, so a pre-built options variable or an explicit `undefined` is rejected too, not only a
-fresh object literal. Only a literal `strictProfiles: false` types the raw keys; a non-literal
-`boolean` also stays permissive and leaves the decision to the runtime. A helper typed with a bare
-`WorkflowContext` stays permissive (the runtime check still applies), while
+capability key, so every checkout selection still compiles. Claude's `addDirs` stays typed only
+together with a profile that accepts
+[root-bounded call-site directories](#bounded-call-site-directories): one that declares
+`claude.addDirRoots`, inherits it through `extends`, or gets it from `defaults.claude`, and, for a
+call that omits `profile`, a rooted `defaults.profile`. Under any other profile, including the
+implicit `text`, `addDirs` fails typecheck like the other keys, while every profile still compiles
+without it. `defineWorkflow` reads this from the literal `profiles` and `defaults`; when it cannot
+see their shape (a profiles object typed `Record<string, AgentProfile>`, a non-literal `extends`)
+the type stays permissive and the runtime check decides
+([ADR 0062](decisions/0062-type-call-site-adddirs-by-profile-roots.md)). Codex `addDirs` stay
+removed. A registered harness's literal `capabilityKeys` are removed the same way. The removed keys
+are typed as optional `never` properties, so a pre-built options variable or an explicit `undefined`
+is rejected too, not only a fresh object literal. Only a literal `strictProfiles: false` types the
+raw keys; a non-literal `boolean` also stays permissive and leaves the decision to the runtime. A
+helper typed with a bare `WorkflowContext` stays permissive (the runtime check still applies), while
 `WorkflowContext<'scout', BuiltInHarnesses, true>` is a strict helper contract that accepts the
 workflow's strict context. Explicit `defineWorkflow` type arguments are all-or-nothing: with a
 shorter prefix such as `defineWorkflow<Input, Output>`, the rest take the strict, childless
 defaults, so `strictProfiles: false` or a nonempty `children` list fails typecheck; drop the type
-arguments (preferred) or spell all seven.
+arguments (preferred) or spell all seven. Explicit type arguments also leave the `profiles` and
+`defaults` shapes uninferred: declared roles then accept call-site Claude `addDirs` at type level,
+while built-ins and an omitted `profile` reject them even when `defaults` roots them, so such a
+workflow must drop the type arguments.
 
 | Preset            | Claude tools                  | Codex sandbox   | Claude turns | Claude USD | Deadline     |
 | ----------------- | ----------------------------- | --------------- | ------------ | ---------- | ------------ |
@@ -140,6 +149,9 @@ profiles: { reader: { extends: 'readonly', claude: { addDirRoots: ['.state/runs'
 await ctx.claude.text('review', { profile: 'reader', prompt, addDirs: [`.state/runs/${pr}`] });
 ```
 
+- **Typecheck.** In a strict workflow, `addDirs` on a profile without roots (including the implicit
+  `text`) fails typecheck and `workflow validate` (`load.typecheck`); the runtime check below still
+  covers what the types cannot see.
 - **Claude only.** Codex `addDirs` are writable sandbox roots, so Codex cannot take a bounded
   call-site directory; `codex.addDirRoots` (on a profile or on `defaults`) fails validation with
   that reason. List Codex directories statically in `codex.addDirs`.

@@ -32,7 +32,8 @@ MCP/settings, native agents/profiles/config, additional directories, environment
 Default `strictProfiles` rejects those fields at call sites, with one bounded exception: a Claude
 call may pass `addDirs` when its profile declares `claude.addDirRoots` and every entry canonicalizes
 (no `..` segments, symlinks resolved) inside a root; accepted entries are appended to the profile's
-`addDirs` as canonical absolute paths. See
+`addDirs` as canonical absolute paths. Under any other profile the call fails typecheck where
+`defineWorkflow` can see the profile's shape. See
 [bounded call-site directories](agent-profiles.md#bounded-call-site-directories). Role prompts,
 models, effort, fallbacks and image attachments can be supplied per call. Native
 configuration/agent/escape/env controls and enabled network access conservatively require an
