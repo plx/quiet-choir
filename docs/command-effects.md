@@ -45,13 +45,13 @@ escapes into a separate session/group is outside that ownership, as with native 
 process-tree semantics are weaker; filesystem durability uses the existing local POSIX contract.
 
 Identity covers the command, canonical cwd, hash of the explicit environment overlay, stdin digest,
-`inheritEnv`, accepted exit codes, output schema/mode, and `onError` when it is `'return'` (omitting
-it and passing `'throw'` are the same identity). `timeoutMs`, `maxOutputBytes`, and `retry` are
-policy, so raising them does not invalidate completed work. Sticky run policy accepts
-`kind: 'exec'`, timeout/output caps, and retry. Unfinished effects retain the existing explicit
-redefinition/history behavior; completed identity changes require a new run or an appropriate fork.
-Repeated observations need fresh IDs or a read-only `ctx.poll`: a command poll runs one command per
-check, and an observer can run its commands through `context.exec`.
+`inheritEnv`, `scrubEnv` when it is enabled, accepted exit codes, output schema/mode, and `onError`
+when it is `'return'` (omitting it and passing `'throw'` are the same identity). `timeoutMs`,
+`maxOutputBytes`, and `retry` are policy, so raising them does not invalidate completed work. Sticky
+run policy accepts `kind: 'exec'`, timeout/output caps, and retry. Unfinished effects retain the
+existing explicit redefinition/history behavior; completed identity changes require a new run or an
+appropriate fork. Repeated observations need fresh IDs or a read-only `ctx.poll`: a command poll
+runs one command per check, and an observer can run its commands through `context.exec`.
 
 `meta` attaches JSON labels to the step record, like `StepDefinition.meta`. It is neither identity
 nor policy, so relabelling never refuses a resume. `inspect` shows a step with a string
@@ -71,6 +71,26 @@ create, close or reopen, alert dismissal, pull request create or edit, merge and
 one `ctx.step` that finds its own earlier write by a marker or by the state it left, or acts only
 when a preceding read says it still needs to; the merge is also pinned to a head SHA by GitHub.
 
+A command that launches `claude`, `codex` or a wrapper around them can opt in to the host
+agent-session scrub that agent children always get, with `scrubEnv`. `true` removes the names
+`childEnvironment` removes ([harness isolation](harness-isolation.md): `CLAUDECODE`,
+`CODEX_THREAD_ID`, `TRACEPARENT`, most `CLAUDE_CODE_*` names and the rest) and keeps authentication
+and configuration such as `ANTHROPIC_*`, `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CODE_USE_*` and
+`CODEX_HOME`; an array removes those plus its exact names, as `CliHarnessOptions.scrubEnv` does. The
+scrubbed parent comes first, then `env`, so the overlay can restore a scrubbed name; the
+`QUIET_CHOIR_` variables are added last and always delivered. `scrubEnv` with `inheritEnv: false` is
+rejected before the command runs, since nothing is inherited, and so is a name that is not an
+identifier. Omitted or `false` keeps full inheritance, which stays the default (#337): most commands
+(Git, `gh`, `npm`, scripts) are unaffected by these variables, some tools read `TRACEPARENT`,
+`AI_AGENT` or `CLAUDE_CODE_*` settings on purpose, and a new default would have changed every
+existing workflow's commands and the identity of their completed steps. Enabled, the scrub enters
+identity as its sorted, deduplicated extra names (`true` and `[]` are the same identity), so
+toggling it on a completed step needs a new ID; omitting it or passing `false` leaves identity and
+the recorded summary byte-identical. Host values and the removed names are never recorded, and
+completed replay does not read the environment. A custom `ProcessRunner` receives the extra names as
+`ProcessRunRequest.scrubEnv` (present only when enabled) and must honor it like `inheritEnv`;
+`NodeProcessRunner` applies it with `childEnvironment`.
+
 ## Commands inside a callback or observer
 
 A `ctx.step` callback or `ctx.poll` observer cannot call durable `ctx.exec`. It runs commands
@@ -78,7 +98,7 @@ through its own context instead: `context.exec(argv, options)` and
 `context.exec.json(argv, { schema })` take the same command and options as `ctx.exec`, without an
 ID, `worktree`, `retry` or `meta`. They go through the same runner as `ctx.exec`
 (`RunOptions.execRunner`, or `processRunner`), with the same five-minute and 1 MiB defaults,
-environment overlay, reserved `QUIET_CHOIR_` prefix, exit-code and JSON rules.
+environment overlay, opt-in `scrubEnv`, reserved `QUIET_CHOIR_` prefix, exit-code and JSON rules.
 
 These commands are **not durable effects**. They are never replayed or reused, and they run again
 whenever the parent reruns: on a retry, on a resume of an unfinished step, and on every poll check.

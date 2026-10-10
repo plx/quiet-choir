@@ -2,6 +2,18 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `ctx.exec`, a callback's or observer's `context.exec` and a command poll's `commandOptions` accept
+  `scrubEnv` (#337), which removes host agent-session variables (`CLAUDECODE`, `CODEX_THREAD_ID`,
+  `TRACEPARENT`, most `CLAUDE_CODE_*` names and the rest of the `childEnvironment` patterns) from
+  the inherited environment while keeping authentication and configuration. `true` applies the
+  built-in patterns, an array adds exact names, the explicit `env` overlay applies afterwards and
+  the `QUIET_CHOIR_*` variables are still delivered; it is rejected with `inheritEnv: false`. The
+  default is unchanged: commands still inherit the full parent environment. Enabled, the sorted
+  extra names are part of the exec and command-poll identity and are recorded in the exec summary as
+  `scrubEnv`; without it identities and records are byte-identical. A custom `ProcessRunner` must
+  honor the new `ProcessRunRequest.scrubEnv` like `inheritEnv`. The record schema revision is now 16
+  (a nested shape change); see [command effects](docs/command-effects.md) and
+  [storage](docs/storage.md#record-schema-revision).
 - Contributors: `npm run test:contract -- --tools` captures real Codex `mcp_tool_call` and
   `web_search` items against a local fake API and stdio MCP server, with no upstream cost (#334).
   The checked-in captures (codex-cli 0.160.0) in `test/fixtures/harness-tools/` back unit tests that

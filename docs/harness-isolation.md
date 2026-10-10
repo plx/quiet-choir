@@ -151,7 +151,9 @@ authentication variables (`ANTHROPIC_*`, `OPENAI_*`, `CODEX_API_KEY`) and config
 `CLAUDE_CODE_MAX_OUTPUT_TOKENS`, are removed too; restore one deliberately with `env.set`.
 `CliHarnessOptions.scrubEnv` adds exact names with an array, or explicitly disables scrubbing with
 `false`; `--harness-config` accepts the same option. Custom adapters get the same scrub from
-`childEnvironment` in `quiet-choir/harness-kit`.
+`childEnvironment` in `quiet-choir/harness-kit`. Commands are not scrubbed by default: a `ctx.exec`
+or `context.exec` that launches an agent CLI opts in with `scrubEnv`
+([commands](command-effects.md)).
 
 Harness metadata records observed names for `ANTHROPIC_*`, `OPENAI_*`, `CLAUDE_CODE_USE_*`, Claude
 effort/subagent-model/OAuth/config-home variables, `MAX_THINKING_TOKENS`, `CODEX_HOME`, and
