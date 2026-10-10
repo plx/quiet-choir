@@ -376,7 +376,8 @@ The test fails when the top-level keys change without a new revision. From revis
 per revision, a digest of the run-level JSON Schema without `steps` and a digest of the step schema
 (with the installed zod version), so a nested addition, removal or type change in a run-level object
 or a step fails it too (#374); add the printed digests under the new revision and never edit a
-released pin. Schemas that `record.ts` imports count. Validators inside `z.custom`, refinements and
+released pin (while the current revision is still unreleased, correct its own pin instead of bumping
+again). Schemas that `record.ts` imports count. Validators inside `z.custom`, refinements and
 transforms render as `{}` or not at all in the JSON Schema, so changes there are still caught only
 in review. A zod upgrade that merely changes the JSON Schema encoding also fails the check: if
 `record.ts` and the schemas it imports did not change, re-pin the current revision's digests and zod

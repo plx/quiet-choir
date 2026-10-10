@@ -150,9 +150,10 @@ function shapePinMessage(
   const lines = [
     `${what} changed without a new schema revision.`,
     `Actual ${part} digest: ${actual}`,
-    `A persisted shape change needs a revision: bump SUPPORTED_SCHEMA_REVISION in src/workflow/runtime/record.ts,`,
+    `If revision ${String(SUPPORTED_SCHEMA_REVISION)} is already released, a persisted shape change needs a revision: bump SUPPORTED_SCHEMA_REVISION in src/workflow/runtime/record.ts,`,
     `add revision ${String(next)} to test/fixtures/schema-revision/record-keys.json (repeat the key list for a nested-only change) with its key digest,`,
     `and add the printed run/steps digests and the installed zod version (${installedZod}) under '${String(next)}' in shapeDigests.`,
+    `If revision ${String(SUPPORTED_SCHEMA_REVISION)} is not released yet (you bumped SUPPORTED_SCHEMA_REVISION in this change and are adding its pin), replace the run/steps digests under '${String(SUPPORTED_SCHEMA_REVISION)}' in shapeDigests with the printed ones instead of bumping again.`,
     `Never edit a released revision's pin. See docs/storage.md#record-schema-revision.`,
   ];
   if (pinnedZod !== installedZod)
@@ -346,8 +347,15 @@ describe('record key snapshot', () => {
     const message = shapePinMessage('run', 'abc123', '4.5.4', '4.5.4');
     expect(message).toContain('abc123');
     expect(message).toContain('bump SUPPORTED_SCHEMA_REVISION in src/workflow/runtime/record.ts');
+    expect(message).toContain(
+      `If revision ${String(SUPPORTED_SCHEMA_REVISION)} is already released`,
+    );
     expect(message).toContain('test/fixtures/schema-revision/record-keys.json');
     expect(message).toContain(`'${String(SUPPORTED_SCHEMA_REVISION + 1)}' in shapeDigests`);
+    expect(message).toContain(
+      `If revision ${String(SUPPORTED_SCHEMA_REVISION)} is not released yet`,
+    );
+    expect(message).toContain(`under '${String(SUPPORTED_SCHEMA_REVISION)}' in shapeDigests`);
     expect(message).toContain("Never edit a released revision's pin");
     expect(message).toContain('docs/storage.md#record-schema-revision');
     expect(message).not.toContain('encoding change');
