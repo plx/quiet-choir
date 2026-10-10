@@ -109,6 +109,14 @@ function parseStray(
   return { pid: Number(match[1]), kind: match[2] === 'gone' ? 'gone' : 'tmp' };
 }
 
+/**
+ * Whether `entry`, a name in the lock's parent directory, is a `.tmp` publish directory or a `.gone`
+ * release tombstone of the lock named `lockName`, as {@link sweepStrays} recognises them. @internal
+ */
+export function isLockStray(lockName: string, entry: string): boolean {
+  return parseStray(lockName, entry) !== undefined;
+}
+
 /** Parse a lock's `owner.json`; errors keep their errno. @internal */
 export async function readOwner(lockPath: string): Promise<Owner> {
   return ownerSchema.parse(JSON.parse(await readFile(join(lockPath, 'owner.json'), 'utf8')));

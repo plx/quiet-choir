@@ -138,6 +138,56 @@ export function removalVerdict(
   return { kind: 'remove' };
 }
 
+/** One entry of a record-less `<runId>/`, as the interrupted-removal inspector saw it. @internal */
+export interface InterruptedRemovalEntry {
+  readonly name: string;
+  readonly kind: 'file' | 'directory' | 'other';
+  /** Whether the name is a `.tmp` or `.gone` stray of the primary lock `lock` (lock.ts). */
+  readonly lockStray: boolean;
+}
+
+/** The plain facts that {@link interruptedRemovalShape} judges for one run ID. @internal */
+export interface InterruptedRemovalFacts {
+  /** Whether the ID is a valid run ID. */
+  readonly validRunId: boolean;
+  /** Whether `<runId>/run.json` or `<runId>.json` exists; an entry that cannot be checked counts. */
+  readonly recordPresent: boolean;
+  /** Whether the legacy `<runId>.inbox` exists. */
+  readonly inboxSibling: boolean;
+  /** Whether the legacy `<runId>.cancel.json` exists. */
+  readonly cancelSibling: boolean;
+  /** How many `<runId>.json.v<N>` migration backups exist. */
+  readonly backups: number;
+  /** `<runId>/`, or null when it does not exist. */
+  readonly directory: {
+    /** True for a symbolic link or anything but a directory; its entries are then not read. */
+    readonly symlinkOrNotDirectory: boolean;
+    readonly entries: readonly InterruptedRemovalEntry[];
+  } | null;
+}
+
+/**
+ * Whether the ID names what a `workflow rm` of an unmigrated flat run left when it stopped after
+ * deleting the flat file (its commit point) and before renaming `<runId>/` away
+ * ([ADR 0061](../../../docs/decisions/0061-finish-interrupted-flat-run-removal.md)): a valid ID with
+ * no record, no legacy `.inbox` or `.cancel.json` (removal deletes both before the commit point), a
+ * `<runId>/` that is absent or a real directory holding only the primary lock directory `lock` and
+ * that lock's strays, and at least one of that directory or a `.json.v<N>` backup. The legacy guard
+ * `<runId>.json.lock` may also be there; ownership, not this shape, judges whether it holds. Anything
+ * else, such as `launch/` (ADR 0055), `journal.jsonl` (a run before its first snapshot), `inbox/` or
+ * an unknown file, is not such a leftover. @internal
+ */
+export function interruptedRemovalShape(facts: InterruptedRemovalFacts): boolean {
+  if (!facts.validRunId || facts.recordPresent || facts.inboxSibling || facts.cancelSibling)
+    return false;
+  const { directory } = facts;
+  if (directory === null) return facts.backups > 0;
+  if (directory.symlinkOrNotDirectory) return false;
+  return directory.entries.every(
+    (entry) => (entry.name === 'lock' && entry.kind === 'directory') || entry.lockStray,
+  );
+}
+
 /**
  * The filesystem codes of a `run.unreadable` read that name damaged record content rather than an
  * access or I/O problem: `EISDIR` and `ENOTDIR` (a record path of the wrong kind). @internal
