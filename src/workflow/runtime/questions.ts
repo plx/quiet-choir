@@ -7,7 +7,7 @@ import { CancelledError } from './fan-out.js';
 import { AnswerError, answerCandidates, schemaMismatch, syntheticInvalid } from './inbox.js';
 import { digest, jsonValue } from './json.js';
 import { stepIdentity } from './identity.js';
-import { answerEnvelopeSchema, validateAnswerAuthor } from './question-schema.js';
+import { answerEnvelopeSchema, envelopeBinding, validateAnswerAuthor } from './question-schema.js';
 import type { AnswerIssue, AskOptions } from './question-model.js';
 import type { JsonValue } from './model.js';
 import type { RunRecord, StepMapItem, StepRecord } from './store.js';
@@ -637,7 +637,7 @@ export class RunQuestions {
       const envelope = answerEnvelopeSchema.parse(jsonValue(JSON.parse(text)));
       if (envelope.questionFingerprint !== step.fingerprint)
         throw new Error('Answer question fingerprint does not match the waiting question.');
-      if (envelope.runCreatedAt !== undefined && envelope.runCreatedAt !== record.createdAt)
+      if (envelopeBinding(envelope, record) === 'mismatch')
         throw new Error('Answer was addressed to an earlier run with this ID.');
       try {
         validateAnswerAuthor(step.question.request.audience, envelope.by);

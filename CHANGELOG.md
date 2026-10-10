@@ -2,6 +2,18 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- New runs record a random `generation` (a UUID written once, when the run is created, including a
+  fork), and answer delivery binds to it instead of `createdAt` alone (#371,
+  [ADR 0049](docs/decisions/0049-guard-held-run-removal.md)). Answer envelopes carry `runGeneration`
+  beside `runCreatedAt`, and the owner, `workflow pending`, the answer writer's withdrawal and
+  `workflow rm`'s re-check under the lock compare generations, so a run that reuses an ID with the
+  same `createdAt` (a rewound or frozen clock) no longer accepts a stale answer and rm refuses it
+  with `run.exists`. A record without a `generation`, and an envelope from an older writer, falls
+  back to `createdAt`; the field is never backfilled, so existing runs and the answers already
+  written for them keep working. rm's `run.exists` details gain `expectedGeneration` and
+  `generation`. The record schema revision becomes 17: a revision-16 build reads a new record with
+  `generation` hidden and refuses to rewrite it. A delivery from a `workflow answer` build before
+  this change carries only `runCreatedAt`, so a same-`createdAt` replacement still accepts it.
 - `workflow rm ID` finishes the removal of an unmigrated flat run that crashed after deleting its
   `<runId>.json` and before renaming `<runId>/` away, and `workflow prune` finishes every such
   removal in the runs containers it scans, whatever its filters (#369,

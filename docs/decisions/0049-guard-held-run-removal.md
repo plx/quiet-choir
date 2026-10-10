@@ -89,6 +89,24 @@ entry, and `pending` shows it as a queued delivery without attribution). The bin
 guarantee and the writer's check is the cleanup. The field is optional, so envelopes from older
 writers still parse and are accepted as before.
 
+Amended by #371: a timestamp is not unique, so a replacement created with the removed run's exact
+`createdAt` (a rewound or frozen clock) would pass every check above. The binding identity is now a
+random per-run `generation` (a UUID the runner writes once, when it creates a record, under record
+schema revision 17), and `runGeneration(run)` is that token, or `createdAt` for a record without
+one. A record is never given a generation later: a resume that assigned one would make envelopes
+already written for that run, bound to its `createdAt`, mismatch. rm pins the inspected run's
+generation and refuses `run.exists` when the record under the lock carries another; its details add
+`expectedGeneration` and `generation` beside `expectedCreatedAt` and `createdAt`, so an operator
+sees why rm refused when the two timestamps are equal. Envelopes add `runGeneration` and keep
+`runCreatedAt` for owners from older builds, which strip unknown keys and bind on it. An envelope is
+addressed to a run when every binding field it carries matches (`envelopeBinding`): the owner
+rejects any mismatch, `pending` withholds its attribution, and the writer's withdrawal deletes only
+a match, so it never deletes a same-`createdAt` replacement's own delivery. An envelope with neither
+field, from an older writer, is still accepted by the owner and kept by the withdrawal. One residual
+is accepted rather than closed: a delivery from a `workflow answer` build before #371 carries only
+`runCreatedAt`, so a same-`createdAt` replacement still accepts it. Rejecting such envelopes on runs
+that have a generation would break mixed-version answering for a clock-rewind-only case.
+
 Holding the guard while the primary is released keeps every other writer out, because each one takes
 the guard first. Removing the flat marker before the directory, and renaming the directory to a
 dotted name, mean `list` and `inspect` see either an intact run or none. A crash leaves an intact

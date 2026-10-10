@@ -686,13 +686,115 @@ describe('workflow rm and a racing answer', () => {
     expect(await gone(delivery.path)).toBe(true);
   });
 
-  it('still accepts a delivery without runCreatedAt, as an older writer leaves it', async () => {
+  it('a run that reuses the ID with the same createdAt rejects a delivery addressed to the removed run', async () => {
+    // A frozen clock gives the removed run and its replacement the same createdAt (#371). Only
+    // Date is faked, so the owner's polling and lock timing keep real timers.
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2030-01-02T03:04:05.678Z') });
+    try {
+      await suspendedRun('asked');
+      const first = await readRun({ stateDir, runId: 'asked' });
+      const delivery = await writeAnswer({ stateDir, runId: 'asked', stepId: 'gate', value: true });
+      const envelope = JSON.parse(await readFile(delivery.path, 'utf8')) as Record<string, unknown>;
+      expect(envelope).toMatchObject({
+        runGeneration: first.generation,
+        runCreatedAt: first.createdAt,
+      });
+      removed(await remove('asked', { force: true }));
+      await suspendedRun('asked');
+      const second = await readRun({ stateDir, runId: 'asked' });
+      expect(second.createdAt).toBe(first.createdAt);
+      expect(second.generation).toEqual(expect.any(String));
+      expect(second.generation).not.toBe(first.generation);
+      // The old writer's link lands after the new run registered the same question.
+      await mkdir(join(delivery.path, '..'), { recursive: true });
+      await writeFile(delivery.path, JSON.stringify(envelope));
+      expect((await listPending({ stateDir }))[0]?.delivery).toEqual({
+        state: 'queued',
+        at: null,
+        by: null,
+      });
+      expect(
+        (
+          await runWorkflow(askWorkflow, {
+            runId: 'asked',
+            stateDir,
+            cwd: root,
+            input: null,
+            resume: true,
+          })
+        ).status,
+      ).toBe('suspended');
+      const saved = await readRun({ stateDir, runId: 'asked' });
+      expect(saved.steps['gate']?.status).toBe('waiting');
+      expect(saved.steps['gate']?.question?.rejections).toEqual([
+        expect.objectContaining({ error: 'Answer was addressed to an earlier run with this ID.' }),
+      ]);
+      expect(await gone(delivery.path)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps a delivery to a replacement with the same createdAt, byte for byte', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2030-01-02T03:04:05.678Z') });
+    try {
+      await suspendedRun('asked');
+      const run = await readRun({ stateDir, runId: 'asked' });
+      removed(await remove('asked', { force: true }));
+      await suspendedRun('asked');
+      const replacement = await readRun({ stateDir, runId: 'asked' });
+      expect(replacement.createdAt).toBe(run.createdAt);
+      expect(replacement.generation).not.toBe(run.generation);
+      // The replacement's own delivery binds the same createdAt but its own generation.
+      const delivery = await writeAnswer({ stateDir, runId: 'asked', stepId: 'gate', value: true });
+      const bytes = await readFile(delivery.path);
+      expect(JSON.parse(bytes.toString('utf8'))).toMatchObject({
+        runGeneration: replacement.generation,
+        runCreatedAt: run.createdAt,
+      });
+      await expect(
+        withdrawDeliveryIfRunRemoved(stateDir, run, delivery.path),
+      ).rejects.toMatchObject({ reason: 'conflict' });
+      expect(await readFile(delivery.path)).toEqual(bytes);
+      expect(await readdir(join(delivery.path, '..'))).toEqual([basename(delivery.path)]);
+      expect(
+        (
+          await runWorkflow(askWorkflow, {
+            runId: 'asked',
+            stateDir,
+            cwd: root,
+            input: null,
+            resume: true,
+          })
+        ).status,
+      ).toBe('completed');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('withdraws a delivery bound by createdAt alone to a removed run without a generation', async () => {
+    await suspendedRun('asked');
+    const run = await readRun({ stateDir, runId: 'asked' });
+    // A record created before schema revision 17 has no generation: createdAt stands in.
+    const { generation, ...older } = run;
+    expect(generation).toEqual(expect.any(String));
+    removed(await remove('asked', { force: true }));
+    const path = answerPath(stateDir, 'asked', 'gate');
+    await lateDelivery(path, run.createdAt);
+    await expect(withdrawDeliveryIfRunRemoved(stateDir, older, path)).rejects.toMatchObject({
+      reason: 'conflict',
+    });
+    await onlyIgnoreFileLeft();
+  });
+
+  it('still accepts a delivery without runGeneration or runCreatedAt, as an older writer leaves it', async () => {
     await suspendedRun('asked');
     const delivery = await writeAnswer({ stateDir, runId: 'asked', stepId: 'gate', value: true });
-    const { runCreatedAt, ...older } = JSON.parse(await readFile(delivery.path, 'utf8')) as Record<
-      string,
-      unknown
-    >;
+    const { runGeneration, runCreatedAt, ...older } = JSON.parse(
+      await readFile(delivery.path, 'utf8'),
+    ) as Record<string, unknown>;
+    expect(runGeneration).toBeDefined();
     expect(runCreatedAt).toBeDefined();
     await writeFile(delivery.path, JSON.stringify(older));
     expect((await listPending({ stateDir }))[0]?.delivery).toMatchObject({
@@ -1108,6 +1210,85 @@ describe('workflow rm and a replaced run', () => {
       await onlyIgnoreFileLeft();
     },
   );
+
+  it('refuses a replacement with the same createdAt, by its generation, and leaves it intact', async () => {
+    // A frozen clock gives the inspected run and its replacement the same createdAt (#371).
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2030-01-02T03:04:05.678Z') });
+    try {
+      await completedRun('reused');
+      const inspected = await readRequiredRun({ runId: 'reused', stateDir });
+      let before: Record<string, string> = {};
+      const refusal = await removeRun({ runId: 'reused', stateDir }, processRunner, {
+        beforeLock: async () => {
+          await rm(join(stateDir, 'reused'), { recursive: true, force: true });
+          await completedRun('reused');
+          before = await snapshot(join(stateDir, 'reused'));
+        },
+      }).then(
+        () => assert.fail('rm removed the replacement'),
+        (error: unknown) => error,
+      );
+      const replacement = await readRequiredRun({ runId: 'reused', stateDir });
+      expect(replacement.createdAt).toBe(inspected.createdAt);
+      expect(replacement.generation).not.toBe(inspected.generation);
+      expect(refusal).toMatchObject({
+        code: 'run.exists',
+        runId: 'reused',
+        details: {
+          expectedCreatedAt: inspected.createdAt,
+          createdAt: inspected.createdAt,
+          expectedGeneration: inspected.generation,
+          generation: replacement.generation,
+        },
+      });
+      expect(Object.keys(before).length).toBeGreaterThan(0);
+      expect(await snapshot(join(stateDir, 'reused'))).toEqual(before);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('falls back to createdAt as the generation of a record written without one', async () => {
+    await completedRun('reused');
+    // As a build before schema revision 17 wrote it: no generation.
+    const file = join(stateDir, 'reused', 'run.json');
+    const { generation, ...older } = JSON.parse(await readFile(file, 'utf8')) as Record<
+      string,
+      unknown
+    >;
+    expect(generation).toEqual(expect.any(String));
+    await writeFile(file, JSON.stringify(older));
+    const inspected = await readRequiredRun({ runId: 'reused', stateDir });
+    expect(inspected.generation).toBeUndefined();
+    const refusal = await removeRun({ runId: 'reused', stateDir }, processRunner, {
+      beforeLock: async () => {
+        await rm(join(stateDir, 'reused'), { recursive: true, force: true });
+        await delay(5);
+        await completedRun('reused');
+      },
+    }).then(
+      () => assert.fail('rm removed the replacement'),
+      (error: unknown) => error,
+    );
+    const replacement = await readRequiredRun({ runId: 'reused', stateDir });
+    expect(refusal).toMatchObject({
+      code: 'run.exists',
+      details: {
+        expectedCreatedAt: inspected.createdAt,
+        createdAt: replacement.createdAt,
+        expectedGeneration: inspected.createdAt,
+        generation: replacement.generation,
+      },
+    });
+    // Without a replacement, rm removes a run that has no generation.
+    removed(await remove('reused'));
+    await completedRun('older');
+    const olderFile = join(stateDir, 'older', 'run.json');
+    const olderRecord = JSON.parse(await readFile(olderFile, 'utf8')) as Record<string, unknown>;
+    delete olderRecord['generation'];
+    await writeFile(olderFile, JSON.stringify(olderRecord));
+    removed(await remove('older'));
+  });
 
   it('leaves the replacement’s checkpoint files untouched when it refuses', async () => {
     await completedRun('reused');

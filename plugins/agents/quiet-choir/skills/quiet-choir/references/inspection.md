@@ -161,6 +161,7 @@ permission to kill. Foreign-host or incomplete ownership needs inspection. Prefe
 | `error`                                   | Last run failure message, or null                                              |
 | `cwd`, `input`                            | Original execution directory and validated input                               |
 | `createdAt`, `updatedAt`                  | Creation and last checkpoint timestamps; not heartbeats                        |
+| `generation`                              | Random per-run token binding answers; absent on runs before schema revision 17 |
 | `steps`                                   | Object keyed by durable step ID; absent IDs have not been recorded             |
 | `output`                                  | Final workflow result; use only when the run is completed                      |
 

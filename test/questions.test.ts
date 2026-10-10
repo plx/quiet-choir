@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -17,6 +17,7 @@ import {
   type WorkflowContext,
 } from '../src/index.js';
 import { AnswerError, answerPath } from '../src/workflow/runtime/inbox.js';
+import { envelopeBinding } from '../src/workflow/runtime/question-schema.js';
 import { writeRun } from '../src/workflow/runtime/store.js';
 
 let stateDir: string;
@@ -399,9 +400,15 @@ it('records plain-text refusals without issues', async () => {
   await runWorkflow(definition, options());
   const delivery = await writeAnswer({ ...options(), stepId: 'plain', value: 'ship' });
   const envelope = JSON.parse(await readFile(delivery.path, 'utf8')) as Record<string, unknown>;
+  const run = await readRun(options());
+  expect(run.generation).toMatch(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+  );
+  expect(envelope).toMatchObject({ runGeneration: run.generation, runCreatedAt: run.createdAt });
   const refusals = [
     JSON.stringify({ ...envelope, questionFingerprint: '0'.repeat(64) }),
     JSON.stringify({ ...envelope, runCreatedAt: '1999-01-01T00:00:00.000Z' }),
+    JSON.stringify({ ...envelope, runGeneration: randomUUID() }),
     '{ not json',
     JSON.stringify({ value: 'ship' }),
   ];
@@ -418,6 +425,40 @@ it('records plain-text refusals without issues', async () => {
     expect(rejection).not.toHaveProperty('issues');
   }
   expect(rejections[1]?.error).toBe('Answer was addressed to an earlier run with this ID.');
+  expect(rejections[2]?.error).toBe('Answer was addressed to an earlier run with this ID.');
+  expect(rejections[2]?.file).toContain('.rejected.');
+  // Each refused delivery moved aside, so the question still has none queued.
+  expect((await listPending({ stateDir }))[0]?.delivery?.state).toBe('none');
+});
+
+it('binds an envelope by every binding field it carries', () => {
+  const createdAt = '2030-01-02T03:04:05.678Z';
+  const generation = randomUUID();
+  const run = { createdAt, generation };
+  const older = { createdAt };
+  expect(envelopeBinding({}, run)).toBe('unbound');
+  expect(envelopeBinding({}, older)).toBe('unbound');
+  expect(envelopeBinding({ runGeneration: generation }, run)).toBe('match');
+  expect(envelopeBinding({ runCreatedAt: createdAt }, run)).toBe('match');
+  expect(envelopeBinding({ runGeneration: generation, runCreatedAt: createdAt }, run)).toBe(
+    'match',
+  );
+  // A run without a generation is identified by its createdAt.
+  expect(envelopeBinding({ runGeneration: createdAt, runCreatedAt: createdAt }, older)).toBe(
+    'match',
+  );
+  expect(envelopeBinding({ runGeneration: generation }, older)).toBe('mismatch');
+  expect(envelopeBinding({ runGeneration: randomUUID() }, run)).toBe('mismatch');
+  expect(envelopeBinding({ runCreatedAt: '1999-01-01T00:00:00.000Z' }, run)).toBe('mismatch');
+  // Contradicting fields: a matching createdAt never excuses another generation, or vice versa.
+  expect(envelopeBinding({ runGeneration: randomUUID(), runCreatedAt: createdAt }, run)).toBe(
+    'mismatch',
+  );
+  expect(
+    envelopeBinding({ runGeneration: generation, runCreatedAt: '1999-01-01T00:00:00.000Z' }, run),
+  ).toBe('mismatch');
+  // Raw JSON values that are not strings never match.
+  expect(envelopeBinding({ runGeneration: null }, run)).toBe('mismatch');
 });
 
 it('records a refinement that throws as a plain-text rejection', async () => {

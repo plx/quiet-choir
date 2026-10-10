@@ -462,6 +462,26 @@ empty, so only `run.json` is checked in. Stack paths are scrubbed to `/fixture/.
 formatted with Prettier; its read-view digest in `test/record-schema-revision.test.ts` was computed
 on the same unmodified main from this file.
 
+`revision-sixteen-checkpoint.json` was generated the same way at origin/main `03ba2b5`, before the
+random per-run generation (#371) added the top-level `generation` field in revision 17. Its run ID
+is `revision-sixteen`, and it ran this definition once:
+
+```ts
+defineWorkflow({
+  name: 'schema-revision',
+  version: '1',
+  input: z.null(),
+  output: z.boolean(),
+  run: (ctx) => ctx.ask('gate', { prompt: 'Ship?', schema: z.boolean() }),
+});
+```
+
+It carries `schemaRevision: 16`, no `generation`, and a suspended `ask` `gate` waiting for an
+answer, so a delivery written to it binds to the run's `createdAt`. The journal was empty, so only
+`run.json` is checked in. It has no stack paths, and the file was formatted with Prettier; its
+read-view digest in `test/record-schema-revision.test.ts` was computed on the same unmodified main
+from this file. No harness was invoked.
+
 `record-keys.json` lists the top-level run-record keys of each schema revision. Adding or changing a
 persisted run-level field adds a revision there and bumps `SUPPORTED_SCHEMA_REVISION`; a revision
 that only changes a nested shape repeats the previous key list. See `docs/storage.md`.

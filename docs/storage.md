@@ -202,11 +202,13 @@ not counted.
 rm refuses a held lock or live children, and without `--force` a running, suspended or waiting run.
 Then it takes the run lock (legacy guard first, without a working directory, so it never registers a
 project), re-reads the record, refuses (`run.exists`) if it is no longer the run rm inspected
-(another run reused the ID, so its `createdAt` differs) and removes caches. If Git cannot remove one
-while its repository exists, rm stops before deleting the run: caches Git already removed stay
-removed and are recorded in the ledger, no ref is deleted, and the record stays for a retry with
-`workflow clean`. When the repository is gone, rm deletes only caches named by a digest that matches
-their ledger key. Holding the legacy guard throughout, it deletes in this order:
+(another run reused the ID, so its generation differs: the random `generation` a run records when it
+is created, or its `createdAt` for a record from before schema revision 17, which has none) and
+removes caches. Comparing generations also refuses a replacement created with the same `createdAt`.
+If Git cannot remove one while its repository exists, rm stops before deleting the run: caches Git
+already removed stay removed and are recorded in the ledger, no ref is deleted, and the record stays
+for a retry with `workflow clean`. When the repository is gone, rm deletes only caches named by a
+digest that matches their ledger key. Holding the legacy guard throughout, it deletes in this order:
 
 1. `<runId>.cancel.json` and `<runId>.inbox/`.
 2. The flat `<runId>.json`, then flushes the directory. For an unmigrated flat run this is the
@@ -223,16 +225,19 @@ their ledger key. Holding the legacy guard throughout, it deletes in this order:
 
 `workflow answer` takes no lock, so rm and the answer writer meet in a handshake instead: after
 linking its delivery, the writer re-reads the run and, when the run is gone (or the ID now names a
-run with another `createdAt`), withdraws the delivery and removes any empty inbox and run directory
-it recreated, and fails with a conflict. It deletes only an envelope addressed to the removed run's
-`createdAt`: it first renames the path to a private name, and puts back anything else, such as a
-delivery a run reusing the ID has since received there. rm's commit point (step 2 or 5) precedes the
-sweep in step 6, so a delivery linked before the commit point is swept from `<runId>.inbox/` or
-renamed into the tombstone with `<runId>/inbox/`, and one linked after it finds the run gone at the
-writer's check. Because that check follows the link, a run that reuses the ID at once could read the
-delivery first; the envelope's `runCreatedAt` closes that gap, since the owner rejects a delivery
-addressed to a run with another `createdAt` ([questions](questions.md#inbox-protocol-and-trust)). No
-answer outlives the run to resolve a later run that reuses the ID.
+run with another generation, which falls back to `createdAt` as above), withdraws the delivery and
+removes any empty inbox and run directory it recreated, and fails with a conflict. It deletes only
+an envelope addressed to the removed run's generation (every binding field it carries matches): it
+first renames the path to a private name, and puts back anything else, such as a delivery a run
+reusing the ID has since received there. rm's commit point (step 2 or 5) precedes the sweep in step
+6, so a delivery linked before the commit point is swept from `<runId>.inbox/` or renamed into the
+tombstone with `<runId>/inbox/`, and one linked after it finds the run gone at the writer's check.
+Because that check follows the link, a run that reuses the ID at once could read the delivery first;
+the envelope's `runGeneration` (with `runCreatedAt`, kept for older owners) closes that gap, since
+the owner rejects a delivery addressed to a run with another generation
+([questions](questions.md#inbox-protocol-and-trust)). No answer outlives the run to resolve a later
+run that reuses the ID. A delivery from a `workflow answer` build before #371 carries only
+`runCreatedAt`, so a replacement with the same `createdAt` still accepts it.
 
 A crash before step 2 leaves an intact run that lists and inspects normally (run rm again), and a
 crash after step 5 leaves a tombstone. `list` and `inspect` never see a half-deleted run, because
@@ -464,6 +469,13 @@ a step attempt's `exec`) and in a command poll's wait request (`poll.command.exe
 `scrubEnv: true`; [command effects](command-effects.md)). It is present only when the scrub is
 enabled, so revision-15 records read and resume unchanged with the same identities. A revision-15
 build reads a revision-16 record, but its parse strips `scrubEnv`, so it refuses to rewrite it.
+Revision 17 (#371) adds the top-level `generation`, a random UUID written once when a run is created
+(including a fork or a dry run), and never backfilled. Answer envelopes and `workflow rm` bind to
+it, so a run that reuses an ID is told apart even with the same `createdAt`
+([questions](questions.md#inbox-protocol-and-trust)). Revision-16 records read and resume unchanged
+and keep `createdAt` as their generation for life, so an answer already written for one stays valid.
+A revision-16 build reads a revision-17 record without the field, reports it hidden, and refuses to
+rewrite it, so it can never drop the token.
 
 **Refusals.** A build must not rewrite a record it cannot fully read: its parse strips unknown
 top-level fields, and the next compaction would write the record back without them. When a record

@@ -1,0 +1,244 @@
+{
+  "allowModelOverride": false,
+  "capabilities": {
+    "defaultProfile": "text",
+    "defaults": {
+      "access": "read",
+      "claude": { "allowedTools": [], "isolation": "restricted", "tools": [] },
+      "claudeAccess": "none",
+      "codex": { "isolation": "restricted", "sandbox": "read-only" },
+      "codexAccess": "read",
+      "environment": {
+        "claude": {
+          "set": [],
+          "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+          "unset": []
+        },
+        "codex": {
+          "set": [],
+          "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+          "unset": []
+        }
+      },
+      "expectsToolUse": false,
+      "maxBudgetUsd": 0.5,
+      "maxTurns": 10,
+      "name": "text",
+      "onPermissionDenied": "warn",
+      "timeoutMs": 300000
+    },
+    "profiles": {
+      "edit": {
+        "access": "write",
+        "claude": {
+          "allowedTools": ["Read", "Grep", "Glob", "Edit", "Write"],
+          "isolation": "restricted",
+          "tools": ["Read", "Grep", "Glob", "Edit", "Write"]
+        },
+        "claudeAccess": "write",
+        "codex": { "isolation": "restricted", "sandbox": "workspace-write" },
+        "codexAccess": "write",
+        "environment": {
+          "claude": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          },
+          "codex": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          }
+        },
+        "expectsToolUse": true,
+        "maxBudgetUsd": 5,
+        "maxTurns": 40,
+        "name": "edit",
+        "onPermissionDenied": "warn",
+        "timeoutMs": 1800000
+      },
+      "readonly": {
+        "access": "read",
+        "claude": {
+          "allowedTools": ["Read", "Grep", "Glob"],
+          "isolation": "restricted",
+          "tools": ["Read", "Grep", "Glob"]
+        },
+        "claudeAccess": "read",
+        "codex": { "isolation": "restricted", "sandbox": "read-only" },
+        "codexAccess": "read",
+        "environment": {
+          "claude": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          },
+          "codex": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          }
+        },
+        "expectsToolUse": true,
+        "maxBudgetUsd": 2,
+        "maxTurns": 25,
+        "name": "readonly",
+        "onPermissionDenied": "warn",
+        "timeoutMs": 900000
+      },
+      "text": {
+        "access": "read",
+        "claude": { "allowedTools": [], "isolation": "restricted", "tools": [] },
+        "claudeAccess": "none",
+        "codex": { "isolation": "restricted", "sandbox": "read-only" },
+        "codexAccess": "read",
+        "environment": {
+          "claude": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          },
+          "codex": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          }
+        },
+        "expectsToolUse": false,
+        "maxBudgetUsd": 0.5,
+        "maxTurns": 10,
+        "name": "text",
+        "onPermissionDenied": "warn",
+        "timeoutMs": 300000
+      }
+    },
+    "requiredGrants": [],
+    "strictProfiles": true
+  },
+  "createdAt": "2026-10-10T14:16:13.710Z",
+  "cwd": "/",
+  "engine": { "node": "v26.10.0", "quietChoir": "0.0.0", "tsx": "4.23.11", "zod": "4.5.4" },
+  "error": null,
+  "errorStack": null,
+  "eventCounts": {},
+  "events": [
+    {
+      "at": "2026-10-10T14:16:13.711Z",
+      "data": null,
+      "execution": 1,
+      "message": null,
+      "phase": null,
+      "stepId": null,
+      "total": null,
+      "type": "run.started"
+    },
+    {
+      "at": "2026-10-10T14:16:13.745Z",
+      "data": null,
+      "execution": 1,
+      "message": null,
+      "phase": null,
+      "stepId": null,
+      "total": null,
+      "type": "run.suspended"
+    }
+  ],
+  "executions": [
+    {
+      "endedAt": "2026-10-10T14:16:13.745Z",
+      "error": null,
+      "errorStack": null,
+      "n": 1,
+      "outcome": "suspended",
+      "pid": 76103,
+      "startedAt": "2026-10-10T14:16:13.711Z"
+    }
+  ],
+  "formatVersion": 7,
+  "grantedProfiles": {},
+  "grants": [],
+  "harness": { "kind": "none", "previousKinds": [] },
+  "id": "revision-sixteen",
+  "input": null,
+  "maps": {},
+  "maxChildDepth": 8,
+  "nextWakeAt": null,
+  "output": null,
+  "phase": null,
+  "policy": [],
+  "policyWarnings": [],
+  "profileOverrides": [],
+  "replayWarnings": [],
+  "rootCause": null,
+  "runBudget": { "maxRunAgentAttempts": null, "maxRunCostUsd": null, "maxWindowUtilization": null },
+  "schemaRevision": 16,
+  "seq": 2,
+  "sessionSalt": "caf74156-28fd-4d32-b94b-ef8aae1a80e2",
+  "status": "suspended",
+  "steps": {
+    "gate": {
+      "attemptHistory": [],
+      "attempts": 1,
+      "durationMs": null,
+      "error": null,
+      "errorStack": null,
+      "fingerprint": "b61dfb3bcb383c1e10970eebf6617c34894c3e437ea5cd6af65edd0115b3cd1c",
+      "finishedAt": null,
+      "identity": {
+        "audience": "251ecb599a3f3a2f1e70671a65292c15862d28613e3dfd97edb7640f14bf4986",
+        "choices": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "details": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "kind": "e43a5493c180fde1ca0c3b266b7781876016f68d2caaa937e049f3c050b87a66",
+        "prompt": "6adf86c3a3f0b5bdc69261ecf8f91545d0000f4348cf42f91179f2f04a16dd4c",
+        "schema": "e02dfc50edffc895f421fc88295c4bf67ee4b79c7888552ee939dc68d95e8739",
+        "subject": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "title": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+      },
+      "kind": "ask",
+      "launchStamp": 0,
+      "output": null,
+      "phase": null,
+      "question": {
+        "askedAt": "2026-10-10T14:16:13.736Z",
+        "rejections": [],
+        "request": {
+          "audience": "any",
+          "choices": [],
+          "details": null,
+          "prompt": "Ship?",
+          "schema": { "$schema": "http://json-schema.org/draft-07/schema#", "type": "boolean" },
+          "subject": null,
+          "title": null
+        },
+        "resolution": null
+      },
+      "request": null,
+      "seq": 1,
+      "startedAt": "2026-10-10T14:16:13.736Z",
+      "status": "waiting",
+      "wait": {
+        "checks": 0,
+        "deadline": null,
+        "nextCheckAt": null,
+        "note": null,
+        "notifiedAt": 1791641773736,
+        "openedAt": 1791641773736,
+        "request": { "deadline": null, "poll": null, "timeoutMs": null }
+      },
+      "wakeAt": null
+    }
+  },
+  "updatedAt": "2026-10-10T14:16:13.745Z",
+  "workflow": {
+    "fingerprint": "33ef9c28a8ff62a64d1fa804d8f1b81cba6c5b29e2c2c82e9fb762cf179fccd8",
+    "identity": {
+      "code": "schema-revision",
+      "engine": { "formatVersion": 6, "version": "0.0.0" },
+      "files": {},
+      "inputSchema": "199490fad0bd9dd1925ebbce2ed02f949ef0396fcbabcd41baa5ffa3b1ea49b2",
+      "outputSchema": "e02dfc50edffc895f421fc88295c4bf67ee4b79c7888552ee939dc68d95e8739"
+    },
+    "name": "schema-revision",
+    "version": "1"
+  }
+}

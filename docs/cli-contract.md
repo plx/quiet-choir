@@ -229,12 +229,14 @@ alive or unverifiable; and, without `--force`, `run.active` when the recorded st
 `suspended` or any step is `waiting` (`error.details` is `{status, waiting}`), since a pending wait,
 answer or resume may still need the run. After taking the lock rm refuses with `run.exists` and
 removes nothing when another run reused the ID since rm inspected it (`error.details` has
-`expectedCreatedAt` and `createdAt`). A missing run is `run.not_found` and an unreadable one
-`run.unreadable`; a damaged record is removed only with `--unreadable` (below). rm takes the run
-lock without registering a project, so a dead owner's lock is recovered as on resume. When Git
-cannot remove a cache while its repository exists, rm stops before deleting the run and fails with
-`workflow.storage` (exit 74): caches Git already removed stay removed and are recorded in the ledger
-(`error.details.removedCaches` names them), no ref is deleted, the message and
+`expectedCreatedAt` and `createdAt`, and `expectedGeneration` and `generation`: each run's random
+`generation`, or its `createdAt` for a run created before schema revision 17; the generations differ
+even when a replacement has the same `createdAt`). A missing run is `run.not_found` and an
+unreadable one `run.unreadable`; a damaged record is removed only with `--unreadable` (below). rm
+takes the run lock without registering a project, so a dead owner's lock is recovered as on resume.
+When Git cannot remove a cache while its repository exists, rm stops before deleting the run and
+fails with `workflow.storage` (exit 74): caches Git already removed stay removed and are recorded in
+the ledger (`error.details.removedCaches` names them), no ref is deleted, the message and
 `error.details.caches` name each cache that remains, `error.details.warnings` carries Git's reasons,
 and the record stays for a retry with `workflow clean ID`. Success returns
 `{kind:"workflow.rm.result", ok:true, runId, stateDir, dryRun, force, refs, verdict, removed, launchOnly, unreadable, interrupted, paths, caches, refsRemoved, keptRefs, bytes, tombstones, warnings}`:
