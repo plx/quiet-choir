@@ -497,6 +497,8 @@ describe('workflow rm deletion', () => {
       caches: [],
       tombstones: [],
       launchOnly: false,
+      unreadable: false,
+      interrupted: false,
     });
     await onlyIgnoreFileLeft();
     expect(await gone(join(root, 'xdg'))).toBe(true);
@@ -728,10 +730,15 @@ describe('workflow rm ordering', () => {
     (['migrated', 'flat'] as const).map((layout) => [layout, stop] as const),
   );
 
+  // A flat run stopped after its commit point and before the rename leaves `legacy/` and any backups.
+  const interruptedAfter: readonly RemovalStep[] = ['flat', 'backups', 'primary-released'];
+
   it.each(cases)(
     'a %s run stopped after %s lists and inspects as intact or not found',
     async (layout, stop) => {
       await (layout === 'migrated' ? migratedLegacy() : unmigratedLegacy());
+      const backup = layout === 'flat' && stop === 'flat';
+      if (backup) await writeFile(join(stateDir, 'legacy.json.v1'), '{}');
       await expect(
         removeRun({ runId: 'legacy', stateDir }, processRunner, {
           afterStep: (name) => {
@@ -761,6 +768,27 @@ describe('workflow rm ordering', () => {
       }
       const tombstones = (await readdir(stateDir)).filter((name) => name.endsWith('.removing'));
       expect(tombstones).toHaveLength(stop === 'renamed' ? 1 : 0);
+      if (layout === 'flat' && interruptedAfter.includes(stop)) {
+        // A real crash leaves both locks behind with a dead owner; rm finishes the removal (ADR 0061).
+        await plant(join(stateDir, 'legacy', 'lock'));
+        await plant(join(stateDir, 'legacy.json.lock'));
+        const finished = removed(await remove('legacy'));
+        expect(finished).toMatchObject({
+          removed: true,
+          interrupted: true,
+          launchOnly: false,
+          unreadable: false,
+          paths: [
+            join(stateDir, 'legacy'),
+            join(stateDir, 'legacy.json.lock'),
+            ...(backup ? [join(stateDir, 'legacy.json.v1')] : []),
+          ],
+          caches: [],
+          refsRemoved: [],
+          keptRefs: [],
+        });
+        await onlyIgnoreFileLeft();
+      }
     },
   );
 
@@ -792,6 +820,203 @@ describe('workflow rm ordering', () => {
     await mkdir(join(stateDir, dead));
     expect(removed(await remove('second')).tombstones).toEqual([dead]);
     await onlyIgnoreFileLeft();
+  });
+});
+
+describe('workflow rm of an interrupted flat-run removal', () => {
+  const live = () =>
+    owner(process.pid, 'live', hostname(), {
+      osStartTime: processIdentity(process.pid)?.start ?? null,
+    });
+
+  /**
+   * An unmigrated flat run whose rm stopped after deleting the flat file, as a crash leaves it:
+   * `<runId>/` with the primary lock and the legacy guard, both owned by a dead process.
+   */
+  async function crashedRemoval(runId: string, backup = false): Promise<void> {
+    await flatRecord(runId, 'completed');
+    if (backup) await writeFile(join(stateDir, `${runId}.json.v1`), '{}');
+    await expect(
+      removeRun({ runId, stateDir }, processRunner, {
+        afterStep: (name) => {
+          if (name === 'flat') throw new Error('crash');
+        },
+      }),
+    ).rejects.toThrow('crash');
+    await plant(join(stateDir, runId, 'lock'));
+    await plant(join(stateDir, `${runId}.json.lock`));
+    await expect(inspectRun({ stateDir, runId })).rejects.toMatchObject({ code: 'run.not_found' });
+  }
+
+  it('previews the finish with its paths and bytes, changing nothing', async () => {
+    await crashedRemoval('flat', true);
+    const before = await snapshot(root);
+    const preview = removed(await remove('flat', { dryRun: true }));
+    expect(preview).toMatchObject({
+      dryRun: true,
+      removed: false,
+      verdict: 'remove',
+      interrupted: true,
+      launchOnly: false,
+      unreadable: false,
+      paths: [
+        join(stateDir, 'flat'),
+        join(stateDir, 'flat.json.lock'),
+        join(stateDir, 'flat.json.v1'),
+      ],
+      caches: [],
+      refsRemoved: [],
+      keptRefs: [],
+      bytes: await runBytes(stateDir, 'flat'),
+      tombstones: [],
+      warnings: [],
+    });
+    expect(preview.bytes).toBeGreaterThan(0);
+    expect(await snapshot(root)).toEqual(before);
+    expect(removed(await remove('flat'))).toMatchObject({ removed: true, interrupted: true });
+    await onlyIgnoreFileLeft();
+  });
+
+  it('finishes a removal that left only backups and the legacy guard', async () => {
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(join(stateDir, 'ghost.json.v2'), '{"formatVersion":2}');
+    await plant(join(stateDir, 'ghost.json.lock'));
+    const result = removed(await remove('ghost'));
+    expect(result).toMatchObject({
+      removed: true,
+      interrupted: true,
+      paths: [join(stateDir, 'ghost.json.lock'), join(stateDir, 'ghost.json.v2')],
+    });
+    await onlyIgnoreFileLeft();
+  });
+
+  it.for([
+    [
+      'a live primary lock owner',
+      (id: string) => plant(join(stateDir, id, 'lock'), { owner: live() }),
+    ],
+    [
+      'a live legacy guard owner',
+      (id: string) => plant(join(stateDir, `${id}.json.lock`), { owner: live() }),
+    ],
+    [
+      'unreadable primary metadata',
+      (id: string) => plant(join(stateDir, id, 'lock'), { owner: null }),
+    ],
+  ] as const)('refuses %s with run.locked, even with --force', async ([, hold]) => {
+    await crashedRemoval('held');
+    await rm(join(stateDir, 'held', 'lock'), { recursive: true });
+    await rm(join(stateDir, 'held.json.lock'), { recursive: true });
+    await hold('held');
+    const before = await snapshot(stateDir);
+    for (const force of [false, true]) {
+      refused(await remove('held', { force }), 'run.locked');
+      const preview = removed(await remove('held', { force, dryRun: true }));
+      expect(preview).toMatchObject({ interrupted: true, verdict: { code: 'run.locked' } });
+    }
+    expect(await snapshot(stateDir)).toEqual(before);
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'refuses a dead owner’s live recorded child as run.orphans, changing nothing',
+    async () => {
+      await crashedRemoval('orphan');
+      const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+        detached: true,
+        stdio: 'ignore',
+      });
+      children.push(child);
+      assert(child.pid);
+      await delay(50);
+      await plant(join(stateDir, 'orphan', 'lock'), {
+        files: {
+          [`processes/${String(child.pid)}.json`]: JSON.stringify({
+            pid: child.pid,
+            pgid: child.pid,
+            binary: 'fake-harness',
+            cwd: stateDir,
+            startedAt: new Date().toISOString(),
+            osStartTime: processIdentity(child.pid)?.start ?? null,
+            runId: 'orphan',
+            stepId: 'review',
+            attempt: 1,
+            ownerToken: 'old',
+          }),
+        },
+      });
+      const before = await snapshot(stateDir);
+      refused(await remove('orphan', { force: true }), 'run.orphans');
+      const preview = removed(await remove('orphan', { dryRun: true }));
+      expect(preview).toMatchObject({ interrupted: true, verdict: { code: 'run.orphans' } });
+      expect(await snapshot(stateDir)).toEqual(before);
+    },
+  );
+
+  it.for([
+    ['journal.jsonl', 'journal.jsonl'],
+    ['an inbox', 'inbox/gate.json'],
+    ['an unknown file', 'notes.txt'],
+    ['a leftover launch next to the lock', 'launch/1.log'],
+  ] as const)('leaves a directory with %s alone as run.not_found', async ([, file]) => {
+    await crashedRemoval('other');
+    await mkdir(join(stateDir, 'other', file, '..'), { recursive: true });
+    await writeFile(join(stateDir, 'other', file), '');
+    const before = await snapshot(stateDir);
+    refused(await remove('other', { dryRun: true }), 'run.not_found');
+    refused(await remove('other', { force: true }), 'run.not_found');
+    expect(await snapshot(stateDir)).toEqual(before);
+  });
+
+  it('refuses with run.exists when a record appears before the lock, keeping it', async () => {
+    await crashedRemoval('raced');
+    await expect(
+      removeRun({ runId: 'raced', stateDir }, processRunner, {
+        beforeLock: () => flatRecord('raced', 'completed'),
+      }),
+    ).rejects.toMatchObject({
+      code: 'run.exists',
+      message: expect.stringContaining('A run now holds ID raced') as unknown,
+    });
+    expect((await readRequiredRun({ runId: 'raced', stateDir })).status).toBe('completed');
+    expect(await gone(join(stateDir, 'raced', 'lock'))).toBe(true);
+    expect(await gone(join(stateDir, 'raced.json.lock'))).toBe(true);
+  });
+
+  it('refuses with run.not_found when the leftover changed before the lock', async () => {
+    await crashedRemoval('changed');
+    await expect(
+      removeRun({ runId: 'changed', stateDir }, processRunner, {
+        beforeLock: () => writeFile(join(stateDir, 'changed', 'journal.jsonl'), ''),
+      }),
+    ).rejects.toMatchObject({ code: 'run.not_found' });
+    expect(await readdir(join(stateDir, 'changed'))).toEqual(['journal.jsonl']);
+  });
+
+  it.for([{ refs: true }, { force: true }, { unreadable: true }] as const)(
+    'finishes the removal with %o, which changes nothing on this path',
+    async (flags) => {
+      await crashedRemoval('flagged');
+      const result = removed(await remove('flagged', flags));
+      expect(result).toMatchObject({
+        removed: true,
+        interrupted: true,
+        refs: flags.refs ?? false,
+        force: flags.force ?? false,
+        caches: [],
+        refsRemoved: [],
+        keptRefs: [],
+      });
+      await onlyIgnoreFileLeft();
+    },
+  );
+
+  it('never finishes a removal for prune’s pinned rm', async () => {
+    await crashedRemoval('pinned');
+    const before = await snapshot(stateDir);
+    await expect(
+      removeRun({ runId: 'pinned', stateDir, expectedUpdatedAt: 'x' }, processRunner),
+    ).rejects.toMatchObject({ code: 'run.not_found' });
+    expect(await snapshot(stateDir)).toEqual(before);
   });
 });
 
@@ -1287,6 +1512,7 @@ describe('workflow rm of a leftover launch directory', () => {
     const result = removed(await remove('broken', { refs: true }));
     expect(result).toMatchObject({
       launchOnly: true,
+      interrupted: false,
       removed: true,
       verdict: 'remove',
       refs: true,
@@ -1361,6 +1587,7 @@ describe('workflow rm of a leftover launch directory', () => {
       dryRun: true,
       removed: false,
       launchOnly: true,
+      interrupted: false,
       verdict: 'remove',
       paths: [directory],
       bytes: await runBytes(stateDir, 'broken'),
@@ -1618,6 +1845,7 @@ describe('workflow rm --unreadable of a run whose record is damaged', () => {
       removed: true,
       unreadable: true,
       launchOnly: false,
+      interrupted: false,
       verdict: 'remove',
       bytes,
       caches: [],
@@ -1751,6 +1979,7 @@ describe('workflow rm --unreadable of a run whose record is damaged', () => {
       removed: false,
       unreadable: true,
       launchOnly: false,
+      interrupted: false,
       verdict: 'remove',
       paths: [directory],
       bytes: await runBytes(stateDir, 'damaged'),

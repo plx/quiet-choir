@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { lstatSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // workflow rm removes a finished run, refuses a suspended one without --force, and its dry run
 // changes nothing; workflow list reports each run's bytes. A run whose run.json is damaged is
-// refused with the --unreadable command, which removes it. Local sleeps only: no harness calls.
+// refused with the --unreadable command, which removes it. What a removal of a flat run left after
+// its commit point (a lock-only directory and a backup) is finished. Local sleeps only: no harness
+// calls.
 const repository = fileURLToPath(new URL('..', import.meta.url));
 const root = mkdtempSync(join(tmpdir(), 'choir-rm-cli-'));
 const stateDir = join(root, 'state');
@@ -66,6 +68,7 @@ try {
   assert.equal(preview.kind, 'workflow.rm.result');
   assert.equal(preview.verdict, 'remove');
   assert.equal(preview.removed, false);
+  assert.equal(preview.interrupted, false);
   assert.equal(preview.bytes, row.bytes);
   assert.deepEqual(preview.paths, [join(stateDir, 'done')]);
   assert.deepEqual(snapshot(), before);
@@ -122,7 +125,25 @@ try {
   assert.equal(swept.removed, true);
   assert.equal(swept.unreadable, true);
   assert.equal(swept.launchOnly, false);
+  assert.equal(swept.interrupted, false);
   assert.equal(swept.warnings.length, 1);
+  assert.deepEqual(readdirSync(stateDir), ['.gitignore']);
+
+  // An empty lock directory left by a crashed flat-run removal, plus its backup (ADR 0061).
+  mkdirSync(join(stateDir, 'ghost', 'lock'), { recursive: true });
+  writeFileSync(join(stateDir, 'ghost.json.v1'), '{}');
+  const ghostBefore = snapshot();
+  const unfinished = document(0, 'rm', 'ghost', '--dry-run');
+  assert.equal(unfinished.interrupted, true);
+  assert.equal(unfinished.verdict.code, 'run.locked', JSON.stringify(unfinished.verdict));
+  assert.deepEqual(snapshot(), ghostBefore);
+  rmSync(join(stateDir, 'ghost', 'lock'), { recursive: true });
+  const ready = document(0, 'rm', 'ghost', '--dry-run');
+  assert.equal(ready.verdict, 'remove');
+  assert.deepEqual(ready.paths, [join(stateDir, 'ghost'), join(stateDir, 'ghost.json.v1')]);
+  const finished = command(['rm', 'ghost']);
+  assert.equal(finished.status, 0, finished.stderr);
+  assert.match(finished.stdout, /^Finished the interrupted removal of ghost \(/u);
   assert.deepEqual(readdirSync(stateDir), ['.gitignore']);
   console.log('rm CLI smoke passed');
 } finally {
