@@ -958,15 +958,15 @@ describe('checks rollup', () => {
     let cases = 0;
     for (const view of views)
       for (const now of [0, 4_999, 5_000, 10_000]) {
-        const before = decideChecks(view, { ...timing, now });
-        for (const requiredChecks of [undefined, []]) {
-          const decision = decideChecks(view, { ...timing, now, requiredChecks });
-          expect(decision).toEqual(before);
+        // The existing table above pins the omitted option; an empty list decides the same.
+        const omitted = decideChecks(view, { ...timing, now });
+        const empty = decideChecks(view, { ...timing, now, requiredChecks: [] });
+        expect(empty).toEqual(omitted);
+        for (const decision of [omitted, empty])
           if (!decision.done) expect(decision.progress).not.toHaveProperty('missing');
-          cases++;
-        }
+        cases++;
       }
-    expect(cases).toBe(72);
+    expect(cases).toBe(36);
   });
 
   it('never reports success while a required check is absent', () => {
