@@ -19,8 +19,10 @@ arguments or shell source: command descriptions are recorded and visible in insp
 `ExecResult` contains `code`, `signal`, `stdout`, `stderr`, `truncated`, and `durationMs`. By
 default, only exit 0 succeeds. Non-ok exits throw `ExecError`; attempt history preserves the exit
 code, signal, classification, and the last 1024 characters of each output stream. `ctx.exec.json`
-parses stdout with its required Zod schema and checkpoints that value instead of raw output. Invalid
-or truncated JSON fails.
+parses stdout with its required Zod schema and checkpoints that value instead of raw output.
+Truncated output fails with kind `output-limit`. Stdout that is not JSON after an accepted nonzero
+exit (in `okExitCodes`, or `'any'`) fails with kind `process`, because the command failed without a
+body; any other invalid JSON or schema mismatch fails with kind `schema`.
 
 A `try/catch` around a command is not a durable decision: resume runs the command again and can take
 the other branch. To branch on a failure, pass `onError: 'return'`, as every effect that can fail
@@ -198,12 +200,13 @@ spawning; unmatched commands run for real there, and worktree Git always does. A
 `"commands": "fixture"` fails an unmatched command at its step in both modes. `workflow fixtures`
 exports completed command results as exec rules keyed by argv and environment/stdin digests, and
 settled or absorbed command failures as rules with their exit `code` and recorded output tails when
-a command result reproduces them (an exit code outside `okExitCodes` or an `exec.json` schema
-failure). A spawn failure, timeout, signal or output-limit failure gets no exported rule yet; the
-export still sets `"commands": "fixture"`, so a replay of that run fails at that step. An `exec`
-rule with `error` (and optionally `kind`) can describe such a failure by hand: the command rejects
-with an `ExecError` of kind `process` by default, with no exit code or output. File effects, local
-callbacks, and top-level workflow code still run for real unless selected by `--stub-steps`.
+a command result reproduces them (an exit code outside `okExitCodes`, an `exec.json` accepted
+nonzero exit without JSON, or an `exec.json` schema failure). A spawn failure, timeout, signal or
+output-limit failure gets no exported rule yet; the export still sets `"commands": "fixture"`, so a
+replay of that run fails at that step. An `exec` rule with `error` (and optionally `kind`) can
+describe such a failure by hand: the command rejects with an `ExecError` of kind `process` by
+default, with no exit code or output. File effects, local callbacks, and top-level workflow code
+still run for real unless selected by `--stub-steps`.
 
 Commands a callback or observer runs through `context.exec` are rehearsed the same way: synthesized
 or answered by an `exec` rule, and listed in `commands` with `parentStepId` set to the step or wait

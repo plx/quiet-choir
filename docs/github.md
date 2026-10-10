@@ -101,15 +101,28 @@ A read is a memoized snapshot, not a live view:
   `status: 'unavailable'`, which replays as data. "No alerts" is `status: 'ok'` with an empty list.
 - **Everything else rejects.** Not Found, bad credentials, a GraphQL error, an error page after
   alerts, an empty stdout from a network failure, a timeout or any other exit code rejects with an
-  `ExecError`; nothing is settled, so a resume retries the read.
+  `ExecError`; nothing is settled, so a resume retries the read. A gh failure that leaves no JSON on
+  stdout is kind `process`; an error body that is JSON but not one the read accepts (Not Found, bad
+  credentials, a single-page 5xx body from code scanning) is kind `schema`.
 - **Code scanning skips `--slurp`.** With `--slurp`, gh closes its outer array even when a later
   page fails, so the alerts fetched before a dropped connection would parse as a complete list.
   Plain `--paginate` merges the REST pages into one array and writes its closing `]` only after the
-  last page, so a failure after the first page leaves unparseable JSON and the read rejects.
-- **Retry.** There is no default retry, because deciding which gh failures are transient would mean
-  guessing from messages. Reads are safe to repeat, so pass one when you want it, such as
-  `{ retry: { maxAttempts: 3, on: ['process', 'timeout'] } }`. A network failure that leaves no JSON
-  on stdout has kind `schema`, the same kind as an incomplete collection.
+  last page, so a failure after the first page leaves unparseable JSON and the read rejects with
+  kind `process`.
+- **Retry.** Reads get no default retry and no new error kind
+  ([ADR 0044](decisions/0044-gh-backed-github-reads.md), amended by #349). Deciding which gh
+  failures are transient would mean guessing from messages, kind `process` also covers permanent
+  failures such as a missing login or a GraphQL error, a default would change existing workflows,
+  and `timeout` under the five-minute default deadline would triple a hung read. Reads are safe to
+  repeat, so pass `{ retry: { maxAttempts: 3, on: ['process', 'timeout'] } }` when you want one. A
+  network failure (gh exits nonzero with no JSON on stdout: empty output, an unclosed paginated
+  array, an error page appended to a partial array) is kind `process` on every read, because
+  `exec.json` classifies an accepted nonzero exit without JSON as `process`
+  ([ADR 0021](decisions/0021-durable-commands-and-files.md)). An incomplete collection only arises
+  at exit 0 with valid JSON and is kind `schema`, so that policy retries the network failure and
+  never the incomplete collection. A code-scanning error body that is JSON (such as a single-page
+  5xx) stays kind `schema`; code scanning has no completeness check, so its retry may add
+  `'schema'`.
 - **Output caps.** A read keeps up to `maxOutputBytes` of stdout (1 MiB by default, 8 MiB for
   `epic.snapshot`). Larger output rejects the read instead of shrinking it, so raise the cap for
   pull requests with many or long review comments, for example
