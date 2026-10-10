@@ -1,13 +1,14 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, realpath, rename, writeFile } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, extname, join, relative, resolve } from 'node:path';
 import { homedir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import ts from 'typescript';
 import { z } from 'zod';
 import type { WorkflowDescription } from '../runtime/child-model.js';
 import { capabilityManifestSchema } from '../runtime/profiles.js';
-import { engineInfo } from '../runtime/engine.js';
+import { engineInfo, recordedEngine } from '../runtime/engine.js';
 import { digest } from '../runtime/json.js';
 import { analyzeTypecheckEntrypoint } from '../typecheck/plan.js';
 import type { TypecheckPlan } from '../typecheck/model.js';
@@ -65,8 +66,10 @@ const validation = z.object({
 // Version 3: validate results saved by version 2 hold plaintext settings, MCP servers and prompts
 // (#103); they are never served and are rewritten with the redacted manifest. Version 4: version 3
 // results may hold plaintext registered harness options now listed in sensitiveOptions (#247).
+// Version 5 (#345): entries are keyed on the engine code and toolchain digest; version 4 entries
+// keyed on the version string alone are revalidated and rewritten.
 const cache = z.object({
-  version: z.literal(4),
+  version: z.literal(5),
   engine: z.string(),
   plan: z.json(),
   sources: z.record(z.string(), z.string()),
@@ -141,13 +144,72 @@ async function cacheSources(
   return sources;
 }
 
+const engineExtensions = new Set(['.ts', '.mts', '.cts', '.js', '.mjs', '.cjs', '.json']);
+
+/**
+ * Digest of the engine's own code: every regular `.ts`, `.mts`, `.cts`, `.js`, `.mjs`, `.cjs` and
+ * `.json` file (declaration files included) under `root`, keyed by relative path (`digest` sorts keys). Source maps
+ * and symlinks are skipped. @internal
+ */
+export async function engineCodeDigest(root: string): Promise<string> {
+  const files: Record<string, string> = {};
+  const visit = async (directory: string): Promise<void> => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) await visit(path);
+      else if (entry.isFile() && engineExtensions.has(extname(entry.name)))
+        files[relative(root, path).split('\\').join('/')] = hash(await readFile(path));
+    }
+  };
+  await visit(root);
+  return digest(files);
+}
+
+let engineKeyMemo: Promise<string> | undefined;
+
+/**
+ * The cache key for what validates a definition: the engine version, Node major, a digest of the
+ * running engine modules (`src/` under tsx or vitest, `dist/` in a build) and the TypeScript, zod
+ * and tsx versions. Validation rules live in that code, so any change revalidates every entry.
+ * Computed once per process; `undefined` when it cannot be computed, so the cache is bypassed. The
+ * walked root follows this file's location (two directories up).
+ */
+async function engineKey(): Promise<string | undefined> {
+  try {
+    engineKeyMemo ??= engineCodeDigest(fileURLToPath(new URL('../../', import.meta.url))).then(
+      (code) => {
+        const { zod, tsx } = recordedEngine();
+        return digest({
+          quietChoir: engineInfo.version,
+          node: process.versions.node.split('.')[0] ?? 'unknown',
+          code,
+          typescript: ts.version,
+          zod,
+          tsx,
+        });
+      },
+    );
+    return await engineKeyMemo;
+  } catch {
+    engineKeyMemo = undefined;
+    return undefined;
+  }
+}
+
 /** Source-validated metadata cache; execution always imports and checks the selected workflow anew. @internal */
 export async function listDefinitions(
   directories: readonly string[],
   /** Validate one definition; execution passes durabilityLint 'warn', so findings only log. */
   validate: (plan: TypecheckPlan) => Promise<WorkflowCommandResult>,
-  refresh = false,
+  options: {
+    refresh?: boolean;
+    /** Override the computed engine key, so a test can change the validation digest. */
+    engine?: string;
+  } = {},
 ): Promise<WorkflowCommandResult> {
+  const refresh = options.refresh ?? false;
+  // Without a key nothing is read or written: every definition validates.
+  const engine = options.engine ?? (await engineKey());
   const definitions: ValidatedWorkflow[] = [];
   const names = new Map<string, string>();
   const root = join(
@@ -160,9 +222,8 @@ export async function listDefinitions(
     if (!analyzed.ok) throw new Error(analyzed.error.message);
     const plan = analyzed.plan;
     const path = join(root, `${digest({ entrypoint, configuration: plan.configuration })}.json`);
-    const engine = `${engineInfo.version}:${process.versions.node.split('.')[0] ?? 'unknown'}`;
     let result: ValidatedWorkflow | undefined;
-    if (!refresh) {
+    if (!refresh && engine !== undefined) {
       try {
         const prior = cache.parse(JSON.parse(await readFile(path, 'utf8')));
         if (
@@ -195,18 +256,23 @@ export async function listDefinitions(
         entrypoint: checked.entrypoint,
         workflow: checked.workflow,
       };
-      try {
-        const sources = await cacheSources(plan, result);
-        await mkdir(root, { recursive: true, mode: 0o700 });
-        const temporary = `${path}.${randomUUID()}.tmp`;
-        await writeFile(temporary, JSON.stringify({ version: 4, engine, plan, sources, result }), {
-          mode: 0o600,
-          flag: 'wx',
-        });
-        await rename(temporary, path);
-      } catch {
-        /* Cache availability does not change the validated discovery result. */
-      }
+      if (engine !== undefined)
+        try {
+          const sources = await cacheSources(plan, result);
+          await mkdir(root, { recursive: true, mode: 0o700 });
+          const temporary = `${path}.${randomUUID()}.tmp`;
+          await writeFile(
+            temporary,
+            JSON.stringify({ version: 5, engine, plan, sources, result }),
+            {
+              mode: 0o600,
+              flag: 'wx',
+            },
+          );
+          await rename(temporary, path);
+        } catch {
+          /* Cache availability does not change the validated discovery result. */
+        }
     }
     const previous = names.get(result.workflow.name);
     if (previous)

@@ -295,7 +295,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
           plan.directories,
           (typecheck) =>
             this.execute({ kind: 'workflow.validate', typecheck, durabilityLint: 'warn' }),
-          plan.kind === 'workflow.list-defs' && plan.refresh,
+          { refresh: plan.kind === 'workflow.list-defs' && plan.refresh === true },
         );
         if (plan.kind === 'workflow.list-defs' || !registry.ok) return registry;
         if (registry.kind !== 'workflow.list-defs.result')
