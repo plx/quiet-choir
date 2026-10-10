@@ -28,6 +28,22 @@ export interface ExecOptions {
   readonly env?: Readonly<Record<string, string>>;
   /** Inherit the parent environment by default; false keeps only the overlay and run metadata. */
   readonly inheritEnv?: boolean;
+  /**
+   * Opt in to removing host agent-session variables from the inherited environment, with the same
+   * patterns `childEnvironment` applies to agent children (`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`,
+   * `CODEX_THREAD_ID`, `TRACEPARENT` and the rest; authentication and configuration such as
+   * `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` and `CODEX_HOME` are kept). Use it for commands
+   * that launch `claude`, `codex` or a wrapper around them. `true` applies the built-in patterns; an
+   * array applies them plus those exact names. Omitted or `false` inherits the parent environment
+   * unchanged, the default.
+   *
+   * The explicit `env` overlay applies after the scrub, so it can restore a scrubbed name, and the
+   * `QUIET_CHOIR_*` run metadata is still delivered. Enabled, the scrub and its extra names (never
+   * the host's values or the removed names) are part of the command's identity, so toggling it on a
+   * completed step under the same ID refuses the resume. Rejected with `inheritEnv: false`, which
+   * leaves nothing to scrub.
+   */
+  readonly scrubEnv?: boolean | readonly string[];
   /** UTF-8 stdin, delivered after durable process registration. Only its digest is recorded. */
   readonly input?: string;
   /** Accepted exits, default [0]. 'any' treats nonzero exits as data, but still rejects signals. */
@@ -184,6 +200,14 @@ export interface ProcessRunRequest {
   readonly env: Readonly<Record<string, string>>;
   /** Whether the adapter should inherit its parent environment. */
   readonly inheritEnv: boolean;
+  /**
+   * Present only when {@link ExecOptions.scrubEnv} is enabled (with `inheritEnv` true): extra exact
+   * names to remove, sorted, on top of the built-in host agent-session patterns (empty for `true`).
+   * A custom runner must honor it like `inheritEnv`: build the inherited part of the child's
+   * environment without the scrubbed host names, then apply `env` and the run metadata.
+   * `NodeProcessRunner` uses `childEnvironment` for this.
+   */
+  readonly scrubEnv?: readonly string[];
   /** Text to send after process registration. */
   readonly input: string;
   /** Enforced wall-clock deadline. */
@@ -218,6 +242,11 @@ export interface ExecSummary {
   readonly envSha256: string;
   /** Whether the parent environment is inherited. */
   readonly inheritEnv: boolean;
+  /**
+   * Present only when the host agent-session scrub is enabled: the requested extra names, sorted
+   * and deduplicated (empty for `scrubEnv: true`). Host values and removed names are not stored.
+   */
+  readonly scrubEnv?: readonly string[];
   /** SHA-256 of stdin; input is not stored. */
   readonly inputSha256: string;
   /** Exit-code branch contract. */
