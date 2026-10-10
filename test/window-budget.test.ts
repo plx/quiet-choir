@@ -23,6 +23,7 @@ import {
   type WorkflowContext,
   type WorkflowEvent,
 } from '../src/index.js';
+import { AttemptTranscript } from '../src/workflow/runtime/agent-transcript.js';
 import { ThresholdLogger } from '../src/application/execution.js';
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import { TickWorkflowExecutor } from '../src/workflow/loader/tick.js';
@@ -30,10 +31,14 @@ import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
 import { MAX_EPOCH_MS } from '../src/workflow/runtime/clock.js';
 import { FailureOrigins } from '../src/workflow/runtime/fan-out.js';
 import {
+  latestRateLimits,
   windowStop,
   windowSuspensionMessage,
   type RateLimitDiagnostics,
 } from '../src/workflow/runtime/rate-limit.js';
+import type { RunRecord, StepRecord } from '../src/workflow/runtime/record.js';
+import { RunBudget, type RunBudgetPolicy } from '../src/workflow/runtime/run-budget.js';
+import { summarizeUsage } from '../src/workflow/runtime/usage-summary.js';
 import { recordEventLines } from '../src/workflow/loader/event-follow.js';
 
 const project = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -545,6 +550,58 @@ describe('the gate in a run', () => {
     },
   );
 
+  it('counts a committed report while its on-failure transcript discard is still pending', async () => {
+    const stateDir = await directory();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let discarding!: () => void;
+    const discardStarted = new Promise<void>((resolve) => {
+      discarding = resolve;
+    });
+    vi.spyOn(AttemptTranscript.prototype, 'discard').mockImplementation(async () => {
+      discarding();
+      await gate;
+    });
+    const agent = harness(() => reportAt(0.9));
+    const definition = defineWorkflow({
+      ...base,
+      async run(ctx) {
+        await ctx.map('items', [0, 1], { concurrency: 2 }, async (item) => {
+          if (item === 0) {
+            await ctx.claude.text('first', { prompt: 'first' });
+            return;
+          }
+          // The first attempt has committed and is discarding its transcript, still admitted.
+          await discardStarted;
+          // Settles the discard only after the sibling's admission check has run.
+          setTimeout(release, 50);
+          await ctx.claude.text('sibling', { prompt: 'sibling' });
+        });
+        return null;
+      },
+    });
+    const options = { stateDir, runId: 'discard', harness: agent, clock: clockAt(wake - hour) };
+    const result = await runWorkflow(definition, {
+      ...options,
+      input: null,
+      maxWindowUtilization: 0.5,
+      policy: [{ transcripts: 'on-failure' }],
+    });
+    release();
+    expect(result).toMatchObject({ status: 'suspended', nextWakeAt: wake });
+    expect(agent.calls).toEqual(['claude']);
+    const record = await readRun(options);
+    expect(record.steps['items/0/first']?.status).toBe('completed');
+    expect(record.steps['items/1/sibling']).toBeUndefined();
+    expect(record.budgetStop).toMatchObject({
+      stepId: 'items/1/sibling',
+      observed: 0.9,
+      resetsAt: T,
+    });
+  });
+
   it('wakes at an earlier wait deadline, so the gate does not delay a timeout', async () => {
     const stateDir = await directory();
     const clock = clockAt(wake - hour);
@@ -701,4 +758,259 @@ export default defineWorkflow({ name: 'window', version: '1', input: z.null(), o
     expect(done.status).toBe('completed');
     expect(done.steps['two']?.attempts).toBe(1);
   }, 15_000);
+});
+
+// The gate keeps the latest report per harness as attempts settle instead of rescanning the step
+// map on every admission (#378). Synthetic records, as in test/rate-limit.test.ts; a Proxy around
+// `record.steps` counts how often admission enumerates it.
+describe('RunBudget rate-limit cache', () => {
+  const minute = 60_000;
+  const base = wake - 10 * hour;
+  const live = wake - hour;
+  const gate: RunBudgetPolicy = {
+    maxRunCostUsd: null,
+    maxRunAgentAttempts: null,
+    maxWindowUtilization: 0.5,
+  };
+  const attemptAt = (
+    attempt: number,
+    at: number,
+    report: RateLimitDiagnostics | undefined,
+    harness = 'claude',
+  ) => ({
+    attempt,
+    startedAt: new Date(at - minute).toISOString(),
+    finishedAt: new Date(at).toISOString(),
+    status: 'completed',
+    request: { harness },
+    usage: null,
+    ...(report === undefined ? {} : { diagnostics: { rateLimit: report } }),
+  });
+  const agentStep = (
+    seq: number,
+    at: number,
+    report: RateLimitDiagnostics | undefined,
+    harness = 'claude',
+  ) =>
+    ({
+      kind: harness,
+      seq,
+      status: 'completed',
+      attempts: 1,
+      attemptHistory: [attemptAt(1, at, report, harness)],
+    }) as unknown as StepRecord;
+  function counted(steps: Record<string, StepRecord>): {
+    record: RunRecord;
+    steps: Record<string, StepRecord>;
+    target: Record<string, StepRecord>;
+    enumerations: () => number;
+  } {
+    let enumerations = 0;
+    const proxy = new Proxy(steps, {
+      ownKeys(target) {
+        enumerations++;
+        return Reflect.ownKeys(target);
+      },
+    });
+    return {
+      record: { id: 'cache', steps: proxy } as unknown as RunRecord,
+      steps: proxy,
+      target: steps,
+      enumerations: () => {
+        const value = enumerations;
+        enumerations = 0;
+        return value;
+      },
+    };
+  }
+  /** What the gate decided before #378: a full scan of the steps (uncounted) on this admission. */
+  const scanned = (steps: Record<string, StepRecord>, harness: string, now: number) =>
+    windowStop(latestRateLimits(Object.entries(steps))[harness], 0.5, now, MAX_EPOCH_MS);
+  const refusal = (error: RunBudgetExceededError | undefined) =>
+    error && {
+      window: error.stop.window,
+      observed: error.stop.observed,
+      resetsAt: error.stop.resetsAt,
+    };
+
+  it.each([
+    ['the latest report is live', T, T - 2 * 3600, live, 0.9],
+    ['the latest report expired, though an earlier one is live', T - 2 * 3600, T, live, undefined],
+    ['every report expired', T, T, wake, undefined],
+  ] as const)(
+    'seeds from a saved record when %s, as a full scan decides',
+    (_name, latestReset, earlierReset, now, observed) => {
+      const { record, target } = counted({
+        earlier: agentStep(1, base, reportAt(0.9, earlierReset)),
+        latest: agentStep(2, base + minute, reportAt(0.9, latestReset)),
+      });
+      const expected = scanned(target, 'claude', now);
+      expect(expected?.observed).toBe(observed);
+      const budget = new RunBudget(record, gate, clockAt(now));
+      expect(budget.check('codex-next', 'codex')).toBeUndefined();
+      const error = budget.check('next', 'claude');
+      expect(refusal(error)).toEqual(
+        expected && {
+          window: expected.window,
+          observed: expected.observed,
+          resetsAt: expected.resetsAt,
+        },
+      );
+      expect(budget.wakeAt).toBe(expected?.wakeAt ?? null);
+    },
+  );
+
+  it('folds a report in when its admitted attempt releases', () => {
+    const { record, steps, target, enumerations } = counted({
+      one: agentStep(1, base, reportAt(0.1)),
+    });
+    const budget = new RunBudget(record, gate, clockAt(live));
+    expect(budget.check('two', 'claude')).toBeUndefined();
+    enumerations();
+    const release = budget.enter('two');
+    steps['two'] = agentStep(2, base + minute, reportAt(0.9));
+    // A report counts once its attempt has settled and released, as a resumed run would see it.
+    expect(budget.check('three', 'claude')).toBeUndefined();
+    release();
+    release();
+    expect(budget.check('three', 'claude')?.stop).toMatchObject({ stepId: 'three', observed: 0.9 });
+    expect(scanned(target, 'claude', live)?.observed).toBe(0.9);
+    expect(enumerations()).toBe(0);
+  });
+
+  it('counts a failed attempt before its retry backoff through observe', () => {
+    const { record, steps } = counted({});
+    const budget = new RunBudget(record, gate, clockAt(live));
+    expect(budget.check('retried', 'claude')).toBeUndefined();
+    budget.enter('retried');
+    steps['retried'] = agentStep(1, base, reportAt(0.9));
+    budget.observe('retried');
+    expect(budget.check('other', 'claude')?.stop.observed).toBe(0.9);
+  });
+
+  it.each([
+    ['the later-finishing attempt releases first', ['late', 'early'], 0.9, 0.1],
+    ['the earlier-finishing attempt releases first', ['early', 'late'], 0.9, 0.1],
+    ['the later-finishing low report releases first', ['late', 'early'], 0.1, 0.9],
+    ['the later-finishing low report releases last', ['early', 'late'], 0.1, 0.9],
+  ] as const)(
+    'keeps the later-finishing report of two concurrent attempts when %s',
+    (_name, order, lateUtilization, earlyUtilization) => {
+      const { record, steps, target, enumerations } = counted({
+        seed: agentStep(1, base, reportAt(0.1)),
+      });
+      const budget = new RunBudget(record, gate, clockAt(live));
+      expect(budget.check('late', 'claude')).toBeUndefined();
+      expect(budget.check('early', 'claude')).toBeUndefined();
+      enumerations();
+      const releases = { late: budget.enter('late'), early: budget.enter('early') };
+      // The later-started attempt finishes first in time but may release in either order.
+      steps['late'] = agentStep(2, base + 3 * minute, reportAt(lateUtilization));
+      steps['early'] = agentStep(3, base + 2 * minute, reportAt(earlyUtilization));
+      for (const id of order) releases[id]();
+      const expected = scanned(target, 'claude', live);
+      expect(budget.check('next', 'claude')?.stop.observed).toBe(expected?.observed);
+      expect(expected?.observed).toBe(lateUtilization >= 0.5 ? lateUtilization : undefined);
+      expect(enumerations()).toBe(0);
+    },
+  );
+
+  it('rescans once when a redefinition rewrites the step that holds the latest report', () => {
+    const holder = agentStep(2, base + minute, reportAt(0.1));
+    const { record, target, enumerations } = counted({
+      other: agentStep(1, base, reportAt(0.9)),
+      holder,
+    });
+    const budget = new RunBudget(record, gate, clockAt(live));
+    expect(budget.check('next', 'claude')).toBeUndefined();
+    enumerations();
+    // Redefined as a local step: its attempts leave the projection.
+    holder.kind = 'step';
+    budget.observe('holder');
+    expect(enumerations()).toBe(0);
+    expect(scanned(target, 'claude', live)?.observed).toBe(0.9);
+    expect(budget.check('next', 'claude')?.stop).toMatchObject({ observed: 0.9 });
+    expect(enumerations()).toBe(1);
+  });
+
+  it('folds a redefined step that holds no latest report in place, without a rescan', () => {
+    const moved = agentStep(1, base, reportAt(0.9));
+    const { record, target, enumerations } = counted({
+      moved,
+      holder: agentStep(2, base + minute, reportAt(0.1)),
+    });
+    const budget = new RunBudget(record, gate, clockAt(live));
+    expect(budget.check('next', 'codex')).toBeUndefined();
+    enumerations();
+    // Redefined across harnesses: its report now belongs to Codex.
+    moved.kind = 'codex';
+    moved.attemptHistory = (moved.attemptHistory ?? []).map((attempt) => ({
+      ...attempt,
+      request: { harness: 'codex' } as never,
+    }));
+    budget.observe('moved');
+    expect(budget.check('next', 'claude')).toBeUndefined();
+    expect(budget.check('next', 'codex')?.stop).toMatchObject({ harness: 'codex', observed: 0.9 });
+    expect(scanned(target, 'codex', live)?.observed).toBe(0.9);
+    expect(enumerations()).toBe(0);
+  });
+
+  it.each([100, 10_000])(
+    'admits without enumerating %i steps after the first window check',
+    (count) => {
+      const { record, steps, enumerations } = counted(
+        Object.fromEntries(
+          Array.from({ length: count }, (_, index) => [
+            `s${String(index)}`,
+            agentStep(index + 1, base + index, reportAt(0.1)),
+          ]),
+        ),
+      );
+      const budget = new RunBudget(record, gate, clockAt(live));
+      // The constructor's attempt count, once per execution.
+      enumerations();
+      expect(budget.check('first', 'claude')).toBeUndefined();
+      expect(enumerations()).toBe(1);
+      for (let index = 0; index < 1_000; index++) {
+        const id = `n${String(index)}`;
+        expect(budget.check(id, index % 2 ? 'codex' : 'claude')).toBeUndefined();
+        const release = budget.enter(id);
+        steps[id] = agentStep(count + index + 1, base + count + index, reportAt(0.2));
+        release();
+      }
+      expect(enumerations()).toBe(0);
+    },
+  );
+
+  it('still sums recorded usage for the cost cap, integration usage included', () => {
+    const paid = (seq: number, costUsd: number) =>
+      ({
+        ...agentStep(seq, base + seq, reportAt(0.1)),
+        attemptHistory: [{ ...attemptAt(1, base + seq, reportAt(0.1)), usage: { costUsd } }],
+      }) as unknown as StepRecord;
+    const local = {
+      kind: 'step',
+      seq: 3,
+      status: 'completed',
+      attempts: 1,
+      attemptHistory: [
+        {
+          ...attemptAt(1, base, undefined),
+          request: undefined,
+          integration: 'github',
+          usage: { costUsd: 0.125 },
+        },
+      ],
+    } as unknown as StepRecord;
+    const { record } = counted({ one: paid(1, 0.25), two: paid(2, 0.25), local });
+    const usage = summarizeUsage(record);
+    const total = (usage.costUsd ?? 0) + (usage.integrationUsage.costUsd ?? 0);
+    expect(total).toBe(0.625);
+    const budget = new RunBudget(record, { ...gate, maxRunCostUsd: 0.6 }, clockAt(live));
+    expect(budget.check('next', 'claude')?.stop).toMatchObject({
+      metric: 'maxRunCostUsd',
+      limit: 0.6,
+      observed: total,
+    });
+  });
 });

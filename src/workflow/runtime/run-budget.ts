@@ -1,7 +1,7 @@
 import { brandError, isBranded } from './error-brand.js';
 import { z } from 'zod';
 import { clockNow, MAX_EPOCH_MS, systemClock } from './clock.js';
-import { latestRateLimits, windowStop, windowStopDescription } from './rate-limit.js';
+import { RateLimitTracker, windowStop, windowStopDescription } from './rate-limit.js';
 import type { RunRecord } from './record.js';
 import { summarizeUsage } from './usage-summary.js';
 import type { WorkflowClock } from './wait-model.js';
@@ -97,7 +97,25 @@ export const runBudgetSchema = z.object({
   maxWindowUtilization: z.number().min(0).max(1).nullable().optional(),
 });
 
-/** Own admission reservations and drain refusals without cancelling paid work. @internal */
+/**
+ * Own admission reservations and drain refusals without cancelling paid work. @internal
+ *
+ * Admission cost does not grow with the step map under the window gate alone (#378). The gate reads
+ * the `latestRateLimits` projection from a {@link RateLimitTracker} seeded by one scan of the record
+ * on the first window check, folded per step in O(that step's attempts) as admitted attempts settle,
+ * and rescanned only when a step that holds a harness's latest report is rewritten so that the
+ * report no longer stands (see {@link RunBudget.observe}). The answer equals `latestRateLimits` over
+ * the record, except for timing: a new report counts once its attempt has settled and been saved
+ * (the runner observes the step on release, before a retry's backoff and after a completion save),
+ * as a resumed run would see it, where a full scan also read an in-flight attempt's unsaved report.
+ * A seed or rescan while an attempt runs still reads it, ranked by its start, and its settlement
+ * replaces it.
+ *
+ * The cost total is not cached; `check` sums it only while `maxRunCostUsd` is set. It includes
+ * integration usage that local steps report through `reportUsage`, which settles outside admission
+ * and so has no release to fold it in; it depends on legacy fallbacks and on the order floats are
+ * summed in; and `stop.observed` must equal the cost that inspect and run results report.
+ */
 export class RunBudget {
   readonly #record: RunRecord;
   readonly #policy: RunBudgetPolicy;
@@ -108,6 +126,8 @@ export class RunBudget {
   #active = 0;
   #error: RunBudgetExceededError | undefined;
   #wakeAt: number | null = null;
+  // Only with the window gate set; undefined until the first window check and after invalidation.
+  #rateLimits: RateLimitTracker | undefined;
 
   /** `clock` decides which recorded rate-limit windows have expired. */
   public constructor(
@@ -144,22 +164,18 @@ export class RunBudget {
   /** Latch a refusal when a cap is reached; `harness` selects the rate-limit report to read. */
   public check(stepId: string, harness: string): RunBudgetExceededError | undefined {
     if (this.#error) return this.#error;
-    const usage = summarizeUsage(this.#record);
-    const values: RunBudgetPolicy = {
-      maxRunAgentAttempts: this.#attempts,
-      maxRunCostUsd: (usage.costUsd ?? 0) + (usage.integrationUsage.costUsd ?? 0),
-    };
     for (const metric of ['maxRunAgentAttempts', 'maxRunCostUsd'] as const) {
       const limit = this.#policy[metric];
-      const observed = values[metric] ?? 0;
-      if (limit === null || observed < limit) continue;
+      if (limit === null) continue;
+      const observed = metric === 'maxRunAgentAttempts' ? this.#attempts : this.#cost();
+      if (observed < limit) continue;
       return this.#latch({ stepId, metric, limit, observed, at: new Date().toISOString() });
     }
     const windowLimit = this.#policy.maxWindowUtilization ?? null;
     if (windowLimit === null) return undefined;
     // Per harness: a Codex admission is never refused by Claude's windows.
-    const reports = latestRateLimits(Object.entries(this.#record.steps));
-    const report = Object.hasOwn(reports, harness) ? reports[harness] : undefined;
+    this.#rateLimits ??= this.#seedRateLimits();
+    const report = this.#rateLimits.get(harness);
     const stop = windowStop(report, windowLimit, clockNow(this.#clock), MAX_EPOCH_MS);
     if (!stop) return undefined;
     this.#wakeAt = stop.wakeAt;
@@ -175,6 +191,34 @@ export class RunBudget {
     });
   }
 
+  #cost(): number {
+    const usage = summarizeUsage(this.#record);
+    return (usage.costUsd ?? 0) + (usage.integrationUsage.costUsd ?? 0);
+  }
+
+  #seedRateLimits(): RateLimitTracker {
+    const tracker = new RateLimitTracker();
+    for (const [stepId, step] of Object.entries(this.#record.steps))
+      tracker.observeStep(stepId, step);
+    return tracker;
+  }
+
+  /**
+   * Fold `stepId`'s attempts, as the record holds them now, into the window gate's projection.
+   * The runner calls it after an admitted attempt settles (through `enter`'s release, before a
+   * retry's backoff, and after a success's completion save, ahead of any transcript discard that
+   * delays the release) and after it rewrites a recorded step's kind, harness or request (redefinition
+   * and legacy migration). When a report the step held no longer stands, the projection is dropped
+   * and the next window check rescans the record once. A no-op until the first window check.
+   */
+  public observe(stepId: string): void {
+    const tracker = this.#rateLimits;
+    if (!tracker) return;
+    const steps = this.#record.steps;
+    if (!tracker.observeStep(stepId, Object.hasOwn(steps, stepId) ? steps[stepId] : undefined))
+      this.#rateLimits = undefined;
+  }
+
   #latch(stop: RunBudgetStop): RunBudgetExceededError {
     this.#record.budgetStop = stop;
     this.#error = new RunBudgetExceededError(this.#record.id, stop, this.#wakeAt);
@@ -183,7 +227,8 @@ export class RunBudget {
     return this.#error;
   }
 
-  public enter(): () => void {
+  /** Reserve an admitted attempt of `stepId`; the release observes the settled step. */
+  public enter(stepId: string): () => void {
     this.#attempts++;
     this.#active++;
     let released = false;
@@ -195,6 +240,7 @@ export class RunBudget {
         for (const resolve of this.#idle) resolve();
         this.#idle.clear();
       }
+      this.observe(stepId);
     };
   }
 

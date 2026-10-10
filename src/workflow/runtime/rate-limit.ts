@@ -183,43 +183,114 @@ export function formatRateLimitDetail(
   return parts.length === 0 ? '' : `(${parts.join('; ')})`;
 }
 
+/** One attempt's valid report, keyed by harness and ranked against the others. @internal */
+export interface RateLimitCandidate {
+  /** Harness the attempt ran on, with the agent summary's fallbacks. */
+  readonly harness: string;
+  /** `[settled or started ms, started ms, attempt, step seq]`; a greater rank is later. */
+  readonly rank: readonly number[];
+  /** The report as {@link latestRateLimits} returns it. */
+  readonly summary: RateLimitSummary;
+}
+
+/**
+ * The attempts of one step that {@link latestRateLimits} considers, in history order: none for a
+ * fork-reused step or a non-agent kind, and only attempts whose `rateLimit` is valid. @internal
+ */
+export function rateLimitCandidates(stepId: string, step: StepRecord): RateLimitCandidate[] {
+  if (step.reusedFrom) return [];
+  if (step.kind !== 'claude' && step.kind !== 'codex' && step.kind !== 'agent') return [];
+  const candidates: RateLimitCandidate[] = [];
+  for (const attempt of step.attemptHistory ?? []) {
+    const report = readRateLimit(attempt.diagnostics);
+    if (!report) continue;
+    const harness =
+      attempt.request?.harness ??
+      step.request?.harness ??
+      (step.kind === 'agent' ? step.harness : undefined) ??
+      step.kind;
+    candidates.push({
+      harness,
+      rank: [
+        Date.parse(attempt.finishedAt ?? attempt.startedAt),
+        Date.parse(attempt.startedAt),
+        attempt.attempt,
+        step.seq ?? 0,
+      ],
+      summary: { stepId, attempt: attempt.attempt, finishedAt: attempt.finishedAt, ...report },
+    });
+  }
+  return candidates;
+}
+
+/**
+ * The {@link latestRateLimits} projection, folded one step at a time so a caller can keep it as
+ * attempts settle instead of rescanning every step. The rank orders distinct attempts of steps
+ * with distinct `seq` totally, so the result does not depend on the order steps are observed in
+ * (only a full tie between steps without `seq` falls back to the later observation). @internal
+ */
+export class RateLimitTracker {
+  // A Map, so a harness named `constructor` or `__proto__` is plain data.
+  readonly #best = new Map<string, RateLimitCandidate>();
+
+  /**
+   * Fold every attempt of `step` (undefined for a step that is gone) into the projection.
+   * Observing a step again is idempotent, and an attempt whose rank grew (it settled since) replaces
+   * its earlier copy. Returns false, folding nothing, when an entry this step holds no longer
+   * stands: its attempt lost its report, moved to another harness, left the projection with a kind
+   * or reuse change, or its rank fell. Only a full rescan finds that harness's runner-up, so the
+   * caller must then discard the tracker.
+   */
+  public observeStep(stepId: string, step: StepRecord | undefined): boolean {
+    const candidates = step ? rateLimitCandidates(stepId, step) : [];
+    for (const [harness, held] of this.#best) {
+      if (held.summary.stepId !== stepId) continue;
+      const fresh = candidates.find(
+        (candidate) =>
+          candidate.harness === harness && candidate.summary.attempt === held.summary.attempt,
+      );
+      if (!fresh || compare(fresh.rank, held.rank) < 0) return false;
+    }
+    for (const candidate of candidates) {
+      const previous = this.#best.get(candidate.harness);
+      if (previous && compare(candidate.rank, previous.rank) < 0) continue;
+      this.#best.set(candidate.harness, candidate);
+    }
+    return true;
+  }
+
+  /** The latest report of `harness`, or undefined when none was observed. */
+  public get(harness: string): RateLimitSummary | undefined {
+    return this.#best.get(harness)?.summary;
+  }
+
+  /** Whether the latest report of any harness came from `stepId`. */
+  public holds(stepId: string): boolean {
+    for (const { summary } of this.#best.values()) if (summary.stepId === stepId) return true;
+    return false;
+  }
+
+  /** The projection as a plain record by harness, in first-observation order. */
+  public toRecord(): Record<string, RateLimitSummary> {
+    return Object.fromEntries([...this.#best].map(([harness, { summary }]) => [harness, summary]));
+  }
+}
+
 /**
  * For each harness, the attempt with a valid `rateLimit` that settled last (the start time breaks
- * ties and stands in for an attempt that never settled). Failed attempts count: a rejected status
- * on a 429 is the most useful report. Fork-reused steps are excluded, as usage excludes them.
- * Harnesses come from the attempt's request and fall back as the agent summary does. @internal
+ * ties and stands in for an attempt that never settled, then the attempt number, then the step's
+ * `seq`, so an exact tie between steps goes to the later step). Failed attempts count: a rejected
+ * status on a 429 is the most useful report. Fork-reused steps are excluded, as usage excludes
+ * them. Harnesses come from the attempt's request and fall back as the agent summary does. Step IDs
+ * are unique, as in `Object.entries(record.steps)`. The run budget keeps the same projection
+ * incrementally with {@link RateLimitTracker}. @internal
  */
 export function latestRateLimits(
   steps: Iterable<readonly [string, StepRecord]>,
 ): Record<string, RateLimitSummary> {
-  const best = new Map<string, { rank: readonly number[]; summary: RateLimitSummary }>();
-  for (const [stepId, step] of steps) {
-    if (step.reusedFrom) continue;
-    if (step.kind !== 'claude' && step.kind !== 'codex' && step.kind !== 'agent') continue;
-    for (const attempt of step.attemptHistory ?? []) {
-      const report = readRateLimit(attempt.diagnostics);
-      if (!report) continue;
-      const harness =
-        attempt.request?.harness ??
-        step.request?.harness ??
-        (step.kind === 'agent' ? step.harness : undefined) ??
-        step.kind;
-      const started = Date.parse(attempt.startedAt);
-      const rank = [Date.parse(attempt.finishedAt ?? attempt.startedAt), started, attempt.attempt];
-      const previous = best.get(harness);
-      if (previous && compare(rank, previous.rank) < 0) continue;
-      best.set(harness, {
-        rank,
-        summary: {
-          stepId,
-          attempt: attempt.attempt,
-          finishedAt: attempt.finishedAt,
-          ...report,
-        },
-      });
-    }
-  }
-  return Object.fromEntries([...best].map(([harness, { summary }]) => [harness, summary]));
+  const tracker = new RateLimitTracker();
+  for (const [stepId, step] of steps) tracker.observeStep(stepId, step);
+  return tracker.toRecord();
 }
 
 function compare(a: readonly number[], b: readonly number[]): number {

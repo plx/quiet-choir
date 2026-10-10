@@ -31,7 +31,11 @@ while `runBudget` is already merged by the runtime for every execution, includin
 **Per harness, at admission.** With the cap set, admission takes the budgeted path of ADR 0025.
 After the two existing caps, `RunBudget.check(stepId, harness)` reads the admitting harness's latest
 report (`latestRateLimits`, the same projection `inspect` shows) and evaluates it with the pure
-`windowStop` in `rate-limit.ts`:
+`windowStop` in `rate-limit.ts`. Since #378 `RunBudget` keeps that projection incrementally rather
+than rescanning every step per admission: it seeds it on the first window check, folds in each
+admitted attempt's step as the attempt settles, and rescans once after a redefinition rewrites the
+step that holds a harness's latest report. The result is the same projection; a new report counts
+once its attempt has settled and been saved. The gate reads it as follows:
 
 - a window's reset is its own `resetsAt`, or the event's `resetsAt` when the event's `type` names
   that window;
