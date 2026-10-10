@@ -897,6 +897,37 @@ describe('nextTicket over the recorded #99 snapshot', () => {
     expect(outsideReferences(snapshot)).toEqual([141]);
   });
 
+  it('parses a sub-issue of another repository against its own repository', () => {
+    const add = (raw: RawEpic) => {
+      const other = structuredClone(node(raw, 164));
+      Object.assign(other, {
+        number: 500,
+        repository: { nameWithOwner: 'octo-org/other-repo' },
+        body: `Depends on #12, ${REPO}#13 and octo-org/other-repo#14`,
+      });
+      other.comments.nodes = [
+        {
+          ...structuredClone(other.comments.nodes[0] ?? node(raw, 121).comments.nodes[0]),
+          body: 'Blocked by Octo-Org/Other-Repo#16\n\n<!-- epic:depends-on 15 -->',
+        },
+      ] as typeof other.comments.nodes;
+      epicOf(raw).subIssues.nodes.push(other);
+      epicOf(raw).subIssuesSummary.total += 1;
+    };
+    const before = snapshotOf();
+    const snapshot = snapshotOf(add);
+    const item = snapshot.items.find((entry) => entry.number === 500);
+    // Phrases first, then markers; the client-qualified #13 names another repository.
+    expect(item?.dependsOn).toEqual([12, 14, 16, 15]);
+    expect(outsideReferences(snapshot)).toEqual(outsideReferences(before));
+    expect(snapshot.items.filter((entry) => entry.number !== 500)).toEqual(before.items);
+    expect(nextTicket(snapshot).skipped).toContainEqual({
+      number: 500,
+      title: expect.any(String) as string,
+      reason: 'other-repository',
+    });
+  });
+
   it.each<[string, (raw: RawEpic) => void, NextTicketPolicy, number | null, (string | number)[][]]>(
     [
       [

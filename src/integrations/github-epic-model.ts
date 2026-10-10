@@ -1142,7 +1142,11 @@ export interface GithubEpicItem {
   readonly assignees: readonly string[];
   /** Whether the epic's checklist line is checked, or null when no line names the item. */
   readonly checked: boolean | null;
-  /** Dependencies declared in the body and comments; see {@link parseDependencies}. */
+  /**
+   * Dependencies declared in the body and comments; see {@link parseDependencies}. The numbers are
+   * issues of the item's own `repository`: a bare `#N` and a marker number resolve there, and a
+   * qualified reference counts only when it names that repository.
+   */
   readonly dependsOn: readonly number[];
   /** GitHub's blocked-by relations, with their states. */
   readonly blockedBy: readonly GithubEpicBlocker[];
@@ -1262,7 +1266,6 @@ function branchLinks(
 
 function mapSubIssue(
   node: RawEpicSubIssue,
-  repo: string,
   viewer: string,
   checked: boolean | null,
   branchLinked: (number: number) => readonly GithubEpicPullRequest[],
@@ -1280,7 +1283,8 @@ function mapSubIssue(
     checked,
     dependsOn: parseDependencies(
       [node.body, ...comments.map((comment) => comment.body)],
-      repo,
+      // The sub-issue's text is written in its own repository, where a bare #N names an issue.
+      node.repository.nameWithOwner,
       node.number,
     ),
     blockedBy: node.blockedBy.nodes.map((blocker) => ({
@@ -1364,7 +1368,6 @@ export function mapEpicSnapshot(
     items: ordered.map(({ node, checked }) =>
       mapSubIssue(
         node,
-        own,
         viewer,
         checked,
         // A sub-issue of another repository has none of this repository's pull requests.
