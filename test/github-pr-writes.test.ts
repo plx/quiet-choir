@@ -950,6 +950,8 @@ describe('arguments and requests', () => {
       'rerun attempt': (gh) => gh.checks.rerunFailed('w', { sha: HEAD, attempt: 0 }),
       'rerun attempts array': (gh) => gh.checks.rerunFailed('w', { sha: HEAD, attempts: as([]) }),
       'rerun attempts null': (gh) => gh.checks.rerunFailed('w', { sha: HEAD, attempts: as(null) }),
+      'rerun attempts map': (gh) =>
+        gh.checks.rerunFailed('w', { sha: HEAD, attempts: as(new Map([[101, 1]])) }),
       'rerun attempts string': (gh) =>
         gh.checks.rerunFailed('w', { sha: HEAD, attempts: as('101') }),
       'rerun attempts key zero': (gh) =>
