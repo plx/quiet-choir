@@ -92,10 +92,11 @@ writers still parse and are accepted as before.
 Holding the guard while the primary is released keeps every other writer out, because each one takes
 the guard first. Removing the flat marker before the directory, and renaming the directory to a
 dotted name, mean `list` and `inspect` see either an intact run or none. A crash leaves an intact
-run (rm again completes it) or a tombstone. Each rm sweeps tombstones whose PID is dead, skipping
-live and unknown ones so a concurrent rm is never disturbed. The signal is honoured only before step
-2; after that the removal finishes, so an interrupt (including a `workflow cancel` aimed at rm's own
-lock) cannot leave a half-deleted run.
+run (rm again completes it), the leftover of an unmigrated flat run between steps 2 and 5 (which
+[0061](0061-finish-interrupted-flat-run-removal.md) finishes), or a tombstone. Each rm sweeps
+tombstones whose PID is dead, skipping live and unknown ones so a concurrent rm is never disturbed.
+The signal is honoured only before step 2; after that the removal finishes, so an interrupt
+(including a `workflow cancel` aimed at rm's own lock) cannot leave a half-deleted run.
 
 **Start is excluded too.** `workflow start` is not a writer: it checks that the run does not exist
 and creates `<runId>/launch/` before its detached runner takes the lock. For an unmigrated flat run,
@@ -114,10 +115,13 @@ size that cannot be measured is null with a list warning, not a skipped run.
 
 - Operators and `prune` have one conservative removal primitive. A run that a pending wait or answer
   still needs is never removed by default, and no lock is ever overridden.
-- A crash between steps 2 and 5 of an unmigrated flat run can leave an empty `<runId>/` and backups
-  that no longer list as a run; a crash after step 5 leaves a tombstone that the next rm in the same
-  runs container sweeps once the crashed process is dead. A reused PID delays that sweep until the
-  new process exits.
+- A crash between steps 2 and 5 of an unmigrated flat run leaves a `<runId>/` holding only the lock,
+  and backups, that no longer list as a run. This gap is closed by
+  [0061](0061-finish-interrupted-flat-run-removal.md): `workflow rm ID` finishes such a removal
+  under the run lock (`interrupted: true`), and `workflow prune` sweeps every one in the containers
+  it scans, both refusing while a live owner holds the ID. A crash after step 5 leaves a tombstone
+  that the next rm in the same runs container sweeps once the crashed process is dead. A reused PID
+  delays that sweep until the new process exits.
 - `RunLock` gains an internal primary-only release. The lock model itself is unchanged: no new lock
   file, no storage format change, and `src/workflow/runtime/model.ts` is untouched.
 - Removing an unreadable run, a lone `<runId>/launch/` from a start that failed before its record,

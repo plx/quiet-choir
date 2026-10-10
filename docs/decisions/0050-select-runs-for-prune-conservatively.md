@@ -78,10 +78,11 @@ and fails with `workflow.interrupted`, naming the runs already removed; they sta
 prune continues.
 
 **Tombstones and dry run.** Before removing, prune sweeps dead rm tombstones in every scanned
-container, so a crashed removal in a container prune selected nothing from is cleaned up too.
-`--dry-run` runs every selected removal as an rm dry run: no lock, no sweep and no write, with rm's
-paths, caches, refs and bytes, and a dry-run refusal, including a record that changed since the
-listing, moves the run to `skipped`.
+container, so a crashed removal in a container prune selected nothing from is cleaned up too. (See
+also [0061](0061-finish-interrupted-flat-run-removal.md): prune then finishes interrupted flat-run
+removals in those containers as well.) `--dry-run` runs every selected removal as an rm dry run: no
+lock, no sweep and no write, with rm's paths, caches, refs and bytes, and a dry-run refusal,
+including a record that changed since the listing, moves the run to `skipped`.
 
 ## Consequences
 

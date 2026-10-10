@@ -358,7 +358,11 @@ cannot remove while its repository exists stops rm before it deletes the run (`w
 exit 74, remaining caches in `error.details.caches`): caches Git already removed stay removed
 (`error.details.removedCaches`), no ref is deleted, and the record stays; fix the cause and retry
 with `workflow clean`. An interrupted rm leaves an intact run (run rm again) or a hidden
-`.<run>.<pid>.<uuid>.removing` directory, which the next rm in that state directory sweeps.
+`.<run>.<pid>.<uuid>.removing` directory, which the next rm in that state directory sweeps. An rm of
+an unmigrated flat run interrupted after deleting `<runId>.json` leaves an ID that no longer lists,
+with a directory holding only its lock and maybe `.json.v<N>` backups; `workflow rm ID` finishes
+that removal (`interrupted: true`, refusing `run.locked` or `run.orphans` while a live owner holds
+it).
 
 `workflow rm ID` also removes the leftover `<runId>/launch/` of a start that failed before its
 record, reporting `launchOnly: true`. While that start may still be in flight (its recorded runner
@@ -400,8 +404,10 @@ whose recorded working directory is gone. Add `--all` to scan every registered p
 `--state-dir` for one runs container. Prune never selects a `running`, `stale` or `suspended` run, a
 run with a `waiting` step or an inbox file a resume could still consume (`queued-answer`; answers
 the run already consumed and rejected deliveries do not count), or a run held by a lock owner,
-recoverer or live orphan. A run that changed after selection is skipped as `changed`. For the rare
-run you deliberately want gone while it is still active or waiting, inspect it and use
+recoverer or live orphan. A run that changed after selection is skipped as `changed`. Whatever the
+filters, prune also sweeps abandoned rm tombstones and finishes the interrupted flat-run removals it
+finds in each scanned state directory, listing them in `unfinishedRemovals`. For the rare run you
+deliberately want gone while it is still active or waiting, inspect it and use
 `workflow rm RUN --force`; prune never forces, and nothing overrides a held lock.
 
 Pinned refs survive prune unless you pass `--refs`, and each removed run lists them as `keptRefs`.

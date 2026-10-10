@@ -124,3 +124,5 @@ part of the documentation.
 - [0059: Keep poll callback identity as loaded source text](0059-keep-poll-callback-identity-as-loaded-source.md)
 
 - [0060: Remove a run whose record is damaged, on request](0060-remove-an-unreadable-run-on-request.md)
+
+- [0061: Finish an interrupted flat-run removal on rm and in prune](0061-finish-interrupted-flat-run-removal.md)
