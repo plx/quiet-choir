@@ -169,6 +169,7 @@ export type {
   RawEpicBlocker,
   RawEpicComment,
   RawEpicIssue,
+  RawEpicOpenPullRequest,
   RawEpicPullRequestRef,
   RawEpicRepositoryRef,
   RawEpicSnapshotResponse,
