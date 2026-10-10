@@ -1,5 +1,8 @@
-import { environmentEdits } from '../harness-kit.js';
-import type { AgentEnvironment, HostEnvironmentSummary } from '../harness-kit.js';
+import { environmentEdits } from '../workflow/runtime/agent-environment.js';
+import type {
+  AgentEnvironment,
+  HostEnvironmentSummary,
+} from '../workflow/runtime/agent-environment-model.js';
 
 /**
  * Additional exact host names to scrub on top of the built-in host-session patterns, or false to

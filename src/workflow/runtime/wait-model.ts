@@ -225,8 +225,9 @@ export interface CommandPollSource<T, O = unknown, N extends JsonInput = JsonVal
   /** Schema for the command's JSON stdout, part of the wait's identity. */
   readonly output: z.ZodType<O>;
   /**
-   * How to run the command. `cwd`, `env`, `inheritEnv`, `input` and `okExitCodes` are identity;
-   * `maxOutputBytes` is policy. Output that exceeds the cap fails the check.
+   * How to run the command. `cwd`, `env`, `inheritEnv`, `scrubEnv` (when enabled), `input` and
+   * `okExitCodes` are identity; `maxOutputBytes` is policy. Output that exceeds the cap fails the
+   * check.
    */
   readonly commandOptions?: PollCommandExecOptions;
   /**

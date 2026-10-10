@@ -258,9 +258,9 @@ const outcome = await ctx.poll('ci', {
 ```
 
 `command` is an argv or `{ shell }`, and `output` the Zod schema of its stdout. `commandOptions`
-takes `cwd`, `env`, `inheritEnv`, `input`, `okExitCodes` and `maxOutputBytes`, but no `timeoutMs`
-(`observeTimeoutMs` bounds each check) and no `onError` (the poll's `onError` applies). `live: true`
-keeps the command real under `--dry-run`. `input`, `schema`, `every`, `noteSchema`,
+takes `cwd`, `env`, `inheritEnv`, `scrubEnv`, `input`, `okExitCodes` and `maxOutputBytes`, but no
+`timeoutMs` (`observeTimeoutMs` bounds each check) and no `onError` (the poll's `onError` applies).
+`live: true` keeps the command real under `--dry-run`. `input`, `schema`, `every`, `noteSchema`,
 `observeTimeoutMs`, `onError` and the time bound mean what they mean for an observer; `noteSchema`
 types and validates the notes `done` returns and `previous.note`. `ctx.wait(id, { poll })` accepts
 the same source, but there `done`'s output is typed `unknown`; `ctx.poll` infers it from `output`.
@@ -284,15 +284,16 @@ Its `diagnostics` keep the exit code and the last 1024 characters of stdout and 
 
 The wait request records `poll.command`: the prepared command summary (`exec`: the command, the
 canonical absolute working directory, SHA-256 digests of the `env` overlay and of stdin,
-`inheritEnv`, the sorted accepted exit codes and `structured: true`) and the JSON Schema of
-`output`. `poll.observe` holds the digest of `done`'s source. Changing the command, its `cwd`,
-`env`, `inheritEnv`, `input` or `okExitCodes`, `output`, or `done` under the same ID fails with
-"wait changed; use a new ID"; `live`, `observeTimeoutMs`, `onError` and `maxOutputBytes` are policy.
-The working directory is absolute, so moving the checkout under a waiting command poll is an
-identity change, as for `ctx.exec`. As with an observer, `done`'s digest is its source text as
-loaded; see [callback source and loaders](#callback-source-and-loaders). The command and its options
-are validated and its working directory resolved when the wait opens, so an invalid command, an
-unknown option or a missing `cwd` fails the wait before its first check. Observer polls never record
+`inheritEnv`, `scrubEnv` when the [host agent-session scrub](command-effects.md) is enabled, the
+sorted accepted exit codes and `structured: true`) and the JSON Schema of `output`. `poll.observe`
+holds the digest of `done`'s source. Changing the command, its `cwd`, `env`, `inheritEnv`,
+`scrubEnv`, `input` or `okExitCodes`, `output`, or `done` under the same ID fails with "wait
+changed; use a new ID"; `live`, `observeTimeoutMs`, `onError` and `maxOutputBytes` are policy. The
+working directory is absolute, so moving the checkout under a waiting command poll is an identity
+change, as for `ctx.exec`. As with an observer, `done`'s digest is its source text as loaded; see
+[callback source and loaders](#callback-source-and-loaders). The command and its options are
+validated and its working directory resolved when the wait opens, so an invalid command, an unknown
+option or a missing `cwd` fails the wait before its first check. Observer polls never record
 `poll.command`, so their requests and identities are unchanged.
 
 Under `--dry-run` each check's command is synthesized from `output`, or answered by an exec fixture

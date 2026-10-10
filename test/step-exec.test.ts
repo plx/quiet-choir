@@ -13,12 +13,14 @@ import {
   type CommandPollOptions,
   type CommandPollSource,
   type DeadlineOutcome,
+  type ExecOptions,
   type ExecResult,
   type ExecStepError,
   type HarnessInvocation,
   type JsonValue,
   type PollCommandExecOptions,
   type PollErrorPolicy,
+  type PollExecOptions,
   type PollOptions,
   type PollOutcome,
   type PollSource,
@@ -26,6 +28,7 @@ import {
   type ProcessRunRequest,
   type Settled,
   type StepContext,
+  type StepExecOptions,
   type WorkflowContext,
   type WorktreeHandle,
 } from '../src/index.js';
@@ -1218,5 +1221,114 @@ describe('inner command records (#317)', () => {
     expect((await readRun({ stateDir, runId: 'late' })).steps['late']).not.toHaveProperty(
       'innerCommands',
     );
+  });
+});
+
+describe('host agent-session scrub (scrubEnv, #337)', () => {
+  it('accepts scrubEnv on every exec option type', () => {
+    expectTypeOf<{ scrubEnv: true }>().toExtend<ExecOptions>();
+    expectTypeOf<{ scrubEnv: readonly ['EXTRA'] }>().toExtend<StepExecOptions>();
+    expectTypeOf<{ scrubEnv: false }>().toExtend<PollExecOptions>();
+    expectTypeOf<{ scrubEnv: string[] }>().toExtend<PollCommandExecOptions>();
+    expectTypeOf<{ scrubEnv: 'yes' }>().not.toExtend<ExecOptions>();
+  });
+
+  it('normalizes the option into the summary only when it is enabled', async () => {
+    const summary = async (options: ExecOptions) =>
+      (await prepareExec(['gh'], options, cwd, false)).summary;
+    const plain = await summary({});
+    expect(plain).not.toHaveProperty('scrubEnv');
+    expect(await summary({ scrubEnv: false })).toEqual(plain);
+    expect(await summary({ scrubEnv: false, inheritEnv: false })).not.toHaveProperty('scrubEnv');
+    expect(await summary({ scrubEnv: true })).toEqual({ ...plain, scrubEnv: [] });
+    expect(await summary({ scrubEnv: [] })).toEqual({ ...plain, scrubEnv: [] });
+    expect((await summary({ scrubEnv: ['B_NAME', 'A_NAME', 'B_NAME'] })).scrubEnv).toEqual([
+      'A_NAME',
+      'B_NAME',
+    ]);
+    await expect(summary({ scrubEnv: true, inheritEnv: false })).rejects.toThrow(
+      'cannot be combined with inheritEnv: false',
+    );
+    await expect(summary({ scrubEnv: ['A=B'] })).rejects.toThrow(
+      'Invalid environment variable name to scrub',
+    );
+  });
+
+  it('passes the scrub to the runner for context.exec and keeps inner command digests', async () => {
+    const { seen, runner } = recorder(() => reply('done'));
+    await runWorkflow(
+      definition((ctx) =>
+        ctx.step('parent', {
+          input: null,
+          schema: z.null(),
+          run: async (context) => {
+            await context.exec(['gh', 'auth'], { scrubEnv: ['Z_NAME', 'A_NAME'] });
+            await context.exec(['gh', 'auth']);
+            return null;
+          },
+        }),
+      ),
+      { ...setup(), processRunner: runner },
+    );
+    expect(seen[0]?.request).toMatchObject({
+      inheritEnv: true,
+      env: {},
+      scrubEnv: ['A_NAME', 'Z_NAME'],
+      nested: true,
+    });
+    expect(seen[1]?.request).not.toHaveProperty('scrubEnv');
+    const commands =
+      (await readRun({ stateDir, runId: 'test' })).steps['parent']?.innerCommands?.commands ?? [];
+    // The recorded env digest stays the overlay's, so exec fixture matching is unchanged.
+    expect(commands.map((entry) => entry.envSha256)).toEqual([
+      commands[1]?.envSha256,
+      (await prepareExec(['gh', 'auth'], {}, cwd, false)).summary.envSha256,
+    ]);
+    expect(commands[0]).not.toHaveProperty('scrubEnv');
+  });
+
+  it('rejects an invalid context.exec scrub before spawning', async () => {
+    const { seen, runner } = recorder();
+    for (const [index, options] of [
+      { scrubEnv: true, inheritEnv: false },
+      { scrubEnv: ['NOT-VALID'] },
+    ].entries()) {
+      const failure = await runWorkflow(
+        definition((ctx) =>
+          ctx.step('parent', {
+            input: null,
+            schema: z.unknown(),
+            run: (context) => context.exec(['gh'], options as StepExecOptions),
+          }),
+        ),
+        { ...setup(`bad-scrub-${String(index)}`), processRunner: runner },
+      ).catch((error: unknown) => error);
+      expect(String(failure)).toMatch(
+        /cannot be combined with inheritEnv: false|Invalid environment variable name to scrub/u,
+      );
+    }
+    expect(seen).toEqual([]);
+  });
+
+  it('passes a command poll scrub to the runner and records it in the wait request', async () => {
+    const { seen, runner } = recorder(() => reply('{"state":"success"}'));
+    await runWorkflow(
+      definition((ctx) =>
+        ctx.poll('ci', {
+          input: null,
+          schema: z.literal('success'),
+          every: 1,
+          timeoutMs: 60_000,
+          command: ['gh', 'pr', 'checks'],
+          output: z.object({ state: z.string() }),
+          commandOptions: { scrubEnv: true },
+          done: () => ({ done: true, value: 'success' as const }),
+        }),
+      ),
+      { ...setup(), processRunner: runner },
+    );
+    expect(seen[0]?.request).toMatchObject({ scrubEnv: [], nested: true });
+    const wait = (await readRun({ stateDir, runId: 'test' })).steps['ci']?.wait;
+    expect(wait?.request.poll?.command?.exec.scrubEnv).toEqual([]);
   });
 });

@@ -3,6 +3,10 @@ import { z } from 'zod';
 import { retryPolicySchema } from './policy.js';
 
 const argument = z.string().refine((value) => !value.includes('\0'), 'NUL is not allowed');
+// A name the host agent-session scrub may remove, as CliHarnessOptions.scrubEnv accepts it.
+const scrubName = z
+  .string()
+  .regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/u, 'Invalid environment variable name to scrub');
 /** @internal */
 export const commandSchema = z.union([
   z.tuple([argument.min(1)], argument),
@@ -24,6 +28,7 @@ export const execOptionsSchema = z.strictObject({
     )
     .optional(),
   inheritEnv: z.boolean().optional(),
+  scrubEnv: z.union([z.boolean(), z.array(scrubName)]).optional(),
   input: z.string().optional(),
   okExitCodes: z
     .union([z.literal('any'), z.array(z.number().int().min(0).max(255)).min(1)])
@@ -59,6 +64,8 @@ export const execSummarySchema = z.object({
   cwd: z.string(),
   envSha256: z.string().regex(/^[a-f0-9]{64}$/u),
   inheritEnv: z.boolean(),
+  // Present only when the scrub is enabled: the sorted extra names, so older summaries are unchanged.
+  scrubEnv: z.array(scrubName).exactOptional(),
   inputSha256: z.string().regex(/^[a-f0-9]{64}$/u),
   okExitCodes: z.union([z.literal('any'), z.array(z.number().int())]),
   structured: z.boolean(),

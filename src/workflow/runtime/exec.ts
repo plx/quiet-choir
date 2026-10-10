@@ -33,11 +33,19 @@ export async function prepareExec(
   const env = settings.env ?? {};
   const input = settings.input ?? '';
   const codes = settings.okExitCodes ?? [0];
+  const inheritEnv = settings.inheritEnv ?? true;
+  const scrub = settings.scrubEnv ?? false;
+  if (scrub !== false && !inheritEnv)
+    throw new Error(
+      'Exec scrubEnv requires the inherited environment; it cannot be combined with inheritEnv: false.',
+    );
   const summary: ExecSummary = {
     command: parsedCommand,
     cwd: directory,
     envSha256: digest(env),
-    inheritEnv: settings.inheritEnv ?? true,
+    inheritEnv,
+    // Present only when enabled, so a command without the scrub keeps its identity byte-identical.
+    ...(scrub === false ? {} : { scrubEnv: scrub === true ? [] : [...new Set(scrub)].sort() }),
     inputSha256: createHash('sha256').update(input).digest('hex'),
     okExitCodes: codes === 'any' ? codes : [...new Set(codes)].sort((a, b) => a - b),
     structured,
@@ -64,6 +72,7 @@ export function processRequest(
     cwd: limits.cwd,
     env: prepared.env,
     inheritEnv: prepared.summary.inheritEnv,
+    ...(prepared.summary.scrubEnv === undefined ? {} : { scrubEnv: prepared.summary.scrubEnv }),
     input: prepared.input,
     timeoutMs: limits.timeoutMs,
     maxOutputBytes: limits.maxOutputBytes,

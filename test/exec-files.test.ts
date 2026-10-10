@@ -179,7 +179,7 @@ it('replays red-as-data and plain/json scoped results without a process adapter'
   expect(invoke).toHaveBeenCalledTimes(2);
 });
 
-it.each(['command', 'cwd', 'env', 'input', 'inheritEnv', 'okExitCodes'] as const)(
+it.each(['command', 'cwd', 'env', 'input', 'inheritEnv', 'scrubEnv', 'okExitCodes'] as const)(
   'rejects completed %s drift before executing',
   async (field) => {
     let command: Command = ['fake'];
@@ -197,6 +197,7 @@ it.each(['command', 'cwd', 'env', 'input', 'inheritEnv', 'okExitCodes'] as const
     else if (field === 'env') settings = { env: { CHANGED: 'yes' } };
     else if (field === 'input') settings = { input: 'changed' };
     else if (field === 'inheritEnv') settings = { inheritEnv: false };
+    else if (field === 'scrubEnv') settings = { scrubEnv: true };
     else settings = { okExitCodes: 'any' };
     await expect(
       runWorkflow(workflow, { ...setup(), resume: true, processRunner: { run: invoke } }),
@@ -433,6 +434,120 @@ it('rejects nested commands and reserved environment keys before spawning', asyn
     ),
   ).rejects.toThrow('reserved');
   expect(run).not.toHaveBeenCalled();
+});
+
+describe('host agent-session scrub (scrubEnv)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+  const host = {
+    CLAUDECODE: '1',
+    CLAUDE_CODE_ENTRYPOINT: 'cli',
+    CODEX_THREAD_ID: 'thread-1',
+    TRACEPARENT: '00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01',
+    EXTRA_SESSION_MARKER: 'extra',
+    ANTHROPIC_API_KEY: 'sk-fixture',
+    CLAUDE_CODE_OAUTH_TOKEN: 'oauth-fixture',
+    CLAUDE_CODE_USE_BEDROCK: '1',
+    CODEX_HOME: '/fixture/codex-home',
+    UNRELATED_SETTING: 'kept',
+  };
+  const printEnv = node('process.stdout.write(JSON.stringify(process.env))');
+  const envSchema = z.record(z.string(), z.string());
+
+  it('removes host session variables, keeps the rest, applies env last and delivers run metadata', async () => {
+    for (const [name, value] of Object.entries(host)) vi.stubEnv(name, value);
+    const run = await runWorkflow(
+      definition(async (ctx) => ({
+        scrubbed: await ctx.exec.json('scrubbed', printEnv, {
+          schema: envSchema,
+          scrubEnv: ['EXTRA_SESSION_MARKER'],
+          env: { CLAUDECODE: 'explicit' },
+        }),
+        builtin: await ctx.exec.json('builtin', printEnv, { schema: envSchema, scrubEnv: true }),
+        inherited: await ctx.exec.json('inherited', printEnv, { schema: envSchema }),
+      })),
+      { ...setup(), processRunner: native },
+    );
+    const output = run.output as Record<
+      'scrubbed' | 'builtin' | 'inherited',
+      Record<string, string>
+    >;
+    const { scrubbed, builtin, inherited } = output;
+    for (const name of ['CLAUDE_CODE_ENTRYPOINT', 'CODEX_THREAD_ID', 'TRACEPARENT']) {
+      expect(scrubbed, name).not.toHaveProperty(name);
+      expect(builtin, name).not.toHaveProperty(name);
+    }
+    expect(builtin).not.toHaveProperty('CLAUDECODE');
+    // The explicit overlay applies after the scrub, so it can restore a scrubbed name.
+    expect(scrubbed['CLAUDECODE']).toBe('explicit');
+    // An extra exact name is removed only where it was requested.
+    expect(scrubbed).not.toHaveProperty('EXTRA_SESSION_MARKER');
+    expect(builtin['EXTRA_SESSION_MARKER']).toBe('extra');
+    for (const environment of [scrubbed, builtin]) {
+      expect(environment).toMatchObject({
+        ANTHROPIC_API_KEY: 'sk-fixture',
+        CLAUDE_CODE_OAUTH_TOKEN: 'oauth-fixture',
+        CLAUDE_CODE_USE_BEDROCK: '1',
+        CODEX_HOME: '/fixture/codex-home',
+        UNRELATED_SETTING: 'kept',
+      });
+      expect(environment['PATH']).toBe(process.env['PATH']);
+    }
+    expect(scrubbed).toMatchObject({
+      QUIET_CHOIR_IDEMPOTENCY_KEY: 'test/scrubbed',
+      QUIET_CHOIR_RUN_ID: 'test',
+      QUIET_CHOIR_STEP_ID: 'scrubbed',
+      QUIET_CHOIR_ATTEMPT: '1',
+    });
+    expect(builtin['QUIET_CHOIR_STEP_ID']).toBe('builtin');
+    // Without scrubEnv the full host environment is still inherited.
+    expect(inherited).toMatchObject(host);
+    // Only the requested extra names are recorded, never host values or the removed names.
+    expect(run.steps['scrubbed']?.exec?.scrubEnv).toEqual(['EXTRA_SESSION_MARKER']);
+    expect(run.steps['builtin']?.exec?.scrubEnv).toEqual([]);
+    expect(run.steps['inherited']?.exec).not.toHaveProperty('scrubEnv');
+    const saved = JSON.stringify((await readRun(setup())).steps['scrubbed']);
+    expect(saved).not.toContain('CODEX_THREAD_ID');
+    expect(saved).not.toContain('thread-1');
+  });
+
+  it('replays a completed scrubbed command without a process runner', async () => {
+    const invoke = vi.fn<ProcessRunner['run']>(() => Promise.resolve(reply));
+    let fail = true;
+    const workflow = definition(async (ctx) => {
+      const result = await ctx.exec('one', ['fake'], { scrubEnv: ['B_NAME', 'A_NAME', 'B_NAME'] });
+      if (fail) throw new Error('later');
+      return result.stdout;
+    });
+    await expect(
+      runWorkflow(workflow, { ...setup(), processRunner: { run: invoke } }),
+    ).rejects.toThrow('later');
+    expect(invoke.mock.calls[0]?.[0].scrubEnv).toEqual(['A_NAME', 'B_NAME']);
+    fail = false;
+    const run = await runWorkflow(workflow, { ...setup(), resume: true });
+    expect(run.output).toBe('hello');
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects scrubEnv with inheritEnv: false and malformed names before spawning', async () => {
+    const run = vi.fn<ProcessRunner['run']>(() => Promise.resolve(reply));
+    for (const [index, [settings, message]] of (
+      [
+        [{ scrubEnv: true, inheritEnv: false }, 'cannot be combined with inheritEnv: false'],
+        [{ scrubEnv: [], inheritEnv: false }, 'cannot be combined with inheritEnv: false'],
+        [{ scrubEnv: ['NOT-VALID'] }, 'Invalid environment variable name to scrub'],
+        [{ scrubEnv: ['1START'] }, 'Invalid environment variable name to scrub'],
+      ] as const
+    ).entries())
+      await expect(
+        runWorkflow(
+          definition((ctx) => ctx.exec('invalid', ['fake'], settings as ExecOptions)),
+          { ...setup(), runId: `invalid-${String(index)}`, processRunner: { run } },
+        ),
+      ).rejects.toThrow(message);
+    expect(run).not.toHaveBeenCalled();
+  });
 });
 
 it('dry-run synthesizes commands and reports them without creating command output files', async () => {

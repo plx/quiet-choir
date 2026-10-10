@@ -380,6 +380,61 @@ describe('exec and file effect identity', () => {
   );
 });
 
+describe('exec scrubEnv identity (#337)', () => {
+  // A disabled scrub leaves the pinned exec identity byte-identical; an enabled one adds one
+  // component, the digest of the sorted extra names, so true and [] are the same identity.
+  it('adds a scrubEnv component only when the scrub is enabled', async () => {
+    const dir = await realpath(await mkdtemp(join(tmpdir(), 'choir-scrub-identity-')));
+    try {
+      const processRunner: ProcessRunner = {
+        run: () =>
+          Promise.resolve({
+            code: 0,
+            signal: null,
+            stdout: '',
+            stderr: '',
+            truncated: false,
+            durationMs: 1,
+          }),
+      };
+      const effects = workflow(async (ctx) => {
+        await ctx.exec('plain', ['golden', 'arg']);
+        await ctx.exec('off', ['golden', 'arg'], { scrubEnv: false });
+        await ctx.exec('on', ['golden', 'arg'], { scrubEnv: true });
+        await ctx.exec('empty', ['golden', 'arg'], { scrubEnv: [] });
+        await ctx.exec('extra', ['golden', 'arg'], { scrubEnv: ['B_NAME', 'A_NAME', 'B_NAME'] });
+      });
+      await runWorkflow(effects, options({ cwd: dir, processRunner }));
+      const steps = await recorded();
+      const plain = {
+        cwd: digest(dir),
+        envSha256: 'ba4b4c01512909e214270a4f23ef856ea7857d763cbab32fe7381b0dc204523d',
+        inheritEnv: 'b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b',
+        inputSha256: 'b4b16dad390bac4c7ce42014c594fa668910b49ec1b7771a17891c187d71e0ab',
+        kind: '37c9a5bba64484ff1971b80862a96916501e4624e59e717e16e7686f6f41be73',
+        okExitCodes: 'd0bca111f8628137adc4c16f123496dcdd1d590d06cb5d9acd68b39fe656fb97',
+        command: '2b653fe7df7f2e8cff409dea7f2a72520752b094d249ba67f458e328eba208fa',
+        schema: 'ff62d310ae73387abafa02c2437810c9303d006a5af94c037f5f9c0754828d1a',
+        structured: 'fcbcf165908dd18a9e49f7ff27810176db8e9f63b4352213741664245224f8aa',
+      };
+      pinned('ctx.exec', steps['plain']?.identity, plain);
+      pinned('ctx.exec scrubEnv: false', steps['off']?.identity, plain);
+      const enabled = {
+        ...plain,
+        scrubEnv: '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
+      };
+      pinned('ctx.exec scrubEnv: true', steps['on']?.identity, enabled);
+      pinned('ctx.exec scrubEnv: []', steps['empty']?.identity, enabled);
+      pinned('ctx.exec scrubEnv extras', steps['extra']?.identity, {
+        ...plain,
+        scrubEnv: '7b431bc8f13f6a05a8cb52ab116b54a32ca7d7bc5101fec8cb171e325d15818a',
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('quiet-choir/github read identity', () => {
   // Every gh call fails, so each read fails after recording its identity.
   const processRunner: ProcessRunner = {

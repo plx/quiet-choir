@@ -62,17 +62,18 @@ bound. Each check runs `command` (argv or `{ shell }`) like an observer's
 signal, rehearsed and fixture-answered, with `observeTimeoutMs` (default 60 s) as its timeout. Then
 `done(output, previous)` returns `{ done: true, value }` or `{ done: false, note? }`. `done` must be
 pure: no context, no context operations, debounce state in the note. `commandOptions` takes `cwd`,
-`env`, `inheritEnv`, `input`, `okExitCodes` and `maxOutputBytes` (no `timeoutMs` or `onError`). A
-failing exit, output over the cap or stdout not matching `output` throws an `ExecError` (kind
-`process`, `output-limit` or `schema`, 1024-character tails) that `onError` may tolerate; `classify`
-can read `error.diagnostics.code`. Identity adds `poll.command` (the prepared command with canonical
-cwd, env and stdin digests and exit codes, plus the `output` JSON Schema), and `poll.observe`
-digests `done`; `live`, `observeTimeoutMs`, `onError` and `maxOutputBytes` are policy. The command
-is validated when the wait opens. Under `--dry-run` each check is synthesized from `output` and
-listed in `commands` under the wait ID; `live: true` runs it for real. A dry run makes up to five
-checks per poll on a virtual clock; see [repeated poll checks](rehearsal.md#repeated-poll-checks).
-`workflow pending` shows the command. In `ctx.wait`, `done`'s output is `unknown`; `ctx.poll` infers
-it.
+`env`, `inheritEnv`, `scrubEnv` (the opt-in host agent-session scrub of
+[commands](commands-files.md)), `input`, `okExitCodes` and `maxOutputBytes` (no `timeoutMs` or
+`onError`). A failing exit, output over the cap or stdout not matching `output` throws an
+`ExecError` (kind `process`, `output-limit` or `schema`, 1024-character tails) that `onError` may
+tolerate; `classify` can read `error.diagnostics.code`. Identity adds `poll.command` (the prepared
+command with canonical cwd, env and stdin digests, `scrubEnv` when enabled and exit codes, plus the
+`output` JSON Schema), and `poll.observe` digests `done`; `live`, `observeTimeoutMs`, `onError` and
+`maxOutputBytes` are policy. The command is validated when the wait opens. Under `--dry-run` each
+check is synthesized from `output` and listed in `commands` under the wait ID; `live: true` runs it
+for real. A dry run makes up to five checks per poll on a virtual clock; see
+[repeated poll checks](rehearsal.md#repeated-poll-checks). `workflow pending` shows the command. In
+`ctx.wait`, `done`'s output is `unknown`; `ctx.poll` infers it.
 
 ```ts
 import { defineWorkflow, z } from 'quiet-choir';
