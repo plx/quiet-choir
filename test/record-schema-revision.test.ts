@@ -598,6 +598,15 @@ describe('reading a record this build cannot fully read', () => {
 describe('writers refuse and change nothing', () => {
   const resume = (runId: string) =>
     runWorkflow(definition(false), { ...options, stateDir, runId, resume: true });
+  // A non-resume execution onto the ID reports the drifted run as existing (#375).
+  const expectExists = async (runId: string): Promise<void> => {
+    const error = await refusal(
+      runWorkflow(definition(false), { ...options, stateDir, runId, input: null }),
+    );
+    expect(error.code).toBe('run.exists');
+    expect(error.message).toBe(`Run ${runId} already exists; use resume or choose a new run ID.`);
+    expect(error.details).toEqual({ stateDir });
+  };
 
   it.each([
     [
@@ -638,6 +647,24 @@ describe('writers refuse and change nothing', () => {
       supportedSchemaRevision: SUPPORTED_SCHEMA_REVISION,
       ...details,
     });
+    expect(await bytes('run')).toEqual(before);
+    await expectExists('run');
+    expect(await bytes('run')).toEqual(before);
+  });
+
+  it('reports a record that fails to parse under drift as existing, and resume as incompatible', async () => {
+    await failedRun('run');
+    await editSnapshot('run', (raw) => {
+      raw['schemaRevision'] = SUPPORTED_SCHEMA_REVISION + 1;
+      raw['status'] = 'paused';
+      raw['futureField'] = true;
+    });
+    const before = await bytes('run');
+    await expectExists('run');
+    const error = await refusal(resume('run'));
+    expect(error.code).toBe('run.incompatible');
+    expect(error.message).toContain('Upgrade quiet-choir');
+    expect(error.details).toMatchObject({ reason: 'record_schema', hiddenFields: ['futureField'] });
     expect(await bytes('run')).toEqual(before);
   });
 

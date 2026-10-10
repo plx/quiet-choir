@@ -498,6 +498,10 @@ journal entry a newer build wrote before compacting), these commands refuse with
 - a fork from the run (`--fork-from`) and a `--dry-run` resume, which would copy the record;
 - `workflow clean`, which rewrites the worktree ledger.
 
+`workflow execute` without `--resume` (or `runWorkflow` without `resume`, including a fork target)
+onto the ID of such a run refuses with `run.exists` (exit 3), as for any existing run, and writes
+nothing; only the commands above that need to read the record keep `run.incompatible`.
+
 `workflow check-resume` and `checkResume()` write nothing but report the same drift, so a compatible
 preflight is never followed by this refusal: the check is incompatible (exit 3) with `record schema`
 among `changed`, the refusal's message, and `reason`, `schemaRevision`, `supportedSchemaRevision`

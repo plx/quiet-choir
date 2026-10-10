@@ -2,6 +2,11 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `workflow execute` without `--resume` (and `runWorkflow` without `resume`, including a fork
+  target) onto the ID of a run whose record this build cannot fully read (a newer `schemaRevision`
+  or unknown fields) now refuses with `run.exists`, as for any existing run, instead of the
+  `run.incompatible` upgrade refusal; nothing is written. Resume still refuses with
+  `run.incompatible` (#375, [storage](docs/storage.md#record-schema-revision)).
 - Contributors: `test/record-schema-revision.test.ts` now pins, from revision 17 on, a digest of the
   run-level JSON Schema (without `steps`) and of the step schema per record schema revision, so a
   nested shape change fails the test until `SUPPORTED_SCHEMA_REVISION` is bumped and the new digests
