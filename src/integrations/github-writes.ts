@@ -263,7 +263,7 @@ const VERSIONS = {
   'pr.create': 'github.pr.create/1',
   'pr.edit': 'github.pr.edit/1',
   'pr.merge': 'github.pr.merge/1',
-  'checks.rerunFailed': 'github.checks.rerunFailed/1',
+  'checks.rerunFailed': 'github.checks.rerunFailed/2',
 } as const;
 
 type WriteOp = keyof typeof VERSIONS;
@@ -288,6 +288,37 @@ function options(value: unknown, op: WriteOp): Readonly<Record<string, unknown>>
   if (value === null || typeof value !== 'object')
     throw new Error(`github ${op} arguments must be an object.`);
   return value as Readonly<Record<string, unknown>>;
+}
+
+/**
+ * Validate the `attempts` option of `checks.rerunFailed`: a plain object whose keys are canonical
+ * decimal run IDs and whose values are positive integers. The record is the recorded step input,
+ * keyed in ascending numeric order (run IDs past 2^32 are not array indices, so insertion order is
+ * kept); the map is what selection reads.
+ */
+function runAttempts(
+  value: unknown,
+  op: WriteOp,
+): { readonly record: Record<string, number>; readonly map: Map<number, number> } {
+  const label = `github ${op} attempts`;
+  const record: Record<string, number> = {};
+  const map = new Map<number, number>();
+  if (value === undefined) return { record, map };
+  if (value === null || typeof value !== 'object' || Array.isArray(value))
+    throw new Error(`${label} must be an object of run ID to attempt.`);
+  const prototype: unknown = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null)
+    throw new Error(`${label} must be an object of run ID to attempt.`);
+  const entries = Object.entries(value as Record<string, unknown>).map(([key, attempt]) => {
+    if (!/^[1-9][0-9]*$/.test(key) || !Number.isSafeInteger(Number(key)))
+      throw new Error(`${label} key ${JSON.stringify(key)} must be a positive integer run ID.`);
+    return [Number(key), positiveInteger(attempt, `${label}[${key}]`)] as const;
+  });
+  for (const [id, attempt] of entries.sort(([left], [right]) => left - right)) {
+    record[String(id)] = attempt;
+    map.set(id, attempt);
+  }
+  return { record, map };
 }
 
 function optionalText(value: unknown, label: string): string | null {
@@ -825,16 +856,17 @@ export function githubWrites(
           given['attempt'] === undefined
             ? 1
             : positiveInteger(given['attempt'], 'github checks.rerunFailed attempt');
+        const attempts = runAttempts(given['attempts'], 'checks.rerunFailed');
         return step(
           'checks.rerunFailed',
           id,
-          { sha, attempt },
+          { sha, attempt, attempts: attempts.record },
           rerunFailedResultSchema,
           settings,
           async (gh) => {
             const list = async () =>
               uniqueRuns(await gh.read(runsListArgv(repo, sha), runsListResponseSchema));
-            const selection = rerunSelection(await list(), attempt);
+            const selection = rerunSelection(await list(), attempt, attempts.map);
             const rerun = selection.rerun.map(runRefOf);
             // GitHub answers 201 with no body, so a plain exec.
             for (const run of rerun) await gh.run(rerunArgv(repo, run.id));

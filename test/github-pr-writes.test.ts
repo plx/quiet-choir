@@ -88,6 +88,7 @@ interface FakeState {
   readonly runsTotalCount?: number;
   readonly runsPages?: readonly (readonly number[])[];
   readonly branches?: Record<string, string>;
+  readonly rerunConclusion?: string;
 }
 
 const harness = useGithubFake('choir-github-pr-writes-');
@@ -183,6 +184,16 @@ interface CrashCase {
   readonly writes: readonly string[];
 }
 
+/** Run 101 failed at attempt 1 and run 102 at attempt 2; a rerun fails again at once. */
+const mixedAttemptsSeed = (): Partial<FakeState> => ({
+  runs: {
+    ...run(101, { name: 'CI' }),
+    ...run(102, { name: 'CodeQL', run_attempt: 2 }),
+    ...run(103, { name: 'Review', conclusion: 'success' }),
+  },
+  rerunConclusion: 'failure',
+});
+
 const crashCases: Readonly<Record<string, CrashCase>> = {
   'pr.create': {
     label: 'pr.create',
@@ -266,6 +277,51 @@ const crashCases: Readonly<Record<string, CrashCase>> = {
       });
     },
     writes: ['POST actions/runs/101/rerun-failed-jobs'],
+  },
+  'checks.rerunFailed mixed attempts': {
+    label: 'checks.rerunFailed',
+    seed: mixedAttemptsSeed,
+    crash: 'POST actions/runs/101/rerun-failed-jobs',
+    op: (gh, policy) =>
+      gh.checks.rerunFailed(
+        'write',
+        { sha: HEAD, attempt: 2, attempts: { 101: 1, 102: 2 } },
+        policy,
+      ),
+    check: (state, _marker, output) => {
+      // Both reruns were committed and failed again at once; the per-run baselines skip both.
+      expect(state.runs['101']).toMatchObject({
+        run_attempt: 2,
+        status: 'completed',
+        conclusion: 'failure',
+      });
+      expect(state.runs['102']).toMatchObject({
+        run_attempt: 3,
+        status: 'completed',
+        conclusion: 'failure',
+      });
+      expect(output).toEqual({
+        rerun: [],
+        skipped: [
+          { id: 102, name: 'CodeQL', attempt: 3 },
+          { id: 101, name: 'CI', attempt: 2 },
+        ],
+        confirmed: true,
+      });
+      // The retry reports its own committed reruns as skipped, so the next round's map carries both
+      // lists: skipped runs at their reported attempt, rerun runs at `attempt + 1`.
+      const previous = output as {
+        rerun: { id: number; attempt: number }[];
+        skipped: { id: number; attempt: number }[];
+      };
+      expect(
+        Object.fromEntries([
+          ...previous.skipped.map((run) => [run.id, run.attempt]),
+          ...previous.rerun.map((run) => [run.id, run.attempt + 1]),
+        ]),
+      ).toEqual({ 101: 2, 102: 3 });
+    },
+    writes: ['POST actions/runs/102/rerun-failed-jobs', 'POST actions/runs/101/rerun-failed-jobs'],
   },
 };
 
@@ -765,6 +821,90 @@ describe('checks.rerunFailed', () => {
     ]);
   });
 
+  it('reruns a mapped run only at its baseline and an unmapped run by the scalar', async () => {
+    const { runner, state } = await fake({
+      runs: {
+        ...runs,
+        ...run(106, { name: 'Lint', run_attempt: 3 }),
+        ...run(107, { name: 'Docs', run_attempt: 2 }),
+        ...run(108, { name: 'Build', run_attempt: 3 }),
+      },
+    });
+    const result = await outcome(runner, 'mapped', (ctx) =>
+      client(ctx).checks.rerunFailed('rerun', {
+        sha: HEAD,
+        // 101 and 102 sit at their baselines, 106 is below its, 108 is past its, 107 is unmapped
+        // (the scalar default 1: past it) and 999 is not a run of this commit.
+        attempts: { 101: 1, 102: 2, 106: 4, 108: 2, 999: 1 },
+      }),
+    );
+    expect(result.output).toEqual({
+      rerun: [
+        { id: 102, name: 'CodeQL', attempt: 2 },
+        { id: 101, name: 'CI', attempt: 1 },
+      ],
+      skipped: [
+        { id: 108, name: 'Build', attempt: 3 },
+        { id: 107, name: 'Docs', attempt: 2 },
+      ],
+      confirmed: true,
+    });
+    expect(writes(await state())).toEqual([
+      'POST actions/runs/102/rerun-failed-jobs',
+      'POST actions/runs/101/rerun-failed-jobs',
+    ]);
+  });
+
+  it('crash after the first of two reruns: the retry reruns only the other run', async () => {
+    const { runner, state } = await fake({
+      ...mixedAttemptsSeed(),
+      crashAfterCommit: 'POST actions/runs/102/rerun-failed-jobs',
+    });
+    const result = await runWorkflow(
+      definition((ctx) =>
+        client(ctx).checks.rerunFailed(
+          'write',
+          { sha: HEAD, attempt: 2, attempts: { 101: 1, 102: 2 } },
+          { retry: { maxAttempts: 2, delayMs: 1 } },
+        ),
+      ),
+      { ...setup('first-post'), processRunner: runner },
+    );
+    expect(result.output).toEqual({
+      rerun: [{ id: 101, name: 'CI', attempt: 1 }],
+      skipped: [{ id: 102, name: 'CodeQL', attempt: 3 }],
+      confirmed: true,
+    });
+    expect(writes(await state())).toEqual([
+      'POST actions/runs/102/rerun-failed-jobs',
+      'POST actions/runs/101/rerun-failed-jobs',
+    ]);
+  });
+
+  it('with only the scalar baseline a run below it is rerun twice across a crash', async () => {
+    // The window the per-run map closes: run 101 was rerun to attempt 2 and failed again, so the
+    // retry sees it at the scalar baseline 2 and reruns it a second time.
+    const { runner, state } = await fake({
+      ...mixedAttemptsSeed(),
+      crashAfterCommit: 'POST actions/runs/101/rerun-failed-jobs',
+    });
+    const result = await runWorkflow(
+      definition((ctx) =>
+        client(ctx).checks.rerunFailed(
+          'write',
+          { sha: HEAD, attempt: 2 },
+          { retry: { maxAttempts: 2, delayMs: 1 } },
+        ),
+      ),
+      { ...setup('scalar-only'), processRunner: runner },
+    );
+    expect(result.status).toBe('completed');
+    expect(writes(await state()).filter((entry) => entry.includes('/101/'))).toEqual([
+      'POST actions/runs/101/rerun-failed-jobs',
+      'POST actions/runs/101/rerun-failed-jobs',
+    ]);
+  });
+
   it('throws IncompleteCollectionError when the list holds fewer runs than total_count', async () => {
     const { runner, state } = await fake({ runs, runsTotalCount: 150 });
     const result = await outcome(runner, 'partial', (ctx) =>
@@ -820,6 +960,24 @@ describe('arguments and requests', () => {
         gh.pr.merge('w', { number: 9, sha: HEAD, method: as('fast-forward') }),
       'rerun sha': (gh) => gh.checks.rerunFailed('w', { sha: 'main' }),
       'rerun attempt': (gh) => gh.checks.rerunFailed('w', { sha: HEAD, attempt: 0 }),
+      'rerun attempts array': (gh) => gh.checks.rerunFailed('w', { sha: HEAD, attempts: as([]) }),
+      'rerun attempts null': (gh) => gh.checks.rerunFailed('w', { sha: HEAD, attempts: as(null) }),
+      'rerun attempts map': (gh) =>
+        gh.checks.rerunFailed('w', { sha: HEAD, attempts: as(new Map([[101, 1]])) }),
+      'rerun attempts string': (gh) =>
+        gh.checks.rerunFailed('w', { sha: HEAD, attempts: as('101') }),
+      'rerun attempts key zero': (gh) =>
+        gh.checks.rerunFailed('w', { sha: HEAD, attempts: as({ '0': 1 }) }),
+      'rerun attempts key padded': (gh) =>
+        gh.checks.rerunFailed('w', { sha: HEAD, attempts: as({ '01': 1 }) }),
+      'rerun attempts key word': (gh) =>
+        gh.checks.rerunFailed('w', { sha: HEAD, attempts: as({ abc: 1 }) }),
+      'rerun attempts value zero': (gh) =>
+        gh.checks.rerunFailed('w', { sha: HEAD, attempts: { 101: 0 } }),
+      'rerun attempts value fraction': (gh) =>
+        gh.checks.rerunFailed('w', { sha: HEAD, attempts: { 101: 1.5 } }),
+      'rerun attempts value string': (gh) =>
+        gh.checks.rerunFailed('w', { sha: HEAD, attempts: as({ 101: '1' }) }),
     };
     for (const [name, attempt] of Object.entries(attempts)) {
       const runId = name.replace(/[^a-z]/gu, '-');
@@ -985,6 +1143,24 @@ describe('pure rules', () => {
     expect(ids(rerunSelection(rows, 1))).toEqual({ rerun: [1], skipped: [2, 5] });
     expect(ids(rerunSelection(rows, 2))).toEqual({ rerun: [1, 2], skipped: [] });
     expect(ids(rerunSelection(rows, 3))).toEqual({ rerun: [1, 2], skipped: [] });
+    // A map gives a run its own baseline: rerun only at it, skipped past it, neither below it.
+    const mapped = (attempts: Record<number, number>, scalar = 1) =>
+      ids(
+        rerunSelection(
+          rows,
+          scalar,
+          new Map(Object.entries(attempts).map(([k, v]) => [Number(k), v])),
+        ),
+      );
+    expect(mapped({ 1: 1 })).toEqual({ rerun: [1], skipped: [2, 5] });
+    expect(mapped({ 2: 2 })).toEqual({ rerun: [1, 2], skipped: [5] });
+    expect(mapped({ 1: 2 })).toEqual({ rerun: [], skipped: [2, 5] });
+    expect(mapped({ 2: 1 })).toEqual({ rerun: [1], skipped: [2, 5] });
+    expect(mapped({ 5: 2 })).toEqual({ rerun: [1], skipped: [2] });
+    expect(mapped({ 5: 1 })).toEqual({ rerun: [1], skipped: [2, 5] });
+    expect(mapped({ 3: 1, 7: 1 })).toEqual({ rerun: [1], skipped: [2, 5] });
+    expect(mapped({ 4: 1, 6: 1 })).toEqual({ rerun: [1], skipped: [2, 5] });
+    expect(mapped({ 99: 1 }, 2)).toEqual({ rerun: [1, 2], skipped: [] });
     expect(
       rerunConfirmed(
         [row(1, { status: 'queued', conclusion: null, run_attempt: 2 })],

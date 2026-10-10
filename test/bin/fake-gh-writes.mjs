@@ -9,7 +9,8 @@
 // GitHub's sha check answers 409), `mergeError` answers the PUT with that error body and exit 1,
 // a pull request with `mergeable: false` answers 405, and `mergeLag` makes that many reads after a
 // merge still report the pull request unmerged. HTTP errors print GitHub's body on stdout and exit
-// 1, as gh does.
+// 1, as gh does. A seeded `rerunConclusion` makes a rerun POST leave the run completed at the next
+// attempt with that conclusion (a rerun that failed again at once) instead of queued.
 import { readFileSync, writeFileSync } from 'node:fs';
 
 // Writing and then calling process.exit can truncate stdout on a pipe, so every answer throws a
@@ -436,8 +437,12 @@ function main() {
     if (!run) httpError(404, 'Not Found');
     if (run.status !== 'completed') httpError(403, 'This workflow is already running');
     run.run_attempt += 1;
-    run.status = 'queued';
-    run.conclusion = null;
+    if (state.rerunConclusion) {
+      run.conclusion = state.rerunConclusion;
+    } else {
+      run.status = 'queued';
+      run.conclusion = null;
+    }
     committed(`POST actions/runs/${match[1]}/rerun-failed-jobs`, null);
   }
   fail(`unexpected ${method} ${target}`, 2);
