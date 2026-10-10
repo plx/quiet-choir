@@ -306,6 +306,9 @@ function runAttempts(
   if (value === undefined) return { record, map };
   if (value === null || typeof value !== 'object' || Array.isArray(value))
     throw new Error(`${label} must be an object of run ID to attempt.`);
+  const prototype: unknown = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null)
+    throw new Error(`${label} must be an object of run ID to attempt.`);
   const entries = Object.entries(value as Record<string, unknown>).map(([key, attempt]) => {
     if (!/^[1-9][0-9]*$/.test(key) || !Number.isSafeInteger(Number(key)))
       throw new Error(`${label} key ${JSON.stringify(key)} must be a positive integer run ID.`);
