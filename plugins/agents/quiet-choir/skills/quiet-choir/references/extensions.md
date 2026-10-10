@@ -235,8 +235,10 @@ serialized JSON value; the runtime parses it, validates it, and checkpoints the 
 `transcriptPath`, `onSession`, `onOutput`, and `onProgress`. Await `onSession(id)` at first sight
 and `onOutput(stream, bytes)` for raw chunks; failures must stop the call as infrastructure errors.
 Use `onOutput` for runtime-owned transcript caps/retention instead of writing directly to the path.
-Send bounded lossy progress summaries, tolerate observer failures, and keep the full trace out of
-memory. Metadata/version probes should not feed attempt transcripts. See
+Send bounded lossy progress summaries, keep the full trace out of memory, and swallow observer
+exceptions: after the first `init` event at most one progress event per 100 ms may reach
+`onProgress`, and an exception it throws must not fail the call (`createInvocationStream` does
+both). Metadata/version probes should not feed attempt transcripts. See
 [streaming and evidence](agent-streaming.md).
 
 The invocation supplies `signal`, `runId`, fully qualified `stepId`, `attempt`, and
@@ -321,11 +323,11 @@ declares them; otherwise profile, override and delegated values for them are not
 Import `runProcess`, `createFakeBinary`, and `assertHarnessConformance` from
 `quiet-choir/harness-kit`. Pass `invocation.trackProcess` to the process runner so registration
 precedes input. The conformance suite passes the adapter a recording `HarnessInvocation` in every
-scenario and requires caller-supplied fakes for twelve scenarios, in order: `text`, `structured`,
+scenario and requires caller-supplied fakes for thirteen scenarios, in order: `text`, `structured`,
 `missing-usage`, `protocol-error` (failure on exit zero), `nonzero-stdout`, `abort`,
-`registration-before-input`, `session`, `transcript`, `timeout`, `rate-limit` and `env`. The fixture
-receives `(scenario, probe)`; the probe holds absolute paths of marker files the fake writes, so the
-suite needs no knowledge of your protocol:
+`registration-before-input`, `session`, `transcript`, `timeout`, `rate-limit`, `env` and `progress`.
+The fixture receives `(scenario, probe)`; the probe holds absolute paths of marker files the fake
+writes, so the suite needs no knowledge of your protocol:
 
 - `probe.started`: create it as soon as the fake starts. `registration-before-input` holds
   `trackProcess` open for 250 ms after it appears.
@@ -344,10 +346,15 @@ exact stdout the fake writes, which must equal the bytes passed to `onOutput('st
 or kind `'rate-limit'`). `env` sets `CLAUDECODE`, `CLAUDE_CODE_BRIDGE_SESSION_ID`,
 `CLAUDE_PLUGIN_DATA`, `CODEX_COMPANION_SESSION_ID` and `CODEX_COMPANION_TRANSCRIPT_PATH` in
 `process.env`, none of which may reach the fake, and restores them afterwards; do not run the suite
-concurrently with other environment-sensitive code in the same process. A failure is an
-`AssertionError` whose message starts `Conformance scenario <name>:`. Never point the suite at a
-paid agent installation. `ClaudeAdapter` and `CodexAdapter` pass it; `CliHarness` remains their
-compatibility dispatcher and rejects unknown names.
+concurrently with other environment-sensitive code in the same process. In `progress` the fake emits
+a quick burst of native activity (at least two progress-producing events, no delay), then succeeds
+with `options.text`; the suite's `onProgress` observer throws after recording each event, and the
+call must still resolve. At least one event must be delivered, so the fake must emit activity the
+adapter reports through `onProgress`. Every scenario also checks the throttle: apart from the first
+`init` event, deliveries must come at least 80 ms apart (the 100 ms bound with 20 ms of slack). A
+failure is an `AssertionError` whose message starts `Conformance scenario <name>:`. Never point the
+suite at a paid agent installation. `ClaudeAdapter` and `CodexAdapter` pass it; `CliHarness` remains
+their compatibility dispatcher and rejects unknown names.
 
 The kit also exports the helpers the built-in adapters use, so a third adapter need not copy them:
 
