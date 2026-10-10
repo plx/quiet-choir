@@ -78,11 +78,15 @@ primitive supersedes a workaround, update its recipe and traps in the same PR.
   fields nested inside run-level objects), bumps `SUPPORTED_SCHEMA_REVISION` in
   `src/workflow/runtime/record.ts` and adds a revision to
   `test/fixtures/schema-revision/record-keys.json` with its digest pinned in
-  `test/record-schema-revision.test.ts`; never edit a released revision. Builds with the guard then
-  refuse to rewrite newer records, but builds that predate it still drop unknown fields (see
-  [record schema revision](docs/storage.md#record-schema-revision)). Any persisted-shape change also
-  pins a fixture or golden digest generated with the unmodified main runtime before the edit, as
-  `test/fixtures/schema-revision/` and `test/fixtures/codex-effort/` do, and keeps old records
+  `test/record-schema-revision.test.ts`; never edit a released revision. That test also pins digests
+  of the run-level (without steps) and step JSON Schemas per revision, so a nested shape change
+  fails it until you bump and pin (the failure message lists the steps); validators in `z.custom`,
+  refinements and transforms are still review-only. After a zod upgrade that only changes the JSON
+  Schema encoding, re-pin the current revision's digests and zod version in place. Builds with the
+  guard then refuse to rewrite newer records, but builds that predate it still drop unknown fields
+  (see [record schema revision](docs/storage.md#record-schema-revision)). Any persisted-shape change
+  also pins a fixture or golden digest generated with the unmodified main runtime before the edit,
+  as `test/fixtures/schema-revision/` and `test/fixtures/codex-effort/` do, and keeps old records
   readable.
 
 ## Dependency pin policy

@@ -372,8 +372,15 @@ including fields nested inside run-level objects such as `runBudget` or `worktre
 `SUPPORTED_SCHEMA_REVISION` in `record.ts` and adds the new revision's top-level keys to
 `test/fixtures/schema-revision/record-keys.json` (with its pinned digest in
 `test/record-schema-revision.test.ts`); a nested-only change repeats the previous revision's list.
-The test fails when the top-level keys change without a new revision; a nested change is caught only
-in review, so it must bump by this rule.
+The test fails when the top-level keys change without a new revision. From revision 17 it also pins,
+per revision, a digest of the run-level JSON Schema without `steps` and a digest of the step schema
+(with the installed zod version), so a nested addition, removal or type change in a run-level object
+or a step fails it too (#374); add the printed digests under the new revision and never edit a
+released pin. Schemas that `record.ts` imports count. Validators inside `z.custom`, refinements and
+transforms render as `{}` or not at all in the JSON Schema, so changes there are still caught only
+in review. A zod upgrade that merely changes the JSON Schema encoding also fails the check: if
+`record.ts` and the schemas it imports did not change, re-pin the current revision's digests and zod
+version in place; that is safe because these digests are never persisted.
 
 **Revisions so far.** Revision 1 is every record up to and including #167. Revision 2 (#168) is a
 nested-only change: `runBudget` gains the optional `maxWindowUtilization`, and `budgetStop` gains

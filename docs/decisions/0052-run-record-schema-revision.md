@@ -58,7 +58,11 @@ upgrade message instead of a Zod error.
 **The bump rule.** Adding or changing the accepted shape of any persisted run-level field, nested
 fields included, bumps the revision. A unit test ties the sorted top-level keys to the newest
 revision in `test/fixtures/schema-revision/record-keys.json` and pins each released revision by
-digest, so a new key cannot land without a new revision. Nested shapes are covered by review only.
+digest, so a new key cannot land without a new revision. Nested shapes were covered by review only.
+
+_Update (2026-10-10, #374):_ from revision 17 the same test also pins digests of the run-level JSON
+Schema (without `steps`) and of the step schema per revision, so nested additions, removals and type
+changes fail it. Validators inside `z.custom`, refinements and transforms stay review-only.
 
 ## Alternatives
 
