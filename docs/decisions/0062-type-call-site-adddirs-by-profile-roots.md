@@ -54,6 +54,11 @@ stays permissive and the runtime check remains the backstop. Runtime behavior is
    `NoExtraKeys`, which maps every key that `AgentProfile` or `AgentDefaults` does not declare to
    `never`, at the top level and inside the `claude` and `codex` blocks.
 
+   `TProfiles` is constrained only to `object`, not to `Record<string, AgentProfile>`: an interface
+   has no string index signature and would fail that constraint, although it is a valid finite
+   profile map. The `WorkflowDefinition` `profiles` property and the `NoExtraKeys` intersection
+   still validate the values.
+
 4. **Permissive fallbacks.** These count as rooted: a `claude` block whose `addDirRoots` key is
    possibly present (a widened `AgentProfile` or `AgentDefaults`), a non-literal `extends` or
    `defaults.profile`, a union-typed profile or defaults any member of which is rooted (a member

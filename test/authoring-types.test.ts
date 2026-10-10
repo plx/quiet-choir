@@ -852,3 +852,36 @@ it('carries strictness, profiles and declared children into authoring types', ()
   expect(unknownProfileKeys.name).toBe('unknown-profile-keys');
   expect(typeof runConst).toBe('function');
 });
+// A profile map declared through an interface has no string index signature but is still a valid
+// finite profile map; its declared shape decides which profiles admit addDirs.
+interface InterfaceProfiles {
+  reader: { extends: 'readonly'; claude: { addDirRoots: readonly ['runs'] } };
+  plain: { extends: 'readonly' };
+}
+const interfaceProfiles: InterfaceProfiles = {
+  reader: { extends: 'readonly', claude: { addDirRoots: ['runs'] } },
+  plain: { extends: 'readonly' },
+};
+export const interfaceTypedProfiles = defineWorkflow({
+  ...base,
+  name: 'interface-typed-profiles',
+  profiles: interfaceProfiles,
+  async run(ctx) {
+    await ctx.claude.text('t', { prompt, profile: 'reader', addDirs });
+    // @ts-expect-error -- plain declares no claude.addDirRoots, even through an interface.
+    await ctx.claude.text('t', { prompt, profile: 'plain', addDirs });
+    await ctx.claude.text('t', { prompt, profile: 'plain' });
+    return null;
+  },
+});
+interface BadInterfaceProfiles {
+  bad: { extends: 'readonly'; nope: true };
+}
+const badInterfaceProfiles: BadInterfaceProfiles = { bad: { extends: 'readonly', nope: true } };
+export const badInterfaceTypedProfiles = defineWorkflow({
+  ...base,
+  name: 'bad-interface-typed-profiles',
+  // @ts-expect-error -- unknown profile keys stay rejected for interface-typed maps.
+  profiles: badInterfaceProfiles,
+  run: () => Promise.resolve(null),
+});

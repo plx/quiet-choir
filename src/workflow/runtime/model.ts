@@ -894,7 +894,9 @@ export interface WorkflowDefinition<
  * `strictProfiles` (omitted means `true`), `children` tuple and `name` are inferred too, so strict
  * call sites, declared profiles and by-name child dispatch are checked at type level. The literal
  * `profiles` and `defaults` (`TProfiles`, `TDefaults`) decide which profiles admit call-site Claude
- * `addDirs` under strict profiles ({@link AddDirProfilesOf}). Explicit type arguments are
+ * `addDirs` under strict profiles ({@link AddDirProfilesOf}); `TProfiles` is constrained to `object`
+ * so an interface-typed profile map (no index signature) is accepted, while the `profiles` property
+ * type validates its values. Explicit type arguments are
  * all-or-nothing: a prefix such as `defineWorkflow<I, O>` leaves `TProfiles` and `TDefaults` empty,
  * so built-ins and an omitted profile then read as unrooted even when `defaults` roots them.
  */
@@ -908,7 +910,7 @@ export function defineWorkflow<
   const TName extends string = string,
   // `{}` means "none declared": omitted profiles or defaults must not read as widened (rooted).
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type
-  const TProfiles extends Readonly<Record<string, AgentProfile>> = {},
+  const TProfiles extends object = {},
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type
   const TDefaults extends AgentDefaults = {},
 >(
