@@ -195,7 +195,7 @@ pull requests or split. That fallback sees only checkboxes, so it cannot tell a 
 blocked from a ready one, unless the read passes `headRefPrefix` (below), which also links open pull
 requests to its items.
 
-#### Pull requests linked by branch name
+#### Branch-linked pull requests
 
 A pull request opened without a closing keyword is not in `closedByPullRequestsReferences`, so its
 ticket looks ready and can be picked again. Pass `headRefPrefix` to link by head branch as well:
