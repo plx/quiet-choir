@@ -4,21 +4,34 @@ import { lstat, readdir, rename, rm, rmdir } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { pidState } from '../../processes/identity.js';
 import type { ProcessSupervisor } from '../../processes/supervisor.js';
-import { formatArgv, workflowArgv, type CommandLauncher } from './commands.js';
+import { formatArgv, nextDetail, workflowArgv, type CommandLauncher } from './commands.js';
 import type { ProcessRunner } from './exec-model.js';
+import type { JsonValue } from './model.js';
 import { digest, jsonValue } from './json.js';
-import { inFlightLeftoverMessage, type LaunchJudgement } from './launch-leftover-decision.js';
+import {
+  inFlightLeftoverMessage,
+  inFlightUnreadableMessage,
+  type LaunchJudgement,
+} from './launch-leftover-decision.js';
 import {
   inspectLaunchLeftover,
+  inspectRunLaunches,
   runRecordPresent,
   type LaunchLeftover,
   type LaunchSettleOptions,
+  type LeftoverLaunch,
 } from './launch-leftovers.js';
 import { isErrno, sweepStrays, withRunGuard } from './lock.js';
 import { legacyRunPath, resolveStateDir, runDirectory } from './paths.js';
 import { OrphanProcessesError } from './process-registry.js';
-import { missingRunError, readRequiredRun } from './read-required-run.js';
 import {
+  holdsRun,
+  missingRunError,
+  readRequiredRun,
+  unreadableRunError,
+} from './read-required-run.js';
+import {
+  damagedRecordCode,
   ownershipHold,
   removalRefusal,
   removalVerdict,
@@ -49,6 +62,13 @@ export interface RemoveRunOptions {
    * sets it.
    */
   readonly expectedUpdatedAt?: string;
+  /**
+   * Also remove a run whose record file is present but whose content is damaged (ADR 0060): an
+   * invalid record, a journal gap, a format-7 marker without its directory, or `run.json` without
+   * `journal.jsonl`. A record unreadable for access or I/O reasons, or a newer build's record, is
+   * still refused. A readable run, or a leftover launch directory, is removed as without it.
+   */
+  readonly unreadable?: boolean;
 }
 
 /** A worktree cache that rm removed, or would remove. @internal */
@@ -77,6 +97,11 @@ export interface RunRemovalResult {
    * before its record (ADR 0055): there are no caches or refs, and `--refs` changes nothing.
    */
   readonly launchOnly: boolean;
+  /**
+   * True when the run's record was damaged and `unreadable` removed it without reading it (ADR
+   * 0060): no caches or refs were touched, and a warning says how to find any it named.
+   */
+  readonly unreadable: boolean;
   /** Paths in the runs container that existed for the run before the removal. */
   readonly paths: readonly string[];
   /** Worktree caches not yet removed by an earlier cleanup. */
@@ -234,14 +259,14 @@ function namespaceDirectory(
   return join(ledger.root, `${record.id}-${ledger.namespace}`);
 }
 
-/** Plan a removal without a lock, a sweep or any write. */
+/** Plan a removal of the read `record` without a lock, a sweep or any write. */
 async function planRemoval(
   stateDir: string,
   options: RemoveRunOptions,
+  record: RunRecord,
   launcher?: CommandLauncher,
 ): Promise<RunRemovalResult> {
   const { runId } = options;
-  const record = await readRequiredRun({ runId, stateDir });
   if (options.expectedUpdatedAt !== undefined)
     checkUpdatedAt(runId, options.expectedUpdatedAt, record.updatedAt);
   const ownership = await inspectRunOwnership({ runId, stateDir });
@@ -261,6 +286,7 @@ async function planRemoval(
         : pick(removalRefusal(runId, stateDir, verdict, launcher)),
     removed: false,
     launchOnly: false,
+    unreadable: false,
     paths: await existingPaths(stateDir, runId),
     caches: Object.values(ledger?.caches ?? {})
       .filter((cache) => cache.state !== 'removed')
@@ -293,7 +319,9 @@ function pick(refusal: ReturnType<typeof removalRefusal>): {
  * ledger records them), no ref is deleted and the record stays for `workflow clean`. Holding the
  * legacy guard throughout, it then deletes the legacy siblings, the flat checkpoint or marker (a
  * flat run's commit point), the backups, releases the primary lock, renames `<runId>/` to a dotted
- * tombstone (a directory run's commit point) and deletes it. The signal is honoured only before the flat file goes. @internal
+ * tombstone (a directory run's commit point) and deletes it. The signal is honoured only before the flat file goes.
+ * With `unreadable`, a run whose record content is damaged takes {@link removeUnreadable} instead;
+ * without it, rm refuses such a run with `run.unreadable` naming the `--unreadable` command. @internal
  */
 export async function removeRun(
   options: RemoveRunOptions,
@@ -311,11 +339,18 @@ export async function removeRun(
       : null;
   if (options.dryRun) {
     const leftover = await leftoverOf();
+    if (leftover)
+      return {
+        kind: 'removed',
+        result: await planLeftoverRemoval(stateDir, options, leftover, live.commandLauncher),
+      };
+    const read = await readForRemoval(stateDir, options, live.commandLauncher);
     return {
       kind: 'removed',
-      result: leftover
-        ? await planLeftoverRemoval(stateDir, options, leftover, live.commandLauncher)
-        : await planRemoval(stateDir, options, live.commandLauncher),
+      result:
+        'record' in read
+          ? await planRemoval(stateDir, options, read.record, live.commandLauncher)
+          : await planUnreadableRemoval(stateDir, options, live),
     };
   }
   const force = options.force ?? false;
@@ -323,7 +358,9 @@ export async function removeRun(
   const tombstones = await sweepTombstones(stateDir);
   const leftover = await leftoverOf();
   if (leftover) return removeLaunchLeftover(stateDir, options, leftover, live, tombstones);
-  const initial = await readRequiredRun({ runId, stateDir });
+  const read = await readForRemoval(stateDir, options, live.commandLauncher);
+  if (!('record' in read)) return removeUnreadable(stateDir, options, live, tombstones);
+  const initial = read.record;
   if (options.expectedUpdatedAt !== undefined)
     checkUpdatedAt(runId, options.expectedUpdatedAt, initial.updatedAt);
   const verdict = removalVerdict(initial, await inspectRunOwnership({ runId, stateDir }), {
@@ -335,14 +372,8 @@ export async function removeRun(
   const bytes = await runBytes(stateDir, runId);
   signal?.throwIfAborted();
   await live.beforeLock?.();
-  const owned = await openFileOwnedRun(stateDir, runId, {
-    commandLauncher: live.commandLauncher,
-    ...(signal === undefined ? {} : { signal }),
-    ...(live.processSupervisor === undefined ? {} : { processSupervisor: live.processSupervisor }),
-  });
-  let outcome: RunRemovalOutcome;
-  try {
-    outcome = await removeOwned(owned, runner, live, {
+  return withOwnedRun(stateDir, runId, live, (owned) =>
+    removeOwned(owned, runner, live, {
       runId,
       stateDir,
       generation: initial.createdAt,
@@ -352,7 +383,30 @@ export async function removeRun(
       paths,
       bytes,
       tombstones,
-    });
+    }),
+  );
+}
+
+/**
+ * Take the run lock without a working directory, run `body` under it and release it: every lock on
+ * a failure, as one error with the release's, and the legacy guard last once the run is removed,
+ * when a failed release only warns. A blocked outcome releases both locks.
+ */
+async function withOwnedRun(
+  stateDir: string,
+  runId: string,
+  live: RemoveRunLive,
+  body: (owned: ReleasableOwnedRun) => Promise<RunRemovalOutcome>,
+): Promise<RunRemovalOutcome> {
+  const { signal } = live;
+  const owned = await openFileOwnedRun(stateDir, runId, {
+    commandLauncher: live.commandLauncher,
+    ...(signal === undefined ? {} : { signal }),
+    ...(live.processSupervisor === undefined ? {} : { processSupervisor: live.processSupervisor }),
+  });
+  let outcome: RunRemovalOutcome;
+  try {
+    outcome = await body(owned);
   } catch (error) {
     try {
       await owned.release();
@@ -407,9 +461,6 @@ async function removeOwned(
   },
 ): Promise<RunRemovalOutcome> {
   const { runId, stateDir, force, signal } = { ...context, signal: live.signal };
-  const step = async (name: RemovalStep): Promise<void> => {
-    await live.afterStep?.(name);
-  };
   const record = await readRequiredRun({ runId, stateDir });
   // The ID is user-chosen: another rm can delete the run rm inspected and a new run can reuse the
   // ID before this lock is taken. Only the inspected generation may be removed.
@@ -475,6 +526,47 @@ async function removeOwned(
         );
     }
   }
+  await deleteRunFiles(owned, stateDir, runId, live);
+  return {
+    kind: 'removed',
+    result: {
+      runId,
+      stateDir,
+      dryRun: false,
+      force,
+      refs: context.refs,
+      verdict: 'remove',
+      removed: true,
+      launchOnly: false,
+      unreadable: false,
+      paths: context.paths,
+      caches,
+      refsRemoved,
+      keptRefs,
+      bytes: context.bytes,
+      tombstones: context.tombstones,
+      warnings,
+    },
+  };
+}
+
+/**
+ * The guard-held deletion order shared by an ordinary and an unreadable removal, under the run lock:
+ * the legacy siblings, the flat `<runId>.json` and a directory flush (a flat run's commit point), the
+ * backups, the primary lock's release, the rename of `<runId>/` to a tombstone and a flush (a
+ * directory run's commit point), the siblings again and the tombstone. The signal is honoured only
+ * before the flat file goes; the caller releases the legacy guard.
+ */
+async function deleteRunFiles(
+  owned: ReleasableOwnedRun,
+  stateDir: string,
+  runId: string,
+  live: RemoveRunLive,
+): Promise<void> {
+  const { signal } = live;
+  const step = async (name: RemovalStep): Promise<void> => {
+    await live.afterStep?.(name);
+  };
   signal?.throwIfAborted();
   const siblings = await runSiblingPaths(stateDir, runId);
   const removeSiblings = async (): Promise<void> => {
@@ -506,26 +598,6 @@ async function removeOwned(
   await removeSiblings();
   await rm(tombstone, { recursive: true, force: true });
   await step('tombstone-deleted');
-  return {
-    kind: 'removed',
-    result: {
-      runId,
-      stateDir,
-      dryRun: false,
-      force,
-      refs: context.refs,
-      verdict: 'remove',
-      removed: true,
-      launchOnly: false,
-      paths: context.paths,
-      caches,
-      refsRemoved,
-      keptRefs,
-      bytes: context.bytes,
-      tombstones: context.tombstones,
-      warnings,
-    },
-  };
 }
 
 /**
@@ -587,16 +659,23 @@ async function lstatIfPresent(path: string): Promise<Stats | undefined> {
   });
 }
 
-/** The `run.active` refusal of a leftover whose start may still be in flight; `--force` never overrides it. */
-function inFlightRefusal(runId: string, leftover: LaunchLeftover): RunRefusedError {
+/**
+ * The `run.active` refusal of a leftover, or of a run with an unreadable record, whose start may
+ * still be in flight; `--force` never overrides it.
+ */
+function inFlightRefusal(
+  runId: string,
+  launches: readonly LaunchJudgement[],
+  message: string = inFlightLeftoverMessage(runId, launches),
+): RunRefusedError {
   return new RunRefusedError(
     'run.active',
     runId,
-    inFlightLeftoverMessage(runId, leftover.launches),
+    message,
     jsonValue({
       status: 'starting',
       waiting: [],
-      launches: leftover.launches.map((launch: LaunchJudgement) => ({
+      launches: launches.map((launch: LaunchJudgement) => ({
         n: launch.n,
         pid: launch.pid,
         host: launch.host,
@@ -633,6 +712,7 @@ async function planLeftoverRemoval(
         : { code: 'run.active', message: inFlightLeftoverMessage(runId, leftover.launches) },
     removed: false,
     launchOnly: true,
+    unreadable: false,
     paths: [leftover.path],
     caches: [],
     refsRemoved: [],
@@ -660,7 +740,7 @@ async function removeLaunchLeftover(
 ): Promise<RunRemovalOutcome> {
   const { runId } = options;
   const { signal } = live;
-  if (!leftover.removable) throw inFlightRefusal(runId, leftover);
+  if (!leftover.removable) throw inFlightRefusal(runId, leftover.launches);
   // The verdict the dry run reports: a held (or unreadable) guard refuses before the guard is
   // taken, as ordinary rm does, so an empty lock directory is `run.locked` rather than a wait.
   const hold = ownershipHold(await inspectRunOwnership({ runId, stateDir }));
@@ -683,7 +763,7 @@ async function removeLaunchLeftover(
         );
       throw await missingRunError({ runId, stateDir });
     }
-    if (!current.removable) throw inFlightRefusal(runId, current);
+    if (!current.removable) throw inFlightRefusal(runId, current.launches);
     // The last point where an abort leaves the directory in place.
     signal?.throwIfAborted();
     const tombstone = join(stateDir, tombstoneName(runId));
@@ -730,6 +810,7 @@ async function removeLaunchLeftover(
       verdict: 'remove',
       removed: true,
       launchOnly: true,
+      unreadable: false,
       paths: [leftover.path],
       caches: [],
       refsRemoved: [],
@@ -739,4 +820,226 @@ async function removeLaunchLeftover(
       warnings,
     },
   };
+}
+
+/**
+ * The record rm judges, or `damaged` when `unreadable` lets rm remove a damaged one (ADR 0060). A
+ * damaged record without `unreadable` is refused as `run.unreadable` naming the `--unreadable`
+ * command in `details.next`; with it, a record unreadable for any other reason is refused saying
+ * why. Prune pins the record it listed, and its read failures stay as they are.
+ */
+async function readForRemoval(
+  stateDir: string,
+  options: RemoveRunOptions,
+  launcher?: CommandLauncher,
+): Promise<{ readonly record: RunRecord } | { readonly damaged: RunRefusedError }> {
+  const { runId } = options;
+  try {
+    return { record: await readRequiredRun({ runId, stateDir }) };
+  } catch (error) {
+    if (options.expectedUpdatedAt !== undefined) throw error;
+    const damaged = await damagedRecordFailure(stateDir, runId, error);
+    if (damaged === null) throw options.unreadable ? notDamagedError(error) : error;
+    if (options.unreadable) return { damaged };
+    throw unreadableHint(damaged, stateDir, runId, options.dryRun ?? false, launcher);
+  }
+}
+
+function detailsObject(details: JsonValue): Record<string, JsonValue> {
+  return details !== null && typeof details === 'object' && !Array.isArray(details) ? details : {};
+}
+
+/**
+ * The `run.unreadable` refusal of a record read failure whose record file (`<runId>/run.json` or
+ * `<runId>.json`) is present and whose content is damaged, by {@link damagedRecordCode}, or null.
+ * A `run.not_found` while the record file is present (a missing companion, such as `run.json`
+ * without `journal.jsonl`) counts as damaged and becomes `run.unreadable`. Every other failure,
+ * including `run.incompatible`, is null.
+ */
+async function damagedRecordFailure(
+  stateDir: string,
+  runId: string,
+  error: unknown,
+): Promise<RunRefusedError | null> {
+  if (!(error instanceof RunRefusedError)) return null;
+  if (error.code === 'run.unreadable') {
+    const code = detailsObject(error.details)['filesystemCode'];
+    return (code === null || typeof code === 'string') &&
+      damagedRecordCode(code) &&
+      (await holdsRun(stateDir, runId))
+      ? error
+      : null;
+  }
+  if (error.code === 'run.not_found' && (await holdsRun(stateDir, runId)))
+    return unreadableRunError({ runId, stateDir }, error.cause ?? error);
+  return null;
+}
+
+/** rm's refusal of a damaged record without `--unreadable`: it names the command that removes it. */
+function unreadableHint(
+  damaged: RunRefusedError,
+  stateDir: string,
+  runId: string,
+  dryRun: boolean,
+  launcher?: CommandLauncher,
+): RunRefusedError {
+  const argv = workflowArgv(
+    launcher,
+    'rm',
+    runId,
+    '--state-dir',
+    stateDir,
+    '--unreadable',
+    ...(dryRun ? ['--dry-run'] : []),
+  );
+  return new RunRefusedError(
+    'run.unreadable',
+    runId,
+    `Run ${runId} has a damaged record (${damaged.message}); nothing was removed. If the run is no longer needed, remove it without reading its record, leaving any worktree caches and pinned refs it named, with ${formatArgv(argv)}.`,
+    {
+      ...detailsObject(damaged.details),
+      next: nextDetail([
+        {
+          why: 'Remove the run whose record is damaged; its worktree caches and pinned refs stay.',
+          argv,
+        },
+      ]),
+    },
+    { cause: damaged.cause ?? damaged },
+  );
+}
+
+/** With `--unreadable`, a `run.unreadable` failure that is not damaged content says why it stays. */
+function notDamagedError(error: unknown): unknown {
+  if (!(error instanceof RunRefusedError) || error.code !== 'run.unreadable') return error;
+  const code = detailsObject(error.details)['filesystemCode'];
+  return new RunRefusedError(
+    'run.unreadable',
+    error.runId,
+    `${error.message} rm --unreadable removes only a record whose content is damaged, not one that cannot be read${typeof code === 'string' ? ` (${code})` : ''}; nothing was removed.`,
+    error.details,
+    { cause: error.cause ?? error },
+  );
+}
+
+/** The warning of every unreadable removal: the record that named caches and refs is unread. */
+function unreadableWarning(runId: string): string {
+  return `The record of ${runId} could not be read, so rm removed none of the worktree caches or pinned refs it may name. Find leftover caches with git worktree list in the run's repository (git worktree prune drops their entries once deleted) and pinned refs with git for-each-ref refs/quiet-choir/${runId}/.`;
+}
+
+/** Whether any launch may still be in flight; null (the directory changed under the scan) counts. */
+function launchInFlight(launches: readonly LeftoverLaunch[] | null): boolean {
+  return launches === null || launches.some((launch) => launch.state === 'in-flight');
+}
+
+/** Refuse `run.active`, even with `--force`, while a launch in `<runId>/launch/` may be in flight. */
+async function refuseInFlightLaunches(
+  stateDir: string,
+  runId: string,
+  live: RemoveRunLive,
+): Promise<void> {
+  const launches = await inspectRunLaunches(stateDir, runId, live.launchSettle);
+  if (launchInFlight(launches))
+    throw inFlightRefusal(runId, launches ?? [], inFlightUnreadableMessage(runId, launches ?? []));
+}
+
+/** The dry run of an unreadable removal: what {@link removeUnreadable} would meet now. */
+async function planUnreadableRemoval(
+  stateDir: string,
+  options: RemoveRunOptions,
+  live: RemoveRunLive,
+): Promise<RunRemovalResult> {
+  const { runId } = options;
+  const hold = ownershipHold(await inspectRunOwnership({ runId, stateDir }));
+  const launches = hold ? [] : await inspectRunLaunches(stateDir, runId, live.launchSettle);
+  return {
+    runId,
+    stateDir,
+    dryRun: true,
+    force: options.force ?? false,
+    refs: options.refs ?? false,
+    verdict: hold
+      ? pick(removalRefusal(runId, stateDir, hold, live.commandLauncher))
+      : launchInFlight(launches)
+        ? { code: 'run.active', message: inFlightUnreadableMessage(runId, launches ?? []) }
+        : 'remove',
+    removed: false,
+    launchOnly: false,
+    unreadable: true,
+    paths: await existingPaths(stateDir, runId),
+    caches: [],
+    refsRemoved: [],
+    keptRefs: [],
+    bytes: await runBytes(stateDir, runId),
+    tombstones: await deadTombstones(stateDir),
+    warnings: [unreadableWarning(runId)],
+  };
+}
+
+/**
+ * Remove a run whose record content is damaged, on request (`unreadable`, ADR 0060). It refuses a
+ * held lock or live orphans, and `run.active`, even with `force`, while a launch in `launch/` may
+ * be in flight. It takes the run lock as ordinary rm does (recovering a dead owner's), reads the
+ * record again under it, which no writer can change meanwhile (`run.exists` when it is readable
+ * now, `run.not_found` when it is gone), judges the launches again and then follows the ordinary
+ * guard-held deletion order. No caches or refs are touched, since the ledger cannot be read.
+ */
+async function removeUnreadable(
+  stateDir: string,
+  options: RemoveRunOptions,
+  live: RemoveRunLive,
+  tombstones: readonly string[],
+): Promise<RunRemovalOutcome> {
+  const { runId } = options;
+  const hold = ownershipHold(await inspectRunOwnership({ runId, stateDir }));
+  if (hold) throw refusalError(runId, stateDir, hold, live.commandLauncher);
+  await refuseInFlightLaunches(stateDir, runId, live);
+  // Measured before the lock exists, so a real removal reports what its dry run reports.
+  const paths = await existingPaths(stateDir, runId);
+  const bytes = await runBytes(stateDir, runId);
+  live.signal?.throwIfAborted();
+  await live.beforeLock?.();
+  return withOwnedRun(stateDir, runId, live, async (owned) => {
+    await confirmDamaged(stateDir, runId);
+    await refuseInFlightLaunches(stateDir, runId, live);
+    await deleteRunFiles(owned, stateDir, runId, live);
+    return {
+      kind: 'removed',
+      result: {
+        runId,
+        stateDir,
+        dryRun: false,
+        force: options.force ?? false,
+        refs: options.refs ?? false,
+        verdict: 'remove',
+        removed: true,
+        launchOnly: false,
+        unreadable: true,
+        paths,
+        caches: [],
+        refsRemoved: [],
+        keptRefs: [],
+        bytes,
+        tombstones,
+        warnings: [unreadableWarning(runId)],
+      },
+    };
+  });
+}
+
+/** Under the run lock: the record must still be damaged, by the same rule as before the lock. */
+async function confirmDamaged(stateDir: string, runId: string): Promise<void> {
+  let record: RunRecord;
+  try {
+    record = await readRequiredRun({ runId, stateDir });
+  } catch (error) {
+    if (await damagedRecordFailure(stateDir, runId, error)) return;
+    throw error;
+  }
+  throw new RunRefusedError(
+    'run.exists',
+    runId,
+    `Run ${runId} became readable after rm inspected it; nothing was removed. Rerun rm to judge the run.`,
+    jsonValue({ status: record.status, createdAt: record.createdAt }),
+  );
 }

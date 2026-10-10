@@ -266,7 +266,8 @@ export interface CleanWorkflowPlan extends ExecutionPlan {
  * Plain-data request to remove one saved run and its worktree caches without importing workflow
  * code (`workflow rm`). `force` also removes a running, suspended or waiting run but never
  * overrides a held lock; `refs` also deletes pinned refs; `dryRun` takes no lock and writes
- * nothing, and reports the verdict a removal would meet.
+ * nothing, and reports the verdict a removal would meet. `unreadable` also removes a run whose
+ * record file is present but whose content is damaged, without touching caches or refs (ADR 0060).
  */
 export interface RemoveWorkflowPlan extends ExecutionPlan {
   readonly kind: 'workflow.rm';
@@ -275,6 +276,7 @@ export interface RemoveWorkflowPlan extends ExecutionPlan {
   readonly force: boolean;
   readonly refs: boolean;
   readonly dryRun: boolean;
+  readonly unreadable: boolean;
 }
 
 /**

@@ -351,11 +351,11 @@ function incompatibleNext(
 }
 
 /**
- * The `{why, argv}` entries a `run.locked` or `worktree.locked` refusal carries in `details.next`,
- * built by the runtime with the invocation's launcher. A malformed entry, or a `next` that is not a
- * list, is dropped.
+ * The `{why, argv}` entries a `run.locked`, `worktree.locked` or rm's `run.unreadable` refusal
+ * carries in `details.next`, built by the runtime with the invocation's launcher. A malformed entry,
+ * or a `next` that is not a list, is dropped.
  */
-function lockedNext(details: Record<string, JsonValue> | undefined): NextCommand[] {
+function detailsNext(details: Record<string, JsonValue> | undefined): NextCommand[] {
   const entries = details?.['next'];
   if (!Array.isArray(entries)) return [];
   return entries.flatMap((value) => {
@@ -392,7 +392,7 @@ export function failureNextCommands(context: FailureNextContext): NextCommand[] 
     });
   }
   // The worktree administration lock belongs to a repository, so its refusal names no run.
-  if (code === 'worktree.locked') return lockedNext(details);
+  if (code === 'worktree.locked') return detailsNext(details);
   if (runId === null || stateDir === null) return [];
   switch (code) {
     case 'workflow.failed':
@@ -413,7 +413,8 @@ export function failureNextCommands(context: FailureNextContext): NextCommand[] 
     case 'run.incompatible':
       return details ? incompatibleNext(context, details, runId, stateDir) : [];
     case 'run.locked':
-      return lockedNext(details);
+    case 'run.unreadable':
+      return detailsNext(details);
     default:
       return [];
   }
