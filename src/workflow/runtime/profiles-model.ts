@@ -199,3 +199,86 @@ export interface CapabilityManifest {
   /** Declared/default elevated roles checked before the body starts. */
   readonly requiredGrants: readonly string[];
 }
+
+/**
+ * Whether profile or defaults type `X` may declare `claude.addDirRoots`: `true` when the key is
+ * possibly present with a type other than `undefined`, so a widened {@link AgentProfile} counts as
+ * rooted. It distributes over unions, so `true extends HasAddDirRoots<X>` means "some member may".
+ * A helper of {@link AddDirProfilesOf}.
+ */
+export type HasAddDirRoots<X> = X extends {
+  /** Claude block of the profile or defaults. */
+  readonly claude?: infer C;
+}
+  ? C extends object
+    ? 'addDirRoots' extends keyof C
+      ? [Exclude<C['addDirRoots' & keyof C], undefined>] extends [never]
+        ? false
+        : true
+      : false
+    : false
+  : false;
+
+/**
+ * Whether the role named `N` has `claude.addDirRoots` from its own layer or its `extends` chain in
+ * the profiles type `TProfiles`, ignoring workflow defaults (which {@link AddDirProfilesOf} checks
+ * first). It mirrors profile resolution, where a layer replaces a parent's roots but cannot remove
+ * them. A built-in, and `undefined` (an omitted `extends` or `defaults.profile`, meaning `text`),
+ * is unrooted, because declared roles cannot reuse a built-in name; so is a name already in `Seen`
+ * (a cycle, which the runtime rejects). A non-literal name, or a name `TProfiles` does not
+ * describe, is rooted. It distributes over a union `N`. A helper of {@link AddDirProfilesOf}.
+ */
+export type AddDirRootedName<
+  N extends string | undefined,
+  TProfiles,
+  Seen extends string = never,
+> = N extends string
+  ? [N] extends [Seen]
+    ? false
+    : string extends N
+      ? true
+      : N extends BuiltinProfile
+        ? false
+        : N extends keyof TProfiles
+          ? true extends HasAddDirRoots<TProfiles[N]>
+            ? true
+            : true extends AddDirRootedName<
+                  Extract<TProfiles[N]['extends' & keyof TProfiles[N]], string | undefined>,
+                  TProfiles,
+                  Seen | N
+                >
+              ? true
+              : false
+          : true
+  : false;
+
+/**
+ * The `profile` values under which a strict Claude call may pass `addDirs`, computed from a
+ * workflow's declared role names `TProfile`, its `profiles` type `TProfiles` and its `defaults` type
+ * `TDefaults`. `undefined` in the result means a call that omits `profile` may pass them, because
+ * the default profile is rooted. It mirrors profile resolution:
+ *
+ * - `defaults.claude.addDirRoots` roots every built-in and declared profile, and the omitted case.
+ * - Otherwise a built-in (`text`, `readonly`, `edit`) is unrooted, and a declared role is rooted
+ *   when it or a profile in its `extends` chain declares `claude.addDirRoots`. A cycle is unrooted
+ *   (the runtime rejects it).
+ * - `undefined` is included when `defaults.profile` (or `text` when absent) is rooted.
+ *
+ * When the types cannot prove a profile unrooted, it counts as rooted: a widened
+ * {@link AgentProfile} or {@link AgentDefaults}, a non-literal `extends` or `defaults.profile`, and a
+ * role in `TProfile` that `TProfiles` does not describe. `defineWorkflow` computes this from the
+ * inferred `profiles` and `defaults` and passes it as the last `WorkflowDefinition` type parameter;
+ * the runtime check stays the backstop.
+ */
+export type AddDirProfilesOf<TProfile extends string, TProfiles, TDefaults> =
+  true extends HasAddDirRoots<TDefaults>
+    ? BuiltinProfile | TProfile | undefined
+    : | {
+          [N in BuiltinProfile | TProfile]: true extends AddDirRootedName<N, TProfiles> ? N : never;
+        }[BuiltinProfile | TProfile]
+      | (true extends AddDirRootedName<
+          Extract<TDefaults['profile' & keyof TDefaults], string | undefined>,
+          TProfiles
+        >
+          ? undefined
+          : never);
