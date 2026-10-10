@@ -3322,8 +3322,18 @@ describe('command polls', () => {
       { commandOptions: { input: '{}' } },
       { commandOptions: { okExitCodes: [0, 8] } },
       { commandOptions: { inheritEnv: false } },
+      { commandOptions: { scrubEnv: true } },
+      { commandOptions: { scrubEnv: ['EXTRA_NAME'] } },
     ])
       expect(await request(changes)).not.toEqual(original);
+    // A disabled scrub keeps the request byte-identical; true and [] are one identity.
+    expect(await request({ commandOptions: { scrubEnv: false } })).toEqual(original);
+    const scrubbed = await request({ commandOptions: { scrubEnv: true } });
+    expect(scrubbed.poll?.command?.exec.scrubEnv).toEqual([]);
+    expect(await request({ commandOptions: { scrubEnv: [] } })).toEqual(scrubbed);
+    expect(await request({ commandOptions: { scrubEnv: ['B_NAME', 'A_NAME'] } })).toEqual(
+      await request({ commandOptions: { scrubEnv: ['A_NAME', 'B_NAME', 'A_NAME'] } }),
+    );
     expect(() => waitRequest({ timeoutMs: 600_000, poll })).toThrow(
       'Command poll identity must be prepared before its wait request.',
     );
@@ -3355,6 +3365,7 @@ describe('command polls', () => {
       { command: counter(file, 98) },
       { output: counted.extend({ extra: z.string().optional() }) },
       { done: () => ({ done: false as const, note: 'changed' }) },
+      { commandOptions: { scrubEnv: true } },
     ])
       await expect(resume(changed)).rejects.toThrow(
         'Step ci: wait changed; use a new ID for a different decision, dependency, or deadline.',
