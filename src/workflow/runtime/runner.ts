@@ -1258,6 +1258,8 @@ export async function runWorkflow<
       error: null,
       steps: {},
       createdAt: now,
+      // Only a new record gets a generation; an older record keeps createdAt as its own (#371).
+      generation: randomUUID(),
       updatedAt: now,
     };
     record.runBudget = runBudget;

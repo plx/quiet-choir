@@ -567,6 +567,13 @@ export interface RunRecord {
   recoveryCause?: RecoveryCause;
   /** ISO creation timestamp. */
   createdAt: string;
+  /**
+   * A random per-run token (a UUID) written once, when the run is created. It is the identity that
+   * answer deliveries and `workflow rm` bind to, so a later run that reuses the ID is told apart
+   * even when it has the same `createdAt`. Absent on records created before schema revision 17;
+   * `createdAt` stands in for it there, for the life of the record (it is never backfilled).
+   */
+  generation?: string;
   /** ISO timestamp of the most recent persisted change. */
   updatedAt: string;
 }
@@ -1145,6 +1152,7 @@ const recordFieldsSchema = z.object({
     ])
     .optional(),
   createdAt: z.iso.datetime(),
+  generation: z.uuid().optional(),
   updatedAt: z.iso.datetime(),
 });
 const recordSchema = recordFieldsSchema.superRefine((record, context) => {
@@ -1350,9 +1358,18 @@ export function withProjectInstructions(
  * Revision 15 (#317) changed only a nested shape: the step field `innerCommands` in `steps`.
  * Revision 16 (#337) changed only a nested shape: the optional `scrubEnv` list of an exec summary
  * in `steps` (step and attempt `exec`) and in a command poll's wait request (`poll.command.exec`).
+ * Revision 17 (#371) added the top-level `generation`, a random per-run token.
  * @internal
  */
-export const SUPPORTED_SCHEMA_REVISION = 16;
+export const SUPPORTED_SCHEMA_REVISION = 17;
+
+/**
+ * The identity a run's answer deliveries and `workflow rm` bind to: its random `generation`, or
+ * its `createdAt` when the record was created before schema revision 17 and has none. @internal
+ */
+export function runGeneration(run: Pick<RunRecord, 'createdAt' | 'generation'>): string {
+  return run.generation ?? run.createdAt;
+}
 
 /**
  * Whether a run recorded any work: at least one step or settled map. A failed run without any gets

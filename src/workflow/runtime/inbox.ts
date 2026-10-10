@@ -12,11 +12,11 @@ import {
   runDirectory,
   type StateDirectoryOptions,
 } from './paths.js';
-import { readRun, listRunIds, type RunRecord } from './store.js';
+import { readRun, listRunIds, runGeneration, type RunRecord } from './store.js';
 import { isValidRunId, runIdMessage, RunRefusedError } from './run-errors.js';
 import { errorCode } from './checkpoint.js';
 import { holdsRun, unreadableRunError } from './read-required-run.js';
-import { answerEnvelopeSchema, validateAnswerAuthor } from './question-schema.js';
+import { answerEnvelopeSchema, envelopeBinding, validateAnswerAuthor } from './question-schema.js';
 import type { JsonValue } from './model.js';
 import type { AnswerIssue } from './question-model.js';
 import type { PendingDelivery, PendingListing, PendingOperation } from './wait-model.js';
@@ -189,12 +189,14 @@ export async function writeAnswer(options: WriteAnswerOptions): Promise<AnswerDe
     throw schemaMismatch(parsed.error.issues);
   }
   const at = new Date().toISOString();
-  // runCreatedAt binds the delivery to this run: a later run that reuses the ID rejects it.
+  // runGeneration binds the delivery to this run: a later run that reuses the ID rejects it, even
+  // with the same createdAt. runCreatedAt is kept for owners from older builds, which bind on it.
   const envelope = {
     value,
     by,
     at,
     questionFingerprint: step.fingerprint,
+    runGeneration: runGeneration(run),
     runCreatedAt: run.createdAt,
   };
   let normalized: z.infer<typeof answerEnvelopeSchema>;
@@ -256,29 +258,29 @@ function isMissing(error: unknown): boolean {
 
 /**
  * The lock-free half of the `workflow rm` handshake (ADR 0049): after publishing a delivery,
- * re-read the run and withdraw the delivery when the run is gone or the ID now names another run
- * (a different `createdAt`). rm's commit point (removing the flat file, or renaming `<runId>/` to
- * its tombstone) precedes its final sweep of the legacy siblings. So a link before the commit point
- * is swept with `<runId>.inbox/` or moved into the tombstone with `<runId>/inbox/`, and a link after
- * it finds the run gone here. This read cannot stop a run that reuses the ID from reading the
- * delivery first; the envelope's `runCreatedAt` does, because that owner rejects a delivery
- * addressed to another generation. This is the cleanup half: it withdraws the delivery only while
- * the path still holds an envelope addressed to this generation (see `withdrawOwnDelivery`), removes
- * any empty inbox and run directories it recreated for a removed run, and reports the conflict to
- * the writer.
+ * re-read the run and withdraw the delivery when the run is gone or the ID now names another run (a
+ * different generation: its random `generation`, or `createdAt` for a record without one). rm's
+ * commit point (removing the flat file, or renaming `<runId>/` to its tombstone) precedes its final
+ * sweep of the legacy siblings. So a link before the commit point is swept with `<runId>.inbox/` or
+ * moved into the tombstone with `<runId>/inbox/`, and a link after it finds the run gone here. This
+ * read cannot stop a run that reuses the ID from reading the delivery first; the envelope's
+ * `runGeneration` and `runCreatedAt` do, because that owner rejects a delivery addressed to another
+ * generation. This is the cleanup half: it withdraws the delivery only while the path still holds
+ * an envelope addressed to this generation (see `withdrawOwnDelivery`), removes any empty inbox and
+ * run directories it recreated for a removed run, and reports the conflict to the writer.
  * @internal
  */
 export async function withdrawDeliveryIfRunRemoved(
   stateDir: string,
-  run: Pick<RunRecord, 'id' | 'createdAt'>,
+  run: Pick<RunRecord, 'id' | 'createdAt' | 'generation'>,
   path: string,
 ): Promise<void> {
   const current = await readRun({ stateDir, runId: run.id }).catch((error: unknown) => {
     if (isMissing(error)) return undefined;
     throw error;
   });
-  if (current?.createdAt === run.createdAt) return;
-  await withdrawOwnDelivery(run.createdAt, path);
+  if (current && runGeneration(current) === runGeneration(run)) return;
+  await withdrawOwnDelivery(run, path);
   // Only a removed run's directories: a run that reuses the ID owns its own.
   if (!current)
     for (const directory of [dirname(path), runDirectory(stateDir, run.id)])
@@ -295,14 +297,19 @@ export async function withdrawDeliveryIfRunRemoved(
 }
 
 /**
- * Delete the envelope at `path` only if it is addressed to the generation `createdAt`. A run that
- * reuses the ID can reject the stale envelope and a new writer can publish its own at the same path
- * before this runs, so the path is first renamed to a private name: from then on no other writer
- * can change what is examined. An envelope addressed to this generation is stale whoever wrote it
- * and is deleted; any other (another generation's, or one that does not parse) is linked back, or
- * left at the private name if a new delivery already took the path, so nothing is overwritten.
+ * Delete the envelope at `path` only if it is addressed to `run`'s generation: every binding field
+ * it carries matches (see `envelopeBinding`). A run that reuses the ID can reject the stale
+ * envelope and a new writer can publish its own at the same path before this runs, so the path is
+ * first renamed to a private name: from then on no other writer can change what is examined. An
+ * envelope addressed to this generation is stale whoever wrote it and is deleted; any other
+ * (another generation's, one from an older writer that carries no binding field, or one that does
+ * not parse) is linked back, or left at the private name if a new delivery already took the path,
+ * so nothing is overwritten.
  */
-async function withdrawOwnDelivery(createdAt: string, path: string): Promise<void> {
+async function withdrawOwnDelivery(
+  run: Pick<RunRecord, 'createdAt' | 'generation'>,
+  path: string,
+): Promise<void> {
   const directory = dirname(path);
   const claimed = join(directory, `.withdraw-${randomUUID()}.tmp`);
   try {
@@ -318,7 +325,7 @@ async function withdrawOwnDelivery(createdAt: string, path: string): Promise<voi
         return (
           typeof envelope === 'object' &&
           envelope !== null &&
-          (envelope as { runCreatedAt?: unknown }).runCreatedAt === createdAt
+          envelopeBinding(envelope, run) === 'match'
         );
       } catch {
         return false;
@@ -416,7 +423,7 @@ export interface ListPendingOptions extends StateDirectoryOptions {
  */
 async function readDelivery(
   stateDir: string,
-  run: Pick<RunRecord, 'id' | 'createdAt'>,
+  run: Pick<RunRecord, 'id' | 'createdAt' | 'generation'>,
   stepId: string,
 ): Promise<PendingDelivery> {
   for (const candidate of answerCandidates(stateDir, run.id, stepId)) {
@@ -430,7 +437,7 @@ async function readDelivery(
     }
     try {
       const envelope = answerEnvelopeSchema.safeParse(JSON.parse(text));
-      if (envelope.success && (envelope.data.runCreatedAt ?? run.createdAt) === run.createdAt)
+      if (envelope.success && envelopeBinding(envelope.data, run) !== 'mismatch')
         return { state: 'queued', at: envelope.data.at, by: envelope.data.by };
     } catch {
       // Not JSON: still queued, with no attribution.

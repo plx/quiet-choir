@@ -1,11 +1,11 @@
 // Run records carry a schemaRevision (#167). A build refuses to rewrite a record with a newer
 // revision or with top-level fields it does not know, because its parse strips them and the next
 // compaction would delete them; reads tolerate both and report the hidden field names.
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   checkResume,
   defineHarness,
@@ -75,6 +75,8 @@ const revisionDigests: Readonly<Record<string, string>> = {
   '15': '01979d40f27afb4d663d424a519d1b89a7d840c34dfdb7f4d206d99bc60a27a5',
   // Revision 16 (#337) changed only the nested exec summary shape (scrubEnv), so it repeats 15.
   '16': '01979d40f27afb4d663d424a519d1b89a7d840c34dfdb7f4d206d99bc60a27a5',
+  // Revision 17 (#371) added the top-level generation.
+  '17': '63118cf801b40577a65f3e26aa1197f0aa7566b1e98ecfd2781e2a8b984ae449',
 };
 // digest(readRun(...)) of the installed pre-revision fixture, computed on unmodified main 91a6d2f.
 const preRevisionReadDigest = '714b6cb068de5c933b7ba04a26d1f931f589f7c9910f76f0e5c8cc493eb13016';
@@ -111,6 +113,9 @@ const revisionFourteenReadDigest =
 // digest(readRun(...)) of the installed revision-fifteen fixture, computed on unmodified main 5e1b8c0.
 const revisionFifteenReadDigest =
   '6800d39fe25dc76f4660388cdb8138cd367ecbee24126e390e1c7f05168c6bc0';
+// digest(readRun(...)) of the installed revision-sixteen fixture, computed on unmodified main 03ba2b5.
+const revisionSixteenReadDigest =
+  'c03e6499db22babe14b26645b8b37693c59242be9386ac0270af84875cea71e9';
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex');
 
@@ -1518,7 +1523,7 @@ describe('revision-nine records (a grant failure before recoveryCause, #284)', (
     expect(saved.recoveryCause).toBeUndefined();
     expect(recordSchemaDrift(saved)).toBeUndefined();
     expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
-    expect(SUPPORTED_SCHEMA_REVISION).toBe(16);
+    expect(SUPPORTED_SCHEMA_REVISION).toBe(17);
   });
 
   it('round-trip every recovery cause through the record parser', async () => {
@@ -2051,5 +2056,137 @@ describe('revision-fifteen records (a completed exec before scrubEnv, #337)', ()
       steps['probe'] = { ...steps['probe'], exec: { ...exec, scrubEnv: ['NOT-VALID'] } };
     });
     await expect(readRun({ stateDir, runId })).rejects.toThrow();
+  });
+});
+
+describe('revision-sixteen records (a waiting question before generation, #371)', () => {
+  const runId = 'revision-sixteen';
+  async function install(): Promise<void> {
+    const fixture = await readFile(
+      new URL('./fixtures/schema-revision/revision-sixteen-checkpoint.json', import.meta.url),
+      'utf8',
+    );
+    await mkdir(join(stateDir, runId));
+    await writeFile(paths(runId).snapshot, fixture);
+    await writeFile(paths(runId).journal, '');
+  }
+  const gate = defineWorkflow({
+    name: 'schema-revision',
+    version: '1',
+    input: z.null(),
+    output: z.boolean(),
+    run: (ctx) => ctx.ask('gate', { prompt: 'Ship?', schema: z.boolean() }),
+  });
+
+  it('read exactly as on main, with a waiting question and no generation', async () => {
+    await install();
+    const record = await readRun({ stateDir, runId });
+    expect(record.schemaRevision).toBe(16);
+    expect(recordSchemaDrift(record)).toBeUndefined();
+    expect(digest(record)).toBe(revisionSixteenReadDigest);
+    expect(record).not.toHaveProperty('generation');
+    expect(record.steps['gate']).toMatchObject({ kind: 'ask', status: 'waiting' });
+  });
+
+  it('bind an answer by createdAt, consume it and keep the record without a generation', async () => {
+    await install();
+    const { createdAt } = await readRun({ stateDir, runId });
+    const delivery = await writeAnswer({ stateDir, runId, stepId: 'gate', value: true });
+    expect(JSON.parse(await readFile(delivery.path, 'utf8'))).toMatchObject({
+      runGeneration: createdAt,
+      runCreatedAt: createdAt,
+    });
+    expect((await listPending({ stateDir }))[0]?.delivery).toMatchObject({
+      state: 'queued',
+      by: 'agent:unspecified',
+    });
+    const result = await runWorkflow(gate, {
+      ...options,
+      stateDir,
+      runId,
+      input: null,
+      resume: true,
+    });
+    expect(result.status).toBe('completed');
+    expect(result.output).toBe(true);
+    const saved = await readRun({ stateDir, runId });
+    expect(saved.createdAt).toBe(createdAt);
+    expect(saved).not.toHaveProperty('generation');
+    expect(recordSchemaDrift(saved)).toBeUndefined();
+    const raw = await rawSnapshot(runId);
+    expect(raw['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
+    expect(raw).not.toHaveProperty('generation');
+  });
+
+  it('reject an answer bound to another generation', async () => {
+    await install();
+    const delivery = await writeAnswer({ stateDir, runId, stepId: 'gate', value: true });
+    const envelope = JSON.parse(await readFile(delivery.path, 'utf8')) as Record<string, unknown>;
+    await writeFile(delivery.path, JSON.stringify({ ...envelope, runGeneration: randomUUID() }));
+    const result = await runWorkflow(gate, {
+      ...options,
+      stateDir,
+      runId,
+      input: null,
+      resume: true,
+    });
+    expect(result.status).toBe('suspended');
+    expect((await readRun({ stateDir, runId })).steps['gate']?.question?.rejections).toEqual([
+      expect.objectContaining({ error: 'Answer was addressed to an earlier run with this ID.' }),
+    ]);
+  });
+});
+
+describe('run generation (#371)', () => {
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+
+  it('gives a new run a random generation, distinct even with the same createdAt', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2030-01-02T03:04:05.678Z') });
+    try {
+      await runWorkflow(definition(false), { ...options, stateDir, runId: 'one', input: null });
+      await runWorkflow(definition(false), { ...options, stateDir, runId: 'two', input: null });
+    } finally {
+      vi.useRealTimers();
+    }
+    const one = await readRun({ stateDir, runId: 'one' });
+    const two = await readRun({ stateDir, runId: 'two' });
+    expect(one.generation).toMatch(uuid);
+    expect(two.generation).toMatch(uuid);
+    expect(one.createdAt).toBe(two.createdAt);
+    expect(one.generation).not.toBe(two.generation);
+    expect(recordSchemaDrift(one)).toBeUndefined();
+    expect((await rawSnapshot('one'))['generation']).toBe(one.generation);
+  });
+
+  it('keeps the generation through a resume and gives a fork its own', async () => {
+    await failedRun('source');
+    const source = await readRun({ stateDir, runId: 'source' });
+    expect(source.generation).toMatch(uuid);
+    await runWorkflow(definition(false), {
+      ...options,
+      stateDir,
+      runId: 'source',
+      input: null,
+      resume: true,
+    });
+    expect((await readRun({ stateDir, runId: 'source' })).generation).toBe(source.generation);
+    await runWorkflow(definition(false), {
+      ...options,
+      stateDir,
+      runId: 'fork',
+      input: null,
+      forkFrom: { runId: 'source' },
+    });
+    const fork = await readRun({ stateDir, runId: 'fork' });
+    expect(fork.generation).toMatch(uuid);
+    expect(fork.generation).not.toBe(source.generation);
+  });
+
+  it('refuses a record whose generation is not a UUID', async () => {
+    await runWorkflow(definition(false), { ...options, stateDir, runId: 'run', input: null });
+    await editSnapshot('run', (raw) => {
+      raw['generation'] = 'not-a-uuid';
+    });
+    await expect(readRun({ stateDir, runId: 'run' })).rejects.toThrow();
   });
 });

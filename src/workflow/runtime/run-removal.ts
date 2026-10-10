@@ -42,7 +42,12 @@ import { RunRefusedError } from './run-errors.js';
 import { openFileOwnedRun, type ReleasableOwnedRun } from './run-store.js';
 import { runBytes, runSiblingPaths } from './run-size.js';
 import { syncDirectory } from './storage-io.js';
-import { inspectRunOwnership, refuseRecordSchemaDrift, type RunRecord } from './store.js';
+import {
+  inspectRunOwnership,
+  refuseRecordSchemaDrift,
+  runGeneration,
+  type RunRecord,
+} from './store.js';
 import { cleanOwnedWorktrees } from './worktree-clean.js';
 
 /** A plain-data request to remove one saved run (`workflow rm`). @internal */
@@ -320,8 +325,9 @@ function pick(refusal: ReturnType<typeof removalRefusal>): {
 /**
  * Remove one saved run without importing workflow code (ADR 0049). It sweeps abandoned
  * tombstones, refuses a held lock, orphans or (without `force`) an active run, takes the run lock
- * without registering a project, re-checks the record (it must still be the inspected run, by
- * `createdAt`, not a replacement that reused the ID, and still removable), removes worktree caches through the shared
+ * without registering a project, re-checks the record (it must still be the inspected run, by its
+ * generation, the random `generation` or `createdAt` for a record without one, not a replacement
+ * that reused the ID, and still removable), removes worktree caches through the shared
  * cleanup (or directly when the repository is gone) and, with `refs`, pinned refs. A cache Git
  * cannot remove stops it before it deletes the run: caches Git already removed stay removed (the
  * ledger records them), no ref is deleted and the record stays for `workflow clean`. Holding the
@@ -405,7 +411,8 @@ export async function removeRun(
     removeOwned(owned, runner, live, {
       runId,
       stateDir,
-      generation: initial.createdAt,
+      generation: runGeneration(initial),
+      createdAt: initial.createdAt,
       expectedUpdatedAt: options.expectedUpdatedAt,
       force,
       refs: options.refs ?? false,
@@ -478,8 +485,13 @@ async function removeOwned(
   context: {
     readonly runId: string;
     readonly stateDir: string;
-    /** The `createdAt` of the run rm inspected; the locked record must still carry it. */
+    /**
+     * The generation of the run rm inspected (its random `generation`, or `createdAt` for a record
+     * without one); the locked record must still carry it.
+     */
     readonly generation: string;
+    /** The `createdAt` of the run rm inspected, reported beside the generation on a refusal. */
+    readonly createdAt: string;
     /** As on {@link RemoveRunOptions.expectedUpdatedAt}: checked again under the lock. */
     readonly expectedUpdatedAt: string | undefined;
     readonly force: boolean;
@@ -493,12 +505,18 @@ async function removeOwned(
   const record = await readRequiredRun({ runId, stateDir });
   // The ID is user-chosen: another rm can delete the run rm inspected and a new run can reuse the
   // ID before this lock is taken. Only the inspected generation may be removed.
-  if (record.createdAt !== context.generation)
+  // A replacement can have the same createdAt (a rewound or frozen clock), so compare generations.
+  if (runGeneration(record) !== context.generation)
     throw new RunRefusedError(
       'run.exists',
       runId,
       `Run ${runId} was replaced by another run with the same ID after rm inspected it; nothing was removed. Re-run rm to inspect the current run.`,
-      jsonValue({ expectedCreatedAt: context.generation, createdAt: record.createdAt }),
+      jsonValue({
+        expectedCreatedAt: context.createdAt,
+        createdAt: record.createdAt,
+        expectedGeneration: context.generation,
+        generation: runGeneration(record),
+      }),
     );
   if (context.expectedUpdatedAt !== undefined)
     checkUpdatedAt(runId, context.expectedUpdatedAt, record.updatedAt);

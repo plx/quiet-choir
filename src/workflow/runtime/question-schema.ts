@@ -159,11 +159,39 @@ export const answerEnvelopeSchema = z.object({
   at: z.iso.datetime(),
   questionFingerprint: z.string().regex(/^[a-f0-9]{64}$/u),
   /**
-   * The `createdAt` of the run the writer addressed, so the owner of a later run that reuses the ID
-   * rejects the delivery (ADR 0049). Optional: deliveries from older writers carry none.
+   * The generation of the run the writer addressed (its random `generation`, or its `createdAt` for
+   * a run created before schema revision 17), so the owner of a later run that reuses the ID
+   * rejects the delivery even when that run has the same `createdAt` (ADR 0049, #371). Optional:
+   * deliveries from older writers carry none.
+   */
+  runGeneration: z.union([z.uuid(), z.iso.datetime()]).optional(),
+  /**
+   * The `createdAt` of the run the writer addressed. Still written beside `runGeneration` for
+   * owners from older builds, which strip unknown envelope keys and bind on this field alone.
+   * Optional: deliveries from older writers before ADR 0049 carry none.
    */
   runCreatedAt: z.iso.datetime().optional(),
 });
+
+/**
+ * Whether an envelope is addressed to `run`: `'match'` when every binding field it carries
+ * (`runGeneration`, `runCreatedAt`) equals the run's own value (its effective generation and its
+ * `createdAt`), `'mismatch'` when any carried field differs, and `'unbound'` when it carries
+ * neither (an older writer). Takes unknown field values so raw, unvalidated JSON can be checked.
+ * @internal
+ */
+export function envelopeBinding(
+  envelope: { readonly runGeneration?: unknown; readonly runCreatedAt?: unknown },
+  run: { readonly createdAt: string; readonly generation?: string | undefined },
+): 'match' | 'mismatch' | 'unbound' {
+  const fields: [unknown, string][] = [
+    [envelope.runGeneration, run.generation ?? run.createdAt],
+    [envelope.runCreatedAt, run.createdAt],
+  ];
+  const carried = fields.filter(([value]) => value !== undefined);
+  if (!carried.length) return 'unbound';
+  return carried.every(([value, expected]) => value === expected) ? 'match' : 'mismatch';
+}
 
 /** Routing guard only: attribution is self-asserted, never authentication. @internal */
 export function validateAnswerAuthor(audience: QuestionRequest['audience'], by: string): void {
