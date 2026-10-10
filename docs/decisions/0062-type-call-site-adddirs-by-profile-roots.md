@@ -52,7 +52,10 @@ stays permissive and the runtime check remains the backstop. Runtime behavior is
    An inferred literal is checked against itself, so inference alone would drop the excess-property
    checks on `profiles` and `defaults`. `defineWorkflow` therefore intersects them with
    `NoExtraKeys`, which maps every key that `AgentProfile` or `AgentDefaults` does not declare to
-   `never`, at the top level and inside the `claude` and `codex` blocks.
+   `never`, at the top level and recursively inside nested objects such as the `claude` and `codex`
+   blocks and structured `env` edits. Arrays and index-signature shapes (`harnesses`, native
+   settings, MCP servers, subagents, the flat `env` overlay) stay open, and a union field type
+   accepts a value that matches one member, so `env: { FOO: 'bar' }` still compiles.
 
    `TProfiles` is constrained only to `object`, not to `Record<string, AgentProfile>`: an interface
    has no string index signature and would fail that constraint, although it is a valid finite

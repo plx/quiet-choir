@@ -339,6 +339,64 @@ export const unknownProfileKeys = defineWorkflow({
   run: () => Promise.resolve(null),
 });
 
+// The checks recurse into structured values such as env edits; open records stay open.
+export const unknownEnvKeys = defineWorkflow({
+  ...base,
+  name: 'unknown-env-keys',
+  defaults: {
+    claude: {
+      env: {
+        set: { FOO: 'bar' },
+        // @ts-expect-error -- defaults.claude.env edits have only set and unset.
+        unest: ['BAZ'],
+      },
+    },
+  },
+  profiles: {
+    typo: {
+      claude: {
+        env: {
+          set: { FOO: 'bar' },
+          // @ts-expect-error -- a profile's claude.env edits have only set and unset.
+          unest: ['BAZ'],
+        },
+      },
+    },
+    codexTypo: {
+      codex: {
+        env: {
+          unset: ['BAZ'],
+          // @ts-expect-error -- a profile's codex.env edits have only set and unset.
+          sett: { FOO: 'bar' },
+        },
+      },
+    },
+  },
+  run: () => Promise.resolve(null),
+});
+export const structuredProfileValues = defineWorkflow({
+  ...base,
+  name: 'structured-profile-values',
+  defaults: { claude: { env: { set: { FOO: 'bar' }, unset: ['BAZ'] } } },
+  profiles: {
+    edits: {
+      claude: { env: { set: { FOO: 'bar' }, unset: ['BAZ'] } },
+      codex: { env: { unset: ['BAZ'] } },
+    },
+    flat: { claude: { env: { FOO: 'bar' } }, codex: { env: { FOO: 'bar', BAZ: 'qux' } } },
+    open: {
+      claude: {
+        settings: { anyKey: { nested: true } },
+        mcpServers: { local: { command: 'server', args: ['--x'] } },
+        agents: { scout: { description: 'd', prompt: 'p', model: 'sonnet' } },
+      },
+      codex: { config: { 'features.anything': true } },
+      harnesses: { tool: { tools: ['x'], extra: { nested: 1 } } },
+    },
+  },
+  run: () => Promise.resolve(null),
+});
+
 // Strict call-site Claude addDirs type only under a profile that declares, inherits or defaults
 // claude.addDirRoots (#385, ADR 0062). The runtime check stays the backstop.
 const addDirs = ['runs/a'];

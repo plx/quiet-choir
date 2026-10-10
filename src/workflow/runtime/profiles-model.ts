@@ -201,28 +201,45 @@ export interface CapabilityManifest {
 }
 
 /**
- * Maps each key of profile or defaults type `T` that `Shape` does not declare to `never`, and does
- * the same one level into the `claude` and `codex` blocks; declared keys map to `unknown`, so
- * `Shape` alone checks their values. `defineWorkflow` intersects the literal `profiles` and
- * `defaults` it infers with this, which keeps the excess-property checks that inferring them would
- * otherwise drop: an unknown key then fails as not assignable to `never`. Other nested objects
- * (`harnesses`, native settings) are records and stay unchecked here. It distributes over unions.
+ * Maps each key of profile or defaults type `T` that `Shape` does not declare to `never`, and
+ * recurses into nested object values against the declared field type, so the `claude` and `codex`
+ * blocks and structured values such as `env: { set, unset }` are checked too; declared keys whose
+ * values are not objects map to `unknown`, so `Shape` alone checks them. `defineWorkflow`
+ * intersects the literal `profiles` and `defaults` it infers with this, which keeps the
+ * excess-property checks that inferring them would otherwise drop: an unknown key then fails as not
+ * assignable to `never`. Arrays and shapes with an index signature (`harnesses`, native settings,
+ * MCP servers and subagents, the flat `env` overlay) stay open. A union `Shape` accepts a value
+ * that matches some member, so `env: { FOO: 'bar' }` still compiles as the flat overlay. It
+ * distributes over unions of `T`.
  */
-export type NoExtraKeys<T, Shape> = T extends object
-  ? {
-      readonly [K in keyof T]: K extends keyof Shape
-        ? K extends 'claude' | 'codex'
-          ? T[K] extends infer B
-            ? B extends object
-              ? {
-                  readonly [J in keyof B]: J extends keyof NonNullable<Shape[K]> ? unknown : never;
-                }
-              : unknown
+export type NoExtraKeys<T, Shape> = T extends readonly unknown[]
+  ? unknown
+  : T extends object
+    ? // O: the non-array object members of Shape.
+      (
+        NonNullable<Shape> extends infer S
+          ? S extends readonly unknown[]
+            ? never
+            : S extends object
+              ? S
+              : never
+          : never
+      ) extends infer O
+      ? [O] extends [never]
+        ? unknown
+        : // M: the members T matches; with none, check every member so unknown keys still fail.
+          (O extends unknown ? (T extends O ? O : never) : never) extends infer M
+          ? ([M] extends [never] ? O : M) extends infer C
+            ? // A union of one exact view per member; an index-signature member is open.
+              C extends unknown
+              ? string extends keyof C
+                ? unknown
+                : { readonly [K in keyof T]: K extends keyof C ? NoExtraKeys<T[K], C[K]> : never }
+              : never
             : never
-          : unknown
-        : never;
-    }
-  : unknown;
+          : never
+      : never
+    : unknown;
 
 /**
  * Whether profile or defaults type `X` may declare `claude.addDirRoots`: `true` when the key is
