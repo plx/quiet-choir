@@ -90,6 +90,7 @@ recover, or inspect a failure.
 | Select provider-specific controls or diagnose native protocol failures        | [Claude](references/claude.md), [Codex](references/codex.md)   |
 | Rehearse with fixtures/dry-run before paying                                  | [Rehearsal](references/rehearsal.md)                           |
 | Resume after failure, accept code edits, fork completed work                  | [Durability and resumption](references/durability.md)          |
+| Read, wait on, or write GitHub through gh; burn down an epic                  | [GitHub](references/github.md)                                 |
 | Embed the engine, log responses, implement a harness                          | [Embedding and extensions](references/extensions.md)           |
 | Port a native Workflow script: map agent, parallel, pipeline and budget       | [Native ports](references/porting-native-workflows.md)         |
 

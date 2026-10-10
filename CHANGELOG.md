@@ -2,6 +2,13 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Both skill copies bundle `references/github.md`, a condensed reference for `quiet-choir/github`
+  (reads, waits, reviewers, writes, merging, epics and the write, gate and land examples as compiled
+  fences), and every link to `docs/github.md` in the skills now points to it (#362). The repository
+  is private, so an installed plugin could not open those links. `skills:check` now rejects any link
+  into the repository's `docs/` tree in skill and command Markdown, and keeps the bundled write,
+  gate and land examples equal to the ones in `docs/github.md`. SKILL.md routes to the new
+  reference.
 - The ticket-loop `ticket-driver` in both skill copies removes a run saved as `skipped` with
   `workflow rm` and starts the ticket again, instead of resuming it and replaying the stale skip
   (#360). The docs say a skip completes the run under `ticket-N` and is final for that run ID, name

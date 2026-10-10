@@ -499,3 +499,82 @@ test('rejects a patterns.md index that omits a recipe section, even one linked f
     );
   });
 });
+
+const docsUrl = 'https://github.com/plx/quiet-choir/blob/main/docs/github.md#waits';
+test('a link into the repository docs tree is rejected in references, SKILL.md and commands', async () => {
+  const links = [
+    `[waits](${docsUrl})`,
+    `[waits][docs]\n\n[docs]: ${docsUrl}`,
+    `<a href="https://github.com/plx/quiet-choir/tree/main/docs">docs</a>`,
+    `[waits](https://github.com/plx/quiet-choir/blob/feature/foo/docs/github.md#waits)`,
+    `<${docsUrl}>`,
+  ];
+  for (const link of links)
+    await fixture(async (root) => {
+      const reference = join(root, packages[0], 'skills/quiet-choir/references/extensions.md');
+      await writeFile(reference, `${await readFile(reference, 'utf8')}\n${link}\n`);
+      await assert.rejects(
+        checkSkills(root, { compile: false }),
+        /extensions\.md: link into the repository's docs\/ tree.*bundle a skill-relative reference/u,
+      );
+    });
+  await fixture(async (root) => {
+    const command = join(root, packages[1], 'commands/run.md');
+    await writeFile(command, `${await readFile(command, 'utf8')}\n[waits](${docsUrl})\n`);
+    await assert.rejects(
+      checkSkills(root, { compile: false }),
+      /run\.md: link into the repository's docs\/ tree/u,
+    );
+  });
+});
+test('links outside the docs tree and docs links in code are not rejected', async () => {
+  await fixture(async (root) => {
+    await append(
+      root,
+      [
+        '',
+        '[example](https://github.com/plx/quiet-choir/blob/main/examples/patterns/next-ticket.workflow.ts)',
+        '[other](https://github.com/plx/quiet-choir/blob/main/src/documents/index.ts)',
+        `Inline code \`${docsUrl}\` is prose, not a link.`,
+        '',
+      ].join('\n'),
+    );
+    await checkSkills(root, { compile: false });
+  });
+});
+
+/** The ts fence that follows the heading `# title`, the way a reader finds the example. */
+function fenceAfter(text, file, heading) {
+  const lines = text.split('\n');
+  const start = lines.indexOf(heading);
+  assert.notEqual(start, -1, `${file}: missing heading ${heading}`);
+  const found = fences(text, file).find(
+    (fence) => fence.start > start && ['ts', 'typescript'].includes(fence.language),
+  );
+  assert.ok(found, `${file}: no ts fence after ${heading}`);
+  return found;
+}
+test('the bundled GitHub reference keeps its anchors and the docs write, gate and land examples', async () => {
+  const docs = await readFile(join(repository, 'docs/github.md'), 'utf8');
+  for (const pkg of packages) {
+    const file = join(repository, pkg, 'skills/quiet-choir/references/github.md');
+    const bundled = await readFile(file, 'utf8');
+    for (const anchor of ['waits', 'writes', 'merging', 'epics', 'gate-example', 'land-example'])
+      assert.ok(anchors(bundled).has(anchor), `${file}: missing #${anchor}`);
+    for (const heading of ['### Write example', '## Gate example', '## Land example'])
+      assert.equal(
+        fenceAfter(bundled, file, heading).code,
+        fenceAfter(docs, 'docs/github.md', heading).code,
+        `${file}: ${heading} differs from docs/github.md`,
+      );
+  }
+});
+test('a drifted bundled GitHub example is caught by the fence comparison', async () => {
+  const docs = await readFile(join(repository, 'docs/github.md'), 'utf8');
+  const file = join(repository, packages[0], 'skills/quiet-choir/references/github.md');
+  const drifted = (await readFile(file, 'utf8')).replace("name: 'gate'", "name: 'drifted'");
+  assert.notEqual(
+    fenceAfter(drifted, file, '## Gate example').code,
+    fenceAfter(docs, 'docs/github.md', '## Gate example').code,
+  );
+});

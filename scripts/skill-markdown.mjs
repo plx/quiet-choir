@@ -135,6 +135,15 @@ function inlineDestination(body, start, file) {
   return rest ? destination : undefined;
 }
 
+/**
+ * An absolute link into this repository's docs tree. The repository is private, so an installed
+ * plugin cannot open it; the operational content belongs in a bundled, skill-relative reference.
+ * Branch refs may contain slashes, so any `/docs` path segment after `blob/` or `tree/` counts, even
+ * when it is really a nested `src/docs` directory; that conservative reading cannot be told apart.
+ */
+const repositoryDocsLink =
+  /^https:\/\/github\.com\/plx\/quiet-choir\/(?:blob|tree)\/[^?#]+?\/docs(?:[/?#]|$)/iu;
+
 /** Verify relative destinations and fragments within the physical installed package. */
 export async function checkLinks(file, text, packageRoot) {
   const body = prose(text, file);
@@ -160,8 +169,14 @@ export async function checkLinks(file, text, packageRoot) {
     /<(?:a|img)\b(?:[^>"']|"[^"]*"|'[^']*')*?\s(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))(?:[^>"']|"[^"]*"|'[^']*')*>/giu,
   ))
     destinations.push(match[1] ?? match[2] ?? match[3]);
+  for (const match of body.matchAll(/<((?:https?|mailto):[^\s<>]*)>/giu))
+    destinations.push(match[1]);
   const root = await realpath(packageRoot);
   for (const destination of new Set(destinations)) {
+    if (repositoryDocsLink.test(destination))
+      throw new Error(
+        `${file}: link into the repository's docs/ tree, which an installed plugin cannot open: ${destination}; bundle a skill-relative reference instead`,
+      );
     if (/^(?:https?:|mailto:)/iu.test(destination)) {
       new URL(destination);
       continue;
