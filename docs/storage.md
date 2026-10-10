@@ -253,6 +253,25 @@ tombstone, flushes the container (the commit point), deletes the tombstone and r
 held guard refuses with `run.locked`. `workflow prune` never selects a leftover; remove each with
 rm.
 
+A run whose record file (`<runId>/run.json` or `<runId>.json`) is present but whose content is
+damaged cannot be judged from its record, so rm refuses it with `run.unreadable` and names
+`workflow rm ID --unreadable` ([ADR 0060](decisions/0060-remove-an-unreadable-run-on-request.md)).
+So both cases that once needed hand deletion go through `workflow rm ID`: a lone `launch/` leftover
+without a flag, a damaged record with `--unreadable`. Damaged means invalid JSON or a record that
+fails validation, a journal sequence gap, a format-7 marker whose directory is missing, a record
+path of the wrong kind (`EISDIR`, `ENOTDIR`), or `run.json` without `journal.jsonl` (which rm
+reports as `run.unreadable`, not `run.not_found`). A record that cannot be read for access or I/O
+reasons (`EACCES`, `EPERM`, `EIO` and the like) may be intact and is still refused, as is a newer
+build's record (`run.incompatible`). With `--unreadable`, rm refuses a held lock (`run.locked`) or a
+dead owner's live child (`run.orphans`) as above, and refuses `run.active`, even with `--force`,
+while any launch in `<runId>/launch/` may still be in flight by the leftover rule (files there that
+are not launch evidence are ignored). It then takes the run lock as for any run, re-reads the record
+under it (`run.exists` when it is readable now, so rm judges it as usual next time), judges the
+launches again and deletes in the order above. It touches no worktree caches or pinned refs, because
+the ledger that names them cannot be read: the result has `unreadable: true` and a warning that
+points to `git worktree list` in the repository and `refs/quiet-choir/<runId>/`. A readable run is
+removed as without the flag. `workflow prune` never selects an unreadable run.
+
 `workflow prune` removes runs in bulk, still only when asked
 ([ADR 0050](decisions/0050-select-runs-for-prune-conservatively.md)). It selects finished runs by
 age (`--older-than 7d`), status (`--status completed,failed,cancelled`) or a missing recorded cwd

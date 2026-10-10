@@ -171,30 +171,8 @@ export async function inspectLaunchLeftover(
   if (!groups) return null;
   const nowMs = options.now?.() ?? Date.now();
   const floorMs = options.floorMs ?? launchSettleFloorMs;
-  const launches: LeftoverLaunch[] = [];
-  for (const group of groups) {
-    let newestMtimeMs = 0;
-    for (const name of group.files) {
-      const stat = await lstatIfPresent(join(launchDir, name));
-      // A file that vanished meanwhile: the directory changed under the scan, so judge it again.
-      if (stat === null) return null;
-      newestMtimeMs = Math.max(newestMtimeMs, stat.mtimeMs);
-    }
-    const runnerName = runnerFileName(group.n);
-    // A runner record that vanished or cannot be read is judged as unparsable: in flight.
-    const runnerText = group.files.includes(runnerName)
-      ? await readFile(join(launchDir, runnerName), 'utf8').catch(() => '')
-      : null;
-    const judgement = judgeLaunch(
-      { n: group.n, runnerText, newestMtimeMs },
-      { nowMs, floorMs, liveness },
-    );
-    launches.push({
-      ...judgement,
-      files: group.files,
-      newest: new Date(newestMtimeMs).toISOString(),
-    });
-  }
+  const launches = await judgeLaunchGroups(launchDir, groups, { nowMs, floorMs });
+  if (launches === null) return null;
   const directory = await lstatIfPresent(launchDir);
   if (directory === null) return null;
   const directoryMtimeMs = directory.mtimeMs;
@@ -213,6 +191,63 @@ export async function inspectLaunchLeftover(
     log: logName && last.files.includes(logName) ? join(launchDir, logName) : null,
     removable: leftoverRemovable(launches, { directoryMtimeMs, nowMs, floorMs }),
   };
+}
+
+/**
+ * Judge each launch number's files in `launchDir` by its runner record or its age; null when a file
+ * vanished during the scan, so the directory changed under it.
+ */
+async function judgeLaunchGroups(
+  launchDir: string,
+  groups: readonly { readonly n: number; readonly files: readonly string[] }[],
+  context: { readonly nowMs: number; readonly floorMs: number },
+): Promise<LeftoverLaunch[] | null> {
+  const launches: LeftoverLaunch[] = [];
+  for (const group of groups) {
+    let newestMtimeMs = 0;
+    for (const name of group.files) {
+      const stat = await lstatIfPresent(join(launchDir, name));
+      // A file that vanished meanwhile: the directory changed under the scan, so judge it again.
+      if (stat === null) return null;
+      newestMtimeMs = Math.max(newestMtimeMs, stat.mtimeMs);
+    }
+    const runnerName = runnerFileName(group.n);
+    // A runner record that vanished or cannot be read is judged as unparsable: in flight.
+    const runnerText = group.files.includes(runnerName)
+      ? await readFile(join(launchDir, runnerName), 'utf8').catch(() => '')
+      : null;
+    const judgement = judgeLaunch(
+      { n: group.n, runnerText, newestMtimeMs },
+      { ...context, liveness },
+    );
+    launches.push({
+      ...judgement,
+      files: group.files,
+      newest: new Date(newestMtimeMs).toISOString(),
+    });
+  }
+  return launches;
+}
+
+/**
+ * Judge every launch in `<stateDir>/<runId>/launch/` of a run whose record exists but cannot be
+ * read, by the same rule as a leftover's (ADR 0055, ADR 0060). Only numbered launch evidence files
+ * are judged; any other entry is ignored rather than making the directory unjudgeable. Returns []
+ * when `launch/` is absent, and null when a file vanished during the scan. @internal
+ */
+export async function inspectRunLaunches(
+  stateDir: string,
+  runId: string,
+  options: LaunchSettleOptions = {},
+): Promise<LeftoverLaunch[] | null> {
+  const launchDir = join(runDirectory(resolve(stateDir), runId), 'launch');
+  const entries = await listEntries(launchDir);
+  if (entries === null) return [];
+  const groups = groupLaunchFiles(entries, { ignoreOthers: true }) ?? [];
+  return judgeLaunchGroups(launchDir, groups, {
+    nowMs: options.now?.() ?? Date.now(),
+    floorMs: options.floorMs ?? launchSettleFloorMs,
+  });
 }
 
 /**

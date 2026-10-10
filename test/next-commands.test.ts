@@ -488,6 +488,39 @@ describe('failureNextCommands', () => {
     });
   });
 
+  describe('run.unreadable', () => {
+    const remove = ['quiet-choir', 'workflow', 'rm', 'r1', '--state-dir', stateDir, '--unreadable'];
+    const entry = { why: 'Remove the run whose record is damaged.', argv: remove };
+    const unreadable = (details: JsonValue, overrides: Partial<FailureNextContext> = {}) =>
+      failureNextCommands({
+        code: 'run.unreadable',
+        details,
+        run: null,
+        runId: 'r1',
+        stateDir,
+        launcher,
+        rehearsal: false,
+        ...overrides,
+      });
+
+    it('passes the details.next entry rm built through', () => {
+      expect(unreadable({ stateDir, filesystemCode: null, next: [entry] })).toEqual([entry]);
+    });
+
+    it('gives nothing for another command’s run.unreadable, which has no details.next', () => {
+      expect(unreadable({ stateDir, filesystemCode: 'EACCES' })).toEqual([]);
+      expect(unreadable(null)).toEqual([]);
+    });
+
+    it('drops malformed entries and keeps the valid ones', () => {
+      expect(
+        unreadable({
+          next: [{ why: 'no argv' }, { why: 'empty argv', argv: [] }, { argv: remove }, entry],
+        }),
+      ).toEqual([entry]);
+    });
+  });
+
   describe('worktree.locked', () => {
     const unlock = ['quiet-choir', 'workflow', 'unlock', '--worktree-admin', '/repo/.git'];
     const entry = { why: 'Rerun once PID 7 on here has exited.', argv: unlock };

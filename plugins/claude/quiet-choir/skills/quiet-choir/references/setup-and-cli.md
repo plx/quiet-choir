@@ -96,7 +96,7 @@ errors, and answers; keep them private. See
 | `workflow transcript RUN_ID STEP_ID`     | Prints an agent attempt's decoded private transcript (native stream-json/JSONL) without importing source    |
 | `workflow unlock RUN_ID`                 | Clears an abandoned lock without importing workflow code; refuses live owners and children                  |
 | `workflow unlock --worktree-admin PATH`  | Clears a repository's abandoned worktree administration lock; refuses live or unverifiable holders          |
-| `workflow rm RUN_ID`                     | Removes a saved run and its caches without importing source; `--dry-run` previews, `--force` for active     |
+| `workflow rm RUN_ID`                     | Removes a saved run and its caches; `--dry-run` previews, `--force` if active, `--unreadable` if damaged    |
 | `workflow prune`                         | Removes finished runs through rm, never forced; `--missing-cwd --all` also removes stale project roots      |
 | `workflow cancel RUN_ID`                 | Ends a run as `cancelled`: an unowned one under its lock, a live one via its verified owner, else exit 3    |
 

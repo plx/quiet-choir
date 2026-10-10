@@ -6,7 +6,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // workflow rm removes a finished run, refuses a suspended one without --force, and its dry run
-// changes nothing; workflow list reports each run's bytes. Local sleeps only: no harness calls.
+// changes nothing; workflow list reports each run's bytes. A run whose run.json is damaged is
+// refused with the --unreadable command, which removes it. Local sleeps only: no harness calls.
 const repository = fileURLToPath(new URL('..', import.meta.url));
 const root = mkdtempSync(join(tmpdir(), 'choir-rm-cli-'));
 const stateDir = join(root, 'state');
@@ -91,6 +92,38 @@ try {
   assert.deepEqual(readdirSync(stateDir), ['.gitignore']);
   assert.deepEqual(document(0, 'list').runs, []);
   assert.equal(document(3, 'inspect', 'done').error.code, 'run.not_found');
+
+  const broken = document(0, 'execute', workflow, '--run-id', 'broken', '--input', '{"nap":0}');
+  assert.equal(broken.status, 'completed');
+  writeFileSync(join(stateDir, 'broken', 'run.json'), 'not json');
+  const damaged = document(3, 'rm', 'broken');
+  assert.equal(damaged.error.code, 'run.unreadable', damaged.error.message);
+  assert.equal(damaged.exitCode, 3);
+  assert.equal(damaged.next.length, 1);
+  const [hint] = damaged.next;
+  assert.deepEqual(hint.argv.slice(-6), [
+    'workflow',
+    'rm',
+    'broken',
+    '--state-dir',
+    damaged.error.details.stateDir,
+    '--unreadable',
+  ]);
+  assert.match(damaged.error.message, /--unreadable/u);
+  assert.deepEqual(damaged.error.details.next, damaged.next);
+  const damagedBefore = snapshot();
+  const plan = document(0, 'rm', 'broken', '--unreadable', '--dry-run');
+  assert.equal(plan.unreadable, true);
+  assert.equal(plan.verdict, 'remove');
+  assert.equal(plan.removed, false);
+  assert.deepEqual(plan.paths, [join(stateDir, 'broken')]);
+  assert.deepEqual(snapshot(), damagedBefore);
+  const swept = document(0, 'rm', 'broken', '--unreadable');
+  assert.equal(swept.removed, true);
+  assert.equal(swept.unreadable, true);
+  assert.equal(swept.launchOnly, false);
+  assert.equal(swept.warnings.length, 1);
+  assert.deepEqual(readdirSync(stateDir), ['.gitignore']);
   console.log('rm CLI smoke passed');
 } finally {
   rmSync(root, { recursive: true, force: true });
