@@ -21,6 +21,7 @@ import {
   type ProcessRunner,
   type ProcessRunRequest,
   type WorkflowContext,
+  type WorkflowDeclaration,
 } from '../src/index.js';
 import { ThresholdLogger } from '../src/application/execution.js';
 import { FixtureExecRules, FixtureProcessRunner } from '../src/harnesses/fixture-exec.js';
@@ -740,10 +741,13 @@ describe('fixture export of settled and absorbed exec failures', () => {
       logger: new ThresholdLogger('silent', () => undefined),
     });
   /** A source run with real processes, exported through the executor as the CLI does. */
-  async function exportSource<T>(workflow: ReturnType<typeof definition<T>>) {
+  async function exportSource<T>(
+    workflow: ReturnType<typeof definition<T>>,
+    calls: HarnessFixtures['calls'] = [],
+  ) {
     const source = await runWorkflow(workflow, {
       ...options('source'),
-      harness: new FixtureHarness({ version: 1, calls: [] }),
+      harness: new FixtureHarness({ version: 1, calls }),
       processRunner: native,
     });
     const exported = await executor().execute({
@@ -1144,6 +1148,184 @@ describe('fixture export of settled and absorbed exec failures', () => {
     expect(dry.output).toEqual(source.output);
     expect(fixture.output).toEqual(source.output);
     expect(JSON.stringify(fixturesFromRun(dry))).toBe(JSON.stringify(fixtures));
+  });
+
+  /** A parent that declares `children` and settles each one under `onError: 'return'`. */
+  const settledParent = (
+    children: readonly WorkflowDeclaration[],
+    frames: readonly (readonly [string, number])[],
+  ) =>
+    // Cast to the childless type the replay helpers take; declared children do not change how it runs.
+    defineWorkflow({
+      name: 'exec-fixtures',
+      version: '1',
+      input: z.null(),
+      output: z.json(),
+      children,
+      async run(ctx) {
+        const out: Record<string, unknown> = {};
+        for (const [id, index] of frames) {
+          const result = await ctx.workflow(id, children[index] as never, null, {
+            onError: 'return',
+          });
+          out[id] = result.ok
+            ? { ok: jsonValue(result.value) }
+            : {
+                kind: result.error.kind,
+                message: result.error.message,
+                stepId: result.error.stepId,
+                attempts: result.error.attempts,
+              };
+        }
+        return jsonValue(out);
+      },
+    }) as unknown as ReturnType<typeof definition<JsonValue>>;
+  const kid = (name: string, run: (ctx: WorkflowContext) => Promise<unknown>) =>
+    defineWorkflow({
+      name,
+      version: '1',
+      input: z.null(),
+      output: z.json(),
+      run: async (ctx) => jsonValue(await run(ctx)),
+    });
+  const settledOutcomes = (run: RunRecord) =>
+    Object.fromEntries(
+      Object.entries(run.children ?? {})
+        .filter(([, frame]) => frame.settled)
+        .map(([id, frame]) => [id, frame.settled?.outcome]),
+    );
+
+  describe('inside settled child frames (#383)', () => {
+    const innerKid = kid('inner-kid', (ctx) =>
+      ctx.exec('probe', node("process.stderr.write('deep');process.exit(5)")),
+    );
+    const children = [
+      kid('agent-kid', (ctx) => ctx.claude.text('ask', { prompt: 'x' })),
+      kid('exec-kid', (ctx) =>
+        ctx.exec('probe', node("process.stderr.write('nope');process.exit(2)")),
+      ),
+      kid('mixed-kid', async (ctx) => {
+        const first = await ctx.claude.text('first', { prompt: 'x' });
+        const broken = await ctx.codex.text('broken', { prompt: 'y' }).catch(() => 'caught');
+        await ctx.exec('probe', node('process.exit(3)'));
+        return [first, broken];
+      }),
+      defineWorkflow({
+        name: 'outer-kid',
+        version: '1',
+        input: z.null(),
+        output: z.json(),
+        children: [innerKid],
+        run: async (ctx) => jsonValue(await ctx.workflow('inner', innerKid, null)),
+      }),
+    ];
+    const parent = settledParent(children, [
+      ['a', 0],
+      ['x', 1],
+      ['m', 2],
+      ['o', 3],
+    ]);
+    const sourceCalls: HarnessFixtures['calls'] = [
+      { step: 'a/ask', error: 'boom', kind: 'rate-limit' },
+      { step: 'm/first', text: 'one' },
+      { step: 'm/broken', error: 'odd' },
+    ];
+
+    it('exports failed agent and exec steps inside settled child frames and replays the same settled errors (#383)', async () => {
+      const { source, fixtures } = await exportSource(parent, sourceCalls);
+      expect(source.status).toBe('completed');
+      for (const id of ['a/ask', 'x/probe', 'm/broken', 'm/probe', 'o/inner/probe']) {
+        expect(source.steps[id]?.status, id).toBe('failed');
+      }
+      expect(source.steps['m/first']?.status).toBe('completed');
+      const expectedOutput = {
+        a: { kind: 'rate-limit', message: 'Step a/ask: boom', stepId: 'a/ask', attempts: 1 },
+        x: { kind: 'process', message: 'Command exited with 2.', stepId: 'x/probe', attempts: 1 },
+        m: { kind: 'process', message: 'Command exited with 3.', stepId: 'm/probe', attempts: 1 },
+        o: {
+          kind: 'process',
+          message: 'Command exited with 5.',
+          stepId: 'o/inner/probe',
+          attempts: 1,
+        },
+      };
+      expect(source.output).toEqual(expectedOutput);
+      const sourceOutcomes = settledOutcomes(source);
+      expect(Object.keys(sourceOutcomes).sort()).toEqual(['a', 'm', 'o', 'x']);
+      for (const outcome of Object.values(sourceOutcomes))
+        expect(outcome).toMatchObject({ ok: false });
+
+      expect(fixtures.commands).toBe('fixture');
+      expect(fixtures.calls).toEqual([
+        { step: 'a/ask', harness: 'claude', error: 'boom', kind: 'rate-limit' },
+        {
+          step: 'm/first',
+          harness: 'claude',
+          output: 'one',
+          usage: { costUsd: null, inputTokens: null, outputTokens: null },
+        },
+        { step: 'm/broken', harness: 'codex', error: 'odd' },
+      ]);
+      expect(fixtures.exec).toEqual([
+        { ...key(source, 'x/probe'), stdout: '', stderr: 'nope', code: 2 },
+        { ...key(source, 'm/probe'), stdout: '', code: 3 },
+        { ...key(source, 'o/inner/probe'), stdout: '', stderr: 'deep', code: 5 },
+      ]);
+
+      const { dry, fixture, report } = await replays(parent, fixtures);
+      for (const replay of [dry, fixture]) {
+        expect(replay.status).toBe('completed');
+        expect(replay.output).toEqual(source.output);
+        expect(settledOutcomes(replay)).toEqual(sourceOutcomes);
+        expect(JSON.stringify(fixturesFromRun(replay))).toBe(JSON.stringify(fixtures));
+      }
+      expect(report.staleExecFixtures).toEqual([]);
+      expect(report.staleCallFixtures).toEqual([]);
+    });
+
+    it('forks a run so that a settled frame reruns against the exported rules and settles the same errors (#383)', async () => {
+      const { source, fixtures } = await exportSource(parent, sourceCalls);
+      const refuse = { run: () => Promise.reject(new Error('spawned a real command')) };
+      const fork = await runWorkflow(parent, {
+        ...options('fork'),
+        forkFrom: { runId: 'source', invalidate: ['a/*', 'x/*', 'm/*', 'o/**'] },
+        harness: new FixtureHarness(fixtures),
+        processRunner: refuse,
+        execRunner: new FixtureProcessRunner(fixtures, refuse),
+      });
+      expect(fork.status).toBe('completed');
+      expect(fork.output).toEqual(source.output);
+      expect(settledOutcomes(fork)).toEqual(settledOutcomes(source));
+    });
+  });
+
+  it('a settled frame whose failure export cannot reproduce fails the replay at that step instead of settling (#383)', async () => {
+    const lonely = kid('lonely-kid', (ctx) => ctx.exec('missing', ['qc-test-missing-binary']));
+    const workflow = settledParent([lonely], [['c', 0]]);
+    const { source, fixtures } = await exportSource(workflow);
+    expect(source.steps['c/missing']?.status).toBe('failed');
+    expect(source.children?.['c']?.settled?.outcome).toMatchObject({
+      ok: false,
+      error: { stepId: 'c/missing' },
+    });
+    expect(fixtures).toEqual({ version: 1, unmatched: 'error', calls: [], commands: 'fixture' });
+
+    await writeFile(join(root, 'export.json'), JSON.stringify(fixtures));
+    const selection = await readHarnessSelection('fixture:export.json', undefined, root);
+    const harness = new RehearsalHarness(selection);
+    await expect(
+      runWorkflow(workflow, {
+        ...options('dry'),
+        harness,
+        rehearsal: harness.hooks,
+        processRunner: harness.processRunner,
+      }),
+    ).rejects.toMatchObject({
+      stepId: 'c/missing',
+      message: expect.stringContaining('No exec fixture matches step c/missing') as unknown,
+    });
+    const replayed = await readRun({ stateDir, runId: 'dry' });
+    expect(replayed.children?.['c']?.settled).toBeUndefined();
   });
 
   it('exports no rule for a spawn failure but keeps commands: fixture, so the replay fails at that step (AC6)', async () => {
