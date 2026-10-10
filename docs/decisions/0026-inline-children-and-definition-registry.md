@@ -5,7 +5,8 @@
 Accepted. Extends scope, profile, observation and journal decisions 0009, 0010, 0015 and 0019.
 Amended by #170 (settled child frames; see the amendment below and
 [ADR 0007](0007-durable-failure-outcomes.md)) and #240 (redefining unfinished frames; see the
-amendment below and [ADR 0005](0005-step-identity-and-policy.md)).
+amendment below and [ADR 0005](0005-step-identity-and-policy.md)) and #345 (engine digest in the
+registry cache key; see the last amendment below).
 
 ## Context
 
@@ -121,6 +122,23 @@ accepted `children` shape, so the record schema revision is 8 (see `docs/storage
 A CLI resume after a version bump still edits the workflow source, so it still needs
 `--accept-code-change` for the source gate; it then proceeds instead of failing on the frame.
 Embedded `runWorkflow` callers redefine without it.
+
+## Amendment: engine digest in the registry cache key (#345)
+
+The cache key was the engine version string, the plan and the source hashes. At version 0.0.0 the
+string never changes, so a tightened validation rule left unchanged sources "valid" from the cache.
+Validation covers more than the Zod schemas: it typechecks against the engine's declarations,
+imports the workflow, applies harness option and profile checks and runs the durability lint. A
+digest of selected schemas would miss most of that, and a hand-bumped revision constant depends on
+discipline that no test can check. The key is therefore
+`digest({ quietChoir, node major, code, typescript, zod, tsx })`, where `code` hashes every `.ts`,
+`.mts`, `.cts`, `.js`, `.mjs`, `.cjs` and `.json` file (declarations included, source maps and
+symlinks skipped) under the directory holding the running engine modules (`src/` under tsx, `dist/`
+in a build). It is computed once per process. If it cannot be computed the cache is neither read nor
+written. The envelope moves to version 5, so version 4 entries are revalidated and rewritten. Any
+engine edit or rebuild revalidates every definition once; the cache is only a performance shortcut,
+so that cost is accepted. A separately installed quiet-choir type package in the workflow project is
+not part of the key; the project lockfile, which is already hashed, covers normal installs.
 
 ## Consequences
 

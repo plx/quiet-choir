@@ -2,6 +2,12 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- The definition registry cache (`workflow list-defs` and execute-by-name) now keys each entry on a
+  digest of the running engine's code plus its Node major and TypeScript, zod and tsx versions
+  (#345), so a changed validation rule can no longer be served from a cached result at the same
+  engine version. The cache envelope moves to version 5: existing entries are revalidated and
+  rewritten once. No public API change; see
+  [ADR 0026](docs/decisions/0026-inline-children-and-definition-registry.md).
 - `ctx.exec`, a callback's or observer's `context.exec` and a command poll's `commandOptions` accept
   `scrubEnv` (#337), which removes host agent-session variables (`CLAUDECODE`, `CODEX_THREAD_ID`,
   `TRACEPARENT`, most `CLAUDE_CODE_*` names and the rest of the `childEnvironment` patterns) from

@@ -158,10 +158,12 @@ An unrecognized name fails with `Unknown workflow name`.
 generated/state/dependency directories and does not follow directory symlinks. These are trusted
 imports; module top-level code must have no workflow effects. The private metadata cache under
 `$XDG_CACHE_HOME/quiet-choir/definitions` (default `~/.cache/quiet-choir/definitions`) checks
-source/dependency/config fingerprints and existing package manifests/locks. `--refresh` forces
-revalidation and imports. Descriptions should be static; use refresh if external configuration
-affects module exports. Cache failure falls back to validation. Execution always loads the selected
-module anew and verifies its registered name.
+source/dependency/config fingerprints and existing package manifests/locks. The cache key also
+includes a digest of the running engine's code plus its Node major and TypeScript, zod and tsx
+versions, so any engine upgrade or rebuild revalidates every entry, and older-format entries are
+revalidated, never served. `--refresh` forces revalidation and imports. Descriptions should be
+static; use refresh if external configuration affects module exports. Cache failure falls back to
+validation. Execution always loads the selected module anew and verifies its registered name.
 
 Separate-run `ctx.child`, linked-run IDs and a `run` wait source remain later work tracked by
 [#18](https://github.com/plx/quiet-choir/issues/18). They are not implemented by inline composition.
