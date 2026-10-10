@@ -2,6 +2,14 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `quiet-choir/github`'s `issue.create` reads a `parent` before creating the issue (#353; amends
+  [ADR 0046](docs/decisions/0046-reconciled-github-writes.md)). A parent that does not exist, or is
+  a pull request, now throws before any write instead of leaving an unlinked issue that the rerun
+  failed on again. A new issue is linked with the node ID the create returned, so the call count is
+  unchanged for it; an issue found by its marker adds one read (the parent's node ID) and still
+  reads its parent before linking, doing nothing for the same parent and throwing for another. A
+  create without `parent` makes no extra call. The step version `github.issue.create/1`, its
+  identity and its result are unchanged, and recorded runs replay unchanged.
 - `quiet-choir/github`'s `waitChecks` accepts `requiredChecks`, check run or status context names
   that must exist before a successful rollup counts (#351; amends
   [ADR 0045](docs/decisions/0045-head-pinned-github-waits.md)). It closes the race where a fast

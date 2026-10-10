@@ -162,8 +162,7 @@ function main() {
       });
     if (query.includes('child: issue(')) {
       const child = state.issues?.[variables.child];
-      const wanted = state.issues?.[variables.parent];
-      if (!child || !wanted) fail('Could not resolve to an Issue');
+      if (!child) fail('Could not resolve to an Issue');
       const parent = child.parent == null ? null : state.issues[child.parent];
       reply({
         data: {
@@ -175,9 +174,16 @@ function main() {
                 ? { id: parent.node_id, number: parent.number, repository: { nameWithOwner: repo } }
                 : null,
             },
-            wanted: { id: wanted.node_id, number: wanted.number },
           },
         },
+      });
+    }
+    if (query.includes('wanted: issue(')) {
+      // GitHub's issue(number:) does not resolve a pull request's number.
+      const wanted = state.issues?.[variables.parent];
+      if (!wanted || wanted.pull_request) fail('Could not resolve to an Issue');
+      reply({
+        data: { repository: { wanted: { id: wanted.node_id, number: wanted.number } } },
       });
     }
     if (query.includes('stateReason')) {

@@ -51,9 +51,13 @@ the client that `github(ctx, { repo })` returns. Its context parameter widens to
   miss page through every issue and pull request in the repository, a far larger cost for the rare
   account switch mid-run, so the limit is documented instead.
 - **Sub-issue links are looked up, never assumed.** Re-linking an already linked sub-issue is not
-  documented behaviour, so `issue.create` reads the issue's parent (by node ID) and the wanted
-  parent's node ID: no parent links with `addSubIssue` (never `replaceParent`), the same parent is a
-  no-op, and another parent throws without a write.
+  documented behaviour, so `issue.create` first reads the wanted parent's node ID, before any write,
+  so a parent that does not exist (or is a pull request) fails before the issue is created (amended
+  by #353; it used to fail after, leaving an unlinked issue). An issue found by its marker has its
+  parent read (by node ID): no parent links with `addSubIssue` (never `replaceParent`), the same
+  parent is a no-op, and another parent throws without a write. An issue this attempt just created
+  has no parent, so it is linked directly with the node ID the POST returned; if something links it
+  first, GitHub refuses, and the retry takes the found path.
 - **Conditional check-then-act where no marker applies.** `close`, `reopen` and `alert.dismiss` read
   the state and write only when it still needs to change: `ifState` (`open` for `close`, `closed`
   for `reopen`) and an alert that is neither dismissed nor fixed. Without `If-Match` a concurrent

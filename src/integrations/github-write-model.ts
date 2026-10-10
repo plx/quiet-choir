@@ -405,15 +405,22 @@ mutation($threadId: ID!) {
   resolveReviewThread(input: { threadId: $threadId }) { thread { isResolved } }
 }`);
 
-/** An issue's node ID and parent, and the wanted parent's node ID. @internal */
+/** The wanted parent's node ID. @internal */
+export const PARENT_ID_QUERY: string = compact(`
+query($owner: String!, $name: String!, $parent: Int!) {
+  repository(owner: $owner, name: $name) {
+    wanted: issue(number: $parent) { id number }
+  }
+}`);
+
+/** An issue's node ID and parent. @internal */
 export const PARENT_QUERY: string = compact(`
-query($owner: String!, $name: String!, $child: Int!, $parent: Int!) {
+query($owner: String!, $name: String!, $child: Int!) {
   repository(owner: $owner, name: $name) {
     child: issue(number: $child) {
       id number
       parent { id number repository { nameWithOwner } }
     }
-    wanted: issue(number: $parent) { id number }
   }
 }`);
 
@@ -463,13 +470,14 @@ export function issueListArgv(
 /** Rows per page of the issue list; a shorter page is the last. @internal */
 export const ISSUE_PAGE_SIZE = 100;
 
+/** The wanted parent's node ID read argv. @internal */
+export function parentIdReadArgv(repo: GithubRepo, parent: number): [string, ...string[]] {
+  return graphqlArgv(repo, PARENT_ID_QUERY, false, {}, { parent });
+}
+
 /** The parent read argv. @internal */
-export function parentReadArgv(
-  repo: GithubRepo,
-  child: number,
-  parent: number,
-): [string, ...string[]] {
-  return graphqlArgv(repo, PARENT_QUERY, false, {}, { child, parent });
+export function parentReadArgv(repo: GithubRepo, child: number): [string, ...string[]] {
+  return graphqlArgv(repo, PARENT_QUERY, false, {}, { child });
 }
 
 /** The issue state read argv. @internal */
@@ -585,6 +593,14 @@ export const parentReadResponseSchema = z.object({
           }),
         }),
       ]),
+    }),
+  }),
+});
+
+/** The wanted parent's node ID read. @internal */
+export const parentIdResponseSchema = z.object({
+  data: z.object({
+    repository: z.object({
       wanted: z.object({ id: z.string(), number: issueNumber }),
     }),
   }),

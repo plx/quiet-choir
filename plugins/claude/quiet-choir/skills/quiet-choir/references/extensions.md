@@ -451,8 +451,9 @@ full workflow context (`github(ctx, ...)` needs `exec`, `poll` and `step`).
 `gh.issue.create(id, { title, body, labels?, parent? })` append the marker
 `<!-- quiet-choir:RUN/STEP -->` and search for it before writing, so a retry or resume after a crash
 finds the earlier write; a reply resolves bot threads by default and human threads only with
-`resolve: true`, and a `parent` link is looked up first (another parent throws). `issue.create`
-searches only the viewer's issues, so keep one `gh` account across a retry or resume.
+`resolve: true`, and a `parent` is read before the issue is created (a missing one throws), a new
+issue is linked at once, and a found issue's parent is looked up (another parent throws).
+`issue.create` searches only the viewer's issues, so keep one `gh` account across a retry or resume.
 `gh.issue.close(id, { number, comment?, reason? })`, `gh.issue.reopen(id, { number, comment? })` and
 `gh.alert.dismiss(id, { number, comment, reason? })` read the state and act only when it still needs
 to change, returning `acted: false` or `dismissed: false` otherwise; GitHub has no `If-Match`, so a
