@@ -141,9 +141,11 @@ A different OS birth identity means the PID has been reused: the unrelated proce
 signaled. Missing/unreadable identity, a surviving group whose original leader cannot be identified,
 and malformed records are reported and retained; `--kill-orphans` refuses to guess. Inspect those
 processes separately and wait for their exit, then clear the abandoned lock with `workflow unlock`
-(below). Do not delete records or lock directories by hand. Locks whose workflow finished but whose
-processes could not be reaped have an explicit `released` owner state, so a long-lived embedding
-process does not permanently obstruct recovery.
+(below). Do not delete records or lock directories by hand. To remove a whole run, records and lock
+included, use `workflow rm RUN`, which refuses while an owner or child is still live; see
+[Removing runs](storage.md#removing-runs). Locks whose workflow finished but whose processes could
+not be reaped have an explicit `released` owner state, so a long-lived embedding process does not
+permanently obstruct recovery.
 
 `quiet-choir workflow unlock RUN [--state-dir DIR] [--force-remote] [--json]` is the sanctioned way
 to clear a lock that resume refuses: incomplete ownership metadata from damage or an older build, a
