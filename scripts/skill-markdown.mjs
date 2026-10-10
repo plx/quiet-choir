@@ -138,9 +138,11 @@ function inlineDestination(body, start, file) {
 /**
  * An absolute link into this repository's docs tree. The repository is private, so an installed
  * plugin cannot open it; the operational content belongs in a bundled, skill-relative reference.
+ * Branch refs may contain slashes, so any `/docs` path segment after `blob/` or `tree/` counts, even
+ * when it is really a nested `src/docs` directory; that conservative reading cannot be told apart.
  */
 const repositoryDocsLink =
-  /^https:\/\/github\.com\/plx\/quiet-choir\/(?:blob|tree)\/[^/]+\/docs(?:[/?#]|$)/iu;
+  /^https:\/\/github\.com\/plx\/quiet-choir\/(?:blob|tree)\/[^?#]+?\/docs(?:[/?#]|$)/iu;
 
 /** Verify relative destinations and fragments within the physical installed package. */
 export async function checkLinks(file, text, packageRoot) {

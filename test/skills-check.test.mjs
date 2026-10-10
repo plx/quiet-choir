@@ -506,6 +506,7 @@ test('a link into the repository docs tree is rejected in references, SKILL.md a
     `[waits](${docsUrl})`,
     `[waits][docs]\n\n[docs]: ${docsUrl}`,
     `<a href="https://github.com/plx/quiet-choir/tree/main/docs">docs</a>`,
+    `[waits](https://github.com/plx/quiet-choir/blob/feature/foo/docs/github.md#waits)`,
   ];
   for (const link of links)
     await fixture(async (root) => {
@@ -532,7 +533,7 @@ test('links outside the docs tree and docs links in code are not rejected', asyn
       [
         '',
         '[example](https://github.com/plx/quiet-choir/blob/main/examples/patterns/next-ticket.workflow.ts)',
-        '[other](https://github.com/plx/quiet-choir/blob/main/src/docs/index.ts)',
+        '[other](https://github.com/plx/quiet-choir/blob/main/src/documents/index.ts)',
         `Inline code \`${docsUrl}\` is prose, not a link.`,
         '',
       ].join('\n'),
