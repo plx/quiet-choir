@@ -30,7 +30,8 @@ already removed by `workflow rm ID` ([0055](0055-remove-leftover-launch-director
   `ENOTDIR`, and a `run.not_found` read while the record file is present (a missing companion, such
   as `run.json` without `journal.jsonl`), which rm now reports as `run.unreadable`. `EACCES`,
   `EPERM`, `EIO`, `EMFILE` and every other code are still refused, since the record may be intact,
-  and so is `run.incompatible`, since a newer build can read and remove that record.
+  and so is `run.incompatible`, since a newer build can read and remove that record. A record path
+  of the wrong kind, such as a directory at `<runId>.json`, is removed whole.
 - Without the flag, rm's refusal of a damaged record keeps `run.unreadable` (exit 3) and names the
   removal command in its message and in `details.next`, built with the invocation's launcher and
   keeping `--dry-run` for a dry run. The top-level `next` passes it through.

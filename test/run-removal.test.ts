@@ -1683,6 +1683,33 @@ describe('workflow rm --unreadable of a run whose record is damaged', () => {
     );
   });
 
+  it('removes a directory sitting at the flat record path, with its siblings', async () => {
+    await mkdir(join(stateDir, 'dirflat.json', 'nested'), { recursive: true });
+    await writeFile(join(stateDir, 'dirflat.json', 'nested', 'file'), 'x');
+    await mkdir(join(stateDir, 'dirflat.inbox'), { recursive: true });
+    await writeFile(join(stateDir, 'dirflat.inbox', 'answer.json'), '{"value":true}');
+    await writeFile(join(stateDir, 'dirflat.cancel.json'), '{}');
+    refused(await remove('dirflat'), 'run.unreadable');
+    expect(removed(await remove('dirflat', { unreadable: true, dryRun: true }))).toMatchObject({
+      removed: false,
+      unreadable: true,
+      verdict: 'remove',
+    });
+    expect(await gone(join(stateDir, 'dirflat.json'))).toBe(false);
+    expect(removed(await remove('dirflat', { unreadable: true }))).toMatchObject({
+      removed: true,
+      unreadable: true,
+    });
+    for (const name of [
+      'dirflat.json',
+      'dirflat.inbox',
+      'dirflat.cancel.json',
+      'dirflat.json.lock',
+    ])
+      expect(await gone(join(stateDir, name))).toBe(true);
+    await onlyIgnoreFileLeft();
+  });
+
   it('removes a format-7 marker whose directory is missing, with its backup', async () => {
     await migratedLegacy();
     await rm(join(stateDir, 'legacy'), { recursive: true, force: true });

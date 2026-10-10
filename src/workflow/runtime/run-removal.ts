@@ -577,7 +577,9 @@ async function deleteRunFiles(
   await step('siblings');
   signal?.throwIfAborted();
   // From here on the removal finishes even if interrupted, so no half-deleted run is left.
-  await rm(siblings.flat, { force: true });
+  // Recursive, so a record path of the wrong kind (`EISDIR`, which `--unreadable` accepts) goes whole;
+  // it does not follow a symbolic link and removes a regular file the same way.
+  await rm(siblings.flat, { recursive: true, force: true });
   await syncDirectory(stateDir);
   await step('flat');
   for (const backup of siblings.backups) await rm(backup, { force: true });
