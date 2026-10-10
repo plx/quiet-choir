@@ -276,11 +276,12 @@ gets. `done` must be pure: it receives no context, and it runs under the observe
 context operation it reaches through a closure fails the run. The command runs again on every check;
 only the terminal value and the last note are recorded.
 
-A failing command throws an `ExecError`: kind `process` for a disallowed exit code or a signal,
-`output-limit` when stdout exceeds the cap, and `schema` when stdout is not JSON matching `output`.
-Its `diagnostics` keep the exit code and the last 1024 characters of stdout and stderr. A throwing
-`done` is handled the same way. Both are rejected observations, so they fail the wait unless
-`onError` tolerates them; `classify` can read `error.diagnostics.code`.
+A failing command throws an `ExecError`: kind `process` for a disallowed exit code, a signal, or
+stdout that is not JSON after an accepted nonzero exit; `output-limit` when stdout exceeds the cap;
+and `schema` for any other stdout that is not JSON or does not match `output`. Its `diagnostics`
+keep the exit code and the last 1024 characters of stdout and stderr. A throwing `done` is handled
+the same way. Both are rejected observations, so they fail the wait unless `onError` tolerates them;
+`classify` can read `error.diagnostics.code`.
 
 The wait request records `poll.command`: the prepared command summary (`exec`: the command, the
 canonical absolute working directory, SHA-256 digests of the `env` overlay and of stdin,

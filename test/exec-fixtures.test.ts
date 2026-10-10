@@ -17,6 +17,7 @@ import {
   type Command,
   type ExecResult,
   type HarnessFixtures,
+  type JsonValue,
   type ProcessRunner,
   type ProcessRunRequest,
   type WorkflowContext,
@@ -1065,6 +1066,42 @@ describe('fixture export of settled and absorbed exec failures', () => {
     expect(fixtures).toMatchObject({
       commands: 'fixture',
       exec: [{ ...key(source, 'short'), stdout: 'not json' }],
+    });
+    const { dry, fixture } = await replays(workflow, fixtures);
+    expect(dry.output).toEqual(source.output);
+    expect(fixture.output).toEqual(source.output);
+  });
+
+  it('exports an accepted nonzero exit without JSON as a stdout and code rule and replays kind process (#349)', async () => {
+    const workflow = definition(z.json(), async (ctx) => {
+      const failures: JsonValue[] = [];
+      for (const [id, stdout] of [
+        ['empty', ''],
+        ['unclosed', '[{"n":1}'],
+      ] as const) {
+        const read = await ctx.exec.json(
+          id,
+          node(`process.stdout.write(${JSON.stringify(stdout)});process.exit(1)`),
+          { schema: Shape, okExitCodes: [0, 1], onError: 'return' },
+        );
+        failures.push(read.ok ? null : jsonValue(read.error));
+      }
+      return failures;
+    });
+    const { source, fixtures } = await exportSource(workflow);
+    const output = source.output as Record<string, unknown>[];
+    expect(output).toHaveLength(2);
+    for (const failure of output) {
+      expect(failure).toMatchObject({ kind: 'process', code: 1 });
+      expect(failure['message']).toMatch(/^Command exited with 1 without JSON on stdout: /u);
+      expect(failure).not.toHaveProperty('parsed');
+    }
+    expect(fixtures).toMatchObject({
+      commands: 'fixture',
+      exec: [
+        { ...key(source, 'empty'), stdout: '', code: 1 },
+        { ...key(source, 'unclosed'), stdout: '[{"n":1}', code: 1 },
+      ],
     });
     const { dry, fixture } = await replays(workflow, fixtures);
     expect(dry.output).toEqual(source.output);

@@ -790,12 +790,13 @@ function permanentGithubError(parsed: JsonValue | undefined): boolean {
 
 /**
  * Classify a rejected observation from typed facts only, never message text (ADR 0007).
- * Transient: an `ExecError` of kind `process` or `timeout`; kind `schema` when stdout was not JSON
- * (a dropped connection or an unclosed paginated array) or gh exited nonzero (an HTTP error body,
- * as the code-scanning read accepts exit 1); and an `observeTimeoutMs` expiry. Fatal: a REST 401
- * or 404 body or a GraphQL `NOT_FOUND` error; kind `output-limit`; exit 0 with JSON that fails the
- * schema (a contract change); any other error, such as an `IncompleteCollectionError` or a
- * reviewer that throws.
+ * Transient: an `ExecError` of kind `process` or `timeout`, which includes an accepted nonzero exit
+ * whose stdout was not JSON (a dropped connection or an unclosed paginated array, #349); kind
+ * `schema` when gh exited nonzero (an HTTP error body, as the code-scanning read accepts exit 1) or
+ * stdout was not JSON (which now means exit 0, such as an empty or cut-off body); and an
+ * `observeTimeoutMs` expiry. Fatal: a REST 401 or 404 body or a GraphQL `NOT_FOUND` error; kind
+ * `output-limit`; exit 0 with JSON that fails the schema (a contract change); any other error, such
+ * as an `IncompleteCollectionError` or a reviewer that throws.
  * @internal
  */
 export function classifyWaitError(error: unknown): 'transient' | 'fatal' {

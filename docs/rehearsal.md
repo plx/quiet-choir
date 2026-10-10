@@ -100,8 +100,9 @@ full argv as `argvPrefix` (omitted for a shell command), and the recorded `envSh
 structured command exports its parsed value as `json`; a plain one exports `stdout`, plus `stderr`
 and `code` when they are not empty or zero. A command failure the run settled (`onError: 'return'`)
 or absorbed (a step left `failed` in a completed run, such as a body `try/catch`) becomes the same
-kind of rule when a command result can reproduce it: an exit code outside `okExitCodes`, or an
-`exec.json` stdout that did not parse or match its schema. The rule carries the exit `code`, the
+kind of rule when a command result can reproduce it: an exit code outside `okExitCodes`, an
+`exec.json` accepted nonzero exit whose stdout is not JSON (kind `process`), or an `exec.json`
+stdout that did not parse or match its schema (kind `schema`). The rule carries the exit `code`, the
 recorded stderr tail as `stderr`, and one output field. That is `json` with the failure's `parsed`
 value, unless the recorded stdout tail is complete JSON for it in another layout (pretty-printed
 output under 1024 characters keeps its bytes as `stdout`); without `parsed` it is the stdout tail as

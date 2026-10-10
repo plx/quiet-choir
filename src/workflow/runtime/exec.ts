@@ -92,12 +92,40 @@ export function execExitFailureMessage(exit: string): string {
 }
 
 /**
- * The prefix of an `exec.json` failure whose stdout did not parse or did not match the schema; the
- * parse or validation message follows. Fixture export matches it. @internal
+ * The prefix of an `exec.json` failure (kind `schema`) whose stdout did not parse after exit 0, or
+ * parsed but did not match the schema; the parse or validation message follows. Fixture export
+ * matches it. @internal
  */
 export const EXEC_SCHEMA_FAILURE_PREFIX = 'Command stdout did not match its JSON schema: ';
 
-/** Execute and validate inside the runtime's single tracked effect. @internal */
+/**
+ * The message of an `exec.json` failure whose nonzero exit code was accepted (listed in
+ * `okExitCodes`, or `'any'`) but whose stdout is not JSON, such as `gh` exiting 1 with empty or
+ * partial output after a dropped connection. The command failed and printed no body, so the failure
+ * is kind `process`, not `schema`; the decision reads only the exit code and whether `JSON.parse`
+ * succeeded, never message text (ADR 0007, ADR 0021 as amended by #349). `detail` is the parse
+ * error message. Fixture export matches the message through {@link isExecNoJsonFailureMessage}.
+ * @internal
+ */
+export function execNoJsonFailureMessage(code: number, detail: string): string {
+  return `${execNoJsonFailurePrefix(code)}${detail}`;
+}
+
+/** Whether a message is {@link execNoJsonFailureMessage} for `code`. @internal */
+export function isExecNoJsonFailureMessage(message: string, code: number): boolean {
+  return message.startsWith(execNoJsonFailurePrefix(code));
+}
+
+function execNoJsonFailurePrefix(code: number): string {
+  return `Command exited with ${String(code)} without JSON on stdout: `;
+}
+
+/**
+ * Execute and validate inside the runtime's single tracked effect. A rejected exit or signal is kind
+ * `process`; for `exec.json`, a truncated capture is `output-limit`, stdout that is not JSON after an
+ * accepted nonzero exit is `process` ({@link execNoJsonFailureMessage}), and any other stdout that
+ * does not parse or match the schema is `schema`. @internal
+ */
 export async function executeCommand<T>(
   runner: ProcessRunner | undefined,
   request: ProcessRunRequest,
@@ -127,15 +155,24 @@ export async function executeCommand<T>(
   if (!schema) return result;
   if (result.truncated)
     throw new ExecError('Structured command output was truncated.', 'output-limit', result);
+  const reject = (cause: unknown, kind: 'process' | 'schema', message: string): never => {
+    throw new ExecError(message, kind, result, { cause, ...failure() });
+  };
+  const detail = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause));
+  let json: JsonValue;
   try {
-    return schema.parse(JSON.parse(result.stdout) as JsonValue);
+    json = JSON.parse(result.stdout) as JsonValue;
   } catch (cause) {
-    throw new ExecError(
-      `${EXEC_SCHEMA_FAILURE_PREFIX}${cause instanceof Error ? cause.message : String(cause)}`,
-      'schema',
-      result,
-      { cause, ...failure() },
-    );
+    // An accepted nonzero exit with no JSON body is a failed command, not a contract violation:
+    // the caller accepted that code only to read a body. Exit 0 with no JSON stays `schema`.
+    return result.code === 0
+      ? reject(cause, 'schema', `${EXEC_SCHEMA_FAILURE_PREFIX}${detail(cause)}`)
+      : reject(cause, 'process', execNoJsonFailureMessage(result.code, detail(cause)));
+  }
+  try {
+    return schema.parse(json);
+  } catch (cause) {
+    return reject(cause, 'schema', `${EXEC_SCHEMA_FAILURE_PREFIX}${detail(cause)}`);
   }
 }
 

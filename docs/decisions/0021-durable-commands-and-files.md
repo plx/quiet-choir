@@ -1,6 +1,7 @@
 # 0021: Keep deterministic commands and file effects in the durable core contract
 
-Status: accepted in the prototype stack.
+Status: accepted in the prototype stack. Amended by #349 (an accepted nonzero exit whose stdout is
+not JSON is kind `process`).
 
 ## Context
 
@@ -16,6 +17,17 @@ admission, grants, and usage separate from operator commands. Record command sum
 failed-attempt exit information, while hashing explicit environment values and stdin. Plain output
 retains bounded head/tail; JSON refuses truncation. Command meaning is identity;
 deadlines/caps/retry are policy.
+
+`exec.json` failure kinds (amended by #349): an exit outside `okExitCodes` or a signal is `process`;
+a truncated capture is `output-limit`; stdout that is not JSON after an accepted nonzero exit
+(listed in `okExitCodes`, or `'any'`) is `process`, because the command failed and printed no body,
+and the caller accepted that exit only to read one; any other stdout that does not parse, or JSON
+that fails the schema, is `schema`. The rule reads only the exit code and whether `JSON.parse`
+succeeded, never message text (ADR 0007), so an explicit retry on `process` covers a tool such as
+`gh` exiting 1 with empty or partial output after a dropped connection without also retrying a
+contract violation. The failure keeps the `SyntaxError` as its cause and has no `parsed`; fixture
+export reproduces it as a `{ stdout, code }` rule. Failures recorded before the amendment keep their
+recorded kind.
 
 Add regular-file reads and atomic UTF-8 writes with canonical cwd path guards. Write receipts
 contain hashes, never supplied content. Conditional replacement is optimistic; create-only

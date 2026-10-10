@@ -4,6 +4,8 @@
 - Issue: #159 (slice A of #21; the ticket called this ADR 0028, a number now taken by the
   error-brand decision)
 - Amends: [0027](0027-typed-harness-registry-and-integration-helpers.md) (`ExecOptions.meta`)
+- Amended by #349: still no default retry, and a gh failure without JSON on stdout is kind `process`
+  through the `exec.json` rule of [0021](0021-durable-commands-and-files.md)
 
 ## Context
 
@@ -67,7 +69,15 @@ Add the `quiet-choir/github` subpath. `github(ctx, { repo })` returns `repo.info
   subcommands is unused here and arrives with the first write that needs one (#161, #162).
 - **Policy only.** A read accepts `timeoutMs`, `maxOutputBytes` and `retry`, never identity-bearing
   exec options. There is no default retry: telling a transient gh failure from a permanent one would
-  mean guessing from messages, which ADR 0007 forbids.
+  mean guessing from messages, which ADR 0007 forbids. #349 kept that choice and added no error
+  kind. Kind `process` also covers permanent gh exits (a missing login, a GraphQL error), a default
+  would change existing workflows, and retrying `timeout` under the 300000 ms default deadline would
+  triple a hung read. Instead, `exec.json` now classifies an accepted nonzero exit whose stdout is
+  not JSON as `process` (ADR 0021), so a network failure (empty stdout, an unclosed paginated array,
+  an error page appended to a partial array) is `process` on every read, while an incomplete
+  collection, which only arises at exit 0 with valid JSON, stays `schema`. The documented explicit
+  retry `{ maxAttempts: 3, on: ['process', 'timeout'] }` therefore retries the former and never the
+  latter.
 - **Module layout.** Queries, schemas and mappers live in the pure `github-model.ts` with an ESLint
   purity block. Integration helpers otherwise import only the public entry point; `github.ts` may
   also import `error-brand.js`, because the brand registry is a cross-instance contract (ADR 0028),
@@ -91,9 +101,10 @@ Octokit could later sit behind the same signatures; this slice does not add it.
   exit code. gh 2.100 closes a slurped outer array even when a later page fails, so more than 100
   alerts followed by a dropped connection or a 5xx would read as a complete list. Without `--slurp`,
   gh merges REST array pages into one array and writes its closing `]` only after the last page, so
-  any failure after the first page leaves unparseable JSON and the read rejects. This relies on that
-  gh behavior (checked against gh 2.100 with a local server); the code-scanning golden digest makes
-  a change to the argv deliberate. GraphQL reads keep `--slurp`: they accept only exit 0, and their
-  last page would also report another page.
+  any failure after the first page leaves unparseable JSON and the read rejects (gh exits 1, so
+  since #349 the failure is kind `process` and a retry on `process` covers it; a JSON error body on
+  a single page stays kind `schema`). This relies on that gh behavior (checked against gh 2.100 with
+  a local server); the code-scanning golden digest makes a change to the argv deliberate. GraphQL
+  reads keep `--slurp`: they accept only exit 0, and their last page would also report another page.
 - `--dry-run` synthesizes every read from its JSON Schema (booleans false, one-item arrays, the
   first union branch), and the synthesized responses pass the completeness checks and the mappers.

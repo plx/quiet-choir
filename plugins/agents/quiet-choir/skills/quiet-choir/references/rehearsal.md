@@ -97,19 +97,20 @@ environment overlay values and stdin are never read or written, only those diges
 command exports its parsed value as `json`; a plain one exports `stdout`, plus `stderr` and `code`
 when they are not empty or zero. A command failure the run settled (`onError: 'return'`) or absorbed
 (a step left `failed` in a completed run) becomes the same kind of rule when a command result can
-reproduce it: an exit code outside `okExitCodes`, or an `exec.json` stdout that did not parse or
-match its schema. The rule carries the exit `code`, the recorded stderr tail as `stderr`, and either
-the failure's `parsed` value as `json` or the recorded stdout tail as `stdout` (complete
-pretty-printed JSON under 1024 characters keeps its bytes). The replay sends that result through the
-same exit-code and schema checks, so the settled error or thrown `ExecError` has the same message,
-kind, code, signal, tails and `parsed`. Long pretty-printed JSON replays compact (its `stdoutTail`
-differs in whitespace), output rebuilt from `parsed` uses the checkpoint's sorted key order (a
-schema failure's message can list its issues in a different order), and a replayed `ExecError`
-reports `truncated: false` and `durationMs: 0`. Any `exec.json` failure (exit code or schema)
-without `parsed` whose stdout tail fills all 1024 characters gets no rule (the tail may have lost
-its start and replay as valid output or an invented `parsed`), neither does an `exec.json` exit
-failure recorded as `truncated`, and neither does a `parsed` whose compact form is over 16 KiB, so
-its replay fails at that step. Spawn failures, timeouts, signal kills, `output-limit` failures and
+reproduce it: an exit code outside `okExitCodes`, an `exec.json` accepted nonzero exit whose stdout
+is not JSON (kind `process`), or an `exec.json` stdout that did not parse or match its schema (kind
+`schema`). The rule carries the exit `code`, the recorded stderr tail as `stderr`, and either the
+failure's `parsed` value as `json` or the recorded stdout tail as `stdout` (complete pretty-printed
+JSON under 1024 characters keeps its bytes). The replay sends that result through the same exit-code
+and schema checks, so the settled error or thrown `ExecError` has the same message, kind, code,
+signal, tails and `parsed`. Long pretty-printed JSON replays compact (its `stdoutTail` differs in
+whitespace), output rebuilt from `parsed` uses the checkpoint's sorted key order (a schema failure's
+message can list its issues in a different order), and a replayed `ExecError` reports
+`truncated: false` and `durationMs: 0`. Any `exec.json` failure (exit code or schema) without
+`parsed` whose stdout tail fills all 1024 characters gets no rule (the tail may have lost its start
+and replay as valid output or an invented `parsed`), neither does an `exec.json` exit failure
+recorded as `truncated`, and neither does a `parsed` whose compact form is over 16 KiB, so its
+replay fails at that step. Spawn failures, timeouts, signal kills, `output-limit` failures and
 custom runner kinds get no exported rule (an exec error rule can describe them by hand; export does
 not produce them yet). When the run has any completed, settled-failed or failed command, export also
 sets `"commands": "fixture"`, even when a failure produced no rule, so a replay whose argv or inputs

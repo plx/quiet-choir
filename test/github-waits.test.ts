@@ -937,6 +937,8 @@ describe('aggregation, threads, heads and classification', () => {
       [new ExecError('exited 1', 'process', result(1, '<html>502</html>')), 'transient'],
       [new ExecError('timed out', 'timeout', result(1)), 'transient'],
       [new ExecError('not JSON', 'schema', result(0, '[{'), { cause: syntax }), 'transient'],
+      // An accepted nonzero exit without JSON is kind process since #349.
+      [new ExecError('no JSON', 'process', result(1, '[{'), { cause: syntax }), 'transient'],
       [
         new ExecError('error body', 'schema', result(1, '{"message":"Server Error"}'), {
           parsed: { message: 'Server Error' },

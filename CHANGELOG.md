@@ -2,6 +2,18 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `exec.json` now classifies a failure whose exit code was accepted (`okExitCodes` lists it, or is
+  `'any'`) but nonzero, and whose stdout is not JSON, as kind `process` instead of `schema`, with
+  the message `Command exited with N without JSON on stdout: ...` (#349; amends
+  [ADR 0021](docs/decisions/0021-durable-commands-and-files.md) and
+  [ADR 0044](docs/decisions/0044-gh-backed-github-reads.md)). The rule reads only the exit code and
+  whether the JSON parsed. For `quiet-choir/github`, a dropped connection, an unclosed paginated
+  array or an error page appended to a partial array from `codeScanning.alerts` is now `process`,
+  like every other read, so the documented retry `{ maxAttempts: 3, on: ['process', 'timeout'] }`
+  retries it and still never retries an `IncompleteCollectionError` (kind `schema`). Reads and
+  writes keep no default retry. A caller that branched on settled kind `schema` for such output now
+  sees `process`; recorded failures keep their kind, and fixture export reproduces the new failure
+  as a `{ stdout, code }` rule. Step identity is unchanged.
 - A dry run no longer warns about custom Zod refinements for the built-in `quiet-choir/github` reads
   and writes, whose completeness checks synthesized responses satisfy (#348; amends
   [ADR 0016](docs/decisions/0016-workflow-rehearsal.md)). The refinements a workflow's own schemas
