@@ -7,6 +7,7 @@ import {
   maxRateLimitWindows,
   normalizeRateLimit,
   parseClaudeRateLimitEvent,
+  RateLimitTracker,
   readRateLimit,
   type RateLimitDiagnostics,
 } from '../src/workflow/runtime/rate-limit.js';
@@ -365,5 +366,154 @@ describe('latestRateLimits', () => {
       ),
     );
     expect(Object.keys(result)).toEqual(['custom']);
+  });
+
+  // The run budget keeps this projection incrementally as attempts settle (#378).
+  describe('RateLimitTracker', () => {
+    const codex = { request: { harness: 'codex' } };
+    const tied = (seq: number, utilization: number) =>
+      step('codex', [attempt(1, '2026-10-01T00:02:00.000Z', report(utilization), codex)], { seq });
+    const steps = (): [string, StepRecord][] => [
+      [
+        'retried',
+        step(
+          'claude',
+          [
+            attempt(1, '2026-10-01T00:05:00.000Z', report(0.2)),
+            attempt(2, '2026-10-01T00:06:00.000Z', report(0.9, 'rejected'), { status: 'failed' }),
+          ],
+          { seq: 1 },
+        ),
+      ],
+      [
+        'unsettled',
+        step(
+          'claude',
+          [
+            attempt(1, null, report(0.7), {
+              startedAt: '2026-10-01T00:07:00.000Z',
+              status: 'interrupted',
+            }),
+          ],
+          { seq: 2 },
+        ),
+      ],
+      [
+        'reused',
+        step('claude', [attempt(1, '2026-10-01T00:09:00.000Z', report(0.8))], {
+          seq: 3,
+          reusedFrom: { runId: 'earlier' },
+        }),
+      ],
+      ['exec', step('exec', [attempt(1, '2026-10-01T00:09:00.000Z', report(0.8))], { seq: 4 })],
+      [
+        'custom',
+        step(
+          'agent',
+          [attempt(1, '2026-10-01T00:01:00.000Z', report(0.3), { request: undefined })],
+          {
+            seq: 5,
+            harness: 'custom',
+          },
+        ),
+      ],
+      ['first-tie', tied(6, 0.4)],
+      ['second-tie', tied(7, 0.5)],
+    ];
+    function* permutations<T>(items: readonly T[]): Generator<T[]> {
+      if (items.length <= 1) {
+        yield [...items];
+        return;
+      }
+      for (const [index, item] of items.entries())
+        for (const rest of permutations(items.filter((_, other) => other !== index)))
+          yield [item, ...rest];
+    }
+
+    it('folds steps in every observation order to the same projection as latestRateLimits', () => {
+      const expected = latestRateLimits(steps());
+      expect(
+        Object.fromEntries(
+          Object.entries(expected).map(([harness, value]) => [
+            harness,
+            `${value.stepId}#${String(value.attempt)}`,
+          ]),
+        ),
+      ).toEqual({ claude: 'unsettled#1', custom: 'custom#1', codex: 'second-tie#1' });
+      let orders = 0;
+      for (const order of permutations(steps())) {
+        const tracker = new RateLimitTracker();
+        for (const [stepId, value] of order) expect(tracker.observeStep(stepId, value)).toBe(true);
+        expect(tracker.toRecord()).toEqual(expected);
+        orders++;
+      }
+      expect(orders).toBe(5040);
+    });
+
+    it('resolves a full rank tie between steps to the higher seq', () => {
+      for (const order of [
+        [tied(2, 0.9), tied(1, 0.1)],
+        [tied(1, 0.1), tied(2, 0.9)],
+      ])
+        expect(latestRateLimits(run(...order))['codex']?.windows['five_hour']?.utilization).toBe(
+          0.9,
+        );
+    });
+
+    it('reports the steps it holds and is idempotent when a step is observed again', () => {
+      const tracker = new RateLimitTracker();
+      for (const [stepId, value] of steps()) tracker.observeStep(stepId, value);
+      expect(tracker.holds('unsettled')).toBe(true);
+      expect(tracker.holds('retried')).toBe(false);
+      expect(tracker.holds('missing')).toBe(false);
+      const before = tracker.toRecord();
+      for (const [stepId, value] of steps()) expect(tracker.observeStep(stepId, value)).toBe(true);
+      expect(tracker.toRecord()).toEqual(before);
+      expect(tracker.get('claude')?.stepId).toBe('unsettled');
+      expect(tracker.get('constructor')).toBeUndefined();
+    });
+
+    it('replaces an attempt that settled since it was observed', () => {
+      const tracker = new RateLimitTracker();
+      const running = step('claude', [attempt(1, null, report(0.3))], { seq: 1 });
+      tracker.observeStep('s', running);
+      const [only] = running.attemptHistory ?? [];
+      if (!only) throw new Error('missing attempt');
+      only.finishedAt = '2026-10-01T00:04:00.000Z';
+      only.diagnostics = report(0.6);
+      expect(tracker.observeStep('s', running)).toBe(true);
+      expect(tracker.get('claude')).toMatchObject({
+        finishedAt: '2026-10-01T00:04:00.000Z',
+        windows: { five_hour: { utilization: 0.6 } },
+      });
+    });
+
+    it.each([
+      ['its kind left the projection', (value: StepRecord) => (value.kind = 'step')],
+      ['it became a fork reuse', (value: StepRecord) => (value.reusedFrom = {} as never)],
+      [
+        'its attempt moved to another harness',
+        (value: StepRecord) => {
+          for (const entry of value.attemptHistory ?? [])
+            entry.request = { harness: 'codex' } as never;
+        },
+      ],
+    ])('refuses to fold a step whose held report no longer stands when %s', (_name, rewrite) => {
+      const tracker = new RateLimitTracker();
+      const holder = step('claude', [attempt(1, '2026-10-01T00:09:00.000Z', report(0.3))], {
+        seq: 2,
+      });
+      const other = step('claude', [attempt(1, '2026-10-01T00:01:00.000Z', report(0.8))], {
+        seq: 1,
+      });
+      tracker.observeStep('other', other);
+      tracker.observeStep('holder', holder);
+      rewrite(holder);
+      expect(tracker.observeStep('holder', holder)).toBe(false);
+      expect(tracker.observeStep('holder', undefined)).toBe(false);
+      // A step that holds nothing is folded in place.
+      other.kind = 'step';
+      expect(tracker.observeStep('other', other)).toBe(true);
+    });
   });
 });
