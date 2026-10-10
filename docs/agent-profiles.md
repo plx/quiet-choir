@@ -178,7 +178,9 @@ await ctx.claude.text('review', { profile: 'reader', prompt, addDirs: [`.state/r
 - **Limits.** The check runs when the call is resolved, not when the CLI opens the directory, so a
   concurrent writer that swaps a path component for a symlink in between is not caught. Resolution
   also runs on replay: a completed step whose directory is now outside its roots (a retargeted
-  symlink) fails to resolve on resume. Restricted mode is unchanged; only `--add-dir` is added. See
+  symlink) fails to resolve on resume. Restricted mode is unchanged; only `--add-dir` is added, and
+  restricted Claude loads no instructions or skills from those directories (see
+  [harness isolation](harness-isolation.md#native-boundary)). See
   [ADR 0054](decisions/0054-bounded-call-site-adddirs.md).
 
 `strictProfiles: false` keeps its earlier behavior: a call's `addDirs` replace the profile's list

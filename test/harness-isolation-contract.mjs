@@ -33,7 +33,16 @@ const markers = {
   memoryMd: 'MEMORY_MD_MARKER',
   userClaudeMd: 'USER_CLAUDE_MD_MARKER',
   homeClaudeMd: 'HOME_CLAUDE_MD_MARKER',
+  // Instruction-like sources inside an added directory (#386).
+  addedClaudeMd: 'ADDED_CLAUDE_MD_MARKER',
+  addedDotClaudeMd: 'ADDED_DOT_CLAUDE_MD_MARKER',
+  addedLocalMd: 'ADDED_CLAUDE_LOCAL_MD_MARKER',
+  addedRule: 'ADDED_RULE_MARKER',
+  addedSkill: 'ADDED_SKILL_MARKER',
+  addedCommand: 'ADDED_COMMAND_MARKER',
 };
+const addedSkillName = 'added-canary';
+const addedCommandName = 'added-command';
 // Inert credentials: the fixture provider authenticates through env_key, so Codex never uses them.
 // They exercise the private CODEX_HOME copy and write-back of instructions: 'none'.
 const authJson = `${JSON.stringify({ OPENAI_API_KEY: 'sk-local-fixture-auth' })}\n`;
@@ -135,6 +144,20 @@ async function execute(provider, name, options = {}, tool, extras = {}) {
   const outside = join(home, 'outside');
   await mkdir(outside);
   await writeFile(join(outside, 'file.txt'), 'OUTSIDE_CONTENT_MARKER');
+  if (provider === 'claude') {
+    // Every instruction-like source Claude can pick up from an added directory (#386).
+    await mkdir(join(outside, '.claude', 'rules'), { recursive: true });
+    await mkdir(join(outside, '.claude', 'commands'), { recursive: true });
+    await writeFile(join(outside, 'CLAUDE.md'), markers.addedClaudeMd);
+    await writeFile(join(outside, '.claude', 'CLAUDE.md'), markers.addedDotClaudeMd);
+    await writeFile(join(outside, 'CLAUDE.local.md'), markers.addedLocalMd);
+    await writeFile(join(outside, '.claude', 'rules', 'canary.md'), markers.addedRule);
+    await skill(join(outside, '.claude', 'skills'), addedSkillName, markers.addedSkill);
+    await writeFile(
+      join(outside, '.claude', 'commands', `${addedCommandName}.md`),
+      `---\ndescription: ${markers.addedCommand}\n---\nCanary command body.\n`,
+    );
+  }
   const plugin = join(home, 'plugin');
   await mkdir(join(plugin, '.claude-plugin'), { recursive: true });
   await mkdir(join(plugin, 'skills', 'fixture'), { recursive: true });
@@ -302,6 +325,8 @@ async function execute(provider, name, options = {}, tool, extras = {}) {
       authUnchanged:
         provider !== 'codex' || (await readFile(join(config, 'auth.json'), 'utf8')) === authJson,
       init,
+      skills: init?.skills ?? [],
+      slashCommands: init?.slash_commands ?? [],
       hooks,
       bodies,
       settingsUnchanged: savedSettings === projectSettings,
@@ -313,6 +338,15 @@ async function execute(provider, name, options = {}, tool, extras = {}) {
     await api.close();
   }
 }
+
+const claudeReached = (run, marker) => JSON.stringify(run.bodies).includes(marker);
+/** Assert that no added-directory instruction, skill or command reached a restricted call. */
+const assertAddedDirExcluded = (run) => {
+  for (const [key, marker] of Object.entries(markers).filter(([key]) => /^added/u.test(key)))
+    assert(!claudeReached(run, marker), `${key} reached a restricted call`);
+  assert(!run.skills.includes(addedSkillName), 'an added directory skill was listed');
+  assert(!run.slashCommands.includes(addedCommandName), 'an added directory command was listed');
+};
 
 try {
   if (providers.includes('claude')) {
@@ -367,7 +401,6 @@ try {
       undefined,
       moveHome({ CLAUDE_CONFIG_DIR: undefined }),
     );
-    const claudeReached = (run, marker) => JSON.stringify(run.bodies).includes(marker);
     // Asserted, because CliHarness detects exactly this file: CLAUDE_CONFIG_DIR replaces
     // HOME/.claude. The ancestor fact is recorded only; ancestor CLAUDE.md files are not detected.
     assert(claudeReached(withConfigDir, markers.userClaudeMd));
@@ -426,6 +459,7 @@ try {
       ({ outside }) => ({ name: 'Read', input: { file_path: join(outside, 'file.txt') } }),
     );
     assert(JSON.stringify(allowed.bodies).includes('OUTSIDE_CONTENT_MARKER'));
+    assertAddedDirExcluded(allowed);
     const protectedWrite = await execute(
       'claude',
       'protected-write',
@@ -442,6 +476,81 @@ try {
       addedDirectoryReadAllowed: true,
       protectedSettingsWriteDenied: true,
     });
+    // Instructions and skills in an added directory (#386). Asserted: restricted Claude loads none
+    // of them, in the request bodies or in the init skill and command listings. The init lists
+    // still carry the CLI's bundled skills, so the test looks for the canary names, not for empty.
+    const addedDirOptions =
+      (extra) =>
+      ({ outside }) => ({
+        tools: ['Read', 'Skill'],
+        addDirs: [outside],
+        ...extra,
+      });
+    const readOutside = ({ outside }) => ({
+      name: 'Read',
+      input: { file_path: join(outside, 'file.txt') },
+    });
+    const addedRestricted = await execute(
+      'claude',
+      'added-dir-restricted',
+      addedDirOptions({}),
+      readOutside,
+    );
+    assert(JSON.stringify(addedRestricted.bodies).includes('OUTSIDE_CONTENT_MARKER'));
+    assertAddedDirExcluded(addedRestricted);
+    // Positive controls. A negative assertion would pass vacuously if a canary were malformed, so
+    // these two runs must reach their canaries. They tie the contract to native opt-in and inherit
+    // behavior: a failure here means Claude changed, not that quiet-choir regressed.
+    const addedOptIn = await execute(
+      'claude',
+      'added-dir-restricted-claude-md-opt-in',
+      addedDirOptions({}),
+      readOutside,
+      { env: () => ({ CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1' }) },
+    );
+    assert(
+      claudeReached(addedOptIn, markers.addedClaudeMd),
+      'CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD did not load the added directory CLAUDE.md',
+    );
+    const addedInherit = await execute(
+      'claude',
+      'added-dir-inherit',
+      addedDirOptions({ isolation: 'inherit' }),
+      readOutside,
+    );
+    assert(
+      addedInherit.skills.includes(addedSkillName),
+      'an inherit call did not list the added directory skill',
+    );
+    const addedFacts = (run) => ({
+      claudeMdReachedRequest: claudeReached(run, markers.addedClaudeMd),
+      dotClaudeClaudeMdReachedRequest: claudeReached(run, markers.addedDotClaudeMd),
+      claudeLocalMdReachedRequest: claudeReached(run, markers.addedLocalMd),
+      ruleReachedRequest: claudeReached(run, markers.addedRule),
+      skillReachedRequest: claudeReached(run, markers.addedSkill),
+      commandReachedRequest: claudeReached(run, markers.addedCommand),
+      skillListed: run.skills.includes(addedSkillName),
+      commandListed: run.slashCommands.includes(addedCommandName),
+    });
+    report.cases.push(
+      {
+        name: 'claude-added-dir-restricted',
+        version: addedRestricted.version,
+        addedDirInstructionsExcluded: true,
+        addedDirSkillsExcluded: true,
+        ...addedFacts(addedRestricted),
+      },
+      {
+        name: 'claude-added-dir-restricted-claude-md-opt-in',
+        version: addedOptIn.version,
+        ...addedFacts(addedOptIn),
+      },
+      {
+        name: 'claude-added-dir-inherit',
+        version: addedInherit.version,
+        ...addedFacts(addedInherit),
+      },
+    );
   }
   if (providers.includes('codex')) {
     const reached = (run, marker) => JSON.stringify(run.bodies).includes(marker);

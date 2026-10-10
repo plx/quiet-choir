@@ -52,6 +52,8 @@ describe('childEnvironment', () => {
     ['CLAUDE_CODE_ENTRYPOINT', true],
     ['CLAUDE_CODE_MAX_OUTPUT_TOKENS', true],
     ['CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS', true],
+    // Native opt-in that loads CLAUDE.md files from added directories even when restricted (#386).
+    ['CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD', true],
     ['CLAUDE_PLUGIN_ROOT', true],
     ['CLAUDE_PID', true],
     ['CLAUDE_EFFORT', true],

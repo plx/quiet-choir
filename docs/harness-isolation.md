@@ -33,12 +33,15 @@ protected settings, Git, and tool-configuration files require a human or permiss
 `dontAsk` does not supply one. A writer may therefore need a different task design. Runtime-owned
 worktree snapshotting runs outside the agent and does not require the agent to commit.
 
-`inherit` is an explicit trust decision. `cwd` selects project `.claude`/`.codex` inputs. Headless
-Claude skips the workspace trust dialog and can execute project hooks in never-trusted directories.
-Do not point inherited calls at untrusted checkouts. `tools: []` alone does not suppress inherited
-MCP or hooks. Custom providers normally stored in `config.toml` need explicit `config` or an
-inherited role. `harnessProfile` selects a native profile from the same skipped `config.toml`, so
-restricted mode rejects it; select `inherit` or configure the equivalent settings through `config`.
+`inherit` is an explicit trust decision. `cwd` selects project `.claude`/`.codex` inputs, and an
+inherit call also loads `.claude/skills` skills and `.claude/commands` commands from its `addDirs`
+directories, including bounded call-site directories of a profile with `addDirRoots`; those are not
+detected in `projectInstructions`. Headless Claude skips the workspace trust dialog and can execute
+project hooks in never-trusted directories. Do not point inherited calls at untrusted checkouts.
+`tools: []` alone does not suppress inherited MCP or hooks. Custom providers normally stored in
+`config.toml` need explicit `config` or an inherited role. `harnessProfile` selects a native profile
+from the same skipped `config.toml`, so restricted mode rejects it; select `inherit` or configure
+the equivalent settings through `config`.
 
 Codex instruction boundary. Unlike restricted Claude, restricted Codex still loads instruction
 files. `--ignore-user-config` skips `config.toml` and `--ignore-rules` skips execpolicy rules, but
@@ -75,8 +78,21 @@ is blank. When `HOME` is the `cwd` or one of its ancestors, `~/.claude/CLAUDE.md
 ancestor's project file even with `CLAUDE_CONFIG_DIR` set, and is recorded the same way. Inherit is
 an explicit trust decision, so the run adds no warning for it; `workflow doctor` names the file.
 Other inherit-mode inputs are not detected: project `CLAUDE.md` files (including other
-`<ancestor>/.claude/CLAUDE.md` files), `CLAUDE.local.md`, rules directories, `@imports` and
-auto-memory.
+`<ancestor>/.claude/CLAUDE.md` files), `CLAUDE.local.md`, rules directories, `.claude/skills` and
+`.claude/commands` in `addDirs` directories, `@imports` and auto-memory.
+
+Added directories. Restricted Claude 2.1.293 loads no `CLAUDE.md`, `.claude/CLAUDE.md`,
+`CLAUDE.local.md`, `.claude/rules/*.md`, `.claude/skills` skill or `.claude/commands` command from
+an `addDirs` directory: none reaches the request, and the skill and command are absent from the init
+listing. This holds for static `addDirs` and for bounded call-site directories alike, which are the
+same `--add-dir` argument. The directory only extends the file tools' reach. It is not a trust
+decision about its contents, so the run records nothing for it. Claude's native opt-in
+`CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1` is not blocked, only gated: with it, even
+restricted Claude loads the added directory's `CLAUDE.md`, `.claude/CLAUDE.md` and `.claude/rules`
+files (not `CLAUDE.local.md`, skills or commands). A host-exported value is removed by the
+`CLAUDE_CODE_*` scrub below, and restoring it takes `env.set`, which is a profile-only control under
+`strictProfiles`, needs an exec grant and enters the step fingerprint. Files loaded that way are not
+detected or recorded.
 
 Instruction-free Codex calls. Set `instructions: 'none'` on a Codex call, in a profile's `codex`
 options or in `defaults.codex` to run without these files. The adapter adds
@@ -171,7 +187,7 @@ inherited mode if a CLI rejects the flags.
 ## Verified native behavior
 
 `npm run test:contract:isolation` after a build is an opt-in local fake-API regression for installed
-Claude 2.1.283 and Codex 0.157.1, last run on Claude 2.1.290 and Codex 0.160.0. It uses fresh homes
+Claude 2.1.283 and Codex 0.157.1, last run on Claude 2.1.293 and Codex 0.160.0. It uses fresh homes
 and dummy keys. It confirms hook and project-instruction suppression, explicit
 settings/MCP/plugin/prompt/tool opt-ins, outside-read denial and `addDirs` restoration, protected
 settings-write denial, and Codex's explicit provider override. For restricted Codex it also records,
@@ -204,14 +220,26 @@ dot-directories skipped, skills six levels below a root loading but not seven, a
 inside another loading. `codex-restricted-skill-no-git` shows only `cwd` contributing without a
 `.git` entry, and `$HOME/.agents/skills` loading when `HOME` is not an ancestor of `cwd`.
 `codex-restricted-memories-enabled` shows `memory_summary.md` (not `MEMORY.md`) loading with
-`features.memories` set. For Claude 2.1.290, `claude-user-instructions` asserts that an inherit call
+`features.memories` set. For Claude 2.1.293, `claude-user-instructions` asserts that an inherit call
 loads `<CLAUDE_CONFIG_DIR>/CLAUDE.md` and a restricted one does not, that `HOME/.claude/CLAUDE.md`
 does not load when `CLAUDE_CONFIG_DIR` is set and `HOME` is not an ancestor of `cwd`, and that it
 loads when `CLAUDE_CONFIG_DIR` is unset; it also records that `HOME/.claude/CLAUDE.md` loads as an
-ancestor's file when `HOME` is an ancestor of `cwd`. Every case asserts that the native CLI reached
-the local fake API; an explicit Codex `config` is merged over the fixture provider, and a negative
-case confirms that a call steered away from it fails the contract. No upstream inference occurs. The
-sanitized report is in
+ancestor's file when `HOME` is an ancestor of `cwd`. Canaries in an added directory (`CLAUDE.md`,
+`.claude/CLAUDE.md`, `CLAUDE.local.md`, a `.claude/rules` file, a `.claude/skills` skill and a
+`.claude/commands` command) cover three runs. `claude-added-dir-restricted` (tools `Read` and
+`Skill`, and the existing `outside-allowed` run) asserts that none reaches the request and that the
+skill and command names are absent from the init `skills` and `slash_commands` lists; it looks for
+the canary names because those lists still carry the CLI's bundled entries. Two positive controls
+are asserted so that this cannot pass vacuously, and a failure there is a native change, not a
+quiet-choir regression: `claude-added-dir-restricted-claude-md-opt-in` (the opt-in variable set
+through the contract's `extras.env`) must reach the `CLAUDE.md` canary, and
+`claude-added-dir-inherit` must list the skill. Their other facts are recorded only: the opt-in also
+reaches `.claude/CLAUDE.md` and the rule but not `CLAUDE.local.md`, the skill or the command, and
+inherit reaches the skill and the command (in the request and the listings) but none of the
+instruction files. The scrub of the opt-in variable is pinned by `test/harness-kit-helpers.test.ts`.
+Every case asserts that the native CLI reached the local fake API; an explicit Codex `config` is
+merged over the fixture provider, and a negative case confirms that a call steered away from it
+fails the contract. No upstream inference occurs. The sanitized report is in
 [`test/fixtures/harness-isolation-results.json`](../test/fixtures/harness-isolation-results.json).
 
 Earlier zero-cost OAuth probes on the same Claude version reached invalid-model responses with

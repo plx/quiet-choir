@@ -1,10 +1,10 @@
 {
-  "capturedAt": "2026-10-06T03:18:21.257Z",
+  "capturedAt": "2026-10-10T23:01:36.699Z",
   "transport": "local fake APIs and dummy keys; no inference",
   "cases": [
     {
       "name": "claude-restricted",
-      "version": "2.1.290 (Claude Code)",
+      "version": "2.1.293 (Claude Code)",
       "inheritedHooksExecuted": true,
       "restrictedHooksExecuted": false,
       "projectInstructionsExcluded": true,
@@ -14,7 +14,7 @@
     },
     {
       "name": "claude-user-instructions",
-      "version": "2.1.290 (Claude Code)",
+      "version": "2.1.293 (Claude Code)",
       "userClaudeMdReachedInherit": true,
       "userClaudeMdReachedRestricted": false,
       "homeClaudeMdReachedWithConfigDir": false,
@@ -34,6 +34,44 @@
       "outsideReadDenied": true,
       "addedDirectoryReadAllowed": true,
       "protectedSettingsWriteDenied": true
+    },
+    {
+      "name": "claude-added-dir-restricted",
+      "version": "2.1.293 (Claude Code)",
+      "addedDirInstructionsExcluded": true,
+      "addedDirSkillsExcluded": true,
+      "claudeMdReachedRequest": false,
+      "dotClaudeClaudeMdReachedRequest": false,
+      "claudeLocalMdReachedRequest": false,
+      "ruleReachedRequest": false,
+      "skillReachedRequest": false,
+      "commandReachedRequest": false,
+      "skillListed": false,
+      "commandListed": false
+    },
+    {
+      "name": "claude-added-dir-restricted-claude-md-opt-in",
+      "version": "2.1.293 (Claude Code)",
+      "claudeMdReachedRequest": true,
+      "dotClaudeClaudeMdReachedRequest": true,
+      "claudeLocalMdReachedRequest": false,
+      "ruleReachedRequest": true,
+      "skillReachedRequest": false,
+      "commandReachedRequest": false,
+      "skillListed": false,
+      "commandListed": false
+    },
+    {
+      "name": "claude-added-dir-inherit",
+      "version": "2.1.293 (Claude Code)",
+      "claudeMdReachedRequest": false,
+      "dotClaudeClaudeMdReachedRequest": false,
+      "claudeLocalMdReachedRequest": false,
+      "ruleReachedRequest": false,
+      "skillReachedRequest": true,
+      "commandReachedRequest": true,
+      "skillListed": true,
+      "commandListed": true
     },
     {
       "name": "codex-instructions-none",

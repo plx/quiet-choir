@@ -2,6 +2,16 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Restricted Claude is verified to load no instructions or skills from `addDirs` directories, static
+  or bounded call-site (#386). The opt-in isolation contract gains canaries for `CLAUDE.md`,
+  `.claude/CLAUDE.md`, `CLAUDE.local.md`, `.claude/rules`, `.claude/skills` and `.claude/commands`
+  in an added directory, asserts that none reaches a restricted call, and keeps two asserted
+  positive controls: the native `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1` opt-in loads the
+  added `CLAUDE.md` (and `.claude/CLAUDE.md` and rules), and inherit lists the added skill and
+  command. The scrub table pins that variable as scrubbed. The fixture is refreshed on Claude
+  2.1.293; the Codex facts are unchanged on 0.160.0. `docs/harness-isolation.md` and the skill
+  references document the result, including that inherit calls load added-directory skills and
+  commands undetected. No runtime behavior changes.
 - A strict Claude call that passes `addDirs` under a profile without `claude.addDirRoots`, including
   the implicit default `text`, now fails typecheck and `workflow validate` (`load.typecheck`)
   instead of failing when the call runs (#385,
