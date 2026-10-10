@@ -2,6 +2,20 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `workflow rm ID` finishes the removal of an unmigrated flat run that crashed after deleting its
+  `<runId>.json` and before renaming `<runId>/` away, and `workflow prune` finishes every such
+  removal in the runs containers it scans, whatever its filters (#369,
+  [ADR 0061](docs/decisions/0061-finish-interrupted-flat-run-removal.md)). The leftover is an ID
+  with no record whose directory holds only its lock (and the lock's strays), or that has only
+  `.json.v<N>` backups; it used to be reported as `run.not_found` and was never removed. Without
+  `--state-dir` or `QUIET_CHOIR_STATE_DIR`, rm also finds it in the legacy `.quiet-choir/runs` when
+  the project's default container holds nothing for the ID. Both refuse `run.locked` or
+  `run.orphans` while a lock owner, recoverer or a dead owner's child is alive, unknown, remote or
+  unreadable, take the run lock, re-check under it (`run.exists` when a run now holds the ID) and
+  rerun rm's deletion order. `workflow.rm.result` gains `interrupted` (false for every other
+  removal), `workflow.prune.result` gains `unfinishedRemovals`, and an interrupted prune's
+  `error.details` gains `unfinishedRemovals`. A directory with anything else, such as
+  `journal.jsonl`, `inbox/` or `launch/`, is left alone.
 - `workflow rm RUN --unreadable` removes a run whose record file is present but whose content is
   damaged: an invalid `run.json` or flat `<runId>.json`, a journal gap, a format-7 marker without
   its directory, or `run.json` without `journal.jsonl` (#367,

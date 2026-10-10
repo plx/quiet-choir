@@ -234,12 +234,21 @@ delivery first; the envelope's `runCreatedAt` closes that gap, since the owner r
 addressed to a run with another `createdAt` ([questions](questions.md#inbox-protocol-and-trust)). No
 answer outlives the run to resolve a later run that reuses the ID.
 
-A crash at any step leaves either an intact run that lists and inspects normally (run rm again) or a
-tombstone. `list` and `inspect` never see a half-deleted run, because the flat marker goes before
-the directory. A signal stops rm only before step 2; after that the removal finishes. Each rm,
-before reading its target, deletes the tombstones in its runs container whose PID is dead (best
-effort), leaving live and unverifiable ones alone, so a concurrent rm of another run is never
-disturbed. `--dry-run` lists them without deleting anything.
+A crash before step 2 leaves an intact run that lists and inspects normally (run rm again), and a
+crash after step 5 leaves a tombstone. `list` and `inspect` never see a half-deleted run, because
+the flat marker goes before the directory. A crash between steps 2 and 5 of an unmigrated flat run
+leaves a record-less `<runId>/` holding only its lock (with the lock's strays), any backups not yet
+deleted and the legacy guard; such an ID does not list as a run
+([ADR 0061](decisions/0061-finish-interrupted-flat-run-removal.md)). `workflow rm ID` finishes that
+removal: with `interrupted: true` in its result, it refuses `run.locked` or `run.orphans` while a
+lock owner, recoverer or a dead owner's child is alive, unknown, remote or unreadable (even with
+`--force`), takes the run lock (recovering the crashed rm's dead locks), re-checks under it that no
+record exists (`run.exists`) and that nothing else appeared in the directory (`run.not_found`), and
+runs the steps above again. A directory with anything else, such as `journal.jsonl`, `inbox/` or
+`launch/`, is not such a leftover and stays `run.not_found`. A signal stops rm only before step 2;
+after that the removal finishes. Each rm, before reading its target, deletes the tombstones in its
+runs container whose PID is dead (best effort), leaving live and unverifiable ones alone, so a
+concurrent rm of another run is never disturbed. `--dry-run` lists them without deleting anything.
 
 A start that failed before its record existed leaves a leftover launch directory (above), which is
 not a run. When the ID has no record and names such a directory, rm takes a separate path with
@@ -282,8 +291,10 @@ is skipped rather than removed. A running, stale or suspended run, a run with a 
 in either inbox that a resume could still consume (consumed and rejected deliveries do not count),
 or a held lock or live orphan is never selected; it is listed in `skipped` with its reason, as is a
 run that rm refuses at removal time, and the batch goes on. Prune sweeps dead rm tombstones in every
-runs container it scans, and its `--dry-run` takes no lock and changes nothing. Flags, reasons and
-result are in the [CLI contract](cli-contract.md).
+runs container it scans, then finishes every interrupted flat-run removal it finds there, under each
+ID's run lock and with the same refusals and re-checks as rm (a held one is skipped silently), and
+lists them in `unfinishedRemovals`; rm by ID does not scan its container. Its `--dry-run` takes no
+lock and changes nothing. Flags, reasons and result are in the [CLI contract](cli-contract.md).
 
 `workflow prune --missing-cwd --all` then removes stale project roots
 ([ADR 0051](decisions/0051-remove-stale-project-roots-by-rmdir.md)); without both flags it never

@@ -237,7 +237,7 @@ cannot remove a cache while its repository exists, rm stops before deleting the 
 (`error.details.removedCaches` names them), no ref is deleted, the message and
 `error.details.caches` name each cache that remains, `error.details.warnings` carries Git's reasons,
 and the record stays for a retry with `workflow clean ID`. Success returns
-`{kind:"workflow.rm.result", ok:true, runId, stateDir, dryRun, force, refs, verdict, removed, launchOnly, unreadable, paths, caches, refsRemoved, keptRefs, bytes, tombstones, warnings}`:
+`{kind:"workflow.rm.result", ok:true, runId, stateDir, dryRun, force, refs, verdict, removed, launchOnly, unreadable, interrupted, paths, caches, refsRemoved, keptRefs, bytes, tombstones, warnings}`:
 `paths` are the run's paths in the runs container, `caches` are `{path, method:"git"|"direct"}`,
 `keptRefs` lists the pins that survive without `--refs`, `bytes` is the list `bytes` measured before
 removal, and `tombstones` names the abandoned removals this rm swept. `--dry-run` takes no lock,
@@ -302,6 +302,25 @@ the `run.locked`, `run.orphans` or `run.active` verdict a removal would meet now
 a leftover launch directory is handled exactly as without the flag. `workflow prune` never selects
 an unreadable run.
 
+An [interrupted removal](storage.md#removing-runs) is what an rm of an unmigrated flat run left when
+it stopped after deleting `<runId>.json` and before renaming `<runId>/` away
+([ADR 0061](decisions/0061-finish-interrupted-flat-run-removal.md)): an ID with no `run.json` or
+`<runId>.json`, no `<runId>.inbox` or `<runId>.cancel.json`, a `<runId>/` that is absent or a real
+directory holding only the `lock` directory and that lock's strays, and at least one of that
+directory or a `<runId>.json.v<N>` backup (the guard `<runId>.json.lock` may be there too). Instead
+of `run.not_found`, `workflow rm ID` finishes that removal. It refuses `run.locked` or `run.orphans`
+exactly as above, even with `--force`, takes the run lock (recovering a dead owner's), re-checks
+under it (`run.exists` when a run now holds the ID, `run.not_found` when anything else appeared in
+the directory) and deletes in the ordinary order. The result has `interrupted: true` (false for
+every other removal), `paths` naming the directory, guard and backups that exist, `bytes`, and empty
+`caches`, `refsRemoved` and `keptRefs`; `--refs`, `--force` and `--unreadable` change nothing. A dry
+run takes no lock and reports `remove`, `run.locked` or `run.orphans`. A directory that holds
+anything else, such as `journal.jsonl`, `inbox/` or `launch/`, is not such a leftover. Legacy
+discovery keys on a record, which such a removal already deleted, so without `--state-dir` or
+`QUIET_CHOIR_STATE_DIR` rm also finds an interrupted removal in the legacy `<cwd>/.quiet-choir/runs`
+(with the legacy-directory warning) when the project's default container holds no record,
+interrupted removal or leftover launch directory of the ID.
+
 `workflow prune [--older-than DURATION] [--status S[,S]] [--missing-cwd] [--all] [--refs] [--dry-run] --json`
 removes finished runs in bulk without importing workflow code
 ([ADR 0050](decisions/0050-select-runs-for-prune-conservatively.md)). It needs at least one of
@@ -331,14 +350,17 @@ failure of one removal never stops the batch: it becomes a `skipped` entry with 
 `orphans`, `active`, `changed`, `gone` (another removal won, `run.not_found`), `refused` (another
 `run.*` code) or `storage` (a cache Git could not remove, or another error of that one removal,
 `workflow.storage`). Before removing anything prune sweeps abandoned rm tombstones in every scanned
-container. Success (exit 0, also with skipped runs) returns
-`{kind:"workflow.prune.result", ok:true, dryRun, stateDirs, filters:{olderThanMs, statuses, missingCwd, all, refs}, removed, skipped, bytes, tombstones, roots, warnings}`:
+container, then finishes every interrupted removal (above) it finds there, whatever the filters,
+through the same refusals and under-lock re-checks as rm; one that is held or changed is skipped
+silently, and any other failure is a warning. Success (exit 0, also with skipped runs) returns
+`{kind:"workflow.prune.result", ok:true, dryRun, stateDirs, filters:{olderThanMs, statuses, missingCwd, all, refs}, removed, skipped, bytes, tombstones, unfinishedRemovals, roots, warnings}`:
 `removed[]` entries are
 `{runId, stateDir, status, updatedAt, cwd, bytes, paths, caches, refsRemoved, keptRefs, warnings}`
 as rm reported them, `skipped[]` entries are
 `{runId, stateDir, status, updatedAt, cwd, bytes, reason, code, message, details}` where `code` is
 the CLI code rm refused (or would refuse) with, `workflow.storage`, or null for `queued-answer`,
-`bytes` is the sum of `removed[].bytes`, `tombstones` are absolute paths, and `warnings` carry
+`bytes` is the sum of `removed[].bytes`, `tombstones` are absolute paths, `unfinishedRemovals` are
+the absolute `<stateDir>/<runId>` paths of the interrupted removals finished, and `warnings` carry
 unreadable runs (which are never removed), unreadable inboxes and unknown cwds. Runs that do not
 match are not listed. `roots` is empty unless both `--missing-cwd` and `--all` are given; then,
 after the run removals, prune judges every stale XDG project root
@@ -359,13 +381,15 @@ the runs behind `runs-kept` or `in-use`. Root removal unlinks only those two fil
 directory with `rmdir`. `bytes` at the top level remains the sum of `removed[].bytes`, and an
 unknown cwd of a root adds a warning instead of an entry. `--dry-run` runs each selected removal as
 an rm `--dry-run`: it takes no lock, sweeps nothing and changes nothing, `removed[]` lists the runs
-a prune would remove now with their bytes, a dry-run refusal moves the run to `skipped`, and
-`roots[]` shows the roots a prune would remove now (`removed: true`), judged without the paths of
-the runs it would remove. A runs container that cannot be read fails the command with
+a prune would remove now with their bytes, a dry-run refusal moves the run to `skipped`,
+`unfinishedRemovals` lists the interrupted removals that no live owner holds, and `roots[]` shows
+the roots a prune would remove now (`removed: true`), judged without the paths of the runs and
+interrupted removals it would remove. A runs container that cannot be read fails the command with
 `workflow.storage` (exit 74). A signal stops prune between removals (a removal past its commit point
 still finishes) or between project roots with `workflow.interrupted` (exit 130),
-`error.details.removed` naming the runs and `error.details.roots` the project roots already removed;
-run prune again to continue. See [storage](storage.md#removing-runs).
+`error.details.removed` naming the runs, `error.details.roots` the project roots and
+`error.details.unfinishedRemovals` the interrupted removals already finished; run prune again to
+continue. See [storage](storage.md#removing-runs).
 
 `workflow cancel ID [--force] [--timeout 30s] --json` ends an unfinished run as `cancelled` without
 importing workflow code

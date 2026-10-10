@@ -57,7 +57,7 @@ export default class WorkflowPrune extends WorkflowCommand {
   public static override readonly summary =
     'Remove finished runs by age, status or missing cwd, each through workflow rm';
   public static override readonly description =
-    'Selects runs whose observed status is completed, failed or cancelled (or those given to --status), and that match every other filter given, then removes each through the guarded workflow rm path, oldest first, without --force. Needs at least one of --older-than, --status or --missing-cwd (exit 2, usage.flag): there is no delete-everything mode. A matching run stays, listed in skipped with its reason, while it is running, stale or suspended, has a waiting step or a queued answer delivery, or is held by a lock owner, recoverer or live orphan; a refusal or failure while removing one run is reported the same way and the rest continue. Exits 0 whenever the runs containers could be read. Also sweeps abandoned rm tombstones in each scanned container. With --missing-cwd --all it then removes stale XDG project roots (registered for a missing cwd, or without a valid project.json) that hold no kept run and nothing but empty directories, unlinking only project.json and runs/.gitignore and removing every directory with rmdir; other stale roots are listed in roots with the reason they stay. --dry-run takes no lock and changes nothing.';
+    'Selects runs whose observed status is completed, failed or cancelled (or those given to --status), and that match every other filter given, then removes each through the guarded workflow rm path, oldest first, without --force. Needs at least one of --older-than, --status or --missing-cwd (exit 2, usage.flag): there is no delete-everything mode. A matching run stays, listed in skipped with its reason, while it is running, stale or suspended, has a waiting step or a queued answer delivery, or is held by a lock owner, recoverer or live orphan; a refusal or failure while removing one run is reported the same way and the rest continue. Exits 0 whenever the runs containers could be read. Also sweeps abandoned rm tombstones in each scanned container, and finishes, under each ID’s run lock, every removal of an unmigrated flat run that stopped after deleting the flat file there (a record-less directory holding only its lock, or only .json.v<N> backups), unless a live owner holds it; they are listed in unfinishedRemovals. With --missing-cwd --all it then removes stale XDG project roots (registered for a missing cwd, or without a valid project.json) that hold no kept run and nothing but empty directories, unlinking only project.json and runs/.gitignore and removing every directory with rmdir; other stale roots are listed in roots with the reason they stay. --dry-run takes no lock and changes nothing.';
 
   public async run(): Promise<void> {
     const { flags } = await this.parse(WorkflowPrune);
@@ -129,6 +129,10 @@ export default class WorkflowPrune extends WorkflowCommand {
       ...result.tombstones.map(
         (path) => `${result.dryRun ? 'Sweepable tombstone' : 'Swept tombstone'}: ${path}`,
       ),
+      ...result.unfinishedRemovals.map(
+        (path) =>
+          `${result.dryRun ? 'Unfinished removal' : 'Finished interrupted removal'}: ${path}`,
+      ),
       ...(result.roots.length
         ? [
             `${result.dryRun ? 'Would remove' : 'Removed'} ${String(removedRoots)} project root${removedRoots === 1 ? '' : 's'}; kept ${String(result.roots.length - removedRoots)}.`,
@@ -145,7 +149,10 @@ export default class WorkflowPrune extends WorkflowCommand {
       ...result.warnings.map((warning) => `Warning: ${warning}`),
     ];
     // Runs and roots already removed stand even when a signal arrived afterwards.
-    if ((result.removed.length || removedRoots) && !result.dryRun)
+    if (
+      (result.removed.length || removedRoots || result.unfinishedRemovals.length) &&
+      !result.dryRun
+    )
       this.outputSavedCompletion(result, lines.join('\n'));
     else this.output(result, lines.join('\n'));
   }

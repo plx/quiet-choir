@@ -21,6 +21,7 @@ import {
   type LaunchSettleOptions,
   type LeftoverLaunch,
 } from './launch-leftovers.js';
+import { inspectInterruptedRemoval, type InterruptedRemoval } from './interrupted-removal.js';
 import { isErrno, sweepStrays, withRunGuard } from './lock.js';
 import { legacyRunPath, resolveStateDir, runDirectory } from './paths.js';
 import { OrphanProcessesError } from './process-registry.js';
@@ -102,6 +103,12 @@ export interface RunRemovalResult {
    * 0060): no caches or refs were touched, and a warning says how to find any it named.
    */
   readonly unreadable: boolean;
+  /**
+   * True when the ID named no run, only what a removal of an unmigrated flat run left after its
+   * commit point (ADR 0061): rm finished that removal. There are no caches or refs left, and
+   * `--refs`, `--force` and `--unreadable` change nothing.
+   */
+  readonly interrupted: boolean;
   /** Paths in the runs container that existed for the run before the removal. */
   readonly paths: readonly string[];
   /** Worktree caches not yet removed by an earlier cleanup. */
@@ -287,6 +294,7 @@ async function planRemoval(
     removed: false,
     launchOnly: false,
     unreadable: false,
+    interrupted: false,
     paths: await existingPaths(stateDir, runId),
     caches: Object.values(ledger?.caches ?? {})
       .filter((cache) => cache.state !== 'removed')
@@ -321,7 +329,10 @@ function pick(refusal: ReturnType<typeof removalRefusal>): {
  * flat run's commit point), the backups, releases the primary lock, renames `<runId>/` to a dotted
  * tombstone (a directory run's commit point) and deletes it. The signal is honoured only before the flat file goes.
  * With `unreadable`, a run whose record content is damaged takes {@link removeUnreadable} instead;
- * without it, rm refuses such a run with `run.unreadable` naming the `--unreadable` command. @internal
+ * without it, rm refuses such a run with `run.unreadable` naming the `--unreadable` command. An ID
+ * that names only a leftover launch directory takes {@link removeLaunchLeftover} (ADR 0055), and one
+ * that names only what an interrupted removal of a flat run left takes
+ * {@link finishInterruptedRemoval} (ADR 0061); prune's pinned removals take neither. @internal
  */
 export async function removeRun(
   options: RemoveRunOptions,
@@ -337,12 +348,23 @@ export async function removeRun(
     options.expectedUpdatedAt === undefined
       ? inspectLaunchLeftover(stateDir, runId, live.launchSettle).catch(() => null)
       : null;
+  // Likewise only rm by ID finishes an interrupted removal (prune sweeps its containers itself).
+  const interruptedOf = async (): Promise<InterruptedRemoval | null> =>
+    options.expectedUpdatedAt === undefined
+      ? inspectInterruptedRemoval(stateDir, runId).catch(() => null)
+      : null;
   if (options.dryRun) {
     const leftover = await leftoverOf();
     if (leftover)
       return {
         kind: 'removed',
         result: await planLeftoverRemoval(stateDir, options, leftover, live.commandLauncher),
+      };
+    const interrupted = await interruptedOf();
+    if (interrupted)
+      return {
+        kind: 'removed',
+        result: await planInterruptedRemoval(options, interrupted, live.commandLauncher),
       };
     const read = await readForRemoval(stateDir, options, live.commandLauncher);
     return {
@@ -358,6 +380,13 @@ export async function removeRun(
   const tombstones = await sweepTombstones(stateDir);
   const leftover = await leftoverOf();
   if (leftover) return removeLaunchLeftover(stateDir, options, leftover, live, tombstones);
+  const interrupted = await interruptedOf();
+  if (interrupted)
+    return finishInterruptedRemoval(interrupted, live, {
+      force,
+      refs: options.refs ?? false,
+      tombstones,
+    });
   const read = await readForRemoval(stateDir, options, live.commandLauncher);
   if (!('record' in read)) return removeUnreadable(stateDir, options, live, tombstones);
   const initial = read.record;
@@ -539,6 +568,7 @@ async function removeOwned(
       removed: true,
       launchOnly: false,
       unreadable: false,
+      interrupted: false,
       paths: context.paths,
       caches,
       refsRemoved,
@@ -551,11 +581,12 @@ async function removeOwned(
 }
 
 /**
- * The guard-held deletion order shared by an ordinary and an unreadable removal, under the run lock:
- * the legacy siblings, the flat `<runId>.json` and a directory flush (a flat run's commit point), the
+ * The guard-held deletion order shared by an ordinary, an unreadable and a finished interrupted
+ * removal, under the run lock: the legacy siblings, the flat `<runId>.json` and a directory flush (a flat run's commit point), the
  * backups, the primary lock's release, the rename of `<runId>/` to a tombstone and a flush (a
  * directory run's commit point), the siblings again and the tombstone. The signal is honoured only
- * before the flat file goes; the caller releases the legacy guard.
+ * before the flat file goes; the caller releases the legacy guard. Every step tolerates a path that
+ * is already gone, so running it again finishes a removal that stopped part-way (ADR 0061).
  */
 async function deleteRunFiles(
   owned: ReleasableOwnedRun,
@@ -715,6 +746,7 @@ async function planLeftoverRemoval(
     removed: false,
     launchOnly: true,
     unreadable: false,
+    interrupted: false,
     paths: [leftover.path],
     caches: [],
     refsRemoved: [],
@@ -813,6 +845,7 @@ async function removeLaunchLeftover(
       removed: true,
       launchOnly: true,
       unreadable: false,
+      interrupted: false,
       paths: [leftover.path],
       caches: [],
       refsRemoved: [],
@@ -968,6 +1001,7 @@ async function planUnreadableRemoval(
     removed: false,
     launchOnly: false,
     unreadable: true,
+    interrupted: false,
     paths: await existingPaths(stateDir, runId),
     caches: [],
     refsRemoved: [],
@@ -1017,6 +1051,7 @@ async function removeUnreadable(
         removed: true,
         launchOnly: false,
         unreadable: true,
+        interrupted: false,
         paths,
         caches: [],
         refsRemoved: [],
@@ -1044,4 +1079,96 @@ async function confirmDamaged(stateDir: string, runId: string): Promise<void> {
     `Run ${runId} became readable after rm inspected it; nothing was removed. Rerun rm to judge the run.`,
     jsonValue({ status: record.status, createdAt: record.createdAt }),
   );
+}
+
+/** The dry run of an interrupted removal: what {@link finishInterruptedRemoval} would meet now. */
+async function planInterruptedRemoval(
+  options: RemoveRunOptions,
+  removal: InterruptedRemoval,
+  launcher?: CommandLauncher,
+): Promise<RunRemovalResult> {
+  const { runId, stateDir } = removal;
+  const hold = ownershipHold(await inspectRunOwnership({ runId, stateDir }));
+  return {
+    runId,
+    stateDir,
+    dryRun: true,
+    force: options.force ?? false,
+    refs: options.refs ?? false,
+    verdict: hold ? pick(removalRefusal(runId, stateDir, hold, launcher)) : 'remove',
+    removed: false,
+    launchOnly: false,
+    unreadable: false,
+    interrupted: true,
+    paths: removal.paths,
+    caches: [],
+    refsRemoved: [],
+    keptRefs: [],
+    bytes: removal.bytes,
+    tombstones: await deadTombstones(stateDir),
+    warnings: [],
+  };
+}
+
+/**
+ * Finish what a removal of an unmigrated flat run left after its commit point (ADR 0061): a
+ * record-less `<runId>/` holding only its primary lock, and any `.json.v<N>` backups and legacy
+ * guard. It refuses `run.locked` or `run.orphans` while ownership holds the ID (a live, unknown,
+ * remote or unreadable owner or recoverer, or a dead owner's live child), even with `force`, then
+ * takes the run lock without a working directory (recovering a dead owner's, as ADR 0030 allows),
+ * re-checks under it that no record exists (`run.exists`) and that the shape still matches
+ * (`run.not_found`), and runs the ordinary guard-held deletion order again. No caches or refs are
+ * left to touch: a removal deletes them before its commit point. `workflow prune` calls it for each
+ * leftover its container scan finds, never `removeRun`, so an ID that became a run after the scan
+ * is refused rather than removed. @internal
+ */
+export async function finishInterruptedRemoval(
+  removal: InterruptedRemoval,
+  live: RemoveRunLive,
+  context: {
+    readonly force: boolean;
+    readonly refs: boolean;
+    readonly tombstones: readonly string[];
+  },
+): Promise<RunRemovalOutcome> {
+  const { runId, stateDir } = removal;
+  const hold = ownershipHold(await inspectRunOwnership({ runId, stateDir }));
+  if (hold) throw refusalError(runId, stateDir, hold, live.commandLauncher);
+  live.signal?.throwIfAborted();
+  await live.beforeLock?.();
+  return withOwnedRun(stateDir, runId, live, async (owned) => {
+    if ((await inspectInterruptedRemoval(stateDir, runId)) === null) {
+      if (await runRecordPresent(stateDir, runId))
+        throw new RunRefusedError(
+          'run.exists',
+          runId,
+          `A run now holds ID ${runId}, so the interrupted removal was not finished; nothing was removed. Rerun rm to judge the run.`,
+          jsonValue({ stateDir }),
+        );
+      throw await missingRunError({ runId, stateDir });
+    }
+    await deleteRunFiles(owned, stateDir, runId, live);
+    return {
+      kind: 'removed',
+      result: {
+        runId,
+        stateDir,
+        dryRun: false,
+        force: context.force,
+        refs: context.refs,
+        verdict: 'remove',
+        removed: true,
+        launchOnly: false,
+        unreadable: false,
+        interrupted: true,
+        paths: removal.paths,
+        caches: [],
+        refsRemoved: [],
+        keptRefs: [],
+        bytes: removal.bytes,
+        tombstones: context.tombstones,
+        warnings: [],
+      },
+    };
+  });
 }

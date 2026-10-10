@@ -9,7 +9,7 @@ import { defaultStateDir } from '../dist/workflow/runtime/paths.js';
 
 // workflow prune refuses a bare call, previews by status and by missing cwd without changing
 // anything, removes the selected runs through workflow rm, keeps a locked run in skipped and never
-// lists a suspended one. With --missing-cwd --all it previews, then removes, stale project roots in
+// lists a suspended one; it finishes what a crashed flat-run removal left. With --missing-cwd --all it previews, then removes, stale project roots in
 // the smoke's own XDG_STATE_HOME. Local sleeps only: no harness calls.
 const repository = fileURLToPath(new URL('..', import.meta.url));
 const root = mkdtempSync(join(tmpdir(), 'choir-prune-cli-'));
@@ -81,6 +81,10 @@ try {
     }),
   );
 
+  // What a crashed rm of a flat run left after its commit point: an empty directory and a backup.
+  mkdirSync(join(stateDir, 'ghost'));
+  writeFileSync(join(stateDir, 'ghost.json.v1'), '{}');
+
   const bare = document(2, ['prune']);
   assert.equal(bare.error.code, 'usage.flag', bare.error.message);
 
@@ -93,6 +97,7 @@ try {
     byStatus.skipped.map((run) => [run.runId, run.reason, run.code]),
     [['held', 'locked', 'run.locked']],
   );
+  assert.deepEqual(byStatus.unfinishedRemovals, [join(stateDir, 'ghost')]);
   const missing = document(0, ['prune', '--missing-cwd', '--dry-run']);
   assert.deepEqual(ids(missing.removed), ['lost']);
   const [lost] = missing.removed;
@@ -102,6 +107,7 @@ try {
 
   const removed = document(0, ['prune', '--missing-cwd']);
   assert.deepEqual(ids(removed.removed), ['lost']);
+  assert.deepEqual(removed.unfinishedRemovals, [join(stateDir, 'ghost')]);
   assert.equal(removed.bytes, lost.bytes);
 
   const text = command(['prune', '--older-than', '0s', '--status', 'completed']);

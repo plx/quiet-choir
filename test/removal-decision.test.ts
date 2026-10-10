@@ -6,9 +6,12 @@ import type { HarnessProcessInspection } from '../src/workflow/runtime/process-r
 import type { RunRecord, StepRecord } from '../src/workflow/runtime/record.js';
 import {
   damagedRecordCode,
+  interruptedRemovalShape,
   ownershipHold,
   removalRefusal,
   removalVerdict,
+  type InterruptedRemovalEntry,
+  type InterruptedRemovalFacts,
   type RemovalVerdict,
 } from '../src/workflow/runtime/removal-decision.js';
 
@@ -353,5 +356,77 @@ describe('damagedRecordCode', () => {
     ['', false],
   ])('%s qualifies: %s', (code, expected) => {
     expect(damagedRecordCode(code)).toBe(expected);
+  });
+});
+
+describe('interruptedRemovalShape', () => {
+  const lockDir: InterruptedRemovalEntry = { name: 'lock', kind: 'directory', lockStray: false };
+  const entry = (
+    name: string,
+    kind: InterruptedRemovalEntry['kind'] = 'file',
+    lockStray = false,
+  ): InterruptedRemovalEntry => ({ name, kind, lockStray });
+  const directory = (...entries: InterruptedRemovalEntry[]) => ({
+    symlinkOrNotDirectory: false,
+    entries,
+  });
+  const facts = (overrides: Partial<InterruptedRemovalFacts> = {}): InterruptedRemovalFacts => ({
+    validRunId: true,
+    recordPresent: false,
+    inboxSibling: false,
+    cancelSibling: false,
+    backups: 0,
+    directory: directory(lockDir),
+    ...overrides,
+  });
+
+  // Accepted: what a removal stopped after its flat commit point leaves, and nothing else.
+  it.each<[string, Partial<InterruptedRemovalFacts>]>([
+    ['an absent directory with a backup', { directory: null, backups: 1 }],
+    ['an empty directory', { directory: directory() }],
+    ['a lock directory only', {}],
+    ['a lock directory and backups', { backups: 2 }],
+    [
+      'a lock and a .gone stray of it',
+      { directory: directory(lockDir, entry('lock.123.uuid.gone', 'directory', true)) },
+    ],
+    [
+      'only a .tmp stray of the lock',
+      { directory: directory(entry('lock.9.uuid.tmp', 'directory', true)) },
+    ],
+  ])('accepts %s', (_name, overrides) => {
+    expect(interruptedRemovalShape(facts(overrides))).toBe(true);
+  });
+
+  // Rejected: anything a live, starting or launch-only run, or a stranger, could hold.
+  it.each<[string, Partial<InterruptedRemovalFacts>]>([
+    ['a lock that is a file', { directory: directory(entry('lock')) }],
+    [
+      'journal.jsonl (a run before its first snapshot)',
+      { directory: directory(lockDir, entry('journal.jsonl')) },
+    ],
+    [
+      'launch/ (a leftover launch directory)',
+      { directory: directory(entry('launch', 'directory')) },
+    ],
+    ['inbox/', { directory: directory(lockDir, entry('inbox', 'directory')) }],
+    ['an unknown file', { directory: directory(entry('notes.txt')) }],
+    ['an unknown entry of another kind', { directory: directory(entry('socket', 'other')) }],
+    [
+      'a stray of another lock name',
+      { directory: directory(entry('other.1.uuid.gone', 'directory')) },
+    ],
+    [
+      'a symbolic link or non-directory at the run path',
+      { directory: { symlinkOrNotDirectory: true, entries: [] }, backups: 1 },
+    ],
+    ['no directory and no backups', { directory: null, backups: 0 }],
+    ['a record present', { recordPresent: true }],
+    ['a record present with only backups', { recordPresent: true, directory: null, backups: 1 }],
+    ['a legacy .inbox sibling', { inboxSibling: true }],
+    ['a legacy .cancel.json sibling', { cancelSibling: true }],
+    ['an invalid ID', { validRunId: false }],
+  ])('rejects %s', (_name, overrides) => {
+    expect(interruptedRemovalShape(facts(overrides))).toBe(false);
   });
 });
