@@ -1,4 +1,5 @@
 import { testInvocation } from './harness-invocation.js';
+import { readFileSync } from 'node:fs';
 import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -24,6 +25,24 @@ function response(outcome: ProtocolOutcome) {
 const parseClaude = (stdout: string, structured: boolean) =>
   response(classifyClaude(stdout, structured));
 const parseCodex = (stdout: string) => response(classifyCodex(stdout));
+
+/** Captured `codex exec --json` streams of the MCP and web search tool items (harness-tools/). */
+const codexToolCaptures = [
+  { name: 'codex-mcp-tool-success', itemType: 'mcp_tool_call' },
+  { name: 'codex-web-search-success', itemType: 'web_search' },
+] as const;
+function codexToolCapture(name: string): { version: string; stdout: string } {
+  const capture = JSON.parse(
+    readFileSync(new URL(`./fixtures/harness-tools/${name}.json`, import.meta.url), 'utf8'),
+  ) as { version: string; stdout: string };
+  return capture;
+}
+function captureEvents(stdout: string): { type: string; item?: { type: string; id: string } }[] {
+  return stdout
+    .split('\n')
+    .filter((line) => line.trim())
+    .map((line) => JSON.parse(line) as { type: string; item?: { type: string; id: string } });
+}
 
 const directories: string[] = [];
 const signal = new AbortController().signal;
@@ -564,6 +583,91 @@ describe('HarnessStream tool-use count', () => {
         item('reasoning', 'item.completed', 'i6'),
       ]),
     ).toBe(5);
+  });
+});
+
+describe('captured Codex tool items', () => {
+  async function feed(stdout: string, byLine: boolean) {
+    const stream = new HarnessStream('codex', false, 1024 * 1024, testInvocation());
+    for (const chunk of byLine ? stdout.split(/(?<=\n)/u) : [stdout])
+      await stream.stdout(Buffer.from(chunk));
+    const outcome = await stream.finish();
+    return { outcome, toolUses: stream.diagnostics('')['toolUses'] };
+  }
+
+  it.each(codexToolCaptures)(
+    'counts the $itemType capture as one tool use and finishes with the message',
+    async ({ name, itemType }) => {
+      const { version, stdout } = codexToolCapture(name);
+      expect(version).toMatch(/^\d+\.\d+\.\d+$/u);
+      const events = captureEvents(stdout);
+      expect(events.some((entry) => entry.item?.type === itemType)).toBe(true);
+      for (const byLine of [false, true]) {
+        const { outcome, toolUses } = await feed(stdout, byLine);
+        expect(toolUses).toBe(1);
+        expect(outcome).toMatchObject({
+          kind: 'success',
+          response: { text: 'hello from captured codex' },
+        });
+      }
+    },
+  );
+
+  it.each(codexToolCaptures)(
+    'holds an item.started and item.completed pair with one id for $itemType',
+    ({ name, itemType }) => {
+      const events = captureEvents(codexToolCapture(name).stdout).filter(
+        (entry) => entry.item?.type === itemType,
+      );
+      expect(events.map((entry) => entry.type)).toEqual(['item.started', 'item.completed']);
+      expect(new Set(events.map((entry) => entry.item?.id)).size).toBe(1);
+    },
+  );
+
+  it('keeps the started and completed lines of one captured item to one count', async () => {
+    const { stdout } = codexToolCapture('codex-mcp-tool-success');
+    const lines = stdout.split(/(?<=\n)/u).filter((line) => line.includes('mcp_tool_call'));
+    expect(lines).toHaveLength(2);
+    expect((await feed(lines.join(''), true)).toolUses).toBe(1);
+    expect((await feed(lines[1] ?? '', true)).toolUses).toBe(1);
+  });
+
+  it('summarizes the captured items with the fields that progress reads', async () => {
+    vi.useFakeTimers({ toFake: ['performance'] });
+    try {
+      for (const [name, expected] of [
+        [
+          'codex-mcp-tool-success',
+          [
+            'Codex mcp_tool_call: item.started fixture/echo',
+            'Codex mcp_tool_call: item.completed fixture/echo',
+          ],
+        ],
+        [
+          'codex-web-search-success',
+          [
+            'Codex web_search: item.started',
+            'Codex web_search: item.completed quiet-choir contract fixture',
+          ],
+        ],
+      ] as const) {
+        const seen: string[] = [];
+        const stream = new HarnessStream('codex', false, 1024 * 1024, {
+          ...testInvocation(),
+          onProgress: (event) => seen.push(event.summary),
+        });
+        for (const line of codexToolCapture(name).stdout.split(/(?<=\n)/u)) {
+          vi.advanceTimersByTime(200);
+          await stream.stdout(Buffer.from(line));
+        }
+        await stream.finish();
+        expect(
+          seen.filter((summary) => /^Codex (mcp_tool_call|web_search):/u.test(summary)),
+        ).toEqual(expected);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

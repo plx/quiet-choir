@@ -285,6 +285,13 @@ APIs. `npm run test:contract -- --refresh` rewrites sanitized captures;
 without native CLIs, credentials, or network. See [rehearsal](docs/rehearsal.md) for scenario
 routing and argv logging.
 
+`npm run test:contract -- --tools` captures the Codex `mcp_tool_call` and `web_search` items into
+`test/fixtures/harness-tools/` (see its README). It is also zero-cost: a loopback fake Responses
+API, a dummy key, a fresh `HOME` and `CODEX_HOME`, and the dependency-free stdio MCP server in
+`test/contracts/mcp-server.mjs`. Without `--refresh` it fails when Codex's item types, the
+`item.started`/`item.completed` pairing, the query or server/tool fields, or the built stream's tool
+count change; with `--refresh` it rewrites the two fixtures that `test/harness.test.ts` replays.
+
 `npm run test:contract:isolation` additionally verifies restricted configuration, untrusted project
 hooks, explicit opt-ins, and file-tool boundaries against local fake APIs. It also uses fresh homes
 and dummy keys, and performs no upstream inference. See
