@@ -106,9 +106,10 @@ export const runBudgetSchema = z.object({
  * and rescanned only when a step that holds a harness's latest report is rewritten so that the
  * report no longer stands (see {@link RunBudget.observe}). The answer equals `latestRateLimits` over
  * the record, except for timing: a new report counts once its attempt has settled and been saved
- * (the runner observes the step on release and before a retry's backoff), as a resumed run would
- * see it, where a full scan also read an in-flight attempt's unsaved report. A seed or rescan while
- * an attempt runs still reads it, ranked by its start, and its settlement replaces it.
+ * (the runner observes the step on release, before a retry's backoff and after a completion save),
+ * as a resumed run would see it, where a full scan also read an in-flight attempt's unsaved report.
+ * A seed or rescan while an attempt runs still reads it, ranked by its start, and its settlement
+ * replaces it.
  *
  * The cost total is not cached; `check` sums it only while `maxRunCostUsd` is set. It includes
  * integration usage that local steps report through `reportUsage`, which settles outside admission
