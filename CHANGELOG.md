@@ -2,6 +2,15 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- The `assertHarnessConformance` suite gains a thirteenth scenario, `progress` (#380). The fixture's
+  fake must emit a quick burst of native activity (at least two progress-producing events) and then
+  succeed; the suite's `onProgress` observer throws after recording each event, and the call must
+  still resolve, so an adapter that lets observer exceptions escape now fails. An adapter whose
+  fixture reports no progress fails too. Every scenario also checks the documented throttle: after
+  the first `init` event, progress deliveries must come at least 80 ms apart (the 100 ms bound,
+  documented on `HarnessInvocation.onProgress`, with 20 ms of slack). Custom fixtures must handle
+  `progress` (an exhaustive switch on `HarnessConformanceCase` needs the new case); the built-in
+  adapters pass, since `createInvocationStream` throttles and isolates observers.
 - `--max-window-utilization` admission no longer rescans the step map: the run budget keeps the
   latest rate-limit report per harness as admitted attempts settle (a report counts once its attempt
   has settled and been saved), and sums usage only while `--max-run-cost-usd` is set (#378,
