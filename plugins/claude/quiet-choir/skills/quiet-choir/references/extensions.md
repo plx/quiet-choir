@@ -437,11 +437,12 @@ Its waits `gh.waitChecks(id, { pr, sha, timeoutMs })`, `gh.waitPr(id, { pr, sha,
 however many checks, and are head-pinned: `success`, `clean` and `merged` are reported only for
 `sha`, any other head ends with `head-moved` (after an optional `staleGraceMs` for an ancestor
 view), and a closed pull request with `closed`. They tolerate a bounded run of transient gh errors
-and return `timeout` at the deadline. Reviewers are `ReviewerBot` adapters (`name`, `login`,
-`reads`, a pure `observe(activity, context)` returning `pending`, `running`, `clean`, `findings` or
-`error`, with a note kept in the wait's checkpoint); `codexReviewer()` keeps Codex's two-check
-debounce and `codeqlReviewer({ settleMs })` counts alerts that land after the CodeQL check. Take
-`since` from `ctx.now` after pushing `sha`. See
+and return `timeout` at the deadline; `waitChecks`' `requiredChecks` names checks that must register
+before a successful rollup counts. Reviewers are `ReviewerBot` adapters (`name`, `login`, `reads`, a
+pure `observe(activity, context)` returning `pending`, `running`, `clean`, `findings` or `error`,
+with a note kept in the wait's checkpoint); `codexReviewer()` keeps Codex's two-check debounce and
+`codeqlReviewer({ settleMs })` counts alerts that land after the CodeQL check. Take `since` from
+`ctx.now` after pushing `sha`. See
 [GitHub waits](https://github.com/plx/quiet-choir/blob/main/docs/github.md#waits).
 
 Its writes are one version-identified `ctx.step` each (`github.comment/1` and so on), so pass the

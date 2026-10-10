@@ -342,6 +342,25 @@ since it could never match.
   pending, `runId` is the Actions run for `gh run`. `no-checks` is reported only once `graceMs`
   (default 300000) has passed since the wait's first check; before that, no checks keeps waiting. A
   pull request that closes or merges before CI finishes is `closed`.
+- `waitChecks` with `requiredChecks: ['Quality and package', 'test (22)']` also waits for named
+  checks to exist. The rollup covers only the checks GitHub has registered so far: right after a
+  push, a fast check can roll up as success before slower workflows register. Naming the checks that
+  must exist stops the wait from trusting that rollup. The names add to the rollup and never filter
+  it: every registered check still counts, and a failure of an unnamed check is still `failure`.
+  Each name is matched exactly against a check run (usually the job name, with any matrix suffix
+  such as `test (22)`) or a commit status context, as the rollup shows them; a workflow name does
+  not match. `success` needs a check of every name and a passing rollup, where a skipped or neutral
+  check run passes as usual. A name that has not registered is listed in `pending` after the
+  registered pending checks; it has no run yet, so do not pass it to `gh run`. `failure` still ends
+  the wait as soon as every registered check has completed and one failed, even while a required
+  check is missing. Once nothing registered is pending and `graceMs` has passed with a required
+  check still missing, the wait ends with `no-checks`, the missing names in `pending`. A wrong name
+  therefore never ends in `success`, only in `no-checks`, `timeout` or another check's `failure`.
+  `graceMs` is measured from the wait's first check, so a chained workflow (one that a
+  `workflow_run` trigger starts after other checks complete) may need a larger `graceMs`. While the
+  wait runs, its saved note (the step's `wait.note` in `workflow inspect --json`) also lists the
+  missing names in `missing`, apart from `pending`, which the note cuts at 40 names. Order and
+  duplicates do not matter, and an empty list is the same as none.
 - `waitPr` returns `{ status, headRefOid, mergeCommit }`. `until: 'merged'` ends at a merge, at a
   close, or as soon as the head leaves `sha`; `until: 'closed'` waits through pushes for any close.
   A pull request closed without merging is `closed` at once with either. `merged` requires the
@@ -439,14 +458,15 @@ Keep `observe` a pure decision: no I/O, clock or context operations. `context` c
 
 ### Identity and the clock
 
-A wait's identity is its input (repository, `pr`, `sha`, `graceMs`, `staleGraceMs`, `until`,
-`since`, and each reviewer's name, login, reads and `identity`), its result schema, its spacing and
-an internal versioned identity such as `{ helper: 'github.waitChecks', version: 1 }` in place of the
-observer's source text, so the helper's code formatting or loader cannot strand a waiting run. A
-reviewer without `identity` contributes the SHA-256 of its `observe` source instead. Policy stays
-out: `tolerate`, `observeTimeoutMs`, `maxOutputBytes` and the time bound's policy fields may change
-on resume. A later quiet-choir version that changes a wait's meaning bumps its version, which makes
-waits in flight refuse to resume with "wait changed"; start a new wait ID.
+A wait's identity is its input (repository, `pr`, `sha`, `graceMs`, `staleGraceMs`, `requiredChecks`
+when given, sorted and without duplicates, `until`, `since`, and each reviewer's name, login, reads
+and `identity`), its result schema, its spacing and an internal versioned identity such as
+`{ helper: 'github.waitChecks', version: 1 }` in place of the observer's source text, so the
+helper's code formatting or loader cannot strand a waiting run. A reviewer without `identity`
+contributes the SHA-256 of its `observe` source instead. Policy stays out: `tolerate`,
+`observeTimeoutMs`, `maxOutputBytes` and the time bound's policy fields may change on resume. A
+later quiet-choir version that changes a wait's meaning bumps its version, which makes waits in
+flight refuse to resume with "wait changed"; start a new wait ID.
 
 Observers have no run clock, so the grace, the stale grace and the CodeQL settle are measured with
 the wall clock from the wait's first check, kept in its note; `RunOptions.clock` does not move them.
