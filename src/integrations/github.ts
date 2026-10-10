@@ -396,9 +396,11 @@ export interface GithubIssueWrites {
   /**
    * Create an issue, reconciled by its marker: read the viewer, then the viewer's issues in the
    * repository newest first, page by page, and create the issue only when none carries the marker.
-   * A miss scans every issue the viewer created there. With `parent`, read the issue's parent:
-   * link it with `addSubIssue` when it has none, do nothing when it already is `parent`, and throw
-   * without any write when it has a different parent.
+   * A miss scans every issue the viewer created there. With `parent`, the wanted parent is read
+   * first, so a parent that does not exist (or is a pull request) throws before any write. A new
+   * issue is then linked with `addSubIssue`. An issue found by its marker has its parent read: link
+   * it when it has none, do nothing when it already is `parent`, and throw without any write when
+   * it has a different parent.
    */
   create(
     id: string,

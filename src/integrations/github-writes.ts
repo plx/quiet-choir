@@ -52,6 +52,8 @@ import {
   mergePrecheck,
   mergeResponseSchema,
   parentDecision,
+  parentIdReadArgv,
+  parentIdResponseSchema,
   parentReadArgv,
   parentReadResponseSchema,
   prCreateResultSchema,
@@ -541,6 +543,13 @@ export function githubWrites(
           issueCreateResultSchema,
           settings,
           async (gh) => {
+            // Read the wanted parent first, so a parent that does not exist (or is a pull request)
+            // fails before any write instead of leaving an unlinked issue behind.
+            const wanted =
+              parent === null
+                ? null
+                : (await gh.read(parentIdReadArgv(repo, parent), parentIdResponseSchema)).data
+                    .repository.wanted;
             const marked = withMarker(body, gh.key);
             const info = repoInfoRead(repo);
             const viewer = info.map(await gh.read(info.argv, info.schema)).viewer;
@@ -565,24 +574,36 @@ export function githubWrites(
                 }),
                 issuePostResponseSchema,
               ));
-            if (parent !== null) {
-              const { child, wanted } = (
-                await gh.read(parentReadArgv(repo, issue.number, parent), parentReadResponseSchema)
-              ).data.repository;
-              const current = child.parent;
-              const decision = parentDecision(current, wanted);
-              if (decision === 'different' && current !== null)
-                throw new Error(
-                  `github issue.create ${id}: issue #${String(issue.number)} already has parent ${current.repository.nameWithOwner}#${String(current.number)}, not #${String(parent)}; it is never moved.`,
-                );
-              if (decision === 'link')
+            if (wanted !== null) {
+              if (found === undefined) {
+                // A fresh issue has no parent. If something links it first, addSubIssue refuses
+                // and the retry takes the found path below, which reads the parent.
                 await gh.write(
                   graphqlWrite(repo, ADD_SUB_ISSUE_MUTATION, {
                     issueId: wanted.id,
-                    subIssueId: child.id,
+                    subIssueId: issue.node_id,
                   }),
                   addSubIssueResponseSchema,
                 );
+              } else {
+                const { child } = (
+                  await gh.read(parentReadArgv(repo, issue.number), parentReadResponseSchema)
+                ).data.repository;
+                const current = child.parent;
+                const decision = parentDecision(current, wanted);
+                if (decision === 'different' && current !== null)
+                  throw new Error(
+                    `github issue.create ${id}: issue #${String(issue.number)} already has parent ${current.repository.nameWithOwner}#${String(current.number)}, not #${String(parent)}; it is never moved.`,
+                  );
+                if (decision === 'link')
+                  await gh.write(
+                    graphqlWrite(repo, ADD_SUB_ISSUE_MUTATION, {
+                      issueId: wanted.id,
+                      subIssueId: child.id,
+                    }),
+                    addSubIssueResponseSchema,
+                  );
+              }
             }
             return {
               number: issue.number,

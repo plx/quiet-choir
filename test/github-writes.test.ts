@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { z } from '../src/index.js';
@@ -23,6 +23,7 @@ import {
   issuePostResponseSchema,
   issueStateResponseSchema,
   parentDecision,
+  parentIdResponseSchema,
   parentReadResponseSchema,
   replyResponseSchema,
   resolveResponseSchema,
@@ -105,6 +106,20 @@ function route(call: FakeCall): string | null {
 }
 const writes = (state: FakeState): string[] =>
   state.calls.map(route).filter((entry): entry is string => entry !== null);
+
+/** Every call by kind: a write's route, or `parent-id`, `child`, `viewer` or `list` for a read. */
+function kinds(state: FakeState): string[] {
+  return state.calls.map((call) => {
+    const written = route(call);
+    if (written !== null) return written;
+    const text = call.argv.join(' ');
+    if (text.includes('wanted: issue(')) return 'parent-id';
+    if (text.includes('child: issue(')) return 'child';
+    if (text.includes('viewer {')) return 'viewer';
+    if (text.includes('creator=')) return 'list';
+    return text;
+  });
+}
 
 const issue = (number: number, overrides: Partial<FakeIssue> = {}): Record<string, FakeIssue> => ({
   [String(number)]: {
@@ -547,6 +562,89 @@ describe('conditional ops', () => {
     expect(after.issues['11']?.parent).toBe(6);
   });
 
+  it.each([
+    ['does not exist', {}, 99],
+    ['is a pull request', issue(8, { pull_request: true }), 8],
+  ])(
+    'reads an issue.create parent first: a parent that %s fails before any write, and a rerun creates the issue',
+    async (_name, seeded, parent) => {
+      const { runner, state } = await fake({ issues: seeded });
+      const workflow = definition((ctx) =>
+        client(ctx).issue.create('orphan', { title: 'Orphan', body: 'Body.', parent }),
+      );
+      await expect(
+        runWorkflow(workflow, { ...setup('orphan'), processRunner: runner }),
+      ).rejects.toThrow(/Step orphan .* failed: Command exited with 1/u);
+      const failed = await state();
+      expect(Object.keys(failed.issues)).toEqual(Object.keys(seeded));
+      expect(writes(failed)).toEqual([]);
+      expect(kinds(failed)).toEqual(['parent-id']);
+
+      // Fix the parent and resume the same run: nothing was written, so it creates and links.
+      const path = join(cwd(), 'gh-state.json');
+      const fixed = JSON.parse(await readFile(path, 'utf8')) as FakeState;
+      await writeFile(
+        path,
+        JSON.stringify({ ...fixed, issues: { ...fixed.issues, ...issue(parent) } }),
+      );
+      const run = await runWorkflow(workflow, {
+        ...setup('orphan'),
+        processRunner: runner,
+        resume: true,
+      });
+      expect(run.status).toBe('completed');
+      expect(run.output).toMatchObject({ created: true, parent });
+      const after = await state();
+      const created = marked(Object.values(after.issues), githubMarker('orphan/orphan'));
+      expect(created).toHaveLength(1);
+      expect(created[0]?.parent).toBe(parent);
+      expect(writes(after)).toEqual(['POST issues', 'graphql addSubIssue']);
+    },
+  );
+
+  it('makes no extra read: a new issue with a parent is pre-read, listed, created and linked, and no parent means no parent read', async () => {
+    const { runner, state } = await fake({ issues: issue(5) });
+    await runWorkflow(
+      definition(async (ctx) => {
+        const gh = client(ctx);
+        await gh.issue.create('child', { title: 'Child', body: 'Body.', parent: 5 });
+        await gh.issue.create('plain', { title: 'Plain', body: 'Body.' });
+        return null;
+      }),
+      { ...setup('counts'), processRunner: runner },
+    );
+    expect(kinds(await state())).toEqual([
+      'parent-id',
+      'viewer',
+      'list',
+      'POST issues',
+      'graphql addSubIssue',
+      'viewer',
+      'list',
+      'POST issues',
+    ]);
+  });
+
+  it('reads the child only when the issue was found by its marker', async () => {
+    const { runner, state } = await fake({
+      issues: {
+        ...issue(5),
+        ...issue(10, {
+          creator: VIEWER,
+          body: `Same.\n\n${githubMarker('found/same')}`,
+          parent: 5,
+        }),
+      },
+    });
+    await runWorkflow(
+      definition((ctx) =>
+        client(ctx).issue.create('same', { title: 'Same', body: 'Same.', parent: 5 }),
+      ),
+      { ...setup('found'), processRunner: runner },
+    );
+    expect(kinds(await state())).toEqual(['parent-id', 'viewer', 'list', 'child']);
+  });
+
   it('throws on the opposite ifState literal and on invalid arguments before the step opens', async () => {
     const { runner, state } = await fake();
     const attempts: Record<string, (gh: GithubClient) => Promise<unknown>> = {
@@ -652,6 +750,7 @@ describe('response schemas', () => {
       ['resolve', resolveResponseSchema],
       ['parentUnlinked', parentReadResponseSchema],
       ['parentLinked', parentReadResponseSchema],
+      ['parentId', parentIdResponseSchema],
       ['addSubIssue', addSubIssueResponseSchema],
       ['issueState', issueStateResponseSchema],
     ];
@@ -802,6 +901,10 @@ export default defineWorkflow({
         outputSource: 'synthesized',
       });
     const written = rehearsedWrites(commands);
+    // The create step reads the parent first, then the viewer and the list, then writes.
+    const created = commands.filter((command) => command.stepId === 'create');
+    expect(created).toHaveLength(5);
+    expect((created[0]?.command as readonly string[]).join(' ')).toContain('wanted: issue(');
     expect(written).toEqual([
       `comment POST repos/${REPO}/issues/7/comments`,
       'reply graphql',

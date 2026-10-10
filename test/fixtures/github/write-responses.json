@@ -94,10 +94,12 @@
   "parentUnlinked": {
     "data": {
       "repository": {
-        "child": { "id": "I_kwDOPchild", "number": 12, "parent": null },
-        "wanted": { "id": "I_kwDOPparent", "number": 5 }
+        "child": { "id": "I_kwDOPchild", "number": 12, "parent": null }
       }
     }
+  },
+  "parentId": {
+    "data": { "repository": { "wanted": { "id": "I_kwDOPparent", "number": 5 } } }
   },
   "parentLinked": {
     "data": {
@@ -110,8 +112,7 @@
             "number": 5,
             "repository": { "nameWithOwner": "octo-org/quiet-choir" }
           }
-        },
-        "wanted": { "id": "I_kwDOPparent", "number": 5 }
+        }
       }
     }
   },
