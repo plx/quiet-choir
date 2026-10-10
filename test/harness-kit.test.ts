@@ -236,7 +236,7 @@ it.each([
         { ...invocation, policy },
       ];
     }),
-    message: /^Conformance scenario timeout: .*timeout/u,
+    message: /^Conformance scenario timeout: .*still running 100ms after the timeout/u,
     // Only the timeout scenario needs the real (hanging) adapter; the in-process one honors the
     // scenarios before it, which keeps this case fast. The small limits are safe because the
     // adapter never settles: load can only delay the failure.
