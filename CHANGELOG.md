@@ -2,6 +2,19 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `workflow rm RUN --unreadable` removes a run whose record file is present but whose content is
+  damaged: an invalid `run.json` or flat `<runId>.json`, a journal gap, a format-7 marker without
+  its directory, or `run.json` without `journal.jsonl` (#367,
+  [ADR 0060](docs/decisions/0060-remove-an-unreadable-run-on-request.md)). It keeps rm's
+  `run.locked` and `run.orphans` refusals, refuses `run.active` even with `--force` while a launch
+  in the run's `launch/` may be in flight, takes the run lock, re-reads the record under it
+  (`run.exists` if it became readable) and deletes in the ordinary order, without touching worktree
+  caches or pinned refs; the result gains `unreadable` and a warning naming how to find them.
+  Without the flag rm still refuses `run.unreadable`, now naming the command in its message and in
+  `error.details.next` (passed through to `next`), and reports `run.json` without `journal.jsonl` as
+  `run.unreadable` instead of `run.not_found`. A record unreadable for access or I/O reasons, or a
+  newer build's record, is still refused, and prune never removes an unreadable run. Together with
+  the leftover `launch/` removal of #261, both cases go through `workflow rm ID`.
 - Both skill copies bundle `references/github.md`, a condensed reference for `quiet-choir/github`
   (reads, waits, reviewers, writes, merging, epics and the write, gate and land examples as compiled
   fences), and every link to `docs/github.md` in the skills now points to it (#362). The repository

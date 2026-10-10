@@ -72,3 +72,5 @@ start.
   slower with the number of leftovers. Directories that are not leftovers are not read.
 - Removing unreadable or corrupt run records (#367), sweeping other crash leftovers (#369) and
   having prune remove leftovers in bulk are separate decisions.
+  [0060](0060-remove-an-unreadable-run-on-request.md) now covers removing a damaged record with
+  `workflow rm --unreadable`.

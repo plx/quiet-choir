@@ -368,6 +368,16 @@ record, reporting `launchOnly: true`. While that start may still be in flight (i
 is alive, unverifiable or remote, or, without a runner record, its files are under an hour old) rm
 refuses with `run.active`, and `--force` does not override it.
 
+A run whose record file is present but damaged (invalid `run.json` or flat `<runId>.json`, a journal
+gap, a migrated marker without its directory, `run.json` without `journal.jsonl`) is refused with
+`run.unreadable`, and `error.details.next` names `workflow rm ID --unreadable`. With that flag rm
+removes it without reading the record, after the same `run.locked` and `run.orphans` refusals and a
+`run.active` refusal (even with `--force`) while a launch in its `launch/` may be in flight. It
+removes no worktree caches or pinned refs, since the record that names them is unreadable; its
+result has `unreadable: true` and a warning pointing to `git worktree list` and
+`refs/quiet-choir/<runId>/`. A record unreadable for access or I/O reasons (`EACCES`, `EIO`) is
+still refused, and prune never removes an unreadable run.
+
 ### Retention recipe
 
 `workflow prune` removes finished runs in bulk through the same guarded rm, one run at a time. It

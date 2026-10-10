@@ -122,3 +122,5 @@ part of the documentation.
 - [0058: Honour a forced cancel in tick's stale recovery](0058-honour-a-forced-cancel-in-stale-recovery.md)
 
 - [0059: Keep poll callback identity as loaded source text](0059-keep-poll-callback-identity-as-loaded-source.md)
+
+- [0060: Remove a run whose record is damaged, on request](0060-remove-an-unreadable-run-on-request.md)

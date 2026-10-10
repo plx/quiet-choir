@@ -210,15 +210,15 @@ failure's `runId` and `stateDir` are null. `next` is the
 `--force-remote` only for a foreign holder; a race (`changed during unlock`) carries the plain
 command. Nothing is ever signaled.
 
-`workflow rm ID [--force] [--refs] [--dry-run] --json` removes one saved run without importing
-workflow code ([ADR 0049](decisions/0049-guard-held-run-removal.md)): the run directory (record,
-journal, `attempts/` transcripts, artifacts, `launch/`, inbox, lock), the legacy `<runId>.json`
-marker or flat record, `<runId>.json.lock`, `<runId>.inbox`, `<runId>.cancel.json` and the
-`<runId>.json.v<N>` backups, and its worktree caches. Caches are removed through the same cleanup as
-`workflow clean`, under the worktree administration lock; when the ledger's repository no longer
-exists, rm deletes the caches inside the run's own `<root>/<runId>-<namespace>/` directly, after
-checking that each is a real directory named by a SHA-256 digest that matches its ledger key (a
-failed check refuses with `workflow.storage` and deletes nothing). It then removes the empty
+`workflow rm ID [--force] [--refs] [--dry-run] [--unreadable] --json` removes one saved run without
+importing workflow code ([ADR 0049](decisions/0049-guard-held-run-removal.md)): the run directory
+(record, journal, `attempts/` transcripts, artifacts, `launch/`, inbox, lock), the legacy
+`<runId>.json` marker or flat record, `<runId>.json.lock`, `<runId>.inbox`, `<runId>.cancel.json`
+and the `<runId>.json.v<N>` backups, and its worktree caches. Caches are removed through the same
+cleanup as `workflow clean`, under the worktree administration lock; when the ledger's repository no
+longer exists, rm deletes the caches inside the run's own `<root>/<runId>-<namespace>/` directly,
+after checking that each is a real directory named by a SHA-256 digest that matches its ledger key
+(a failed check refuses with `workflow.storage` and deletes nothing). It then removes the empty
 namespace directory. Pinned refs are deleted only with `--refs`. It refuses with exit 3 and changes
 nothing, in this order: `run.locked` while any lock owner or recoverer is alive, unverifiable or on
 a foreign host, or has unreadable metadata, even with `--force` (`error.details` has `lockPath`,
@@ -230,14 +230,14 @@ alive or unverifiable; and, without `--force`, `run.active` when the recorded st
 answer or resume may still need the run. After taking the lock rm refuses with `run.exists` and
 removes nothing when another run reused the ID since rm inspected it (`error.details` has
 `expectedCreatedAt` and `createdAt`). A missing run is `run.not_found` and an unreadable one
-`run.unreadable`. rm takes the run lock without registering a project, so a dead owner's lock is
-recovered as on resume. When Git cannot remove a cache while its repository exists, rm stops before
-deleting the run and fails with `workflow.storage` (exit 74): caches Git already removed stay
-removed and are recorded in the ledger (`error.details.removedCaches` names them), no ref is
-deleted, the message and `error.details.caches` name each cache that remains,
-`error.details.warnings` carries Git's reasons, and the record stays for a retry with
-`workflow clean ID`. Success returns
-`{kind:"workflow.rm.result", ok:true, runId, stateDir, dryRun, force, refs, verdict, removed, launchOnly, paths, caches, refsRemoved, keptRefs, bytes, tombstones, warnings}`:
+`run.unreadable`; a damaged record is removed only with `--unreadable` (below). rm takes the run
+lock without registering a project, so a dead owner's lock is recovered as on resume. When Git
+cannot remove a cache while its repository exists, rm stops before deleting the run and fails with
+`workflow.storage` (exit 74): caches Git already removed stay removed and are recorded in the ledger
+(`error.details.removedCaches` names them), no ref is deleted, the message and
+`error.details.caches` name each cache that remains, `error.details.warnings` carries Git's reasons,
+and the record stays for a retry with `workflow clean ID`. Success returns
+`{kind:"workflow.rm.result", ok:true, runId, stateDir, dryRun, force, refs, verdict, removed, launchOnly, unreadable, paths, caches, refsRemoved, keptRefs, bytes, tombstones, warnings}`:
 `paths` are the run's paths in the runs container, `caches` are `{path, method:"git"|"direct"}`,
 `keptRefs` lists the pins that survive without `--refs`, `bytes` is the list `bytes` measured before
 removal, and `tombstones` names the abandoned removals this rm swept. `--dry-run` takes no lock,
@@ -273,6 +273,34 @@ leftover exits 0 and reports the verdict a real rm would meet now: `run.active` 
 leftover, otherwise `run.locked` while the legacy guard (or a lock beside it) is held, otherwise
 `remove`. A cancellation signal is honoured up to the rename; an abort until then leaves the
 directory in place.
+
+A run whose record file (`<runId>/run.json` or `<runId>.json`) is present but whose content is
+damaged is removed only with `--unreadable`
+([ADR 0060](decisions/0060-remove-an-unreadable-run-on-request.md)). Damaged means a
+`run.unreadable` read whose `error.details.filesystemCode` is null (invalid JSON or schema, a
+journal sequence gap, a format-7 marker whose directory is missing), `EISDIR` or `ENOTDIR`, or a
+missing companion such as `journal.jsonl` beside a present `run.json`, which rm reports as
+`run.unreadable` rather than `run.not_found`. Without the flag rm refuses such a run with
+`run.unreadable` (exit 3); its message names the command, and `error.details` adds `next`, one
+`{why, argv}` entry for `workflow rm ID --state-dir DIR --unreadable` (with `--dry-run` when the
+refused rm was a dry run) behind the invocation's launcher, which the top-level `next` passes
+through. Other commands' `run.unreadable` refusals carry no `details.next`. Any other filesystem
+code (`EACCES`, `EPERM`, `EIO`, `EMFILE` and the rest) is still refused with `run.unreadable`, even
+with the flag, whose message then says it removes only damaged content, and `run.incompatible` is
+never removed this way. With `--unreadable` rm refuses, in this order and changing nothing:
+`run.locked` and `run.orphans` exactly as above, even with `--force`; then `run.active`, even with
+`--force`, while a launch in `<runId>/launch/` may still be in flight by the leftover rule
+(`error.details` is `{status:"starting", waiting:[], launches}`; files there that are not launch
+evidence are ignored). It takes the run lock (recovering a dead owner's), re-reads the record under
+it and refuses with `run.exists` when it has become readable (`error.details` has `status` and
+`createdAt`; rerun rm to judge it), or `run.not_found` when it is gone, judges the launches again
+and deletes in the ordinary order. No worktree cache or ref is removed: the result has
+`unreadable: true` (false for every other removal), `caches`, `refsRemoved` and `keptRefs` empty (so
+`--refs` changes nothing), `paths` and `bytes` measured as usual, and a warning naming
+`git worktree list` and `refs/quiet-choir/<runId>/`. A dry run takes no lock and reports `remove` or
+the `run.locked`, `run.orphans` or `run.active` verdict a removal would meet now. A readable run or
+a leftover launch directory is handled exactly as without the flag. `workflow prune` never selects
+an unreadable run.
 
 `workflow prune [--older-than DURATION] [--status S[,S]] [--missing-cwd] [--all] [--refs] [--dry-run] --json`
 removes finished runs in bulk without importing workflow code
@@ -754,6 +782,7 @@ placeholders. Text inspect and human failure messages print each entry as
 | `run.locked`, holder local, gone or damaged           | `unlock RUN --state-dir DIR` from `error.details.next`                                                                    |
 | `run.locked`, holder on a foreign host                | `unlock RUN --state-dir DIR --force-remote` from `error.details.next`, and no other entry                                 |
 | `run.locked` from `cancel` or `rm`, live owner        | none: the message does not name `workflow unlock`                                                                         |
+| `run.unreadable` from `rm`, damaged record            | `rm RUN --state-dir DIR --unreadable` (with `--dry-run` for a dry run) from `error.details.next`                          |
 | `worktree.locked`                                     | `unlock --worktree-admin DIR`, with `--force-remote` for a foreign holder, from `error.details.next`                      |
 | `run.incompatible`, code or schema change only        | `resume … --accept-code-change` (unless the run completed), then a fork                                                   |
 | `run.incompatible`, other run-level changes           | a fork from the stored entrypoint; none when the workflow name changed or for a legacy checkpoint                         |
