@@ -15,6 +15,20 @@
   last failed attempt recorded in that execution, writing no pair when there is none. The event line
   modules may import values from `failure-kind.js`, which itself imports only the pure transient-set
   lookup, so the follower stays code-free.
+- Amended by #333: the follower writes `toolUses` on an agent attempt's `step.completed`,
+  `step.failed` and `step.settled` lines from that attempt's `attemptHistory[].diagnostics.toolUses`
+  (omitted unless a non-negative safe integer). A `step.completed` line takes the step's warnings as
+  `msg` (ADR 0037) from `step.warnings`, but only for the step's latest history entry while the step
+  is completed: warnings are step-level and reset per attempt, so an earlier attempt's warnings are
+  unknowable and omitted rather than guessed. History-less steps get neither field. With
+  `transcripts: 'on-failure'` the runner saves a completion, then discards the transcript and saves
+  again, adding a `Could not remove successful transcript` warning when the discard fails, and emits
+  `step.completed` only after that second save. The follower therefore holds back that latest
+  `step.completed` line while the record shows the cleanup pending (the attempt's transcript receipt
+  still `retained`, no cleanup warning, and its execution the running one), and produces it under
+  the same identity on the first read after the cleanup lands, so a cleanup warning is never
+  dropped. It also releases the line once the run reads as stale (its owner gone), since the cleanup
+  can then never land.
 
 ## Context
 

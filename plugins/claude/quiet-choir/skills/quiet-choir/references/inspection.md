@@ -290,6 +290,9 @@ from the record have limits:
   the pair when the record has none.
 - The record keeps only the latest 500 run events, so `phase`, `log` and `wait.tolerated` lines can
   be evicted before a slow follower reads them. Step and question lines are not subject to that cap.
+- `toolUses` comes from the attempt's recorded `diagnostics.toolUses`. The `step.completed` warnings
+  `msg` (`no-tool-use:` first) comes from the step's warnings, which the record keeps per step, so
+  only the step's latest completed attempt carries it.
 - `ms` is the recorded duration, and fields the record cannot supply are omitted.
 
 Without `--follow` it prints the whole record once and exits 0. With `--follow` it starts at the

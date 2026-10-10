@@ -590,7 +590,9 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         const after = typeof start === 'object' ? start.afterExecution : undefined;
         let cursor: EventFollowCursor | null = null;
         const emit = (value: RunInspection): void => {
-          const derived = recordEventLines(value.run, cursor, start);
+          const derived = recordEventLines(value.run, cursor, start, {
+            stale: value.summary.status === 'stale',
+          });
           cursor = derived.cursor;
           this.#options.logger.log(
             'debug',

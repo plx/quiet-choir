@@ -8,7 +8,11 @@ import { EVENT_LINE_MAX_BYTES, type EventLine } from '../src/workflow/loader/eve
 import type { AttemptRecord, RunRecord, StepRecord } from '../src/workflow/runtime/record.js';
 import { rootCauseSummary } from '../src/workflow/loader/failure-kind.js';
 import type { ErrorKind } from '../src/workflow/runtime/model.js';
-import type { ExecutionRecord, RunEvent } from '../src/workflow/runtime/observability-model.js';
+import type {
+  ExecutionRecord,
+  RequestSummary,
+  RunEvent,
+} from '../src/workflow/runtime/observability-model.js';
 
 /** Fields a test may set, including to undefined to model an older record that lacks them. */
 type Loose<T> = { [K in keyof T]?: T[K] | undefined };
@@ -220,6 +224,173 @@ describe('recordEventLines derivation', () => {
       step: 'agent',
       harness: 'codex',
       ms: 6,
+    });
+  });
+
+  it('carries toolUses per attempt and warnings only for the latest completed attempt', () => {
+    const agentCall = { request: { harness: 'claude' } as RequestSummary };
+    const warning = 'no-tool-use: Profile readonly expects tool use, but it ran none.';
+    const run = record({
+      steps: {
+        retried: step(
+          [
+            attempt(1, 'failed', 10, { ...agentCall, diagnostics: { toolUses: 3 } }),
+            attempt(2, 'completed', 20, { ...agentCall, diagnostics: { toolUses: 0 } }),
+          ],
+          { kind: 'claude', warnings: [warning] },
+        ),
+        twice: step(
+          [
+            attempt(1, 'completed', 30, { ...agentCall, diagnostics: { toolUses: 2 } }),
+            attempt(2, 'completed', 40, { ...agentCall, diagnostics: { toolUses: 0 } }),
+          ],
+          { kind: 'codex', warnings: ['Other', warning] },
+        ),
+        settled: step([attempt(1, 'failed', 50, { ...agentCall, diagnostics: { toolUses: 7 } })], {
+          kind: 'claude',
+          status: 'settled-failed',
+          warnings: [warning],
+        }),
+        unknown: step(
+          [
+            attempt(1, 'completed', 60, { ...agentCall, diagnostics: { toolUses: null } }),
+            attempt(2, 'failed', 61, { ...agentCall, diagnostics: { toolUses: -1 } }),
+            attempt(3, 'completed', 62),
+          ],
+          { kind: 'claude', warnings: [] },
+        ),
+        local: step([attempt(1, 'completed', 70, { diagnostics: { toolUses: 4 } })], {
+          warnings: ['not an agent'],
+        }),
+        waited: step([], { kind: 'ask', finishedAt: at(80) }),
+      },
+    });
+    const lines = parse(read(run).lines).filter((line) => line.ev !== 'run.started');
+    const pick = (name: string): Pick<EventLine, 'ev' | 'attempt' | 'toolUses' | 'msg'>[] =>
+      lines
+        .filter((line) => line.step === name)
+        .map(({ ev, attempt, toolUses, msg }) => ({
+          ev,
+          ...(attempt === undefined ? {} : { attempt }),
+          ...(toolUses === undefined ? {} : { toolUses }),
+          ...(msg === undefined ? {} : { msg }),
+        }));
+    expect(pick('retried')).toEqual([
+      { ev: 'step.failed', attempt: 1, toolUses: 3, msg: 'boom' },
+      { ev: 'step.completed', toolUses: 0, msg: warning },
+    ]);
+    expect(pick('twice')).toEqual([
+      { ev: 'step.completed', toolUses: 2 },
+      { ev: 'step.completed', toolUses: 0, msg: `${warning}; Other` },
+    ]);
+    expect(pick('settled')).toEqual([{ ev: 'step.settled', attempt: 1, toolUses: 7, msg: 'boom' }]);
+    expect(pick('unknown')).toEqual([
+      { ev: 'step.completed' },
+      { ev: 'step.failed', attempt: 2, msg: 'boom' },
+      { ev: 'step.completed' },
+    ]);
+    // Neither field appears on non-agent warnings or history-less steps.
+    expect(pick('local')).toEqual([{ ev: 'step.completed' }]);
+    expect(pick('waited')).toEqual([{ ev: 'step.completed' }]);
+  });
+
+  it('reads toolUses from the recorded request of each attempt, not the current step kind', () => {
+    const run = record({
+      steps: {
+        redefined: step(
+          [
+            attempt(1, 'failed', 10, {
+              request: { harness: 'claude' } as RequestSummary,
+              diagnostics: { toolUses: 3 },
+            }),
+            attempt(2, 'completed', 20, { diagnostics: { toolUses: 5 } }),
+          ],
+          { kind: 'step' },
+        ),
+      },
+    });
+    const lines = parse(read(run).lines).filter((line) => line.step === 'redefined');
+    expect(lines.map(({ ev, toolUses }) => ({ ev, toolUses }))).toEqual([
+      { ev: 'step.failed', toolUses: 3 },
+      { ev: 'step.completed', toolUses: undefined },
+    ]);
+  });
+
+  describe('transcript cleanup after the completion checkpoint', () => {
+    const cleanup = 'Could not remove successful transcript: EBUSY';
+    /** The agent step as each save records it: completed with its transcript, then cleaned up. */
+    const cleaned = (retained: boolean, warnings: string[] = []): StepRecord =>
+      step(
+        [
+          attempt(1, 'completed', 10, {
+            request: { harness: 'claude' } as RequestSummary,
+            diagnostics: { toolUses: 2 },
+            policy: { transcripts: 'on-failure' } as AttemptRecord['policy'],
+            transcript: { path: '/t', bytes: 10, truncated: false, retained },
+          }),
+        ],
+        { kind: 'claude', warnings },
+      );
+    const completed = (lines: readonly string[]): EventLine[] =>
+      parse(lines).filter((line) => line.ev === 'step.completed');
+
+    it('holds step.completed until a failed cleanup records its warning', () => {
+      const first = read(record({ steps: { agent: cleaned(true) } }), 'end');
+      const held = read(record({ steps: { agent: cleaned(true) } }), 'end', first.cursor);
+      expect(completed(held.lines)).toEqual([]);
+      const after = read(
+        record({ steps: { agent: cleaned(true, [cleanup]) } }),
+        'end',
+        held.cursor,
+      );
+      expect(completed(after.lines)).toEqual([
+        expect.objectContaining({ step: 'agent', toolUses: 2, msg: cleanup }),
+      ]);
+      const again = read(
+        record({ steps: { agent: cleaned(true, [cleanup]) } }),
+        'end',
+        after.cursor,
+      );
+      expect(again.lines).toEqual([]);
+    });
+
+    it('releases a pending cleanup once the run is stale', () => {
+      const run = record({ steps: { agent: cleaned(true) } });
+      expect(completed(recordEventLines(run, null, 'all', { stale: false }).lines)).toEqual([]);
+      const stale = recordEventLines(run, null, 'all', { stale: true });
+      expect(completed(stale.lines)).toEqual([
+        expect.objectContaining({ step: 'agent', toolUses: 2 }),
+      ]);
+      expect(recordEventLines(run, stale.cursor, 'all', { stale: true }).lines).toEqual([]);
+    });
+
+    it('produces step.completed without a warning once cleanup succeeds', () => {
+      const held = read(record({ steps: { agent: cleaned(true) } }), 'all');
+      expect(completed(held.lines)).toEqual([]);
+      const after = read(record({ steps: { agent: cleaned(false) } }), 'all', held.cursor);
+      const lines = completed(after.lines);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).not.toHaveProperty('msg');
+      expect(read(record({ steps: { agent: cleaned(false) } }), 'all', after.cursor).lines).toEqual(
+        [],
+      );
+    });
+
+    it('releases a pending cleanup once its execution is no longer the running one', () => {
+      const ended = record({ status: 'failed', steps: { agent: cleaned(true) } });
+      expect(completed(read(ended).lines)).toHaveLength(1);
+      const resumed = record({
+        executions: [execution(1, 0, 20), execution(2, 30)],
+        steps: { agent: cleaned(true) },
+      });
+      expect(completed(read(resumed).lines)).toHaveLength(1);
+      const other = step([
+        attempt(1, 'completed', 10, {
+          policy: { transcripts: 'on' } as AttemptRecord['policy'],
+          transcript: { path: '/t', bytes: 10, truncated: false, retained: true },
+        }),
+      ]);
+      expect(completed(read(record({ steps: { other } })).lines)).toHaveLength(1);
     });
   });
 

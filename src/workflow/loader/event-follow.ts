@@ -3,7 +3,13 @@ import type { RunEvent } from '../runtime/observability-model.js';
 import { windowSuspensionMessage } from '../runtime/rate-limit.js';
 import { stepEventError } from '../runtime/step-event-error.js';
 import type { AttemptRecord, RunRecord, StepRecord } from '../runtime/record.js';
-import { eventMessage, formatEventFields, type EventLineFields } from './event-line.js';
+import {
+  eventMessage,
+  formatEventFields,
+  validToolUses,
+  warningsMessage,
+  type EventLineFields,
+} from './event-line.js';
 import { attemptErrorKind, rootCauseErrorKind, stepErrorKind } from './failure-kind.js';
 import type { ErrorKind } from '../runtime/model.js';
 
@@ -153,16 +159,57 @@ function runEventCandidates(record: RunRecord): Candidate[] {
   });
 }
 
-function stepCandidates(record: RunRecord, id: string, step: StepRecord): Candidate[] {
+const cleanupWarning = 'Could not remove successful transcript';
+
+/**
+ * Whether a completed attempt's transcript cleanup is still pending. With `transcripts:
+ * 'on-failure'` the runner saves the completion, then discards the transcript and saves again,
+ * adding a warning when the discard fails; it emits `step.completed` only after that second save.
+ * Until it lands (the receipt still retained and no cleanup warning) while the attempt's execution
+ * is the running one, the line's warnings are not final, so the follower holds it back. A stale
+ * run's owner is gone and the cleanup will never land, so nothing is pending then.
+ */
+function cleanupPending(
+  record: RunRecord,
+  step: StepRecord,
+  attempt: AttemptRecord,
+  stale: boolean,
+): boolean {
+  if (stale || record.status !== 'running' || attempt.transcript?.retained !== true) return false;
+  if (attempt.policy.transcripts !== 'on-failure') return false;
+  // A later execution (a resume after a crash between the saves) never finishes this cleanup.
+  const latest = record.executions?.at(-1);
+  if (latest === undefined || latest.n !== attempt.execution || latest.endedAt !== null)
+    return false;
+  return !(step.warnings ?? []).some((warning) => warning.startsWith(cleanupWarning));
+}
+
+function stepCandidates(
+  record: RunRecord,
+  id: string,
+  step: StepRecord,
+  stale: boolean,
+): Candidate[] {
   // A fork copies reused records; `--events` drops them as step.reused, so the follower does too.
   if (step.reusedFrom) return [];
   const harness = agentKinds.has(step.kind) ? (step.harness ?? step.kind) : undefined;
   const common = { run: record.id, step: id, harness, phase: step.phase };
   const result: Candidate[] = [];
   const history: readonly AttemptRecord[] = step.attemptHistory ?? [];
+  const toolUsesOf = (attempt: AttemptRecord): { toolUses?: number } => {
+    // Only agent attempts report a count; live, only agent.finished supplies one. The attempt's own
+    // request says it was an agent call, so a step later redefined as another kind keeps its count.
+    const value =
+      attempt.request?.harness === undefined ? undefined : attempt.diagnostics?.['toolUses'];
+    return validToolUses(value) ? { toolUses: value } : {};
+  };
   history.forEach((attempt, index) => {
     if (attempt.finishedAt === null) return;
-    if (attempt.status === 'completed')
+    const latest = index === history.length - 1;
+    if (attempt.status === 'completed') {
+      // Produced on a later read, under the same key, once its cleanup warning is final.
+      if (latest && step.status === 'completed' && cleanupPending(record, step, attempt, stale))
+        return;
       result.push({
         key: `attempt\u0000${id}\u0000${String(attempt.attempt)}\u0000completed`,
         execution: attempt.execution,
@@ -173,11 +220,18 @@ function stepCandidates(record: RunRecord, id: string, step: StepRecord): Candid
           ev: 'step.completed',
           ms: attempt.durationMs ?? undefined,
           costUsd: attempt.usage?.costUsd,
+          ...toolUsesOf(attempt),
+          // step.warnings is reset per attempt, so it belongs only to the step's latest attempt.
+          // Only agent steps carry them live (on agent.finished), so only they do here.
+          msg:
+            harness !== undefined && latest && step.status === 'completed'
+              ? warningsMessage(step.warnings)
+              : undefined,
         },
       });
-    else if (attempt.status === 'failed') {
+    } else if (attempt.status === 'failed') {
       // The runner writes only step.settled for the final attempt of a settled failure.
-      const settled = step.status === 'settled-failed' && index === history.length - 1;
+      const settled = step.status === 'settled-failed' && latest;
       result.push({
         key: `attempt\u0000${id}\u0000${String(attempt.attempt)}\u0000${settled ? 'settled' : 'failed'}`,
         execution: attempt.execution,
@@ -190,6 +244,7 @@ function stepCandidates(record: RunRecord, id: string, step: StepRecord): Candid
           // The kind this attempt recorded, which can differ from the step's last one.
           errorKind: settled ? undefined : attemptErrorKind(attempt),
           ms: attempt.durationMs ?? undefined,
+          ...toolUsesOf(attempt),
           msg: stepEventError(attempt.error),
         },
       });
@@ -254,7 +309,15 @@ function stepCandidates(record: RunRecord, id: string, step: StepRecord): Candid
  * attempt's recorded `errorKind`, null when it has none); a `run.failed` entry that names a root
  * effect carries the root cause's kind in the latest execution, or the kind of that step's last
  * failed attempt in an earlier execution, and no kind when the record has neither; and every
- * question that notified (`wait.opened`). Fork-reused steps and cancelled or
+ * question that notified (`wait.opened`). Completed and failed attempts also carry the attempt's
+ * recorded `diagnostics.toolUses` when its own recorded request names a harness, whatever kind the
+ * step has now, and a `step.completed` line carries the step's warnings as its
+ * `msg` only for the step's latest attempt, because the record keeps warnings per step, not per
+ * attempt. That latest `step.completed` line is held back while its `transcripts: 'on-failure'`
+ * cleanup is pending in the running execution (the receipt still retained and no cleanup warning
+ * yet), and produced on the read after the cleanup save, as the runner emits it only then, so a
+ * cleanup warning is never lost; it is also released once `options.stale` says the run's owner is
+ * gone, as the cleanup can then never land. Fork-reused steps and cancelled or
  * interrupted attempts write nothing, and fields the record cannot supply are omitted. Lines are
  * deduplicated by identity, not position, so eviction past the 500-event cap neither repeats nor
  * hides newer lines. Each call returns the lines not yet accounted for in `cursor` (null on the
@@ -265,10 +328,13 @@ export function recordEventLines(
   record: RunRecord,
   cursor: EventFollowCursor | null,
   start: EventFollowStart,
+  options: { readonly stale?: boolean } = {},
 ): { readonly lines: readonly string[]; readonly cursor: EventFollowCursor } {
   const candidates = [
     ...runEventCandidates(record),
-    ...Object.entries(record.steps).flatMap(([id, step]) => stepCandidates(record, id, step)),
+    ...Object.entries(record.steps).flatMap(([id, step]) =>
+      stepCandidates(record, id, step, options.stale === true),
+    ),
   ];
   const after = typeof start === 'object' ? start.afterExecution : undefined;
   const print =

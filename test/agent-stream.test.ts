@@ -28,6 +28,8 @@ import { AttemptTranscript } from '../src/workflow/runtime/agent-transcript.js';
 import * as storageIo from '../src/workflow/runtime/storage-io.js';
 import { formatAgentEventDetail } from '../src/workflow/loader/executor.js';
 import { maxRateLimitWindows } from '../src/workflow/runtime/rate-limit.js';
+import { recordEventLines } from '../src/workflow/loader/event-follow.js';
+import { EventLineMemory, formatEventLine, type EventLine } from '../src/workflow/loader/events.js';
 
 let directory: string;
 beforeEach(async () => {
@@ -828,10 +830,26 @@ async function toolUseRun(
   });
   const step = required(run.steps['task']);
   return {
+    run,
+    events,
     step,
     toolUses: step.attemptHistory?.[0]?.diagnostics?.['toolUses'],
     finished: events.filter((event) => event.type === 'agent.finished'),
   };
+}
+
+/** The step.completed line for `task`, as --events writes it live and as the record follower derives it. */
+function taskCompletedLines(result: Awaited<ReturnType<typeof toolUseRun>>) {
+  const memory = new EventLineMemory();
+  const live = result.events
+    .map((event) => formatEventLine(event, memory))
+    .filter((text): text is string => text !== null)
+    .map((text) => JSON.parse(text) as EventLine)
+    .filter((line) => line.step === 'task' && line.ev === 'step.completed');
+  const recorded = recordEventLines(result.run, null, 'all')
+    .lines.map((text) => JSON.parse(text) as EventLine)
+    .filter((line) => line.step === 'task' && line.ev === 'step.completed');
+  return { live, recorded };
 }
 
 const noToolUse = (harness: string, profile = 'readonly') =>
@@ -846,6 +864,45 @@ it('warns when a Claude attempt that expects tools completes without one', async
   expect(toolUses).toBe(0);
   expect(step.warnings).toEqual([noToolUse('claude')]);
   expect(finished).toMatchObject([{ outcome: 'completed', warnings: [noToolUse('claude')] }]);
+});
+
+it.each(['claude', 'codex'] as const)(
+  'shows a %s attempt without a tool call as a no-tool-use step.completed line in --events',
+  async (harness) => {
+    const result = await toolUseRun(
+      harness,
+      harness === 'claude'
+        ? [claudeInit, claudeText, ...fixtureStdout('claude-text-success')]
+        : codexLines(),
+      'readonly',
+      false,
+      `events-${harness}`,
+    );
+    const { live, recorded } = taskCompletedLines(result);
+    expect(live).toHaveLength(1);
+    expect(live[0]).toMatchObject({ harness, toolUses: 0 });
+    expect(live[0]?.msg?.startsWith('no-tool-use:')).toBe(true);
+    expect(live[0]?.msg).toBe(noToolUse(harness));
+    // The record yields the same line apart from process-observed time and duration.
+    expect(recorded).toHaveLength(1);
+    const stable = (line: EventLine) => ({ ...line, t: undefined, ms: undefined });
+    expect(recorded.map(stable)).toEqual(live.map(stable));
+  },
+);
+
+it('leaves toolUses on and warnings off the step.completed line of an attempt that used a tool', async () => {
+  const result = await toolUseRun(
+    'claude',
+    [claudeInit, claudeTool('toolu_1'), claudeText, ...fixtureStdout('claude-text-success')],
+    'readonly',
+    false,
+    'events-tool',
+  );
+  const { live, recorded } = taskCompletedLines(result);
+  expect(live[0]).toMatchObject({ toolUses: 1 });
+  expect(live[0]).not.toHaveProperty('msg');
+  expect(recorded[0]).toMatchObject({ toolUses: 1 });
+  expect(recorded[0]).not.toHaveProperty('msg');
 });
 
 it('counts a Claude tool_use block once, even when its ID repeats, and does not warn', async () => {
