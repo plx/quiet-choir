@@ -202,15 +202,17 @@ end in a digit; anything else throws before `gh` runs.
 Issue bodies and comments are read as Markdown with these rules:
 
 - **Code is ignored.** Text in fenced blocks, indented code and inline code spans is ignored (except
-  that dependency phrases are read from indented code; see Dependencies), following CommonMark: a
-  fence is three or more backticks or tildes and closes only on the same character at least as long;
-  it ends with the block quote or list item it opens in; HTML blocks (including `<!-- ... -->`
-  comments) are tracked and have no inline code. A run with no closer is literal text.
-- **Checklist.** Lines `- [ ] ...`, `* [x] ...` or `+ [X] ...` outside fenced code. Each line counts
-  for its first reference to the repository, `#N` or `OWNER/REPO#N` (case-insensitive); lines naming
-  only other repositories, anchors such as `page#12`, and the epic itself are skipped, and the first
-  line wins when a number is listed twice. `#0` and numbers beyond JavaScript's safe-integer range
-  name no issue.
+  that checklist lines and dependency phrases are read at any indentation, including in indented
+  code; see Checklist and Dependencies), following CommonMark: a fence is three or more backticks or
+  tildes and closes only on the same character at least as long; it ends with the block quote or
+  list item it opens in; HTML blocks (including `<!-- ... -->` comments) are tracked and have no
+  inline code. A run with no closer is literal text.
+- **Checklist.** Lines `- [ ] ...`, `* [x] ...` or `+ [X] ...` outside fenced code, at any
+  indentation (nested items count); only fenced code is skipped, so put an example checklist in a
+  fenced block. Each line counts for its first reference to the repository, `#N` or `OWNER/REPO#N`
+  (case-insensitive); lines naming only other repositories, anchors such as `page#12`, and the epic
+  itself are skipped, and the first line wins when a number is listed twice. `#0` and numbers beyond
+  JavaScript's safe-integer range name no issue.
 - **Dependencies** (`dependsOn`), from an item's body and all its comments, by any author: the
   phrases "depends on", "blocked by" and "requires" followed by a list such as `#4, #5 and #6`, and
   the marker `<!-- epic:depends-on 3,4 -->`. Only issues of the item's own repository count, and
