@@ -5,6 +5,7 @@ import type { RunLockView, RunOwnership } from '../src/workflow/runtime/lock.js'
 import type { HarnessProcessInspection } from '../src/workflow/runtime/process-registry.js';
 import type { RunRecord, StepRecord } from '../src/workflow/runtime/record.js';
 import {
+  damagedRecordCode,
   ownershipHold,
   removalRefusal,
   removalVerdict,
@@ -333,5 +334,24 @@ describe('removalRefusal', () => {
     });
     expect(active.message).toContain('still has waiting steps (waiting: question)');
     expect(active.message).toContain('--force');
+  });
+});
+
+describe('damagedRecordCode', () => {
+  // An allowlist: only content failures qualify, so an access or I/O problem never removes a run.
+  it.each<[string | null, boolean]>([
+    [null, true],
+    ['EISDIR', true],
+    ['ENOTDIR', true],
+    ['EACCES', false],
+    ['EPERM', false],
+    ['EIO', false],
+    ['EMFILE', false],
+    ['ENFILE', false],
+    ['ENOENT', false],
+    ['EBUSY', false],
+    ['', false],
+  ])('%s qualifies: %s', (code, expected) => {
+    expect(damagedRecordCode(code)).toBe(expected);
   });
 });

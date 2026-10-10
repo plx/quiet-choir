@@ -138,6 +138,25 @@ export function removalVerdict(
   return { kind: 'remove' };
 }
 
+/**
+ * The filesystem codes of a `run.unreadable` read that name damaged record content rather than an
+ * access or I/O problem: `EISDIR` and `ENOTDIR` (a record path of the wrong kind). @internal
+ */
+const damagedContentCodes: ReadonlySet<string> = new Set(['EISDIR', 'ENOTDIR']);
+
+/**
+ * Whether the `filesystemCode` of a `run.unreadable` record read names damaged content, which
+ * `workflow rm --unreadable` may remove
+ * ([ADR 0060](../../../docs/decisions/0060-remove-an-unreadable-run-on-request.md)). It is an
+ * allowlist: null (a parse or validation failure, a journal sequence gap, a format-7 marker whose
+ * directory is missing), `EISDIR` or `ENOTDIR` qualify. Every other code, such as `EACCES`,
+ * `EPERM`, `EIO`, `EMFILE` or `ENOENT`, means the record could not be read and may be intact, so it
+ * never qualifies. @internal
+ */
+export function damagedRecordCode(filesystemCode: string | null): boolean {
+  return filesystemCode === null || damagedContentCodes.has(filesystemCode);
+}
+
 /** A refusal's stable code, operator message and plain details. @internal */
 export interface RemovalRefusal {
   readonly code: 'run.locked' | 'run.orphans' | 'run.active';

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   groupLaunchFiles,
   inFlightLeftoverMessage,
+  inFlightUnreadableMessage,
   isLoneLaunchDirectory,
   judgeLaunch,
   launchSettleFloorMs,
@@ -56,6 +57,24 @@ describe('leftover launch directory shape', () => {
     ['a temporary file', [file('1.runner.json.tmp')]],
   ] as const)('rejects %s', ([, entries]) => {
     expect(groupLaunchFiles(entries)).toBeNull();
+  });
+
+  it('leaves out every other entry with ignoreOthers, as a damaged run’s judgement needs', () => {
+    expect(
+      groupLaunchFiles(
+        [
+          file('1.log'),
+          file('notes.txt'),
+          file('0.log'),
+          file('1.json'),
+          directory('2.log'),
+          { name: '3.log', kind: 'other' },
+          file('1.runner.json'),
+        ],
+        { ignoreOthers: true },
+      ),
+    ).toEqual([{ n: 1, files: ['1.log', '1.runner.json'] }]);
+    expect(groupLaunchFiles([file('notes.txt')], { ignoreOthers: true })).toEqual([]);
   });
 });
 
@@ -138,6 +157,12 @@ describe('judging a launch', () => {
     expect(message).toContain('launch 2: no runner record');
     expect(message).not.toContain('launch 1');
     expect(message).toContain('even with --force');
+    const unreadable = inFlightUnreadableMessage('damaged', [settled, flying]);
+    expect(unreadable).toContain('has an unreadable record');
+    expect(unreadable).toContain('launch 2: no runner record');
+    expect(unreadable).not.toContain('launch 1');
+    expect(unreadable).toContain('even with --force');
+    expect(inFlightUnreadableMessage('damaged', [])).toContain('changed while rm inspected it');
   });
 
   it('judges an empty launch/ by its own age', () => {

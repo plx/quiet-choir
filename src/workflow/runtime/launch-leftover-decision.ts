@@ -53,20 +53,31 @@ export function isLoneLaunchDirectory(entries: readonly LaunchEntry[]): boolean 
   return entries.length === 1 && entries[0]?.name === 'launch' && entries[0].kind === 'directory';
 }
 
+/** The launch number of a regular launch evidence file, or null for any other entry. */
+function launchNumber(entry: LaunchEntry): number | null {
+  const match = launchFile.exec(entry.name);
+  if (entry.kind !== 'file' || match?.[1] === undefined) return null;
+  const n = Number(match[1]);
+  return Number.isSafeInteger(n) ? n : null;
+}
+
 /**
  * Group the entries of `launch/` by launch number, or null when any entry is not a regular launch
- * evidence file. Each group lists its file names in sorted order; the result is sorted by number.
- * @internal
+ * evidence file. With `ignoreOthers`, such entries are left out instead, as the launch judgement of
+ * a run whose record is unreadable needs (ADR 0060). Each group lists its file names in sorted
+ * order; the result is sorted by number. @internal
  */
 export function groupLaunchFiles(
   entries: readonly LaunchEntry[],
+  options: { readonly ignoreOthers?: boolean } = {},
 ): { readonly n: number; readonly files: readonly string[] }[] | null {
   const groups = new Map<number, string[]>();
   for (const entry of entries) {
-    const match = launchFile.exec(entry.name);
-    if (entry.kind !== 'file' || match?.[1] === undefined) return null;
-    const n = Number(match[1]);
-    if (!Number.isSafeInteger(n)) return null;
+    const n = launchNumber(entry);
+    if (n === null) {
+      if (options.ignoreOthers) continue;
+      return null;
+    }
     const files = groups.get(n) ?? [];
     files.push(entry.name);
     groups.set(n, files);
@@ -171,8 +182,24 @@ export function inFlightLeftoverMessage(
   runId: string,
   launches: readonly LaunchJudgement[],
 ): string {
+  return `Run ${runId} has no record yet, but its start may still be in flight (${describeInFlight(launches, 'an empty launch directory younger than the settle floor')}); the start's runner may still create the record. rm refuses it even with --force; retry once the runner has exited, or after the settle floor for a launch without a runner record.`;
+}
+
+/**
+ * The message of rm's `run.active` refusal of a run whose record is unreadable while a launch in
+ * its `launch/` may still be in flight (ADR 0060). `--force` never overrides it. @internal
+ */
+export function inFlightUnreadableMessage(
+  runId: string,
+  launches: readonly LaunchJudgement[],
+): string {
+  return `Run ${runId} has an unreadable record, but a start of it may still be in flight (${describeInFlight(launches, 'its launch directory changed while rm inspected it')}); the start's runner may still take the run. rm refuses it even with --force and changed nothing; retry once the runner has exited, or after the settle floor for a launch without a runner record.`;
+}
+
+/** The in-flight launches, described for a refusal; `none` when there is no in-flight launch. */
+function describeInFlight(launches: readonly LaunchJudgement[], none: string): string {
   const pending = launches.filter((launch) => launch.state === 'in-flight');
-  const described = pending.length
+  return pending.length
     ? pending
         .map((launch) =>
           launch.runner === 'none'
@@ -182,6 +209,5 @@ export function inFlightLeftoverMessage(
               : `launch ${String(launch.n)}: runner PID ${String(launch.pid)} on ${launch.host ?? 'unknown'} is ${launch.runner}`,
         )
         .join('; ')
-    : 'an empty launch directory younger than the settle floor';
-  return `Run ${runId} has no record yet, but its start may still be in flight (${described}); the start's runner may still create the record. rm refuses it even with --force; retry once the runner has exited, or after the settle floor for a launch without a runner record.`;
+    : none;
 }
