@@ -2,6 +2,14 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `--max-window-utilization` admission no longer rescans the step map: the run budget keeps the
+  latest rate-limit report per harness as admitted attempts settle (a report counts once its attempt
+  has settled and been saved), and sums usage only while `--max-run-cost-usd` is set (#378,
+  [ADR 0053](docs/decisions/0053-window-utilization-gate-suspends-until-reset.md)). On a synthetic
+  run of 10,000 Claude steps an admission dropped from about 26 ms to under 1 µs after a one-time 15
+  ms scan. The cost total is still summed per check, since it includes integration usage that local
+  steps report outside admission and must equal what `inspect` reports. An exact tie between reports
+  of different steps now resolves to the later step, in `inspect` too. No other behavior change.
 - `workflow execute` without `--resume` (and `runWorkflow` without `resume`, including a fork
   target) onto the ID of a run whose record this build cannot fully read (a newer `schemaRevision`
   or unknown fields) now refuses with `run.exists`, as for any existing run, instead of the
