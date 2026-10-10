@@ -311,6 +311,34 @@ export const rootedProfiles = defineWorkflow({
   run: () => Promise.resolve(null),
 });
 
+// Inferring the literal profiles and defaults keeps their excess-property checks (#385).
+export const unknownProfileKeys = defineWorkflow({
+  ...base,
+  name: 'unknown-profile-keys',
+  defaults: {
+    codex: {
+      model: 'gpt',
+      // @ts-expect-error -- defaults.codex has no such key.
+      sandboxMode: 'read-only',
+    },
+  },
+  profiles: {
+    reader: {
+      extends: 'readonly',
+      // @ts-expect-error -- a profile has no such top-level key.
+      addDirRoots: ['runs'],
+    },
+    tooled: {
+      claude: {
+        tools: ['Read'],
+        // @ts-expect-error -- a profile's claude block has no such key.
+        allowTools: ['Read'],
+      },
+    },
+  },
+  run: () => Promise.resolve(null),
+});
+
 // Strict call-site Claude addDirs type only under a profile that declares, inherits or defaults
 // claude.addDirRoots (#385, ADR 0062). The runtime check stays the backstop.
 const addDirs = ['runs/a'];
@@ -821,5 +849,6 @@ it('carries strictness, profiles and declared children into authoring types', ()
     'explicit-profiles',
   ]);
   expect(prefixRootedDefaults.name).toBe('prefix-rooted-defaults');
+  expect(unknownProfileKeys.name).toBe('unknown-profile-keys');
   expect(typeof runConst).toBe('function');
 });

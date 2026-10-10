@@ -201,6 +201,30 @@ export interface CapabilityManifest {
 }
 
 /**
+ * Maps each key of profile or defaults type `T` that `Shape` does not declare to `never`, and does
+ * the same one level into the `claude` and `codex` blocks; declared keys map to `unknown`, so
+ * `Shape` alone checks their values. `defineWorkflow` intersects the literal `profiles` and
+ * `defaults` it infers with this, which keeps the excess-property checks that inferring them would
+ * otherwise drop: an unknown key then fails as not assignable to `never`. Other nested objects
+ * (`harnesses`, native settings) are records and stay unchecked here. It distributes over unions.
+ */
+export type NoExtraKeys<T, Shape> = T extends object
+  ? {
+      readonly [K in keyof T]: K extends keyof Shape
+        ? K extends 'claude' | 'codex'
+          ? T[K] extends infer B
+            ? B extends object
+              ? {
+                  readonly [J in keyof B]: J extends keyof NonNullable<Shape[K]> ? unknown : never;
+                }
+              : unknown
+            : never
+          : unknown
+        : never;
+    }
+  : unknown;
+
+/**
  * Whether profile or defaults type `X` may declare `claude.addDirRoots`: `true` when the key is
  * possibly present with a type other than `undefined`, so a widened {@link AgentProfile} counts as
  * rooted. It distributes over unions, so `true extends HasAddDirRoots<X>` means "some member may".

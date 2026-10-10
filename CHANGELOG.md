@@ -13,8 +13,9 @@
   `WorkflowContext` helper, `strictProfiles: false`), and the runtime check is unchanged.
   `WorkflowDefinition` gains a trailing defaulted type parameter, `WorkflowContext` and
   `CallOptions` a fifth, and `defineWorkflow` two trailing inferred ones; the new public types are
-  `AddDirProfilesOf`, `AddDirRootedName`, `HasAddDirRoots`, `ProfileReferenceOf` and
-  `ClaudeAddDirSelection`. Explicit `defineWorkflow` type arguments leave `profiles` and `defaults`
+  `AddDirProfilesOf`, `AddDirRootedName`, `HasAddDirRoots`, `ProfileReferenceOf`,
+  `ClaudeAddDirSelection` and `NoExtraKeys`, which keeps unknown keys in the inferred `profiles` and
+  `defaults` rejected. Explicit `defineWorkflow` type arguments leave `profiles` and `defaults`
   uninferred, so a workflow that relies on rooted defaults must drop them. Both Workflow Lab batches
   record the new `model.ts` hash.
 - Fixture export and replay of failed steps inside `onError: 'return'` child frames are now covered

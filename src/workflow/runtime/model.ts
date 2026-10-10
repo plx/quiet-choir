@@ -38,7 +38,12 @@ import type {
 } from './wait-model.js';
 import type { PhaseOptions } from './observability-model.js';
 import type { z } from 'zod';
-import type { AddDirProfilesOf, AgentDefaults, AgentProfile } from './profiles-model.js';
+import type {
+  AddDirProfilesOf,
+  AgentDefaults,
+  AgentProfile,
+  NoExtraKeys,
+} from './profiles-model.js';
 import type { MapStepError } from './fan-out.js';
 import type { ModelUsage, TokenCounts } from './usage-model.js';
 import type { ChildOptions, WorkflowDeclaration, WorkflowPhase } from './child-model.js';
@@ -917,10 +922,15 @@ export function defineWorkflow<
     TName,
     AddDirProfilesOf<TProfile, TProfiles, TDefaults>
   > & {
-    /** Named capability roles; their literal type decides which roles admit call-site `addDirs`. */
-    readonly profiles?: TProfiles;
+    /**
+     * Named capability roles; their literal type decides which roles admit call-site `addDirs`, and
+     * {@link NoExtraKeys} keeps unknown keys rejected.
+     */
+    readonly profiles?: TProfiles & {
+      readonly [N in keyof TProfiles]: NoExtraKeys<TProfiles[N], AgentProfile>;
+    };
     /** Common defaults; their literal type decides whether built-ins and omitted profiles do. */
-    readonly defaults?: TDefaults;
+    readonly defaults?: TDefaults & NoExtraKeys<TDefaults, AgentDefaults>;
   },
 ): WorkflowDefinition<
   TInput,

@@ -48,6 +48,12 @@ stays permissive and the runtime check remains the backstop. Runtime behavior is
      without `extends` starts from `text` and is unrooted. A cycle is unrooted; the runtime rejects
      it.
    - The omitted case is rooted when `defaults.profile` (or `text` when absent) is rooted.
+
+   An inferred literal is checked against itself, so inference alone would drop the excess-property
+   checks on `profiles` and `defaults`. `defineWorkflow` therefore intersects them with
+   `NoExtraKeys`, which maps every key that `AgentProfile` or `AgentDefaults` does not declare to
+   `never`, at the top level and inside the `claude` and `codex` blocks.
+
 4. **Permissive fallbacks.** These count as rooted: a `claude` block whose `addDirRoots` key is
    possibly present (a widened `AgentProfile` or `AgentDefaults`), a non-literal `extends` or
    `defaults.profile`, a union-typed profile or defaults any member of which is rooted (a member
@@ -65,9 +71,9 @@ stays permissive and the runtime check remains the backstop. Runtime behavior is
    own definition; delegation is not narrowed at type level.
 
 The new public types are `AddDirProfilesOf`, its helpers `AddDirRootedName`, `HasAddDirRoots` and
-`ProfileReferenceOf`, and `ClaudeAddDirSelection`. They are public rather than `@internal` because
-`stripInternal` would remove them from the emitted declarations that `CallOptions` and
-`defineWorkflow` reference.
+`ProfileReferenceOf`, `ClaudeAddDirSelection`, and `NoExtraKeys`. They are public rather than
+`@internal` because `stripInternal` would remove them from the emitted declarations that
+`CallOptions` and `defineWorkflow` reference.
 
 ## Alternatives
 

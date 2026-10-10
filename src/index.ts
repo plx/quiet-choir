@@ -163,6 +163,7 @@ export type {
   AddDirProfilesOf,
   AddDirRootedName,
   HasAddDirRoots,
+  NoExtraKeys,
   ProfileReferenceOf,
   ProfileOverride,
   ResolvedProfile,
