@@ -12,6 +12,7 @@ import {
   EXEC_SCHEMA_FAILURE_PREFIX,
   SETTLED_PARSED_MAX_BYTES,
   execExitFailureMessage,
+  isExecNoJsonFailureMessage,
 } from '../runtime/exec.js';
 import { EXEC_TAIL_LIMIT } from '../runtime/exec-error.js';
 import type { ExecSummary } from '../runtime/exec-model.js';
@@ -26,8 +27,8 @@ import { stepErrorKind } from './failure-kind.js';
  * settled or absorbed command failures without importing source, taking ownership, or rewriting a
  * run. Agent failure rules carry the recorded message and, when the failure had a real category,
  * its `kind`. A command failure becomes an ordinary exec rule with its exit code and recorded output
- * tails when the result path can reproduce it (an exit code outside `okExitCodes`, or an `exec.json`
- * schema failure); spawn failures, timeouts, signal kills and output-limit failures get no rule
+ * tails when the result path can reproduce it (an exit code outside `okExitCodes`, an `exec.json`
+ * accepted nonzero exit without JSON on stdout, or an `exec.json` schema failure); spawn failures, timeouts, signal kills and output-limit failures get no rule
  * (exec error rules can describe them by hand, but export does not produce them yet), but still set
  * `commands: 'fixture'`. Commands a step callback or a poll observer ran through `context.exec`
  * become exec rules keyed by the parent's ID, from the raw results recorded on the parent (a
@@ -286,8 +287,9 @@ interface ExecFailure {
 
 /**
  * An exec rule that makes `executeCommand` fail the same way again, or undefined when the result
- * path cannot reproduce the failure. Only an exit code outside `okExitCodes` (kind `process`) and an
- * `exec.json` stdout that did not parse or match its schema (kind `schema`) qualify, both with a
+ * path cannot reproduce the failure. Only an exit code outside `okExitCodes` (kind `process`), an
+ * `exec.json` accepted nonzero exit whose stdout is not JSON (kind `process`, #349) and an
+ * `exec.json` stdout that did not parse or match its schema (kind `schema`) qualify, all with a
  * real exit code and no signal. Spawn failures, timeouts, signal kills, `output-limit` and kinds
  * from a custom process runner are not exported: exec error rules can describe them by hand, but
  * they carry no signal, output tails or exit code, and export does not produce them yet.
@@ -296,6 +298,10 @@ interface ExecFailure {
  * failure kept `parsed`, the rule uses `json: parsed` unless the tail is complete JSON that parses
  * to it in another layout (pretty-printed output under 1024 characters keeps its bytes), so a
  * truncated tail still reproduces `parsed`, and export, replay and export again give the same rule.
+ *
+ * A failure recorded before #349 as kind `schema` for an accepted nonzero exit with non-JSON stdout
+ * still exports its `{ stdout, code }` rule, but the current runtime replays it as kind `process`
+ * with the new message, so a body that branches on the kind can diverge in that rehearsal.
  *
  * An `exec.json` failure (kind `process` or `schema`) without `parsed` whose stdout tail fills the
  * tail bound (`EXEC_TAIL_LIMIT`) may have lost its start. For a `schema` failure the surviving
@@ -334,6 +340,10 @@ function execFailureRule(
     return undefined;
   const reproducible =
     (failure.kind === 'process' && failure.message === execExitFailureMessage(String(code))) ||
+    (failure.kind === 'process' &&
+      summary.structured &&
+      code !== 0 &&
+      isExecNoJsonFailureMessage(failure.message, code)) ||
     (failure.kind === 'schema' &&
       summary.structured &&
       failure.message.startsWith(EXEC_SCHEMA_FAILURE_PREFIX));

@@ -258,6 +258,48 @@ describe('paginated reads', () => {
     expect(complete.seen).toHaveLength(1);
   });
 
+  it('never retries an incomplete collection under a retry on process and timeout', async () => {
+    const pages = threadPages();
+    const thread = pages[1]?.data.repository.pullRequest.reviewThreads.nodes[0];
+    if (!thread) throw new Error('fixture has no second-page thread');
+    (thread.comments.pageInfo as { hasNextPage: boolean }).hasNextPage = true;
+    const truncated = fakeGh((read) =>
+      read === 'pr.reviewThreads' ? { stdout: JSON.stringify(pages) } : undefined,
+    );
+    const error = await failing(
+      (gh) =>
+        gh.pr.reviewThreads(
+          'threads',
+          { number: 329 },
+          { retry: { maxAttempts: 3, delayMs: 0, on: ['process', 'timeout'] } },
+        ),
+      truncated.runner,
+    );
+    expect(error).toBeInstanceOf(IncompleteCollectionError);
+    expect(((error as IncompleteCollectionError).cause as ExecError).kind).toBe('schema');
+    expect(truncated.seen).toHaveLength(1);
+  });
+
+  it('retries a GraphQL read that exits 1 with empty stdout', async () => {
+    let calls = 0;
+    const { seen, runner } = fakeGh((read) => {
+      if (read !== 'repo.info') return undefined;
+      calls += 1;
+      return calls === 1 ? { code: 1, stdout: '' } : undefined;
+    });
+    const run = await runWorkflow(
+      definition((ctx) =>
+        github(ctx, { repo: 'octo-org/quiet-choir' }).repo.info('repo', {
+          retry: { maxAttempts: 3, delayMs: 0, on: ['process', 'timeout'] },
+        }),
+      ),
+      { ...setup(), processRunner: runner },
+    );
+    expect(run.status).toBe('completed');
+    expect(seen).toHaveLength(2);
+    expect((await readRun(setup())).steps['repo']?.attemptHistory?.[0]?.errorKind).toBe('process');
+  });
+
   const pageInfo = (...path: (string | number)[]) => [...path, 'pageInfo'];
   it.each([
     [
@@ -395,21 +437,22 @@ describe('code scanning', () => {
   it.each([
     ['Not Found', { code: 1, stdout: fixture('code-scanning-not-found.json') }, 'schema'],
     ['Bad credentials', { code: 1, stdout: fixture('bad-credentials.json') }, 'schema'],
-    ['empty stdout (network failure)', { code: 1, stdout: '' }, 'schema'],
+    // Exit 1 without JSON on stdout is kind process (#349), so a retry on process covers it.
+    ['empty stdout (network failure)', { code: 1, stdout: '' }, 'process'],
     // A dropped connection after an empty first page: gh never closes the merged array.
-    ['an unclosed empty array', { code: 1, stdout: '[' }, 'schema'],
+    ['an unclosed empty array', { code: 1, stdout: '[' }, 'process'],
     // A dropped connection after page 1: the alerts gh already printed, still unclosed.
-    ['a network drop after page 1', { code: 1, stdout: `[${alert}` }, 'schema'],
+    ['a network drop after page 1', { code: 1, stdout: `[${alert}` }, 'process'],
     // A 5xx on page 2: gh appends the error body to the unclosed array.
     [
       'a 5xx page after alerts',
       { code: 1, stdout: `[${alert}{"message":"Server Error"}` },
-      'schema',
+      'process',
     ],
     [
       'an unavailable page after alerts',
       { code: 1, stdout: `[${alert}{"message":"no analysis found"}` },
-      'schema',
+      'process',
     ],
     ['an alert array inside an array', { code: 0, stdout: `[[${alert}]]` }, 'schema'],
     ['exit 2', { code: 2, stdout: fixture('code-scanning-not-enabled.json') }, 'process'],
@@ -418,6 +461,33 @@ describe('code scanning', () => {
     expect(error).toBeInstanceOf(ExecError);
     expect((error as ExecError).kind).toBe(kind);
     expect((await readRun(setup())).steps['alerts']?.status).toBe('failed');
+  });
+
+  it('retries exit 1 with empty stdout to success under a retry on process', async () => {
+    let calls = 0;
+    const { seen, runner } = fakeGh((read) => {
+      if (read !== 'codeScanning.alerts') return undefined;
+      calls += 1;
+      return calls === 1
+        ? { code: 1, stdout: '' }
+        : { stdout: fixture('code-scanning-alerts.json') };
+    });
+    const run = await runWorkflow(
+      definition((ctx) =>
+        github(ctx, { repo: 'octo-org/quiet-choir' }).codeScanning.alerts(
+          'alerts',
+          { ref: 'refs/pull/7/merge' },
+          { retry: { maxAttempts: 3, delayMs: 0, on: ['process', 'timeout'] } },
+        ),
+      ),
+      { ...setup(), processRunner: runner },
+    );
+    expect(run.status).toBe('completed');
+    expect((run.output as { status: string; alerts: unknown[] }).alerts).toHaveLength(4);
+    expect(seen).toHaveLength(2);
+    const step = (await readRun(setup())).steps['alerts'];
+    expect(step?.status).toBe('completed');
+    expect(step?.attemptHistory?.[0]?.errorKind).toBe('process');
   });
 
   it('reads an empty merged array as no alerts', async () => {

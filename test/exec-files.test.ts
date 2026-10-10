@@ -1237,6 +1237,93 @@ describe("settled commands and files (onError: 'return')", () => {
     }
   });
 
+  it('classifies an accepted nonzero exit without JSON on stdout as process, never schema', async () => {
+    const outputs: Record<
+      string,
+      { code: number; stdout: string; okExitCodes: NonNullable<ExecOptions['okExitCodes']> }
+    > = {
+      empty: { code: 1, stdout: '', okExitCodes: [0, 1] },
+      unclosed: { code: 1, stdout: '[', okExitCodes: [0, 1] },
+      mismatch: { code: 1, stdout: '{"failed":["b"]}', okExitCodes: [0, 1] },
+      clean: { code: 0, stdout: '', okExitCodes: [0, 1] },
+      any: { code: 1, stdout: '', okExitCodes: 'any' },
+    };
+    const run = vi.fn<ProcessRunner['run']>((_request, invocation) => {
+      const output = outputs[invocation.stepId];
+      if (!output) throw new Error(`unexpected ${invocation.stepId}`);
+      return Promise.resolve({ ...reply, code: output.code, stdout: output.stdout });
+    });
+    const schema = z.object({ passed: z.boolean() });
+    const workflow = definition(async (ctx) => {
+      for (const [id, output] of Object.entries(outputs)) {
+        const settled = await ctx.exec.json(id, ['fake'], {
+          schema,
+          okExitCodes: output.okExitCodes,
+          onError: 'return',
+        });
+        expect(settled.ok).toBe(false);
+      }
+      return null;
+    });
+    await runWorkflow(workflow, { ...setup(), processRunner: { run } });
+    const steps = (await readRun(setup())).steps;
+    const settled = (id: string) => steps[id]?.settledError as Record<string, unknown>;
+    for (const id of ['empty', 'unclosed', 'any']) {
+      expect(settled(id)).toMatchObject({ kind: 'process', code: 1, signal: null });
+      expect(settled(id)['message']).toMatch(/^Command exited with 1 without JSON on stdout: /u);
+      expect(settled(id)).not.toHaveProperty('parsed');
+    }
+    expect(settled('mismatch')).toMatchObject({
+      kind: 'schema',
+      code: 1,
+      parsed: { failed: ['b'] },
+    });
+    expect(settled('mismatch')['message']).toMatch(
+      /^Command stdout did not match its JSON schema: /u,
+    );
+    expect(settled('clean')).toMatchObject({ kind: 'schema', code: 0 });
+    expect(settled('clean')['message']).toMatch(/^Command stdout did not match its JSON schema: /u);
+    expect(settled('clean')).not.toHaveProperty('parsed');
+  });
+
+  it('throws the no-JSON process failure with its SyntaxError cause and retries it on process', async () => {
+    let calls = 0;
+    const run = vi.fn<ProcessRunner['run']>(() => {
+      calls += 1;
+      return Promise.resolve({ ...reply, code: 1, stdout: calls === 1 ? '' : '[' });
+    });
+    let thrown: unknown;
+    await expect(
+      runWorkflow(
+        definition(async (ctx) => {
+          try {
+            return await ctx.exec.json('read', ['fake'], {
+              schema: z.array(z.number()),
+              okExitCodes: [0, 1],
+              retry: { maxAttempts: 2, delayMs: 0, on: ['process'] },
+            });
+          } catch (error) {
+            thrown = error;
+            throw error;
+          }
+        }),
+        { ...setup(), processRunner: { run } },
+      ),
+    ).rejects.toThrow();
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(thrown).toBeInstanceOf(ExecError);
+    const error = thrown as ExecError;
+    expect(error.kind).toBe('process');
+    expect(error.cause).toBeInstanceOf(SyntaxError);
+    expect(error.parsed).toBeUndefined();
+    expect(error.diagnostics).toMatchObject({ code: 1, stdoutTail: '[' });
+    expect(error.message).toBe(
+      `Command exited with 1 without JSON on stdout: ${(error.cause as SyntaxError).message}`,
+    );
+    const history = (await readRun(setup())).steps['read']?.attemptHistory ?? [];
+    expect(history.map((attempt) => attempt.errorKind)).toEqual(['process', 'process']);
+  });
+
   it('settles a command timeout with kind timeout and replays it', async () => {
     const workflow = definition(async (ctx) => {
       const result = await ctx.exec('slow', node('setTimeout(() => {}, 30000)'), {
