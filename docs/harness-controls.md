@@ -223,8 +223,9 @@ and fails unless every request carries the sentinel model and the bogus effort. 
 [ADR 0040](decisions/0040-grade-harness-versions-against-a-tested-range.md).
 
 To widen the range after a CLI update, run `npm run build && npm run test:contract` (and, for Codex,
-`npm run test:contract:doctor`) from a quiet-choir checkout, review the captures, then raise
-`testedHarnessVersions` `maximum` (or lower `minimum`) in `src/harnesses/tested-versions.ts`.
+`npm run test:contract -- --tools` and `npm run test:contract:doctor`) from a quiet-choir checkout,
+review the captures, then raise `testedHarnessVersions` `maximum` (or lower `minimum`) in
+`src/harnesses/tested-versions.ts`.
 
 `CliHarness` also reads `--version` on each provider's first live use in a run invocation. Saved
 `harnesses` record binary/version, and inspect shows them. Discovery failures and version changes on

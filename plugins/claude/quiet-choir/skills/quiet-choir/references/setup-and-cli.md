@@ -225,15 +225,15 @@ rejection the Codex enums check warns (drift unverified, nothing spent). `zeroIn
 judged after the call; the remaining exposure is a CLI that substitutes a known model, which
 `npm run build && npm run test:contract:doctor` detects against a loopback fake API. Current tested
 bounds are Claude 2.1.283 and Codex 0.157.1; to widen them, run
-`npm run build && npm run test:contract` from a checkout, review the captures, then raise
-`testedHarnessVersions`. Codex's argv probe uses private temporary copies of config/auth and an
-empty native profile; selected user/profile defaults are inspected separately, without printing
-secrets. Project/managed layers can override those defaults. Exported `probeHarnessContracts`
-supports CI. `harnesses` in run metadata and inspect records first live-use binary/version; version
-drift warns on resume without invalidating completed results, and a run on an untested version
-records one `harnessWarnings` entry naming `configuration doctor`. The configuration topic has one
-command, `configuration doctor`. See [durability](durability.md) before recovery and
-[inspection](inspection.md) for saved status.
+`npm run build && npm run test:contract` (and, for Codex, `npm run test:contract -- --tools`) from a
+checkout, review the captures, then raise `testedHarnessVersions`. Codex's argv probe uses private
+temporary copies of config/auth and an empty native profile; selected user/profile defaults are
+inspected separately, without printing secrets. Project/managed layers can override those defaults.
+Exported `probeHarnessContracts` supports CI. `harnesses` in run metadata and inspect records first
+live-use binary/version; version drift warns on resume without invalidating completed results, and a
+run on an untested version records one `harnessWarnings` entry naming `configuration doctor`. The
+configuration topic has one command, `configuration doctor`. See [durability](durability.md) before
+recovery and [inspection](inspection.md) for saved status.
 
 ## Execution policy flags
 
