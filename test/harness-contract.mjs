@@ -3,39 +3,47 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { CliHarness, HarnessError } from '../dist/index.js';
 import { materializeInvocation } from '../dist/harnesses/invocation.js';
 import { parseClaude, parseCodex } from '../dist/harnesses/protocol.js';
+import { HarnessStream } from '../dist/harnesses/stream.js';
 import { fakeApi } from './contracts/local-api.mjs';
 
 const refresh = process.argv.includes('--refresh');
 const usage = process.argv.includes('--usage');
 const stream = process.argv.includes('--stream');
+const tools = process.argv.includes('--tools');
+const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+const mcpServerPath = join(repositoryRoot, 'test', 'contracts', 'mcp-server.mjs');
 const requestedSessionId = '5697cc90-cb47-5a1f-8896-cbf83255e506';
 const selected = process.argv
   .find((arg) => arg.startsWith('--cases='))
   ?.slice(8)
   .split(',');
-const scenarios = usage
-  ? ['codex-usage-success']
-  : [
-      'claude-text-success',
-      'claude-structured-success',
-      'claude-turn-limit',
-      'claude-api-error',
-      'codex-text-success',
-      'codex-structured-success',
-      'codex-invalid-schema',
-      'codex-reconnect-success',
-    ];
+const scenarios = tools
+  ? ['codex-mcp-tool-success', 'codex-web-search-success']
+  : usage
+    ? ['codex-usage-success']
+    : [
+        'claude-text-success',
+        'claude-structured-success',
+        'claude-turn-limit',
+        'claude-api-error',
+        'codex-text-success',
+        'codex-structured-success',
+        'codex-invalid-schema',
+        'codex-reconnect-success',
+      ];
 assert(
   process.argv
     .slice(2)
     .every(
-      (arg) => ['--refresh', '--stream', '--usage'].includes(arg) || arg.startsWith('--cases='),
+      (arg) =>
+        ['--refresh', '--stream', '--usage', '--tools'].includes(arg) || arg.startsWith('--cases='),
     ),
-  'Use --refresh, --stream, --usage and/or --cases=<comma-separated scenario names>.',
+  'Use --refresh, --stream, --usage, --tools and/or --cases=<comma-separated scenario names>.',
 );
 assert(
   !selected || selected.every((name) => scenarios.includes(name)),
@@ -101,6 +109,9 @@ function execute(binary, argv, input, cwd, env) {
 function sanitize(text) {
   return text
     .replaceAll(directory, '/fixture')
+    .replaceAll(mcpServerPath, '/fixture/mcp-server.mjs')
+    .replaceAll(repositoryRoot, '/repo')
+    .replaceAll(process.execPath, '/fixture/node')
     .replace(
       /\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b/giu,
       '00000000-0000-4000-8000-000000000000',
@@ -108,6 +119,64 @@ function sanitize(text) {
     .replace(/127\.0\.0\.1:\d+/gu, '127.0.0.1:12345')
     .replace(/sk-(?:ant-)?quiet-choir-fake/gu, '<fake-key>');
 }
+function jsonLines(text) {
+  return text
+    .split('\n')
+    .filter((line) => line.trim())
+    .map((line) => JSON.parse(line));
+}
+/** The sorted event/item-type pairs a Codex JSONL stream contains. */
+function toolShape(stdout) {
+  return [
+    ...new Set(
+      jsonLines(stdout).map((entry) => `${entry.type}${entry.item ? `:${entry.item.type}` : ''}`),
+    ),
+  ].sort();
+}
+/** Live drift detection for the --tools scenarios; throws when Codex's item shapes change. */
+async function assertToolCapture(name, result, api) {
+  const entries = jsonLines(result.stdout);
+  const items = (event, type) =>
+    entries.filter((entry) => entry.type === event && entry.item?.type === type);
+  if (name === 'codex-mcp-tool-success') {
+    const [started, ...moreStarted] = items('item.started', 'mcp_tool_call');
+    const [completed, ...moreCompleted] = items('item.completed', 'mcp_tool_call');
+    assert(started && completed, `${name}: expected mcp_tool_call item.started and item.completed`);
+    assert(
+      !moreStarted.length && !moreCompleted.length,
+      `${name}: expected exactly one mcp_tool_call pair`,
+    );
+    assert.equal(started.item.id, completed.item.id, `${name}: pair ids differ`);
+    assert.equal(completed.item.server, 'fixture');
+    assert.equal(completed.item.tool, 'echo');
+    assert.equal(completed.item.status, 'completed');
+  } else {
+    const completed = items('item.completed', 'web_search');
+    assert.equal(completed.length, 1, `${name}: expected one web_search item.completed`);
+    assert.equal(completed[0].item.query, 'quiet-choir contract fixture');
+    const started = items('item.started', 'web_search');
+    for (const entry of started)
+      assert.equal(entry.item.id, completed[0].item.id, `${name}: pair ids differ`);
+    assert(
+      api.requests.some((request) =>
+        request.tools.some((tool) => tool.type === 'web_search' && tool.externalWebAccess === true),
+      ),
+      `${name}: the request did not offer live web search (web_search = "live")`,
+    );
+  }
+  // The built stream parser must count the capture as exactly one tool use.
+  const parser = new HarnessStream('codex', false, 16 * 1024 * 1024, {
+    signal: new AbortController().signal,
+    runId: 'contract',
+    stepId: name,
+    attempt: 1,
+    trackProcess: () => Promise.resolve({ release: () => Promise.resolve() }),
+  });
+  await parser.stdout(Buffer.from(result.stdout));
+  await parser.finish();
+  assert.equal(parser.diagnostics('')['toolUses'], 1, `${name}: HarnessStream toolUses`);
+}
+
 try {
   for (const name of scenarios.filter((name) => !selected || selected.includes(name))) {
     const provider = name.startsWith('claude') ? 'claude' : 'codex';
@@ -137,7 +206,8 @@ try {
     if (provider === 'codex')
       await writeFile(
         join(config, 'config.toml'),
-        `model_provider = "fixture"\nmodel = "gpt-5.5"\n[model_providers.fixture]\nname = "Local contract API"\nbase_url = "${api.url}/v1"\nwire_api = "responses"\nenv_key = "QUIET_CHOIR_FAKE_API_KEY"\nrequires_openai_auth = false\nrequest_max_retries = 0\nstream_max_retries = 2\n`,
+        // Top-level keys must precede the first table.
+        `model_provider = "fixture"\nmodel = "gpt-5.5"\n${name === 'codex-web-search-success' ? 'web_search = "live"\n' : ''}[model_providers.fixture]\nname = "Local contract API"\nbase_url = "${api.url}/v1"\nwire_api = "responses"\nenv_key = "QUIET_CHOIR_FAKE_API_KEY"\nrequires_openai_auth = false\nrequest_max_retries = 0\nstream_max_retries = 2\n${name === 'codex-mcp-tool-success' ? `[mcp_servers.fixture]\ncommand = ${JSON.stringify(process.execPath)}\nargs = [${JSON.stringify(mcpServerPath)}]\n` : ''}`,
       );
     const structured =
       name.includes('structured') ||
@@ -229,6 +299,7 @@ try {
           reasoning_output_tokens: 12,
         });
       }
+      if (tools) await assertToolCapture(name, result, api);
       if (success && structured)
         assert.deepEqual(JSON.parse(parsed.response.text), { answer: 'captured answer' });
       const capture = {
@@ -266,7 +337,7 @@ try {
             }),
       };
       const captureDirectory = new URL(
-        `./fixtures/${usage ? 'harness-usage' : stream ? 'harness-stream' : 'harness'}/`,
+        `./fixtures/${tools ? 'harness-tools' : usage ? 'harness-usage' : stream ? 'harness-stream' : 'harness'}/`,
         import.meta.url,
       );
       if (refresh) await mkdir(captureDirectory, { recursive: true });
@@ -275,6 +346,12 @@ try {
       else {
         const previous = JSON.parse(await readFile(path, 'utf8'));
         assert.equal(previous.code, result.code, `${name}: process contract drift`);
+        if (tools)
+          assert.deepEqual(
+            toolShape(result.stdout),
+            toolShape(previous.stdout),
+            `${name}: Codex item types or events drifted from the checked-in capture`,
+          );
         if (previous.version !== version)
           console.error(
             `Version drift: ${provider} ${previous.version} -> ${version}; use --refresh after reviewing captures.`,
