@@ -849,6 +849,151 @@ describe('checks rollup', () => {
       value: { status: 'closed' },
     });
   });
+
+  it('waits for every required check before trusting a successful rollup', () => {
+    const required = { ...timing, requiredChecks: ['Tests'] };
+    const early = { ...required, now: 1_000 };
+    const tests = (conclusion: string | null) => checkRun('Tests', conclusion, 12);
+    const testsFailed = {
+      name: 'Tests',
+      url: 'https://github.com/octo-org/quiet-choir/actions/runs/12/job/1',
+      runId: 12,
+    };
+    // A fast check rolled up as success before Tests registered: keep polling.
+    expect(decideChecks(head({ contexts: [checkRun('Quality')] }), early)).toEqual({
+      done: false,
+      progress: { headRefOid: SHA, failed: [], pending: ['Tests'], missing: ['Tests'] },
+    });
+    expect(
+      decideChecks(head({ contexts: [checkRun('Quality'), tests('SUCCESS')] }), early),
+    ).toEqual({
+      done: true,
+      value: { status: 'success', headRefOid: SHA, failed: [], pending: [] },
+    });
+    expect(decideChecks(head({ contexts: [checkRun('Quality'), tests(null)] }), early)).toEqual({
+      done: false,
+      progress: { headRefOid: SHA, failed: [], pending: ['Tests'], missing: [] },
+    });
+    // A failed required check is failure once nothing registered is pending.
+    expect(
+      decideChecks(head({ contexts: [checkRun('Quality'), tests('FAILURE')] }), early),
+    ).toEqual({
+      done: true,
+      value: { status: 'failure', headRefOid: SHA, failed: [testsFailed], pending: [] },
+    });
+    expect(
+      decideChecks(head({ contexts: [checkRun('Lint', null), tests('FAILURE')] }), early),
+    ).toEqual({
+      done: false,
+      progress: { headRefOid: SHA, failed: [testsFailed], pending: ['Lint'], missing: [] },
+    });
+    // A rollup failure ends the wait even while another required check has not registered.
+    expect(
+      decideChecks(head({ contexts: [checkRun('Quality'), tests('FAILURE')] }), {
+        ...early,
+        requiredChecks: ['Deploy', 'Tests'],
+      }),
+    ).toEqual({
+      done: true,
+      value: { status: 'failure', headRefOid: SHA, failed: [testsFailed], pending: ['Deploy'] },
+    });
+    // A required check that never registers: no-checks after graceMs, once nothing is pending.
+    const quality = head({ contexts: [checkRun('Quality')] });
+    expect(decideChecks(quality, { ...required, now: 4_999 })).toMatchObject({ done: false });
+    for (const view of [quality, head({ contexts: [] })])
+      expect(decideChecks(view, { ...required, now: 5_000 })).toEqual({
+        done: true,
+        value: { status: 'no-checks', headRefOid: SHA, failed: [], pending: ['Tests'] },
+      });
+    expect(
+      decideChecks(head({ contexts: [checkRun('Quality'), checkRun('Lint', null)] }), {
+        ...required,
+        now: 100_000,
+      }),
+    ).toEqual({
+      done: false,
+      progress: { headRefOid: SHA, failed: [], pending: ['Lint', 'Tests'], missing: ['Tests'] },
+    });
+    expect(decideChecks(head({ state: 'MERGED', contexts: [checkRun('Quality')] }), early)).toEqual(
+      {
+        done: true,
+        value: { status: 'closed', headRefOid: SHA, failed: [], pending: ['Tests'] },
+      },
+    );
+    // Status contexts count by their context name.
+    expect(
+      decideChecks(
+        head({
+          contexts: [
+            {
+              __typename: 'StatusContext',
+              context: 'ci/legacy',
+              state: 'SUCCESS',
+              targetUrl: null,
+            },
+          ],
+        }),
+        { ...early, requiredChecks: ['ci/legacy'] },
+      ),
+    ).toMatchObject({ done: true, value: { status: 'success' } });
+    // The pin rules come first: another head or rollup has nothing missing yet.
+    expect(decideChecks(head({ rollupOid: ANCESTOR }), early)).toEqual({
+      done: false,
+      progress: { headRefOid: SHA, failed: [], pending: [], missing: [] },
+    });
+  });
+
+  it('decides exactly as before with requiredChecks omitted or empty', () => {
+    const views = [
+      head(),
+      head({ contexts: [] }),
+      head({ contexts: [checkRun('Quality', 'FAILURE', 11), checkRun('Tests', null)] }),
+      head({ contexts: [checkRun('Quality', 'FAILURE', 11), checkRun('Tests')] }),
+      head({ contexts: [checkRun('Tests', null)] }),
+      head({ state: 'MERGED', contexts: [checkRun('Tests', null)] }),
+      head({ state: 'CLOSED', contexts: [] }),
+      head({ rollupOid: ANCESTOR }),
+      head({ headRefOid: OTHER }),
+    ];
+    let cases = 0;
+    for (const view of views)
+      for (const now of [0, 4_999, 5_000, 10_000]) {
+        const before = decideChecks(view, { ...timing, now });
+        for (const requiredChecks of [undefined, []]) {
+          const decision = decideChecks(view, { ...timing, now, requiredChecks });
+          expect(decision).toEqual(before);
+          if (!decision.done) expect(decision.progress).not.toHaveProperty('missing');
+          cases++;
+        }
+      }
+    expect(cases).toBe(72);
+  });
+
+  it('never reports success while a required check is absent', () => {
+    const contexts = [
+      [],
+      [checkRun('Quality')],
+      [checkRun('Quality'), checkRun('Tests')],
+      [checkRun('Quality'), checkRun('Tests', null)],
+      [checkRun('Tests'), checkRun('Lint', 'FAILURE')],
+      [checkRun('Tests'), checkRun('Deploy')],
+    ];
+    const lists = [['Tests'], ['Deploy', 'Tests'], ['Lint'], ['Quality', 'Tests']];
+    let successes = 0;
+    for (const checks of contexts)
+      for (const state of ['OPEN', 'MERGED', 'CLOSED'])
+        for (const requiredChecks of lists)
+          for (const now of [0, 10_000]) {
+            const view = head({ state, contexts: checks });
+            const decision = decideChecks(view, { ...timing, now, requiredChecks });
+            if (!decision.done || decision.value.status !== 'success') continue;
+            const names = view.checks.items.map((item) => item.name);
+            for (const name of requiredChecks) expect(names).toContain(name);
+            successes++;
+          }
+    // Successes do happen, so the loop checks something.
+    expect(successes).toBeGreaterThan(0);
+  });
 });
 
 describe('pull request states', () => {
@@ -1191,6 +1336,105 @@ describe('waitChecks', () => {
     });
   });
 
+  describe('with requiredChecks', () => {
+    const quality = prHead({ checks: [checkRun('Quality')] });
+    const required = { pr: 338, sha: SHA, requiredChecks: ['Tests'], every: 5 };
+
+    it('keeps polling past an early successful rollup until the required check passes', async () => {
+      const { runner, log } = inProcess({
+        'pr.head': [
+          { json: quality },
+          { json: quality },
+          { json: prHead({ checks: [checkRun('Quality'), checkRun('Tests', null)] }) },
+          { json: prHead({ checks: [checkRun('Quality'), checkRun('Tests')] }) },
+        ],
+      });
+      const result = await run(
+        (gh) => gh.waitChecks('ci', { ...required, timeoutMs: 60_000 }),
+        runner,
+      );
+      expect(result.output).toEqual({
+        status: 'success',
+        headRefOid: SHA,
+        failed: [],
+        pending: [],
+      });
+      expect(log.filter((read) => read === 'pr.head').length).toBeGreaterThanOrEqual(4);
+    });
+
+    it('times out with the missing check in pending and in the note, never success', async () => {
+      const { runner } = inProcess({ 'pr.head': [{ json: quality }] });
+      const result = await run(
+        (gh) => gh.waitChecks('ci', { ...required, graceMs: 60_000, every: 10, timeoutMs: 100 }),
+        runner,
+      );
+      expect(result.output).toEqual({
+        status: 'timeout',
+        headRefOid: SHA,
+        failed: [],
+        pending: ['Tests'],
+      });
+      // inspect shows what the wait is waiting for, even when pending is truncated.
+      expect((await readRun(setup())).steps['ci']?.wait?.note).toMatchObject({
+        headRefOid: SHA,
+        pending: ['Tests'],
+        missing: ['Tests'],
+      });
+      // Without the option the same view succeeds at once and a waiting note has no missing key.
+      const pending = prHead({ checks: [checkRun('Quality'), checkRun('Tests', null)] });
+      const plain = inProcess({ 'pr.head': [{ json: pending }] });
+      await run(
+        (gh) => gh.waitChecks('ci', { pr: 338, sha: SHA, every: 10, timeoutMs: 100 }),
+        plain.runner,
+        'plain',
+      );
+      const note = (await readRun(setup('plain'))).steps['ci']?.wait?.note;
+      expect(note).toMatchObject({ pending: ['Tests'] });
+      expect(note).not.toHaveProperty('missing');
+    });
+
+    it('reports failure with the failed required check', async () => {
+      const { runner } = inProcess({
+        'pr.head': [
+          { json: prHead({ checks: [checkRun('Quality'), checkRun('Tests', 'FAILURE', 12)] }) },
+        ],
+      });
+      const result = await run(
+        (gh) => gh.waitChecks('ci', { ...required, timeoutMs: 60_000 }),
+        runner,
+      );
+      expect(result.output).toEqual({
+        status: 'failure',
+        headRefOid: SHA,
+        failed: [
+          {
+            name: 'Tests',
+            url: 'https://github.com/octo-org/quiet-choir/actions/runs/12/job/1',
+            runId: 12,
+          },
+        ],
+        pending: [],
+      });
+    });
+
+    it('reports no-checks with the missing check in pending after graceMs', async () => {
+      const { runner, log } = inProcess({ 'pr.head': [{ json: quality }] });
+      const started = Date.now();
+      const result = await run(
+        (gh) => gh.waitChecks('ci', { ...required, graceMs: 150, every: 10, timeoutMs: 60_000 }),
+        runner,
+      );
+      expect(Date.now() - started).toBeGreaterThanOrEqual(150);
+      expect(result.output).toEqual({
+        status: 'no-checks',
+        headRefOid: SHA,
+        failed: [],
+        pending: ['Tests'],
+      });
+      expect(log.length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
   it('treats a head that sha does not descend from as moved, even inside the stale grace', async () => {
     for (const [runId, compare] of [
       ['behind', { json: { status: 'behind' } }],
@@ -1302,7 +1546,7 @@ describe('waitChecks', () => {
 });
 
 describe('arguments', () => {
-  const { runner } = inProcess({});
+  const { runner, log } = inProcess({});
   const cases: [string, (gh: GithubClient) => Promise<unknown>, string][] = [
     [
       'bad sha',
@@ -1352,6 +1596,22 @@ describe('arguments', () => {
       'bad pr',
       (gh) => gh.waitChecks('ci', { pr: 0, sha: SHA, timeoutMs: 1 }),
       'waitChecks pr must be a positive integer',
+    ],
+    [
+      'requiredChecks string',
+      (gh) =>
+        gh.waitChecks('ci', { pr: 1, sha: SHA, requiredChecks: 'Tests' as never, timeoutMs: 1 }),
+      'waitChecks requiredChecks must be an array of nonempty strings',
+    ],
+    [
+      'requiredChecks empty name',
+      (gh) => gh.waitChecks('ci', { pr: 1, sha: SHA, requiredChecks: [''], timeoutMs: 1 }),
+      'waitChecks requiredChecks must be an array of nonempty strings',
+    ],
+    [
+      'requiredChecks number',
+      (gh) => gh.waitChecks('ci', { pr: 1, sha: SHA, requiredChecks: [1 as never], timeoutMs: 1 }),
+      'waitChecks requiredChecks must be an array of nonempty strings',
     ],
     [
       'bad until',
@@ -1418,6 +1678,7 @@ describe('arguments', () => {
     ).rejects.toThrow();
     expect(String(thrown)).toContain(message);
     expect((await readRun(setup(name.replace(/\W/gu, '-')))).steps).toEqual({});
+    expect(log).toEqual([]);
   });
 
   it('validates the CodeQL reviewer options', () => {

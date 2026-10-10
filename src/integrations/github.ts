@@ -593,13 +593,25 @@ export type GithubWaitChecksOptions = GithubWaitBound &
     readonly pr: number;
     /** The head SHA to pin: the full 40 lowercase hex characters; an abbreviated SHA throws. */
     readonly sha: string;
-    /** Milliseconds from the first check before "no checks" is final; default 300000. */
+    /**
+     * Milliseconds from the first check before "no checks" (or, with `requiredChecks`, a required
+     * check that has not registered) is final; default 300000.
+     */
     readonly graceMs?: number;
     /**
      * Milliseconds from the first check during which a head that `sha` descends from is a stale
      * view, not a move; default 0 (strict).
      */
     readonly staleGraceMs?: number;
+    /**
+     * Checks that must exist before a successful rollup counts: check run (job) or status context
+     * names exactly as the rollup shows them, such as `test (22)`, not workflow names. They add to
+     * the rollup and never filter it. `success` needs every name registered; a name that has not
+     * registered is listed in `pending` (and in the note's `missing`), and once nothing registered
+     * is pending and `graceMs` has passed, the wait ends with `no-checks`. Order and duplicates do
+     * not matter; empty is the same as omitting it.
+     */
+    readonly requiredChecks?: readonly string[];
     /** Retained stdout bytes of each read, default 1048576. */
     readonly maxOutputBytes?: number;
   };
@@ -673,6 +685,7 @@ export interface GithubClient {
    * Wait for the checks of head `sha` to finish: one `ctx.poll` under `id`, reading the pull
    * request view on every check. Head-pinned: `success` and `failure` only for `sha`; any other
    * head ends with `head-moved` (after `staleGraceMs`, see {@link GithubWaitChecksOptions}).
+   * With `requiredChecks`, `success` also waits until every named check has registered.
    */
   waitChecks(id: string, options: GithubWaitChecksOptions): Promise<WaitChecksResult>;
   /**
@@ -856,7 +869,12 @@ export function github(
 // ---------------------------------------------------------------------------------------------
 // Waits (ADR 0045)
 
-/** A wait's identity value; bump the version whenever the wait's observable meaning changes. */
+/**
+ * A wait's identity value; bump the version whenever the wait's observable meaning changes. An
+ * option that enters the input only when given (such as `waitChecks`' `requiredChecks`) needs no
+ * bump: no recorded wait carries it, so none changes meaning, and the version is shared by every
+ * wait kind.
+ */
 const WAIT_VERSION = 1;
 const DEFAULT_TOLERATE = 5;
 const CHECKS_EVERY: PollInterval = { initialMs: 30_000, maxMs: 120_000 };
@@ -873,6 +891,17 @@ function nonNegative(value: unknown, fallback: number, label: string): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0)
     throw new Error(`${label} must be a nonnegative integer.`);
   return value;
+}
+
+/** `waitChecks`' `requiredChecks`, sorted and without duplicates; empty is the same as absent. */
+function requiredCheckNames(value: unknown): string[] {
+  if (value === undefined) return [];
+  if (
+    !Array.isArray(value) ||
+    value.some((name: unknown) => typeof name !== 'string' || name === '')
+  )
+    throw new Error('waitChecks requiredChecks must be an array of nonempty strings.');
+  return [...new Set(value as readonly string[])].sort();
 }
 
 /** Validate what every wait shares, before the wait opens. */
@@ -1011,9 +1040,12 @@ function githubWaits(
       const { pr, sha, bound, policy } = waitBase('waitChecks', options);
       const graceMs = nonNegative(options.graceMs, DEFAULT_GRACE_MS, 'waitChecks graceMs');
       const staleGraceMs = nonNegative(options.staleGraceMs, 0, 'waitChecks staleGraceMs');
+      const requiredChecks = requiredCheckNames(options.requiredChecks);
+      // Only a nonempty list enters the input, so a wait without it keeps its identity.
+      const required = requiredChecks.length ? { requiredChecks } : {};
       const maxOutputBytes = options.maxOutputBytes;
       const source: PollOptions<WaitChecksTerminal> & InternalPollIdentity = {
-        input: { repo: repoKey(repo), pr, sha, graceMs, staleGraceMs },
+        input: { repo: repoKey(repo), pr, sha, graceMs, staleGraceMs, ...required },
         schema: waitChecksValueSchema,
         every: options.every ?? CHECKS_EVERY,
         ...bound,
@@ -1036,8 +1068,16 @@ function githubWaits(
           const waiting = { headRefOid: view.headRefOid, failed: [], pending: [] };
           if (head === 'moved') return { done: true, value: { status: 'head-moved', ...waiting } };
           if (head === 'stale')
-            return { done: false, note: { startedAt, stale: [...stale], ...waiting } };
-          const decision = decideChecks(view, { sha, now, startedAt, graceMs });
+            return {
+              done: false,
+              note: {
+                startedAt,
+                stale: [...stale],
+                ...waiting,
+                ...(requiredChecks.length ? { missing: [] } : {}),
+              },
+            };
+          const decision = decideChecks(view, { sha, now, startedAt, graceMs, requiredChecks });
           if (decision.done) return decision;
           const { progress } = decision;
           return {
@@ -1048,6 +1088,7 @@ function githubWaits(
               headRefOid: progress.headRefOid,
               failed: bounded(progress.failed),
               pending: bounded(progress.pending),
+              ...(progress.missing === undefined ? {} : { missing: bounded(progress.missing) }),
             },
           };
         },
