@@ -487,7 +487,9 @@ inline code ignored). Any truncated connection, or fewer sub-issues than GitHub 
 picks the first `in-flight` item (an open linked pull request), else a `close-split` parent, else
 the first `ready` one, and lists every other open item in `skipped` with its reason (`waiting`,
 `held`, `split`, `other-repository`, `not-a-sub-issue`, or a later `ready`); `done` is true only
-when nothing is open. A dependency outside the epic counts as open until you read it: pass the
-`gh.issue.view` results for `outsideReferences(snapshot)` as `outside`. Key the snapshot by round
-(`ctx.id('epic', n, round)`) to see fresh state. See
-[epics](https://github.com/plx/quiet-choir/blob/main/docs/github.md#epics).
+when nothing is open. Pass `headRefPrefix` (for example `'epic-172/'`) to `epic.snapshot` to also
+link open same-repository, non-fork pull requests on a branch named `<prefix><N>` or
+`<prefix><N>-...` to item N (off by default; the read throws above 100 open pull requests). A
+dependency outside the epic counts as open until you read it: pass the `gh.issue.view` results for
+`outsideReferences(snapshot)` as `outside`. Key the snapshot by round (`ctx.id('epic', n, round)`)
+to see fresh state. See [epics](https://github.com/plx/quiet-choir/blob/main/docs/github.md#epics).

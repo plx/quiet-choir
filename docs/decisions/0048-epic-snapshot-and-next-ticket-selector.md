@@ -3,6 +3,7 @@
 - Status: accepted
 - Issue: #163 (slice D of #21, question 4: selection and dispatch recovery)
 - Builds on: [0044](0044-gh-backed-github-reads.md) (complete-or-throw reads)
+- Amended by: #357 (the opt-in `headRefPrefix` read; see the last Decision bullet)
 
 ## Context
 
@@ -48,12 +49,12 @@ Add `gh.epic.snapshot(id, { number }, policy?)` to `quiet-choir/github`, and the
   checklist line naming an issue that is not a sub-issue stays in `snapshot.checklist` and is
   reported by the selector as `not-a-sub-issue`, never silently dropped. Without sub-issues, the
   items are the checklist lines themselves (`source: 'task-list'`), with checkbox-derived states and
-  nothing else. The checklist parser ignores fenced code (backtick or tilde fences, with CommonMark
-  opening and closing rules, an unclosed fence running to the end of its container, also inside
-  block quotes and list items, whose open items are tracked across lines, read by a character loop
-  over the container markers) and inline code (CommonMark code spans, found by a linear scan rather
-  than a backtracking regex), takes each line's first reference to the client's repository, and
-  skips the epic itself.
+  nothing else, unless the read passes `headRefPrefix` (below). The checklist parser ignores fenced
+  code (backtick or tilde fences, with CommonMark opening and closing rules, an unclosed fence
+  running to the end of its container, also inside block quotes and list items, whose open items are
+  tracked across lines, read by a character loop over the container markers) and inline code
+  (CommonMark code spans, found by a linear scan rather than a backtracking regex), takes each
+  line's first reference to the client's repository, and skips the epic itself.
 - **Rules taken from the burn-down survey, not the ticket's sketch.** The ticket proposed skipping
   items with an open linked pull request (`has-open-pr`). The survey that has been running epic #99
   instead finishes work already under way, and that is kept: an open linked pull request (drafts
@@ -80,6 +81,32 @@ Add `gh.epic.snapshot(id, { number }, policy?)` to `quiet-choir/github`, and the
 - **Module layout.** The query, schema, parsers, mapper and selector live in the pure
   `github-epic-model.ts` with its own ESLint purity block (values only from `../index.js` and
   `./github-model.js`; no process or clock).
+- **Branch-linked pull requests (#357).** `gh.epic.snapshot(id, { number, headRefPrefix? })` is off
+  by default: without `headRefPrefix` the query, argv and schema are exactly as above, so the golden
+  `epic.snapshot` digests and in-flight runs are untouched. With it, the read is a second variant of
+  the same single command: the query also reads the repository's open pull requests
+  (`pullRequests(states: OPEN, first: 100) { number state isDraft url headRefName isCrossRepository }`),
+  and its own schema, pinned as `epic.snapshot headRefPrefix`, adds one completeness check. The
+  legacy burn-down also treated a pull request on a branch named for the ticket as linked, so a pull
+  request opened without a closing keyword left its ticket looking ready. The convention is a prefix
+  string, not a pattern: a pull request matches item N when its head branch is `prefix` + N or
+  starts with `prefix` + N + `-`, with N in decimal without leading zeros (`epic-172/357-slug` for
+  `epic-172/`). A prefix must be nonempty, hold no NUL and not end in a digit, which would make the
+  number ambiguous (`issue-1` + `23` against `issue-12` + `3`); an invalid one throws before `gh`
+  runs. The mapper merges the matches into the item's `pullRequests`, deduplicated by number: a
+  closing-reference entry wins and keeps its place, branch-only matches follow in ascending number,
+  so `nextTicket` is unchanged and still pure. Only open pull requests of the repository itself
+  link, and only to items of that repository (a sub-issue of another repository gets none): a fork's
+  branch name is not this repository's convention, and anyone could park a ticket by naming one, the
+  same reasoning as counting only the viewer's split markers. `task-list` items link too. The prefix
+  is a mapper parameter, like `nextTicket`'s policy, and not identity: the checkpoint holds the
+  validated raw response with every open pull request, ADR 0044's mapper-on-replay rule applies, and
+  GraphQL would reject the prefix as a declared but unused variable. Changing the prefix across a
+  resume therefore re-maps the same recorded open pull requests. The open-pull-request page is one
+  page of 100 like every other connection here: `hasNextPage` throws `IncompleteCollectionError` for
+  `repository.pullRequests`, so a repository with more than 100 open pull requests cannot use the
+  option. Search-based filtering (`search(type: ISSUE, query: "head:...")`) was rejected: GitHub
+  search lags its index and matches `head:` loosely, so a just-opened pull request could be missed.
 
 Claims (`gh.issue.claim`, assignees as locks) and ticking checklist lines are out of scope: they are
 writes, and would follow ADR 0046's reconciled-write rules if concurrent runs ever need them.
@@ -93,7 +120,9 @@ writes, and would follow ADR 0046's reconciled-write rules if concurrent runs ev
   the same ticket.
 - Linked pull requests are those GitHub links to the issue: through a closing keyword in a pull
   request into the default branch, or by hand. A pull request stacked on another base, or one that
-  works on an issue without a closing reference, is not seen, so its ticket can be picked again.
+  works on an issue without a closing reference, is not seen, so its ticket can be picked again,
+  unless the read passes `headRefPrefix` and the pull request is open, in this repository and on a
+  branch the prefix names.
 - GitHub Enterprise Server versions or accounts without sub-issues or issue dependencies lack the
   `subIssues` or `blockedBy` fields, so gh exits 1 and the read rejects; there is no fallback query.
 - An epic with more than 100 sub-issues, or a sub-issue with more than 100 comments, cannot be

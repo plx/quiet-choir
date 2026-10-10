@@ -27,8 +27,10 @@ import {
   type RawEpicSubIssue,
 } from '../src/integrations/github.js';
 import {
+  EPIC_SNAPSHOT_BRANCHES_QUERY,
   EPIC_SNAPSHOT_QUERY,
   epicSnapshotRead,
+  headRefIssueNumber,
   mapEpicSnapshot,
 } from '../src/integrations/github-epic-model.js';
 import { definition, REPO, repository, useGithubFake, VIEWER } from './github-fake.js';
@@ -157,13 +159,16 @@ function fakeGh(
 }
 
 /** Run `gh.epic.snapshot('epic', { number: 99 })` and keep the error it throws. */
-async function failingSnapshot(runner: ProcessRunner): Promise<unknown> {
+async function failingSnapshot(runner: ProcessRunner, headRefPrefix?: string): Promise<unknown> {
   let thrown: unknown;
   await expect(
     runWorkflow(
       definition(async (ctx) => {
         try {
-          return await github(ctx, { repo: REPO }).epic.snapshot('epic', { number: 99 });
+          return await github(ctx, { repo: REPO }).epic.snapshot('epic', {
+            number: 99,
+            ...(headRefPrefix === undefined ? {} : { headRefPrefix }),
+          });
         } catch (error) {
           thrown = error;
           throw error;
@@ -380,6 +385,374 @@ describe('gh.epic.snapshot complete-or-throw', () => {
       { ...setup('epic'), processRunner: runner },
     );
     expect((run.output as unknown as GithubEpicSnapshot).items).toHaveLength(16);
+  });
+});
+
+describe('headRefPrefix: pull requests linked by head branch', () => {
+  const PREFIX = 'epic-99/';
+  const openPr = (number: number, headRefName: string, extra: Record<string, unknown> = {}) => ({
+    number,
+    state: 'OPEN',
+    isDraft: false,
+    url: `https://github.com/${REPO}/pull/${String(number)}`,
+    headRefName,
+    isCrossRepository: false,
+    ...extra,
+  });
+  type OpenPr = ReturnType<typeof openPr>;
+  /** Give the response its repository.pullRequests page, as the variant query reads it. */
+  const withOpen =
+    (...nodes: OpenPr[]) =>
+    (raw: RawEpic) => {
+      raw.data.repository.pullRequests = { pageInfo: { hasNextPage: false }, nodes };
+    };
+  const linked = (snapshot: GithubEpicSnapshot, number: number): number[] =>
+    (snapshot.items.find((item) => item.number === number)?.pullRequests ?? []).map(
+      (entry) => entry.number,
+    );
+  const mapped = (mutate: (raw: RawEpic) => void, prefix: string | undefined = PREFIX) => {
+    const raw = recordedEpic() as RawEpic;
+    mutate(raw);
+    return mapEpicSnapshot(repo, raw, prefix);
+  };
+
+  it('reports a ticket whose only pull request is linked by its head branch as in flight', () => {
+    const snapshot = mapped(withOpen(openPr(900, 'epic-99/164-work')));
+    expect(snapshot.items.find((item) => item.number === 164)?.pullRequests).toEqual([
+      {
+        number: 900,
+        state: 'OPEN',
+        isDraft: false,
+        url: `https://github.com/${REPO}/pull/900`,
+        headRefName: 'epic-99/164-work',
+      },
+    ]);
+    expect(nextTicket(snapshot).pick).toMatchObject({
+      number: 164,
+      status: 'in-flight',
+      pullRequests: [900],
+    });
+  });
+
+  it('links an exact prefix + number branch and a draft pull request', () => {
+    const snapshot = mapped(
+      withOpen(openPr(900, 'epic-99/167'), openPr(901, 'epic-99/168-x', { isDraft: true })),
+    );
+    expect(linked(snapshot, 167)).toEqual([900]);
+    expect(linked(snapshot, 168)).toEqual([901]);
+  });
+
+  it('links nothing without headRefPrefix, even when the response lists open pull requests', () => {
+    const raw = recordedEpic() as RawEpic;
+    withOpen(openPr(900, 'epic-99/164-work'))(raw);
+    expect(linked(mapEpicSnapshot(repo, raw), 164)).toEqual([]);
+    expect(nextTicket(mapEpicSnapshot(repo, raw)).pick).toMatchObject({
+      number: 163,
+      status: 'ready',
+    });
+  });
+
+  it('leaves closing-only links unchanged', () => {
+    const add = (raw: RawEpic) => {
+      node(raw, 164).closedByPullRequestsReferences.nodes.push(pr(401, 'OPEN'));
+    };
+    const before = snapshotOf(add);
+    const after = mapped(both(add, withOpen()));
+    expect(after).toEqual(before);
+    expect(nextTicket(after).pick).toMatchObject({ number: 164, pullRequests: [401] });
+  });
+
+  it('lists a pull request found by both closing reference and branch once, closing entry first', () => {
+    const snapshot = mapped(
+      both(
+        (raw) => {
+          node(raw, 164).closedByPullRequestsReferences.nodes.push(pr(401, 'OPEN'));
+        },
+        withOpen(
+          openPr(402, 'epic-99/164-later'),
+          openPr(401, 'epic-99/164-work'),
+          openPr(399, 'epic-99/164-earlier'),
+        ),
+      ),
+    );
+    // The closing entry keeps its place and its fields; branch-only matches follow by number.
+    expect(linked(snapshot, 164)).toEqual([401, 399, 402]);
+    expect(snapshot.items.find((item) => item.number === 164)?.pullRequests[0]).toEqual(
+      pr(401, 'OPEN'),
+    );
+    const only = mapped(
+      both(
+        (raw) => {
+          node(raw, 164).closedByPullRequestsReferences.nodes.push(pr(401, 'OPEN'));
+        },
+        withOpen(openPr(401, 'epic-99/164-work')),
+      ),
+    );
+    expect(linked(only, 164)).toEqual([401]);
+    expect(nextTicket(only).pick).toMatchObject({ number: 164, pullRequests: [401] });
+    expect(nextTicket(only).skipped.filter((entry) => entry.number === 164)).toEqual([]);
+  });
+
+  it('keeps a same-numbered pull request of another repository beside the branch match', () => {
+    const foreign = {
+      ...pr(401, 'CLOSED'),
+      url: 'https://github.com/other/elsewhere/pull/401',
+    };
+    const snapshot = mapped(
+      both(
+        (raw) => {
+          node(raw, 164).closedByPullRequestsReferences.nodes.push(foreign);
+        },
+        withOpen(openPr(401, 'epic-99/164-work')),
+      ),
+    );
+    const pullRequests = snapshot.items.find((item) => item.number === 164)?.pullRequests;
+    expect(pullRequests?.map((entry) => entry.url)).toEqual([
+      'https://github.com/other/elsewhere/pull/401',
+      `https://github.com/${REPO}/pull/401`,
+    ]);
+    expect(nextTicket(snapshot).pick).toMatchObject({ number: 164, status: 'in-flight' });
+  });
+
+  it('reports a branch-linked pull request of a skipped in-flight ticket', () => {
+    const result = nextTicket(
+      mapped(withOpen(openPr(900, 'epic-99/167-work'), openPr(901, 'epic-99/164-work'))),
+    );
+    expect(result.pick).toMatchObject({ number: 164, pullRequests: [901] });
+    expect(result.skipped).toContainEqual(
+      expect.objectContaining({ number: 167, reason: 'in-flight', pullRequests: [900] }),
+    );
+  });
+
+  it.each([
+    ['another epic prefix', 'epic-98/164-work'],
+    ['a longer number', 'epic-99/1640-work'],
+    ['a number followed by a non-separator', 'epic-99/164x'],
+    ['a number followed by a slash', 'epic-99/164/work'],
+    ['a leading zero', 'epic-99/0164-work'],
+    ['the bare prefix', 'epic-99/'],
+    ['no number after the prefix', 'epic-99/work-164'],
+    ['the prefix in the middle', 'x/epic-99/164-work'],
+    ['a different case', 'EPIC-99/164-work'],
+    ['a plain feature branch', 'fix-164'],
+  ])('does not link a branch with %s', (_name, headRefName) => {
+    expect(mapped(withOpen(openPr(900, headRefName)))).toEqual(mapped(withOpen()));
+  });
+
+  it('links nothing for a number that is not an item of the epic', () => {
+    expect(mapped(withOpen(openPr(900, 'epic-99/7-work')))).toEqual(mapped(withOpen()));
+  });
+
+  it('does not link a fork branch with a matching name', () => {
+    const snapshot = mapped(withOpen(openPr(900, 'epic-99/164-work', { isCrossRepository: true })));
+    expect(linked(snapshot, 164)).toEqual([]);
+    expect(nextTicket(snapshot).pick).toMatchObject({ number: 163, status: 'ready' });
+  });
+
+  it('does not link a pull request that is not open', () => {
+    const snapshot = mapped(withOpen(openPr(900, 'epic-99/164-work', { state: 'MERGED' })));
+    expect(linked(snapshot, 164)).toEqual([]);
+  });
+
+  it('links nothing to a sub-issue of another repository', () => {
+    const snapshot = mapped(
+      both(
+        (raw) => {
+          node(raw, 164).repository.nameWithOwner = 'octo-org/elsewhere';
+        },
+        withOpen(openPr(900, 'epic-99/164-work'), openPr(901, 'epic-99/167-work')),
+      ),
+    );
+    expect(linked(snapshot, 164)).toEqual([]);
+    expect(linked(snapshot, 167)).toEqual([901]);
+  });
+
+  it('links an unchecked task-list item to its open pull request', () => {
+    const snapshot = mapped((raw) => {
+      Object.assign(epicOf(raw), {
+        body: ['- [x] #10 Done', '- [ ] #12 Under way', '- [ ] #13 Not started'].join('\n'),
+        subIssuesSummary: { total: 0, completed: 0 },
+        subIssues: { pageInfo: { hasNextPage: false }, nodes: [] },
+      });
+      withOpen(openPr(900, 'epic-99/12-work'))(raw);
+    });
+    expect(snapshot.source).toBe('task-list');
+    expect(linked(snapshot, 12)).toEqual([900]);
+    expect(linked(snapshot, 13)).toEqual([]);
+    expect(nextTicket(snapshot).pick).toMatchObject({
+      number: 12,
+      status: 'in-flight',
+      pullRequests: [900],
+    });
+  });
+
+  describe('headRefIssueNumber', () => {
+    it.each<[string, string, number | null]>([
+      ['epic-99/164-work', 'epic-99/', 164],
+      ['epic-99/164', 'epic-99/', 164],
+      ['issue-164-work', 'issue-', 164],
+      ['epic-99/9007199254740992-x', 'epic-99/', null],
+      ['epic-99/9007199254740991-x', 'epic-99/', 9007199254740991],
+      ['epic-99/0-x', 'epic-99/', null],
+      ['epic-99/-x', 'epic-99/', null],
+    ])('reads %s under %s as %s', (name, prefix, expected) => {
+      expect(headRefIssueNumber(name, prefix)).toBe(expected);
+    });
+  });
+
+  describe('gh.epic.snapshot with headRefPrefix', () => {
+    const variant = (...nodes: OpenPr[]) => {
+      const raw = recordedEpic() as RawEpic;
+      withOpen(...nodes)(raw);
+      return raw;
+    };
+
+    it('runs exactly one gh api graphql exec with the variant query and maps the branch links', async () => {
+      const { seen, runner } = fakeGh(() => JSON.stringify(variant(openPr(900, 'epic-99/164-x'))));
+      const run = await runWorkflow(
+        definition((ctx) =>
+          github(ctx, { repo: REPO }).epic.snapshot('epic', { number: 99, headRefPrefix: PREFIX }),
+        ),
+        { ...setup('epic'), processRunner: runner },
+      );
+      expect(seen).toHaveLength(1);
+      expect(seen[0]?.argv).toEqual([
+        'gh',
+        'api',
+        'graphql',
+        '-f',
+        `query=${EPIC_SNAPSHOT_BRANCHES_QUERY}`,
+        '-f',
+        'owner=octo-org',
+        '-f',
+        'name=quiet-choir',
+        '-F',
+        'number=99',
+      ]);
+      expect(seen[0]?.argv).toEqual(epicSnapshotRead(repo, 99, PREFIX).argv);
+      // The prefix filters in the mapper: it is not in argv, so another prefix has the same command.
+      expect(JSON.stringify(seen[0]?.argv)).not.toContain(PREFIX);
+      expect(epicSnapshotRead(repo, 99, 'other/').argv).toEqual(seen[0]?.argv);
+      expect(EPIC_SNAPSHOT_BRANCHES_QUERY).toContain(
+        'pullRequests(states: OPEN, first: 100) { pageInfo { hasNextPage } nodes { number state isDraft url headRefName isCrossRepository } }',
+      );
+      expect(EPIC_SNAPSHOT_BRANCHES_QUERY.startsWith(EPIC_SNAPSHOT_QUERY.slice(0, 200))).toBe(true);
+      const snapshot = run.output as unknown as GithubEpicSnapshot;
+      expect(nextTicket(snapshot).pick).toMatchObject({
+        number: 164,
+        status: 'in-flight',
+        pullRequests: [900],
+      });
+    });
+
+    it('keeps the default read on the original query and argv', async () => {
+      const { seen, runner } = fakeGh();
+      await runWorkflow(
+        definition((ctx) => github(ctx, { repo: REPO }).epic.snapshot('epic', { number: 99 })),
+        { ...setup('epic'), processRunner: runner },
+      );
+      expect(seen[0]?.argv).toEqual(epicSnapshotRead(repo, 99).argv);
+      expect(seen[0]?.argv).toContain(`query=${EPIC_SNAPSHOT_QUERY}`);
+      expect(EPIC_SNAPSHOT_QUERY).not.toContain('pullRequests(states');
+    });
+
+    it('replays the recorded pull requests with the prefix of the resumed run', async () => {
+      let prefix = PREFIX;
+      let fail = true;
+      const workflow = definition(async (ctx) => {
+        const snapshot = await github(ctx, { repo: REPO }).epic.snapshot('epic', {
+          number: 99,
+          headRefPrefix: prefix,
+        });
+        if (fail) throw new Error('Injected tail failure');
+        return nextTicket(snapshot).pick?.number ?? null;
+      });
+      const first = fakeGh(() => JSON.stringify(variant(openPr(900, 'epic-99/164-x'))));
+      await expect(
+        runWorkflow(workflow, { ...setup('epic'), processRunner: first.runner }),
+      ).rejects.toThrow('Injected tail failure');
+      fail = false;
+      prefix = 'other/';
+      const second = fakeGh();
+      const resumed = await runWorkflow(workflow, {
+        ...setup('epic'),
+        processRunner: second.runner,
+        resume: true,
+      });
+      // Same command and schema, so the step replays; the new prefix re-maps the recorded response.
+      expect(second.seen).toEqual([]);
+      expect(resumed.output).toBe(163);
+    });
+
+    it('throws IncompleteCollectionError for more than 100 open pull requests', async () => {
+      const raw = variant(openPr(900, 'epic-99/164-x'));
+      raw.data.repository.pullRequests = {
+        pageInfo: { hasNextPage: true },
+        nodes: [openPr(900, 'epic-99/164-x')],
+      };
+      const { runner } = fakeGh(() => JSON.stringify(raw));
+      let thrown: unknown;
+      await expect(
+        runWorkflow(
+          definition(async (ctx) => {
+            try {
+              return await github(ctx, { repo: REPO }).epic.snapshot('epic', {
+                number: 99,
+                headRefPrefix: PREFIX,
+              });
+            } catch (error) {
+              thrown = error;
+              throw error;
+            }
+          }),
+          { ...setup('epic'), processRunner: runner },
+        ),
+      ).rejects.toThrow();
+      expect(thrown).toBeInstanceOf(IncompleteCollectionError);
+      expect(thrown).toMatchObject({ connection: 'repository.pullRequests', stepId: 'epic' });
+    });
+
+    it('still checks the epic connections of the variant response', async () => {
+      const raw = variant();
+      epicOf(raw).subIssues.pageInfo.hasNextPage = true;
+      const error = await failingSnapshot(fakeGh(() => JSON.stringify(raw)).runner, PREFIX);
+      expect(error).toBeInstanceOf(IncompleteCollectionError);
+      expect(error).toMatchObject({ connection: 'epic.subIssues' });
+    });
+
+    it('rejects a response without the open pull request page', async () => {
+      const { runner } = fakeGh();
+      await expect(
+        runWorkflow(
+          definition((ctx) =>
+            github(ctx, { repo: REPO }).epic.snapshot('epic', {
+              number: 99,
+              headRefPrefix: PREFIX,
+            }),
+          ),
+          { ...setup('epic'), processRunner: runner },
+        ),
+      ).rejects.toThrow();
+    });
+
+    it.each([
+      ['an empty prefix', ''],
+      ['a prefix with NUL', 'epic-99/\0'],
+      ['a prefix ending in a digit', 'issue-1'],
+      ['a non-string prefix', 5 as unknown as string],
+      ['a null prefix', null as unknown as string],
+    ])('rejects %s before running gh', async (_name, headRefPrefix) => {
+      const { seen, runner } = fakeGh();
+      await expect(
+        runWorkflow(
+          definition((ctx) =>
+            github(ctx, { repo: REPO }).epic.snapshot('epic', { number: 99, headRefPrefix }),
+          ),
+          { ...setup('epic'), processRunner: runner },
+        ),
+      ).rejects.toThrow('epic.snapshot headRefPrefix must be a nonempty string');
+      expect(seen).toEqual([]);
+    });
   });
 });
 
@@ -1537,5 +1910,35 @@ export default defineWorkflow({
     expect(output.snapshot).toMatchObject({ source: 'sub-issues', total: 0 });
     expect(output.snapshot.items).toHaveLength(1);
     expect(output.next.pick).toBeNull();
+  });
+
+  it('rehearses a snapshot with headRefPrefix as the variant command and completes', async () => {
+    await project();
+    const file = join(cwd(), 'epic-branches.workflow.ts');
+    await writeFile(
+      file,
+      `import { defineWorkflow, z } from ${JSON.stringify(join(repository, 'src/index.js'))};
+import { github, nextTicket } from ${JSON.stringify(join(repository, 'src/integrations/github.js'))};
+export default defineWorkflow({
+  name: 'epic-branches-dry', version: '1', input: z.object({ repo: z.string() }), output: z.unknown(),
+  async run(ctx, input) {
+    const snapshot = await github(ctx, { repo: input.repo }).epic.snapshot('epic', {
+      number: 99,
+      headRefPrefix: 'epic-99/',
+    });
+    return { snapshot, next: nextTicket(snapshot) };
+  },
+});
+`,
+    );
+    const { run, commands, warnings } = await rehearse(file, { repo: REPO });
+    expect(run.status).toBe('completed');
+    expect(warnings.filter((line) => line.includes('custom Zod refinements'))).toEqual([]);
+    expect(commands.map((command) => [command.stepId, command.outputSource])).toEqual([
+      ['epic', 'synthesized'],
+    ]);
+    expect(commands[0]?.command).toEqual(epicSnapshotRead(repo, 99, 'epic-99/').argv);
+    const output = run.output as unknown as { snapshot: GithubEpicSnapshot };
+    expect(output.snapshot).toMatchObject({ source: 'sub-issues', total: 0 });
   });
 });

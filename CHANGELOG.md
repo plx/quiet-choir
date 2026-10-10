@@ -2,6 +2,19 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `quiet-choir/github`'s `epic.snapshot` accepts `headRefPrefix`, which links open pull requests to
+  an item by head branch (#357; amends
+  [ADR 0048](docs/decisions/0048-epic-snapshot-and-next-ticket-selector.md)). A ticket whose only
+  pull request has no closing keyword was reported `ready` and could be picked twice; with
+  `headRefPrefix: 'epic-172/'`, an open same-repository pull request on `epic-172/357` or
+  `epic-172/357-slug` is merged into item 357's `pullRequests` (once per number, closing references
+  first, then branch-only matches by number), so `nextTicket` reports it `in-flight`. Fork branches
+  are ignored, and task-list items link too. It is off by default and the default read's query,
+  argv, schema and identity are unchanged. The option reads a second query variant, pinned as
+  `epic.snapshot headRefPrefix`, that adds the repository's first 100 open pull requests: more than
+  100 throws `IncompleteCollectionError` for `repository.pullRequests`. The prefix must be nonempty,
+  hold no NUL and not end in a digit, or the call throws before `gh` runs. It is applied in the
+  mapper, not identity, so a resumed run with another prefix re-maps the recorded response.
 - `quiet-choir/github`'s `checks.rerunFailed` accepts `attempts`, a per-run baseline map from
   workflow run ID to the attempt the caller saw that run fail (#356; amends
   [ADR 0047](docs/decisions/0047-pull-request-writes-and-head-pinned-merge.md)). A run in the map is

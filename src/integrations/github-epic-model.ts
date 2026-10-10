@@ -28,12 +28,9 @@ import {
 // ---------------------------------------------------------------------------------------------
 // Query
 
-/**
- * One epic with up to 100 sub-issues and, for each, up to 100 labels, assignees, blocked-by
- * relations, linked pull requests and comments. One page of each; the schema fails the read when
- * any of them reports more. @internal
- */
-export const EPIC_SNAPSHOT_QUERY: string = compact(`
+/** The snapshot query; `openPullRequests` is a selection added to the `repository` object. */
+const epicSnapshotQuery = (openPullRequests: string): string =>
+  compact(`
 query($owner: String!, $name: String!, $number: Int!) {
   viewer { login }
   repository(owner: $owner, name: $name) {
@@ -58,9 +55,27 @@ query($owner: String!, $name: String!, $number: Int!) {
           comments(first: 100) { pageInfo { hasNextPage } nodes { author { login } body } }
         }
       }
-    }
+    }${openPullRequests}
   }
 }`);
+
+/**
+ * One epic with up to 100 sub-issues and, for each, up to 100 labels, assignees, blocked-by
+ * relations, linked pull requests and comments. One page of each; the schema fails the read when
+ * any of them reports more. @internal
+ */
+export const EPIC_SNAPSHOT_QUERY: string = epicSnapshotQuery('');
+
+/**
+ * The snapshot query with `headRefPrefix` (#357): the same text plus the repository's first 100 open
+ * pull requests, read for their head branch and whether they come from a fork. One page; the schema
+ * fails the read when it reports more. @internal
+ */
+export const EPIC_SNAPSHOT_BRANCHES_QUERY: string = epicSnapshotQuery(`
+  pullRequests(states: OPEN, first: 100) {
+    pageInfo { hasNextPage }
+    nodes { number state isDraft url headRefName isCrossRepository }
+  }`);
 
 /**
  * Retained stdout bytes of the snapshot read unless the caller's policy says otherwise: 8 MiB.
@@ -99,6 +114,12 @@ export interface RawEpicPullRequestRef {
   readonly url: string;
   /** Head branch. */
   readonly headRefName: string;
+}
+
+/** An open pull request of the repository, read for its head branch (`headRefPrefix`). */
+export interface RawEpicOpenPullRequest extends RawEpicPullRequestRef {
+  /** Whether the head branch lives in a fork. */
+  readonly isCrossRepository: boolean;
 }
 
 /** A sub-issue comment: only its author and body are read. */
@@ -182,6 +203,8 @@ export interface RawEpicSnapshotResponse {
     readonly repository: {
       /** The epic. */
       readonly issue: RawEpicIssue;
+      /** The open pull requests; read only with `headRefPrefix`. */
+      readonly pullRequests?: RawConnection<RawEpicOpenPullRequest>;
     };
   };
 }
@@ -226,6 +249,43 @@ const nestedConnections = [
   'comments',
 ] as const;
 
+const epicIssue = z.object({
+  number: issueNumber,
+  title: z.string(),
+  state: z.string(),
+  url: z.string(),
+  body: z.string(),
+  subIssuesSummary: z.object({ total: count, completed: count }),
+  subIssues: connection(subIssue),
+});
+
+/** The completeness checks of the epic issue, shared by both snapshot schemas. */
+function checkEpicIssue(epic: z.infer<typeof epicIssue>, ctx: z.RefinementCtx): void {
+  const at = ['data', 'repository', 'issue', 'subIssues'];
+  if (epic.subIssues.pageInfo.hasNextPage) incomplete(ctx, 'epic.subIssues', at);
+  epic.subIssues.nodes.forEach((node, index) => {
+    for (const name of nestedConnections)
+      if (node[name].pageInfo.hasNextPage)
+        incomplete(ctx, `epic.subIssues[${String(node.number)}].${name}`, [
+          ...at,
+          'nodes',
+          index,
+          name,
+        ]);
+  });
+  // Only a shortfall can hide an item. A dry run synthesizes one node with a total of 0, which
+  // must pass.
+  const listed = epic.subIssues.nodes.length;
+  const total = epic.subIssuesSummary.total;
+  if (listed < total)
+    ctx.addIssue({
+      code: 'custom',
+      message: `epic.subIssues lists ${String(listed)} sub-issues but subIssuesSummary.total is ${String(total)}.`,
+      path: [...at, 'nodes'],
+      params: { [INCOMPLETE_COLLECTION_PARAM]: 'epic.subIssues' },
+    });
+}
+
 /**
  * Schema of the `epic.snapshot` response. It fails, and the read throws
  * `IncompleteCollectionError`, when the sub-issue page or any sub-issue's labels, assignees,
@@ -236,44 +296,42 @@ export const epicSnapshotResponseSchema: z.ZodType<RawEpicSnapshotResponse> = z
   .object({
     data: z.object({
       viewer: z.object({ login: z.string() }),
+      repository: z.object({ issue: epicIssue }),
+    }),
+  })
+  .superRefine((response, ctx) => {
+    checkEpicIssue(response.data.repository.issue, ctx);
+  });
+
+/**
+ * Schema of the `epic.snapshot` response with `headRefPrefix`: everything
+ * {@link epicSnapshotResponseSchema} checks, and the open pull request page, which fails the read
+ * with `IncompleteCollectionError` for `repository.pullRequests` when it reports another page.
+ * @internal
+ */
+export const epicSnapshotWithBranchesResponseSchema: z.ZodType<RawEpicSnapshotResponse> = z
+  .object({
+    data: z.object({
+      viewer: z.object({ login: z.string() }),
       repository: z.object({
-        issue: z.object({
-          number: issueNumber,
-          title: z.string(),
-          state: z.string(),
-          url: z.string(),
-          body: z.string(),
-          subIssuesSummary: z.object({ total: count, completed: count }),
-          subIssues: connection(subIssue),
-        }),
+        issue: epicIssue,
+        pullRequests: connection(
+          z.object({
+            number: issueNumber,
+            state: z.string(),
+            isDraft: z.boolean(),
+            url: z.string(),
+            headRefName: z.string(),
+            isCrossRepository: z.boolean(),
+          }),
+        ),
       }),
     }),
   })
   .superRefine((response, ctx) => {
-    const epic = response.data.repository.issue;
-    const at = ['data', 'repository', 'issue', 'subIssues'];
-    if (epic.subIssues.pageInfo.hasNextPage) incomplete(ctx, 'epic.subIssues', at);
-    epic.subIssues.nodes.forEach((node, index) => {
-      for (const name of nestedConnections)
-        if (node[name].pageInfo.hasNextPage)
-          incomplete(ctx, `epic.subIssues[${String(node.number)}].${name}`, [
-            ...at,
-            'nodes',
-            index,
-            name,
-          ]);
-    });
-    // Only a shortfall can hide an item. A dry run synthesizes one node with a total of 0, which
-    // must pass.
-    const listed = epic.subIssues.nodes.length;
-    const total = epic.subIssuesSummary.total;
-    if (listed < total)
-      ctx.addIssue({
-        code: 'custom',
-        message: `epic.subIssues lists ${String(listed)} sub-issues but subIssuesSummary.total is ${String(total)}.`,
-        path: [...at, 'nodes'],
-        params: { [INCOMPLETE_COLLECTION_PARAM]: 'epic.subIssues' },
-      });
+    checkEpicIssue(response.data.repository.issue, ctx);
+    if (response.data.repository.pullRequests.pageInfo.hasNextPage)
+      incomplete(ctx, 'repository.pullRequests', ['data', 'repository', 'pullRequests']);
   });
 
 // ---------------------------------------------------------------------------------------------
@@ -1046,7 +1104,11 @@ export interface GithubEpicBlocker {
   readonly state: string;
 }
 
-/** A pull request linked to an item: one whose merge would close it. */
+/**
+ * A pull request linked to an item: one whose merge would close it or, when the snapshot was read
+ * with `headRefPrefix`, an open pull request of the repository itself (not a fork) whose head branch
+ * follows that convention.
+ */
 export interface GithubEpicPullRequest {
   /** Pull request number. */
   readonly number: number;
@@ -1084,7 +1146,10 @@ export interface GithubEpicItem {
   readonly dependsOn: readonly number[];
   /** GitHub's blocked-by relations, with their states. */
   readonly blockedBy: readonly GithubEpicBlocker[];
-  /** Linked pull requests in any state. */
+  /**
+   * Linked pull requests in any state: closing references first, then (with `headRefPrefix`)
+   * branch-only matches in ascending number, each pull request once.
+   */
   readonly pullRequests: readonly GithubEpicPullRequest[];
   /** The slices of a split item, or null; see {@link parseSplit}. */
   readonly split: readonly number[] | null;
@@ -1123,11 +1188,84 @@ export interface GithubEpicSnapshot {
   readonly items: readonly GithubEpicItem[];
 }
 
+const epicPullRequest = (pr: RawEpicPullRequestRef): GithubEpicPullRequest => ({
+  number: pr.number,
+  state: pr.state,
+  isDraft: pr.isDraft,
+  url: pr.url,
+  headRefName: pr.headRefName,
+});
+
+/**
+ * `closing` as it is, then the `branch` matches it does not hold, so each pull request appears
+ * once. Identity is the URL: a closing reference can name a pull request of another repository
+ * with the same number.
+ */
+function mergePullRequests(
+  closing: readonly GithubEpicPullRequest[],
+  branch: readonly GithubEpicPullRequest[],
+): GithubEpicPullRequest[] {
+  const seen = new Set(closing.map((pr) => pr.url));
+  return [...closing, ...branch.filter((pr) => !seen.has(pr.url))];
+}
+
+/**
+ * Throw unless `prefix` can name an issue number in a head branch: a nonempty string without NUL
+ * that does not end in a digit, which would make `issue-1` + `23` and `issue-12` + `3` the same
+ * branch. @internal
+ */
+export function headRefPrefixOf(prefix: unknown, label: string): string {
+  if (
+    typeof prefix !== 'string' ||
+    prefix.length === 0 ||
+    prefix.includes('\0') ||
+    /[0-9]$/u.test(prefix)
+  )
+    throw new Error(`${label} must be a nonempty string without NUL that does not end in a digit.`);
+  return prefix;
+}
+
+/**
+ * The issue number a head branch names under `prefix`: `prefix` + N, or `prefix` + N + `-` and
+ * anything, with N a decimal number without a leading zero and within the safe range; else null.
+ * `epic-172/357-slug` names 357 under `epic-172/`; `epic-172/3570x`, `epic-172/0357` and
+ * `epic-171/357` name nothing. @internal
+ */
+export function headRefIssueNumber(headRefName: string, prefix: string): number | null {
+  if (!headRefName.startsWith(prefix)) return null;
+  const match = /^([1-9][0-9]*)(?:-|$)/u.exec(headRefName.slice(prefix.length));
+  const number = Number(match?.[1]);
+  return match && isIssueNumber(number) ? number : null;
+}
+
+/**
+ * The open same-repository pull requests whose head branch names an issue under `prefix`, by issue
+ * number and in ascending pull request number. Fork branches are skipped: any account can name one.
+ */
+function branchLinks(
+  raw: RawEpicSnapshotResponse,
+  prefix: string | undefined,
+): Map<number, GithubEpicPullRequest[]> {
+  const links = new Map<number, GithubEpicPullRequest[]>();
+  if (prefix === undefined) return links;
+  const open = [...(raw.data.repository.pullRequests?.nodes ?? [])].sort(
+    (a, b) => a.number - b.number,
+  );
+  for (const pr of open) {
+    if (pr.isCrossRepository || pr.state !== 'OPEN') continue;
+    const number = headRefIssueNumber(pr.headRefName, prefix);
+    if (number === null) continue;
+    links.set(number, [...(links.get(number) ?? []), epicPullRequest(pr)]);
+  }
+  return links;
+}
+
 function mapSubIssue(
   node: RawEpicSubIssue,
   repo: string,
   viewer: string,
   checked: boolean | null,
+  branchLinked: (number: number) => readonly GithubEpicPullRequest[],
 ): GithubEpicItem {
   const comments = node.comments.nodes;
   return {
@@ -1150,13 +1288,10 @@ function mapSubIssue(
       repository: blocker.repository.nameWithOwner,
       state: blocker.state,
     })),
-    pullRequests: node.closedByPullRequestsReferences.nodes.map((pr) => ({
-      number: pr.number,
-      state: pr.state,
-      isDraft: pr.isDraft,
-      url: pr.url,
-      headRefName: pr.headRefName,
-    })),
+    pullRequests: mergePullRequests(
+      node.closedByPullRequestsReferences.nodes.map(epicPullRequest),
+      branchLinked(node.number),
+    ),
     split: parseSplit(
       comments.map((comment) => ({ author: comment.author?.login ?? null, body: comment.body })),
       viewer,
@@ -1165,15 +1300,22 @@ function mapSubIssue(
   };
 }
 
-/** Map a validated response to the snapshot. @internal */
+/**
+ * Map a validated response to the snapshot. With `headRefPrefix`, also link each own-repository
+ * item to the open non-fork pull requests whose head branch names it. @internal
+ */
 export function mapEpicSnapshot(
   repo: GithubRepo,
   raw: RawEpicSnapshotResponse,
+  headRefPrefix?: string,
 ): GithubEpicSnapshot {
   const viewer = raw.data.viewer.login;
   const epic = raw.data.repository.issue;
   const own = repo.nameWithOwner;
   const checklist = parseEpicChecklist(epic.body, own, epic.number);
+  const links = branchLinks(raw, headRefPrefix);
+  const branchLinked = (number: number): readonly GithubEpicPullRequest[] =>
+    links.get(number) ?? [];
   const nodes = epic.subIssues.nodes;
   const header = {
     repository: own,
@@ -1198,7 +1340,7 @@ export function mapEpicSnapshot(
         checked: line.checked,
         dependsOn: [],
         blockedBy: [],
-        pullRequests: [],
+        pullRequests: branchLinked(line.number),
         split: null,
       })),
     };
@@ -1219,30 +1361,48 @@ export function mapEpicSnapshot(
     source: 'sub-issues',
     total: epic.subIssuesSummary.total,
     checklist: checklist.map((line) => ({ ...line, isItem: byNumber.has(line.number) })),
-    items: ordered.map(({ node, checked }) => mapSubIssue(node, own, viewer, checked)),
+    items: ordered.map(({ node, checked }) =>
+      mapSubIssue(
+        node,
+        own,
+        viewer,
+        checked,
+        // A sub-issue of another repository has none of this repository's pull requests.
+        isOwnNode(node) ? branchLinked : () => [],
+      ),
+    ),
   };
 }
 
 /**
  * The `epic.snapshot` read: one `gh api graphql` with the epic number as `-F number=N`, no
- * pagination, and an 8 MiB default output cap. @internal
+ * pagination, and an 8 MiB default output cap. With `headRefPrefix` it reads the variant query and
+ * schema that also list the repository's open pull requests; the prefix itself only filters in the
+ * mapper, so it is not part of the command or the schema. @internal
  */
 export function epicSnapshotRead(
   repo: GithubRepo,
   number: unknown,
+  headRefPrefix?: unknown,
 ): GithubReadSpec<RawEpicSnapshotResponse, GithubEpicSnapshot> {
+  const epic = positiveInteger(number, 'epic.snapshot number');
+  const prefix =
+    headRefPrefix === undefined
+      ? undefined
+      : headRefPrefixOf(headRefPrefix, 'epic.snapshot headRefPrefix');
   return {
     op: 'epic.snapshot',
     argv: graphqlArgv(
       repo,
-      EPIC_SNAPSHOT_QUERY,
+      prefix === undefined ? EPIC_SNAPSHOT_QUERY : EPIC_SNAPSHOT_BRANCHES_QUERY,
       false,
       {},
-      { number: positiveInteger(number, 'epic.snapshot number') },
+      { number: epic },
     ),
-    schema: epicSnapshotResponseSchema,
+    schema:
+      prefix === undefined ? epicSnapshotResponseSchema : epicSnapshotWithBranchesResponseSchema,
     maxOutputBytes: EPIC_SNAPSHOT_MAX_OUTPUT_BYTES,
-    map: (raw) => mapEpicSnapshot(repo, raw),
+    map: (raw) => mapEpicSnapshot(repo, raw, prefix),
   };
 }
 

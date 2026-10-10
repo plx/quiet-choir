@@ -457,6 +457,8 @@ describe('quiet-choir/github read identity', () => {
     'issue.view comments': (gh) => gh.issue.view('read', { number: 7, comments: true }),
     'codeScanning.alerts': (gh) => gh.codeScanning.alerts('read', { ref: 'refs/pull/7/merge' }),
     'epic.snapshot': (gh) => gh.epic.snapshot('read', { number: 7 }),
+    'epic.snapshot headRefPrefix': (gh) =>
+      gh.epic.snapshot('read', { number: 7, headRefPrefix: 'epic-7/' }),
   };
   async function identityOfRead(
     name: string,
@@ -530,6 +532,11 @@ describe('quiet-choir/github read identity', () => {
     'epic.snapshot': {
       command: '374b42cec2fe578c037a27637d2c27b2db0251c471bc6639e56262228334973b',
       schema: '2128b1db6d8e326cf5ea65c32cb88fce3921d0276e0ee4cd99e33a0c0024b621',
+    },
+    // The prefix filters in the mapper, so it is not here: only the variant query and schema are.
+    'epic.snapshot headRefPrefix': {
+      command: '7a14f501783f701183d652c79b9188d49c05633b7c6b6473ae9637861af57fa5',
+      schema: 'e20c6ea8d47bbf724b8587a28db2696b64138e30a25c49d8f56fb7555cbc70fd',
     },
   };
 
