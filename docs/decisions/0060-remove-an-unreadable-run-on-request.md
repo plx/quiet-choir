@@ -9,11 +9,11 @@
 ## Context
 
 `workflow rm` judges a run from its record: its status and waiting steps decide `run.active`, its
-`createdAt` pins the generation it removes and its worktree ledger names the caches and refs to
-clean. When the record cannot be read, rm reported `run.unreadable` (or `run.not_found`, when
-`run.json` was present but `journal.jsonl` was missing) and the run could only be deleted by hand.
-That leaves the operator to get the liveness checks, the lock order and the deletion order right,
-which rm already encodes.
+generation (its `createdAt` before #371) pins the run it removes and its worktree ledger names the
+caches and refs to clean. When the record cannot be read, rm reported `run.unreadable` (or
+`run.not_found`, when `run.json` was present but `journal.jsonl` was missing) and the run could only
+be deleted by hand. That leaves the operator to get the liveness checks, the lock order and the
+deletion order right, which rm already encodes.
 
 The lone `<runId>/launch/` of a start that failed before its record, the other case of #367, is
 already removed by `workflow rm ID` ([0055](0055-remove-leftover-launch-directories.md)).

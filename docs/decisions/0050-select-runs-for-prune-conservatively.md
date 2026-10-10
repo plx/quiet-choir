@@ -68,14 +68,14 @@ A runs container that cannot be read is not a per-run problem and still fails th
 **Sequential guarded removal, pinned to the selection.** Selected runs are removed oldest first, one
 at a time, each by `removeRun` without `force` and under its own guard, so rm re-checks its refusals
 under the lock and keeps worktree administration under the ADR 0032 lock. Between listing and
-removal a resume, an answer or a new run reusing the ID can change the record. rm's `createdAt`
-check already refuses a replacement; prune also passes an internal `expectedUpdatedAt`, the
-`updatedAt` it selected on, which `removeRun` checks on its first read (a dry run too) and again
-under the lock. A mismatch refuses with `run.exists`, since the record is no longer the one
-inspected, and prune reports it as `changed`. A queued answer can only be written for a waiting
-step, which the under-lock `run.active` re-check refuses. A signal stops the batch between removals
-and fails with `workflow.interrupted`, naming the runs already removed; they stay removed and a new
-prune continues.
+removal a resume, an answer or a new run reusing the ID can change the record. rm's generation check
+(its `createdAt` check before #371) already refuses a replacement; prune also passes an internal
+`expectedUpdatedAt`, the `updatedAt` it selected on, which `removeRun` checks on its first read (a
+dry run too) and again under the lock. A mismatch refuses with `run.exists`, since the record is no
+longer the one inspected, and prune reports it as `changed`. A queued answer can only be written for
+a waiting step, which the under-lock `run.active` re-check refuses. A signal stops the batch between
+removals and fails with `workflow.interrupted`, naming the runs already removed; they stay removed
+and a new prune continues.
 
 **Tombstones and dry run.** Before removing, prune sweeps dead rm tombstones in every scanned
 container, so a crashed removal in a container prune selected nothing from is cleaned up too. (See

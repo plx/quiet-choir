@@ -121,15 +121,20 @@ the first link wins; as before the upgrade, that name does not separate case var
 case-insensitive filesystems. Owners also scan the other name and inbox for older deliveries. See
 [storage](storage.md) for layout, defaults, and migration.
 
-An envelope is `{ value, by, at, questionFingerprint, runCreatedAt }`. `runCreatedAt` is the
-`createdAt` of the run the writer addressed; the owner rejects a delivery whose `runCreatedAt`
-differs from its own, so an answer meant for a removed run never resolves a later run that reuses
-the ID. Envelopes from older writers omit it and are still accepted. The writer validates lossless
-JSON and the stored schema, creates a private temporary file, flushes it, and links it exclusively
-to the final path, then flushes the directory. Writers never acquire the run lock. Only one
-concurrent delivery wins; the temporary name is removed afterward. Files use 0600 and new
-directories 0700. Envelopes are capped at 1 MiB. These modes do not repair existing directory
-permissions.
+An envelope is `{ value, by, at, questionFingerprint, runGeneration, runCreatedAt }`.
+`runGeneration` is the generation of the run the writer addressed: the random `generation` the run
+recorded when it was created, or its `createdAt` for a run created before schema revision 17, which
+has none. `runCreatedAt` is that run's `createdAt`, still written for owners from older builds,
+which bind on it alone. The owner rejects a delivery whose binding fields differ from its own, so an
+answer meant for a removed run never resolves a later run that reuses the ID, even one created with
+the same `createdAt` (a rewound or frozen clock). Envelopes from older writers omit both fields and
+are still accepted. One gap remains in mixed versions: a delivery from a `workflow answer` build
+before #371 carries only `runCreatedAt`, so a replacement with the same `createdAt` still accepts
+it. The writer validates lossless JSON and the stored schema, creates a private temporary file,
+flushes it, and links it exclusively to the final path, then flushes the directory. Writers never
+acquire the run lock. Only one concurrent delivery wins; the temporary name is removed afterward.
+Files use 0600 and new directories 0700. Envelopes are capped at 1 MiB. These modes do not repair
+existing directory permissions.
 
 Only the run owner ingests answers. It polls every 200 ms while questions are open, and scans again
 at quiescence. It checks the envelope, fingerprint, run generation, attribution, and actual Zod
