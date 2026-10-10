@@ -85,13 +85,22 @@ export interface HarnessConformanceOptions<O extends AgentOptions> {
   readonly failureReason: string;
   /** Expected JSON value in the structured response text. */
   readonly structured: JsonValue;
-  /** Milliseconds allowed to settle cancellation; defaults to 2000. */
+  /**
+   * Milliseconds allowed to settle cancellation in the abort scenario; defaults to 2000. The
+   * timeout scenario also uses it when {@link HarnessConformanceOptions.timeoutDeadlineMs} is unset.
+   */
   readonly abortDeadlineMs?: number;
   /**
    * The timeout scenario's limit in milliseconds, set on both `request.options.timeoutMs` and
    * `invocation.policy.timeoutMs`; defaults to 250.
    */
   readonly timeoutMs?: number;
+  /**
+   * Milliseconds after `timeoutMs` that the timeout scenario allows the adapter to settle the
+   * timed-out call; defaults to `abortDeadlineMs` (2000). It is independent of the abort scenario,
+   * which keeps using `abortDeadlineMs`.
+   */
+  readonly timeoutDeadlineMs?: number;
 }
 
 const scenarios: readonly HarnessConformanceCase[] = [
@@ -370,6 +379,7 @@ async function runScenario<O extends AgentOptions>(
       );
       assert.equal(result, 'aborted', 'Adapter must reject and promptly release work on abort.');
     } else if (scenario === 'timeout') {
+      const timeoutDeadlineMs = options.timeoutDeadlineMs ?? options.abortDeadlineMs ?? 2000;
       const result = await Promise.race([
         invoked.then(
           () => ({ outcome: 'resolved' as const }),
@@ -379,11 +389,11 @@ async function runScenario<O extends AgentOptions>(
             aborted: controller.signal.aborted,
           }),
         ),
-        raceDeadline(timeoutMs + (options.abortDeadlineMs ?? 2000)),
+        raceDeadline(timeoutMs + timeoutDeadlineMs),
       ]);
       assert.ok(
         result !== 'deadline',
-        `Adapter must enforce the ${String(timeoutMs)}ms timeout from request.options.timeoutMs or invocation.policy.timeoutMs; it was still running after the abort deadline.`,
+        `Adapter must enforce the ${String(timeoutMs)}ms timeout from request.options.timeoutMs or invocation.policy.timeoutMs; it was still running ${String(timeoutDeadlineMs)}ms after the timeout.`,
       );
       assert.equal(
         result.outcome,

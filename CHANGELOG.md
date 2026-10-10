@@ -2,6 +2,11 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `assertHarnessConformance` accepts `timeoutDeadlineMs`, the time after the timeout scenario's
+  `timeoutMs` that a timed-out call has to settle (#381). It defaults to `abortDeadlineMs` (2000),
+  so existing callers see the same race; the abort scenario keeps using `abortDeadlineMs`. The
+  deadline failure now names the timeout deadline instead of "the abort deadline". The "ignores the
+  timeout" negative test drops from about 4 s to under 1 s.
 - The `assertHarnessConformance` suite gains a thirteenth scenario, `progress` (#380). The fixture's
   fake must emit a quick burst of native activity (at least two progress-producing events) and then
   succeed; the suite's `onProgress` observer throws after recording each event, and the call must

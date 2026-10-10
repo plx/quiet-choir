@@ -166,8 +166,9 @@ function builtinFixture(
 // measured: 2.9-3.1 s alone (2.4-2.6 s before the progress scenario; thirteen fake-CLI launches plus the
 // 250 ms registration hold and the 250 ms timeout)
 const builtinSuiteTimeoutMs = 7_000;
-// measured: 'ignores the timeout' 4.1 s alone, 3.9 s in the full coverage run (it waits out the
-// 250 ms timeout plus the 2 s abort deadline); the other three take 1.1-2.4 s
+// measured: 'ignores the timeout' 0.6 s alone (an in-process adapter for the scenarios before it,
+// then the real hanging Claude fake for the 100 ms timeout plus its 100 ms deadline); the other
+// three take 1.3-2.7 s ('leaks CLAUDECODE' is the slowest)
 const negativeSuiteTimeoutMs = 12_000;
 
 for (const harness of ['claude', 'codex'] as const)
@@ -235,7 +236,12 @@ it.each([
         { ...invocation, policy },
       ];
     }),
-    message: /^Conformance scenario timeout: .*timeout/u,
+    message: /^Conformance scenario timeout: .*still running 100ms after the timeout/u,
+    // Only the timeout scenario needs the real (hanging) adapter; the in-process one honors the
+    // scenarios before it, which keeps this case fast. The small limits are safe because the
+    // adapter never settles: load can only delay the failure.
+    mixed: true,
+    extra: { timeoutMs: 100, timeoutDeadlineMs: 100 },
   },
   {
     failure: 'leaks CLAUDECODE',
@@ -245,11 +251,16 @@ it.each([
   },
 ])(
   'fails an adapter that $failure, naming the scenario',
-  async ({ adapter, message }) => {
+  async ({ adapter, message, mixed, extra }) => {
     const before = process.env['CLAUDECODE'];
-    await expect(
-      assertHarnessConformance({ ...conformance, fixture: builtinFixture('claude', adapter) }),
-    ).rejects.toThrow(message);
+    const real = builtinFixture('claude', adapter);
+    const honest = scripted(undefined);
+    const fixture: ConformanceOptions['fixture'] = mixed
+      ? (scenario, probe) => (scenario === 'timeout' ? real : honest)(scenario, probe)
+      : real;
+    await expect(assertHarnessConformance({ ...conformance, ...extra, fixture })).rejects.toThrow(
+      message,
+    );
     // The env scenario restores the host's variables even when the adapter fails it.
     expect(process.env['CLAUDECODE']).toBe(before);
   },
@@ -268,9 +279,10 @@ type Defect =
 
 /**
  * An in-process adapter that honors every scenario before the one its defect breaks, so each
- * contract check is shown to fail without a native process.
+ * contract check is shown to fail without a native process. Without a defect it honors every
+ * scenario; its timeout path rejects with `ETIMEDOUT` when `invocation.policy.timeoutMs` elapses.
  */
-function scripted(defect: Defect): ConformanceOptions['fixture'] {
+function scripted(defect: Defect | undefined): ConformanceOptions['fixture'] {
   return (scenario, probe) => {
     const call = {
       runId: 'conformance',
