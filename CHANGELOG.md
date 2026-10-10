@@ -2,6 +2,12 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- A dry run no longer warns about custom Zod refinements for the built-in `quiet-choir/github` reads
+  and writes, whose completeness checks synthesized responses satisfy (#348; amends
+  [ADR 0016](docs/decisions/0016-workflow-rehearsal.md)). The refinements a workflow's own schemas
+  add still warn, now as one line listing the step IDs (the first ten, then a count) instead of one
+  warning per step, placed after the other warnings. No public API change; step identity and JSON
+  Schema are unchanged.
 - The definition registry cache (`workflow list-defs` and execute-by-name) now keys each entry on a
   digest of the running engine's code plus its Node major and TypeScript, zod and tsx versions
   (#345), so a changed validation rule can no longer be served from a cached result at the same
