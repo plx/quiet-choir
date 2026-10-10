@@ -124,6 +124,14 @@ is dismissed with the triage's justification ("used in tests" for test files). A
 refuses to merge while the PR has open alerts. Early in the #32 merge-down, two PRs landed with
 CodeQL threads nobody had answered, which is why this rule exists (see #105).
 
+### Stale head views
+
+GitHub can keep reporting the old head for a while after a push. For `--stale-grace` seconds (90
+from the workflow), `await` treats a reported head as that stale view instead of a foreign push when
+it is an ancestor of the pushed head (fix rounds) or, after a rebase, exactly the head the push
+leased against. `publish` records that head as `previousHead` and the workflow forwards it as
+`--previous-head`. Any other head, or the old head once the grace period ends, is `headMoved`.
+
 ### Verified relay
 
 A Claude Code workflow script cannot run commands or read files, so every mechanical step goes

@@ -26,7 +26,7 @@
 //   rerun    --pr N --sha S              re-run failed CI jobs for S once (flake check)
 //   verify-fixes --pr N --commits a,b    reported commits are in HEAD; last check passed at HEAD
 //   await    --pr N --sha S --since ISO [--codex required|skip] [--ci wait|skip] [--stale-grace 90]
-//            [--max-seconds 420]
+//            [--previous-head S0] [--max-seconds 420]
 //   land     --pr N --sha S [--issue I] [--expect-close | --keep-open I]
 //   close    --pr N < comment.md          comment, then close (Dependabot commands self-close)
 //   last     --pr N --cmd C               re-print the saved output of the last C run
@@ -1251,7 +1251,16 @@ async function publish(a, P, R) {
     fail(`remote head moved to ${p.headRefOid} (expected ${expected}); someone else pushed`);
   }
 
-  const result = { head, retargeted: false, pushed: false, bodyUpdated: false, linked: null };
+  // previousHead is the head this push leased against (null when nothing was pushed): after a
+  // rebase it is not an ancestor of the new head, so await needs it to recognize a stale view.
+  const result = {
+    head,
+    previousHead: null,
+    retargeted: false,
+    pushed: false,
+    bodyUpdated: false,
+    linked: null,
+  };
   if (p.baseRefName !== R.def) {
     gh(['pr', 'edit', String(pr), '-R', R.repo, '--base', R.def]);
     result.retargeted = true;
@@ -1267,6 +1276,7 @@ async function publish(a, P, R) {
       `HEAD:refs/heads/${p.headRefName}`,
     ]);
     result.pushed = true;
+    result.previousHead = p.headRefOid;
   }
   if (a['keep-open']) {
     // The issue must survive this merge: neutralize closing keywords that GitHub would act on.
@@ -1307,7 +1317,11 @@ async function publish(a, P, R) {
     }
   }
   result.at = nowIso();
-  writeJson(join(dir, 'published.json'), { head, at: result.at });
+  writeJson(join(dir, 'published.json'), {
+    head,
+    previousHead: result.previousHead,
+    at: result.at,
+  });
   return result;
 }
 
@@ -1487,8 +1501,12 @@ async function awaitGate(a, P, R) {
   const ciGraceMs = Number(a['ci-grace'] ?? 300) * 1000;
   // GitHub can report the previous head for a while after a push. A head that is an ancestor of
   // the one we pushed is that stale view, not someone else's push: keep polling through a short
-  // grace period (--stale-grace seconds) before calling it moved.
+  // grace period (--stale-grace seconds) before calling it moved. A rebase force-push leaves the
+  // old head unrelated to the new one (not an ancestor), so the exact head the push leased
+  // against (--previous-head) is accepted as well.
   const staleGraceMs = Number(a['stale-grace'] ?? 0) * 1000;
+  // parseArgs turns a valueless flag into true, so only a string counts.
+  const previousHead = typeof a['previous-head'] === 'string' ? a['previous-head'] : null;
   const isAncestor = (older) =>
     existsSync(join(P.workdir, '.git')) &&
     gitOk(P.workdir, ['merge-base', '--is-ancestor', older, sha]);
@@ -1505,7 +1523,10 @@ async function awaitGate(a, P, R) {
       'state,headRefOid,statusCheckRollup',
     ]);
     if (p.headRefOid !== sha) {
-      if (Date.now() - started < staleGraceMs && isAncestor(p.headRefOid)) {
+      if (
+        Date.now() - started < staleGraceMs &&
+        ((previousHead && p.headRefOid === previousHead) || isAncestor(p.headRefOid))
+      ) {
         await sleep(10_000);
         continue;
       }
