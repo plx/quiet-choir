@@ -341,20 +341,22 @@ settling (no scenario may call it twice). `transcript` requires the fixture's `e
 exact stdout the fake writes, which must equal the bytes passed to `onOutput('stdout', ...)`.
 `timeout` sets a short limit (`timeoutMs`, default 250) on both `request.options.timeoutMs` and
 `invocation.policy.timeoutMs`; the fake hangs like `abort`, and the call must reject with error kind
-`timeout` without the signal being aborted. `rate-limit` fakes a native failure carrying HTTP status
-429, which must reject with kind `rate-limit` (a `HarnessError` whose failure has `apiStatus` 429,
-or kind `'rate-limit'`). `env` sets `CLAUDECODE`, `CLAUDE_CODE_BRIDGE_SESSION_ID`,
-`CLAUDE_PLUGIN_DATA`, `CODEX_COMPANION_SESSION_ID` and `CODEX_COMPANION_TRANSCRIPT_PATH` in
-`process.env`, none of which may reach the fake, and restores them afterwards; do not run the suite
-concurrently with other environment-sensitive code in the same process. In `progress` the fake emits
-a quick burst of native activity (at least two progress-producing events, no delay), then succeeds
-with `options.text`; the suite's `onProgress` observer throws after recording each event, and the
-call must still resolve. At least one event must be delivered, so the fake must emit activity the
-adapter reports through `onProgress`. Every scenario also checks the throttle: apart from the first
-`init` event, deliveries must come at least 80 ms apart (the 100 ms bound with 20 ms of slack). A
-failure is an `AssertionError` whose message starts `Conformance scenario <name>:`. Never point the
-suite at a paid agent installation. `ClaudeAdapter` and `CodexAdapter` pass it; `CliHarness` remains
-their compatibility dispatcher and rejects unknown names.
+`timeout` without the signal being aborted, within `timeoutMs` plus `timeoutDeadlineMs` (default:
+`abortDeadlineMs`, 2000; a deadline separate from the abort scenario's own `abortDeadlineMs`).
+`rate-limit` fakes a native failure carrying HTTP status 429, which must reject with kind
+`rate-limit` (a `HarnessError` whose failure has `apiStatus` 429, or kind `'rate-limit'`). `env`
+sets `CLAUDECODE`, `CLAUDE_CODE_BRIDGE_SESSION_ID`, `CLAUDE_PLUGIN_DATA`,
+`CODEX_COMPANION_SESSION_ID` and `CODEX_COMPANION_TRANSCRIPT_PATH` in `process.env`, none of which
+may reach the fake, and restores them afterwards; do not run the suite concurrently with other
+environment-sensitive code in the same process. In `progress` the fake emits a quick burst of native
+activity (at least two progress-producing events, no delay), then succeeds with `options.text`; the
+suite's `onProgress` observer throws after recording each event, and the call must still resolve. At
+least one event must be delivered, so the fake must emit activity the adapter reports through
+`onProgress`. Every scenario also checks the throttle: apart from the first `init` event, deliveries
+must come at least 80 ms apart (the 100 ms bound with 20 ms of slack). A failure is an
+`AssertionError` whose message starts `Conformance scenario <name>:`. Never point the suite at a
+paid agent installation. `ClaudeAdapter` and `CodexAdapter` pass it; `CliHarness` remains their
+compatibility dispatcher and rejects unknown names.
 
 The kit also exports the helpers the built-in adapters use, so a third adapter need not copy them:
 
