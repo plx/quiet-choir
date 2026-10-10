@@ -2,6 +2,13 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `quiet-choir/github`'s `epic.snapshot` parses the dependencies of a sub-issue of another
+  repository against that sub-issue's own repository (#358). Its body and comments are written
+  there, so a bare `#N` and an `<!-- epic:depends-on N -->` marker number now name that repository's
+  issues, and only references qualified with that repository count; they used to be read against the
+  client repository. Same-repository items, `outsideReferences` and `nextTicket` are unchanged. The
+  change is in the mapper only, so the read's query, argv, schema and identity are unchanged and a
+  replayed snapshot is re-mapped with the corrected `dependsOn`.
 - `quiet-choir/github`'s `epic.snapshot` accepts `headRefPrefix`, which links open pull requests to
   an item by head branch (#357; amends
   [ADR 0048](docs/decisions/0048-epic-snapshot-and-next-ticket-selector.md)). A ticket whose only

@@ -272,9 +272,11 @@ number would be ambiguous); anything else throws before `gh` runs.
   and are skipped, in references and in markers alike.
 - **Dependencies** (`dependsOn`), from an item's body and all its comments, by any author, with code
   removed: the phrases "depends on", "blocked by" and "requires" followed by a list such as
-  `#4, #5 and #6`, and the marker `<!-- epic:depends-on 3,4 -->`. Only the repository's issues
-  count, and never the item itself. A misread dependency only delays an item, so indented code is
-  read here: telling an indented code block from an indented line of a list item needs full list
+  `#4, #5 and #6`, and the marker `<!-- epic:depends-on 3,4 -->`. Only issues of the item's own
+  repository count, and never the item itself: for a sub-issue of another repository, a bare `#N`
+  and the marker numbers name that repository's issues, while the epic's checklist is still read
+  against the client repository. A misread dependency only delays an item, so indented code is read
+  here: telling an indented code block from an indented line of a list item needs full list
   tracking, and a wrong guess would hide a real blocker.
 - **Splits** (`split`): the last `<!-- epic:split a,b -->` marker outside code in a comment by the
   viewer. Only the viewer counts, because a split closes an item once its slices close: someone
