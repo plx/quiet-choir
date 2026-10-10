@@ -639,6 +639,29 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** The refusal for a non-resume execution onto an ID that already has a run. */
+function runExistsRefusal(runId: string, stateDir: string, cause?: unknown): RunRefusedError {
+  return new RunRefusedError(
+    'run.exists',
+    runId,
+    `Run ${runId} already exists; use resume or choose a new run ID.`,
+    { stateDir },
+    cause === undefined ? undefined : { cause },
+  );
+}
+
+/** Whether a read refused a record this build cannot fully read (schema drift, #375). */
+function isRecordSchemaRefusal(error: RunRefusedError): boolean {
+  const { details } = error;
+  return (
+    error.code === 'run.incompatible' &&
+    typeof details === 'object' &&
+    details !== null &&
+    !Array.isArray(details) &&
+    details['reason'] === 'record_schema'
+  );
+}
+
 async function waitUntil(
   timestamp: number,
   signal: AbortSignal,
@@ -888,17 +911,17 @@ export async function runWorkflow<
     try {
       existing = await storage.read();
     } catch (error) {
-      // FileRunStore refuses a record this build cannot fully read before any write.
-      if (error instanceof RunRefusedError) throw error;
+      // FileRunStore refuses a record this build cannot fully read before any write. Resume keeps
+      // that upgrade refusal; a non-resume execution reports the drifted run as existing, since
+      // the refusal is only raised after the record's JSON was found and parsed.
+      if (error instanceof RunRefusedError) {
+        if (!options.resume && isRecordSchemaRefusal(error))
+          throw runExistsRefusal(options.runId, stateDir, error);
+        throw error;
+      }
       throw unreadableRunError({ stateDir, runId: options.runId }, error);
     }
-    if (existing && !options.resume)
-      throw new RunRefusedError(
-        'run.exists',
-        options.runId,
-        `Run ${options.runId} already exists; use resume or choose a new run ID.`,
-        { stateDir },
-      );
+    if (existing && !options.resume) throw runExistsRefusal(options.runId, stateDir);
     if (!existing && options.resume)
       throw await missingRunError({ stateDir, runId: options.runId });
     if (existing && ![1, 6, 7].includes(existing.formatVersion))
