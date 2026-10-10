@@ -1636,7 +1636,7 @@ export async function runWorkflow<
         return refuse();
       }
       // Reserve the attempt synchronously before any journal await admits a competing caller.
-      return { permit, finish: budget.enter() };
+      return { permit, finish: budget.enter(id) };
     }
 
     // Attribute a step record to the currently active child frame, so summarizeChildren() and
@@ -1930,6 +1930,8 @@ export async function runWorkflow<
         prior.identity = identity;
         prior.seq = nextSeq++;
         delete prior.legacyIdentity;
+        // The window gate's projection reads kind, harness and seq.
+        budget.observe(id);
         await save();
         // A concurrent effect may have recorded a strict healed divergence during the save.
         outcome = decideReplay({
@@ -2097,6 +2099,9 @@ export async function runWorkflow<
               writable: true,
             });
             if (redefined) {
+              // Before the save's await, so a concurrent admission never reads the prior
+              // definition's reports in the window gate's projection.
+              budget.observe(id);
               await save();
               emit('step.redefined', id, step);
             }
@@ -2109,6 +2114,8 @@ export async function runWorkflow<
           step.errorStack = null;
           step.phase = observedPhase?.title ?? null;
           step.request = observedRequest;
+          // Attempts saved without their own request take their harness from the step's.
+          if (attempt === 1 && prior) budget.observe(id);
           if (observedExec) step.exec = structuredClone(observedExec);
           else delete step.exec;
           delete step.execError;
@@ -2391,6 +2398,8 @@ export async function runWorkflow<
                   });
               }
               if (!classification.retry || signal.reason instanceof CheckpointError) throw error;
+              // The admission release follows the backoff; the gate counts the report now.
+              if (admitted) budget.observe(id);
               try {
                 await waitUntil(
                   clockNow(clock) + Math.min(30_000, delayMs * 2 ** (attempt - 1)),
