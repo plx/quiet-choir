@@ -129,6 +129,18 @@ value legitimately changes per run. A run without commands exports exactly as be
 already carries the same step's prefix is exported without it, so export, replay and export again
 give the same file. It does not modify the source checkpoint.
 
+Steps inside a child frame invoked with `onError: 'return'` export like any absorbed failure. The
+frame settles its error but leaves each failed step `failed`, so its agent and command rules appear
+under the frame-prefixed step IDs (`c/probe`, `c/inner/probe` for a nested frame). A replay, a
+`--dry-run` rehearsal or a fork reruns the frame body against those rules, and the frame settles
+with the same error kind, message and `stepId`. The remaining limits are the general export limits
+above, not frame-specific ones. The settled error's `attempts` comes from the replayed step, so it
+can differ when the original retries saw different kinds. A failure that export gives no rule (spawn
+failure, timeout, signal kill, `output-limit`, the lossy `exec.json` cases) fails the run at that
+step instead of settling the frame, because an unmatched fixture is a configuration error that never
+settles. An agent or command step that a `cancelSiblings` map inside the frame cancelled gets no
+rule either, so a replay that reaches it fails as unmatched.
+
 Commands a step callback or poll observer ran through `context.exec` (and each command-poll check)
 are exported too. The runtime records them on the parent's step record (`innerCommands`): for a
 step, the commands of its latest settled attempt, and for a wait, only those of the observation that

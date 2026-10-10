@@ -118,6 +118,15 @@ drift, or that reaches such a failure, fails at that step instead of running the
 shorten `argvPrefix` or drop a digest by hand when a value legitimately changes per run. A run
 without commands exports exactly as before. It does not modify the source checkpoint.
 
+Steps inside an `onError: 'return'` child frame export like any absorbed failure: the frame settles
+its error but leaves each failed step `failed`, so its rules appear under frame-prefixed step IDs
+(`c/probe`, `c/inner/probe`). A replay, `--dry-run` or fork reruns the frame body against them and
+the frame settles with the same kind, message and `stepId`. The general export limits still apply:
+`attempts` comes from the replayed step and can differ; a failure with no rule (spawn failure,
+timeout, signal kill, `output-limit`, the lossy `exec.json` cases) fails the run at that step
+instead of settling the frame; a step a `cancelSiblings` map in the frame cancelled gets no rule, so
+a replay that reaches it fails as unmatched.
+
 Commands a step callback or poll observer ran through `context.exec` (and each command-poll check)
 are exported too, from the parent's `innerCommands` record: a step's latest settled attempt, or the
 observation that completed a wait. Each rule's `step` is the parent's ID, with the full argv as

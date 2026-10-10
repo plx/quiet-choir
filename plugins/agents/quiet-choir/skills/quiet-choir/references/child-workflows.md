@@ -75,7 +75,8 @@ identity refusals still reject. A settled frame's descendants must be declared. 
 input, schemas and `onError` cannot change on resume (no `--accept-code-change` hint); an unsettled
 frame may switch modes, so resume a failed child with `onError: 'return'` added. Supersession skips
 settled frames. A fork runs a settled frame's body again, reusing its terminal steps: invalidating
-an owned step recomputes the outcome, and a plain failed step inside it runs again.
+an owned step recomputes the outcome, and a plain failed step inside it runs again. A fixtures
+export replays a settled frame's failed steps the same way (see `rehearsal.md`).
 
 `RunOptions.maxChildDepth` defaults to 8, with root depth zero. `--max-child-depth N` on execute or
 resume sets the sticky guard; zero prohibits child entry. Recursion is allowed and counts toward the
