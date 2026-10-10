@@ -434,6 +434,34 @@ is checked in. Stack paths are scrubbed to `/fixture/...` and the file was forma
 its read-view digest in `test/record-schema-revision.test.ts` was computed on the same unmodified
 main from this file.
 
+`revision-fifteen-checkpoint.json` was generated the same way at origin/main `5e1b8c0`, before the
+opt-in exec environment scrub (#337) added the optional nested `scrubEnv` field to the exec summary
+in `steps[].exec`, attempt history entries and command-poll wait requests in revision 16. Its run ID
+is `revision-fifteen`, and it ran this definition once, with an `execRunner` whose `run` resolves
+`{ code: 0, signal: null, stdout: 'ok\n', stderr: '', truncated: false, durationMs: 0 }` (so no
+process was spawned):
+
+```ts
+defineWorkflow({
+  name: 'schema-revision',
+  version: '1',
+  input: z.null(),
+  output: z.null(),
+  async run(ctx) {
+    await ctx.now('prepare');
+    await ctx.exec('probe', ['fixture-tool', 'status']);
+    throw new Error('fixture tail');
+  },
+});
+```
+
+It carries `schemaRevision: 15`, the completed `ctx.now` effect `prepare`, the completed `ctx.exec`
+effect `probe` with its exec summary and no `scrubEnv`, and a workflow-body failure after it, so a
+resume with a body that no longer throws replays `probe` without a process runner. The journal was
+empty, so only `run.json` is checked in. Stack paths are scrubbed to `/fixture/...` and the file was
+formatted with Prettier; its read-view digest in `test/record-schema-revision.test.ts` was computed
+on the same unmodified main from this file.
+
 `record-keys.json` lists the top-level run-record keys of each schema revision. Adding or changing a
 persisted run-level field adds a revision there and bumps `SUPPORTED_SCHEMA_REVISION`; a revision
 that only changes a nested shape repeats the previous key list. See `docs/storage.md`.
