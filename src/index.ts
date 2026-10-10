@@ -20,6 +20,7 @@ export type {
   CapabilitiesOf,
   CapabilityKeysOf,
   CallOptions,
+  ClaudeAddDirSelection,
   RegisteredAgentClient,
 } from './workflow/runtime/harness-model.js';
 export { RunBudgetExceededError } from './workflow/runtime/run-budget.js';
@@ -159,6 +160,11 @@ export type {
   ProfileLimits,
   AgentProfile,
   AgentDefaults,
+  AddDirProfilesOf,
+  AddDirRootedName,
+  HasAddDirRoots,
+  NoExtraKeys,
+  ProfileReferenceOf,
   ProfileOverride,
   ResolvedProfile,
   RedactedControl,

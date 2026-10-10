@@ -53,20 +53,24 @@ too), so a raw key fails typecheck and `workflow validate`; only a literal `stri
 types them. One bounded exception: Claude `addDirs` stay typed, and a profile declaring
 `claude: { addDirRoots: ['.state/runs'] }` accepts call-site `addDirs` whose canonical paths (no
 `..` segments, symlinks resolved, roots against the run cwd) lie inside a root, appending them to
-its own `addDirs` as absolute paths; other profiles reject them when the call runs. Codex cannot
-declare roots, because its directories are writable. Roots are pinned by named grants and bound
-child roles by containment. `ctx.agent(name)` profiles accept only built-in or declared roles. A
-bare `WorkflowContext` helper stays permissive (the runtime still checks);
-`WorkflowContext<'role', BuiltInHarnesses, true>` is a strict helper contract. Explicit
-`defineWorkflow` type arguments are all-or-nothing: with a shorter prefix such as
+its own `addDirs` as absolute paths. `addDirs` typechecks only with a rooted profile (declared,
+inherited through `extends`, or from `defaults.claude`) or, with `profile` omitted, a rooted
+`defaults.profile`; elsewhere, including the implicit `text`, it fails typecheck, and shapes the
+types cannot see (a widened profiles object, or a generic profile or defaults value a factory
+forwards) are checked when the call runs. Codex cannot declare roots, because its directories are
+writable. Roots are pinned by named grants and bound child roles by containment. `ctx.agent(name)`
+profiles accept only built-in or declared roles. A bare `WorkflowContext` helper stays permissive
+(the runtime still checks); `WorkflowContext<'role', BuiltInHarnesses, true>` is a strict helper
+contract. Explicit `defineWorkflow` type arguments are all-or-nothing: with a shorter prefix such as
 `defineWorkflow<Input, Output>`, the rest take the strict, childless defaults, so
 `strictProfiles: false` or a nonempty `children` list fails typecheck; drop the type arguments
-(preferred) or spell all seven. `workflow validate FILE --json` lists resolved
-`workflow.capabilities` without running the body, compactly: each fact once (no `defaults`; read
-`profiles[defaultProfile]`), harness option schemas omitted; `--harness-schemas` prints the complete
-document. Unknown tools/native config controls conservatively require exec capability. Configuration
-loading defaults to restricted mode; [harness isolation](harness-isolation.md) explains inherited
-roles, environment edits, and provider boundaries.
+(preferred) or spell all seven. They also leave `profiles`/`defaults` uninferred, so rooted defaults
+no longer admit built-in or omitted-profile `addDirs`. `workflow validate FILE --json` lists
+resolved `workflow.capabilities` without running the body, compactly: each fact once (no `defaults`;
+read `profiles[defaultProfile]`), harness option schemas omitted; `--harness-schemas` prints the
+complete document. Unknown tools/native config controls conservatively require exec capability.
+Configuration loading defaults to restricted mode; [harness isolation](harness-isolation.md)
+explains inherited roles, environment edits, and provider boundaries.
 
 Every declared/default write or exec role needs a launch grant: `--grant fixer`, `--grant write`,
 `--grant exec` (includes write), or `--grant all`. Declared roles preflight before effects;

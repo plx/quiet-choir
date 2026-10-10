@@ -38,7 +38,12 @@ import type {
 } from './wait-model.js';
 import type { PhaseOptions } from './observability-model.js';
 import type { z } from 'zod';
-import type { AgentDefaults, AgentProfile } from './profiles-model.js';
+import type {
+  AddDirProfilesOf,
+  AgentDefaults,
+  AgentProfile,
+  NoExtraKeys,
+} from './profiles-model.js';
 import type { MapStepError } from './fan-out.js';
 import type { ModelUsage, TokenCounts } from './usage-model.js';
 import type { ChildOptions, WorkflowDeclaration, WorkflowPhase } from './child-model.js';
@@ -549,6 +554,10 @@ export type ChildOutputOf<TChildren, N extends string> =
  * types, and the default `boolean` keeps them, so an unparameterized helper context stays permissive.
  * `TChildren` is the declared `children` tuple that types by-name child dispatch; the default `any`
  * keeps by-name dispatch on JSON values and lets typed contexts reach bare `WorkflowContext` helpers.
+ * `TAddDirProfile` is the set of `profile` values under which a strict Claude call may pass
+ * `addDirs` (`undefined` for an omitted profile under a rooted default; see
+ * {@link AddDirProfilesOf}); the default `string | undefined` admits them for every profile, so a
+ * helper context that omits it stays permissive.
  */
 export interface WorkflowContext<
   TProfile extends string = string,
@@ -558,6 +567,7 @@ export interface WorkflowContext<
   // that take a bare WorkflowContext, through the variance of the by-name workflow overload.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   TChildren extends readonly WorkflowDeclaration[] = any,
+  TAddDirProfile extends string | undefined = string | undefined,
 > {
   /**
    * Select one explicitly registered harness; capabilities determine structured-output availability.
@@ -566,7 +576,10 @@ export interface WorkflowContext<
    */
   agent<K extends keyof R & string>(
     name: K,
-  ): RegisteredAgentClient<CallOptions<K, R[K], TProfile, TStrict>, CapabilitiesOf<R[K]>>;
+  ): RegisteredAgentClient<
+    CallOptions<K, R[K], TProfile, TStrict, TAddDirProfile>,
+    CapabilitiesOf<R[K]>
+  >;
   /**
    * Run a typed child inline with validated I/O, recorded identity, and a scoped effect namespace.
    * With `onError: 'return'`, the frame's outcome is saved and returned as
@@ -753,13 +766,18 @@ export interface WorkflowContext<
   /** Prefix every effect launched in the callback; nested scopes compose without counters. */
   scope<T>(prefix: string, run: () => Promise<T>): Promise<T>;
   /** Bind a lexical prefix to a reusable context; descendants retain their nested scope prefixes. */
-  within(prefix: string): WorkflowContext<TProfile, R, TStrict, TChildren>;
-  /** Claude-specific headless API; a strict workflow omits profile-owned keys (see {@link CallOptions}). */
+  within(prefix: string): WorkflowContext<TProfile, R, TStrict, TChildren, TAddDirProfile>;
+  /**
+   * Claude-specific headless API; a strict workflow omits profile-owned keys and admits `addDirs`
+   * only with a profile that declares `claude.addDirRoots` (see {@link CallOptions}).
+   */
   readonly claude: AgentClient<
-    CallOptions<'claude', BuiltInHarnesses['claude'], TProfile, TStrict>
+    CallOptions<'claude', BuiltInHarnesses['claude'], TProfile, TStrict, TAddDirProfile>
   >;
   /** Codex-specific headless API; a strict workflow omits profile-owned keys (see {@link CallOptions}). */
-  readonly codex: AgentClient<CallOptions<'codex', BuiltInHarnesses['codex'], TProfile, TStrict>>;
+  readonly codex: AgentClient<
+    CallOptions<'codex', BuiltInHarnesses['codex'], TProfile, TStrict, TAddDirProfile>
+  >;
   /** Save a JSON result and reuse it on resume when its inputs match. */
   step<T>(
     id: string,
@@ -798,7 +816,9 @@ export interface WorkflowContext<
 /**
  * Definition of a typed workflow; plain JavaScript controls branching, loops, and composition.
  * `TStrict`, `TChildren` and `TName` carry the literal `strictProfiles`, `children` and `name` that
- * `defineWorkflow` infers into the context type; their defaults keep an unparameterized
+ * `defineWorkflow` infers into the context type, and `TAddDirProfile` the profiles under which a
+ * strict Claude call may pass `addDirs`, which `defineWorkflow` computes from `profiles` and
+ * `defaults` with {@link AddDirProfilesOf}. Their defaults keep an unparameterized
  * `WorkflowDefinition<I, O>` parameter assignable from any typed definition.
  */
 export interface WorkflowDefinition<
@@ -812,6 +832,7 @@ export interface WorkflowDefinition<
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   TChildren extends readonly WorkflowDeclaration[] = any,
   TName extends string = string,
+  TAddDirProfile extends string | undefined = string | undefined,
 > {
   /** Explicit agent registrations; Claude and Codex remain implicitly available. */
   readonly harnesses?: H;
@@ -860,7 +881,8 @@ export interface WorkflowDefinition<
         NoInfer<TProfile>,
         WorkflowHarnesses<NoInfer<H>>,
         NoInfer<TStrict>,
-        NoInfer<TChildren>
+        NoInfer<TChildren>,
+        NoInfer<TAddDirProfile>
       >,
       input: TInput,
     ) => Promise<TOutput>
@@ -870,7 +892,20 @@ export interface WorkflowDefinition<
 /**
  * Define a workflow with input/output types inferred from its runtime schemas. The literal
  * `strictProfiles` (omitted means `true`), `children` tuple and `name` are inferred too, so strict
- * call sites, declared profiles and by-name child dispatch are checked at type level.
+ * call sites, declared profiles and by-name child dispatch are checked at type level. The literal
+ * `profiles` and `defaults` (`TProfiles`, `TDefaults`) decide which profiles admit call-site Claude
+ * `addDirs` under strict profiles ({@link AddDirProfilesOf}); `TProfiles` is constrained to `object`
+ * so an interface-typed profile map (no index signature) is accepted, while the `profiles` property
+ * type validates its values. Explicit type arguments are
+ * all-or-nothing: a prefix such as `defineWorkflow<I, O>` leaves `TProfiles` and `TDefaults` empty,
+ * so built-ins and an omitted profile then read as unrooted even when `defaults` roots them.
+ *
+ * A definition this signature rejects, such as a generic factory that forwards a `P extends
+ * AgentProfile` or `D extends AgentDefaults<never>` value into `profiles` or `defaults` (whose
+ * shape {@link NoExtraKeys} cannot resolve), falls back to a second overload that does not infer
+ * those literals. It reads every profile as rooted, so call-site Claude `addDirs` then typecheck
+ * under strict profiles and the runtime check decides; ordinary excess-property checks still reject
+ * an unknown key in an inline profile or defaults literal.
  */
 export function defineWorkflow<
   TInput,
@@ -880,6 +915,66 @@ export function defineWorkflow<
   const TStrict extends boolean = true,
   const TChildren extends readonly WorkflowDeclaration[] = readonly [],
   const TName extends string = string,
+  // `{}` means "none declared": omitted profiles or defaults must not read as widened (rooted).
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type
+  const TProfiles extends object = {},
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type
+  const TDefaults extends AgentDefaults = {},
+>(
+  definition: WorkflowDefinition<
+    TInput,
+    TOutput,
+    TProfile,
+    H,
+    TStrict,
+    TChildren,
+    TName,
+    AddDirProfilesOf<TProfile, TProfiles, TDefaults>
+  > & {
+    /**
+     * Named capability roles; their literal type decides which roles admit call-site `addDirs`, and
+     * {@link NoExtraKeys} keeps unknown keys rejected.
+     */
+    readonly profiles?: TProfiles & {
+      readonly [N in keyof TProfiles]: NoExtraKeys<TProfiles[N], AgentProfile>;
+    };
+    /** Common defaults; their literal type decides whether built-ins and omitted profiles do. */
+    readonly defaults?: TDefaults & NoExtraKeys<TDefaults, AgentDefaults>;
+  },
+): WorkflowDefinition<
+  TInput,
+  TOutput,
+  TProfile,
+  H,
+  TStrict,
+  TChildren,
+  TName,
+  AddDirProfilesOf<TProfile, TProfiles, TDefaults>
+>;
+/**
+ * Fallback for definitions whose `profiles` or `defaults` shape the first signature cannot check,
+ * such as generic profile or defaults values forwarded by a factory. It infers the same literals
+ * except `profiles` and `defaults`, and leaves the addDirs parameter at its permissive default.
+ */
+export function defineWorkflow<
+  TInput,
+  TOutput,
+  TProfile extends string = never,
+  const H extends readonly HarnessDeclaration[] = readonly [],
+  const TStrict extends boolean = true,
+  const TChildren extends readonly WorkflowDeclaration[] = readonly [],
+  const TName extends string = string,
+>(
+  definition: WorkflowDefinition<TInput, TOutput, TProfile, H, TStrict, TChildren, TName>,
+): WorkflowDefinition<TInput, TOutput, TProfile, H, TStrict, TChildren, TName>;
+export function defineWorkflow<
+  TInput,
+  TOutput,
+  TProfile extends string,
+  H extends readonly HarnessDeclaration[],
+  TStrict extends boolean,
+  TChildren extends readonly WorkflowDeclaration[],
+  TName extends string,
 >(
   definition: WorkflowDefinition<TInput, TOutput, TProfile, H, TStrict, TChildren, TName>,
 ): WorkflowDefinition<TInput, TOutput, TProfile, H, TStrict, TChildren, TName> {

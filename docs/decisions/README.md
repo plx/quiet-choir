@@ -126,3 +126,5 @@ part of the documentation.
 - [0060: Remove a run whose record is damaged, on request](0060-remove-an-unreadable-run-on-request.md)
 
 - [0061: Finish an interrupted flat-run removal on rm and in prune](0061-finish-interrupted-flat-run-removal.md)
+
+- [0062: Type call-site Claude addDirs by profile roots](0062-type-call-site-adddirs-by-profile-roots.md)

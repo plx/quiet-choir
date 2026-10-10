@@ -6,6 +6,8 @@
   [0026](0026-inline-children-and-definition-registry.md) (child delegation),
   [0033](0033-redact-free-form-controls-from-public-manifests.md) (public manifests) and
   [0052](0052-run-record-schema-revision.md) (schema revision)
+- Amended by [0062](0062-type-call-site-adddirs-by-profile-roots.md) (#385): §7's types are precise
+  per profile.
 
 ## Context
 
@@ -56,8 +58,11 @@ writable sandbox roots, so any Codex directory makes the call `write`.
    lie canonically inside some parent root, otherwise
    `Child profile … exceeds parent profile …: claude.addDirRoots`. Codex directories keep literal
    membership. Without a run cwd (direct callers), only literal membership delegates.
-7. **Types.** Under strict profiles, Claude `addDirs` stays a permitted call-site key, with the
-   runtime check as the backstop; Codex `addDirs` and every other capability key stay `never`.
+7. **Types.** Under strict profiles, Claude `addDirs` is a permitted call-site key only together
+   with a profile that declares, inherits or defaults `claude.addDirRoots`, as `defineWorkflow`
+   infers from `profiles` and `defaults` (ADR 0062, #385); shapes the types cannot see stay
+   permissive, with the runtime check as the backstop. Codex `addDirs` and every other capability
+   key stay `never`.
 8. **Records.** Attempt and step request summaries record `addDirs` as passed to the harness, only
    when nonempty: profile entries as declared (a worktree attempt resolves them against its own cwd)
    and call-site entries canonical. Together with the manifest's nested `addDirRoots` this makes
@@ -76,7 +81,7 @@ directories is enabled.
   would hand out writable roots at the call site.
 - **Precise per-profile typing,** allowing call-site Claude `addDirs` only for profiles that declare
   roots. It needs a new `WorkflowDefinition` type parameter in `model.ts`, the Workflow Lab API
-  snapshot contract; deferred to a follow-up.
+  snapshot contract, so this ADR deferred it; ADR 0062 (#385) adopted it.
 
 ## Consequences
 
@@ -88,6 +93,6 @@ directories is enabled.
 - Resolution also runs on replay. If a symlink under a root is retargeted outside it after the step
   completed, resume fails that step's resolution; a retargeted ancestor also changes the canonical
   path and therefore the identity. Both are deliberate, conservative outcomes.
-- A strict Claude call with `addDirs` on a profile without roots now compiles and fails at run time
-  instead of at typecheck.
+- A strict Claude call with `addDirs` on a profile without roots fails at typecheck when
+  `defineWorkflow` can see the profile's shape (ADR 0062), and at run time otherwise.
 - Profiles that declare no roots produce byte-identical requests, identities and grant digests.
