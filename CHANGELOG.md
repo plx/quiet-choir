@@ -2,6 +2,11 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Fixture export and replay of failed steps inside `onError: 'return'` child frames are now covered
+  by tests and documented (#383), with no behavior change. A replay, a `--dry-run` rehearsal and a
+  fork rerun the frame body against the frame-prefixed rules and settle the same error kind, message
+  and step ID. The remaining limits are the general export limits (`attempts` can differ, failures
+  without a rule fail the run at that step, `cancelSiblings`-cancelled steps get no rule).
 - `assertHarnessConformance` accepts `timeoutDeadlineMs`, the time after the timeout scenario's
   `timeoutMs` that a timed-out call has to settle (#381). It defaults to `abortDeadlineMs` (2000),
   so existing callers see the same race; the abort scenario keeps using `abortDeadlineMs`. The

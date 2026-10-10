@@ -85,7 +85,8 @@ and `onError` cannot change on resume, and the refusal does not suggest `--accep
 unsettled frame may switch modes, so a child that failed can be resumed with `onError: 'return'`
 added. Supersession skips settled frames. A fork does not copy frames: it runs a settled frame's
 body again, reusing its completed and settled-failed steps, so an `--invalidate` glob matching an
-owned step recomputes the outcome and a plain failed step inside it runs again. See
+owned step recomputes the outcome and a plain failed step inside it runs again. A fixtures export
+replays a settled frame's failed steps the same way; see [rehearsal](rehearsal.md#fixtures). See
 [ADR 0007](decisions/0007-durable-failure-outcomes.md).
 
 `RunOptions.maxChildDepth` defaults to 8, with root depth zero. `--max-child-depth N` on execute or

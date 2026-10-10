@@ -34,7 +34,8 @@ import { stepErrorKind } from './failure-kind.js';
  * become exec rules keyed by the parent's ID, from the raw results recorded on the parent (a
  * step's latest settled attempt, a poll-completed wait's terminal observation), with `call` only
  * where the parent ran more than one command that meets the same filters or its recording omitted
- * later commands. No rule pins an attempt.
+ * later commands. No rule pins an attempt. Failed steps inside an `onError: 'return'` child frame
+ * export like any absorbed failure, under their frame-prefixed IDs.
  * @internal
  */
 export function fixturesFromRun(run: RunRecord): HarnessFixtures {
