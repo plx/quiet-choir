@@ -4,6 +4,7 @@ import {
   readFile,
   readdir,
   realpath,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -14,8 +15,13 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ThresholdLogger } from '../src/application/execution.js';
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
+import type { TypecheckPlan } from '../src/workflow/typecheck/model.js';
 import { TypecheckProgramCache } from '../src/workflow/typecheck/program-cache.js';
-import { definitionFiles } from '../src/workflow/loader/registry.js';
+import {
+  definitionFiles,
+  engineCodeDigest,
+  listDefinitions,
+} from '../src/workflow/loader/registry.js';
 
 const repository = dirname(dirname(fileURLToPath(import.meta.url)));
 const roots: string[] = [];
@@ -98,21 +104,78 @@ describe('trusted definition registry', { timeout: 30_000 }, () => {
     });
     expect(await readFile(marker, 'utf8')).toBe('xx');
     const cache = join(root, 'cache', 'quiet-choir', 'definitions');
-    // A version-3 entry may hold plaintext registered harness options (#247): never served, rewritten.
-    for (const file of await readdir(cache)) {
-      const entry = JSON.parse(await readFile(join(cache, file), 'utf8')) as { version: number };
-      expect(entry.version).toBe(4);
-      await writeFile(join(cache, file), JSON.stringify({ ...entry, version: 3 }));
+    // A version-4 entry is keyed on the version string alone (#345), and a version-3 entry may hold
+    // plaintext registered harness options (#247): neither is served, both are rewritten.
+    for (const stale of [4, 3]) {
+      for (const file of await readdir(cache)) {
+        const entry = JSON.parse(await readFile(join(cache, file), 'utf8')) as { version: number };
+        expect(entry.version).toBe(5);
+        await writeFile(join(cache, file), JSON.stringify({ ...entry, version: stale }));
+      }
+      expect(await engine.execute(plan)).toMatchObject({ ok: true });
+      expect(await readFile(marker, 'utf8')).toBe('x'.repeat(stale === 4 ? 3 : 4));
+      for (const file of await readdir(cache))
+        expect(JSON.parse(await readFile(join(cache, file), 'utf8'))).toMatchObject({ version: 5 });
     }
-    expect(await engine.execute(plan)).toMatchObject({ ok: true });
-    expect(await readFile(marker, 'utf8')).toBe('xxx');
-    for (const file of await readdir(cache))
-      expect(JSON.parse(await readFile(join(cache, file), 'utf8'))).toMatchObject({ version: 4 });
     for (const file of await readdir(cache)) await writeFile(join(cache, file), 'invalid JSON');
     expect(await engine.execute(plan)).toMatchObject({ ok: true });
-    expect(await readFile(marker, 'utf8')).toBe('xxxx');
-    expect(await engine.execute({ ...plan, refresh: true })).toMatchObject({ ok: true });
     expect(await readFile(marker, 'utf8')).toBe('xxxxx');
+    expect(await engine.execute({ ...plan, refresh: true })).toMatchObject({ ok: true });
+    expect(await readFile(marker, 'utf8')).toBe('xxxxxx');
+  });
+
+  it('revalidates when the validation key changes and serves the new key afterwards (#345)', async () => {
+    const root = await project();
+    const marker = join(root, 'imported');
+    await writeFile(
+      join(root, 'keyed.workflow.ts'),
+      `import {appendFileSync} from 'node:fs'; appendFileSync(${JSON.stringify(marker)},'x'); ${source('keyed')}`,
+    );
+    const runner = executor();
+    const validate = (typecheck: TypecheckPlan) =>
+      runner.execute({ kind: 'workflow.validate', typecheck, durabilityLint: 'warn' });
+    const list = (engine: string) => listDefinitions([root], validate, { engine });
+    const cache = join(root, 'cache', 'quiet-choir', 'definitions');
+    const recorded = async () => {
+      const [file] = await readdir(cache);
+      return (JSON.parse(await readFile(join(cache, file ?? ''), 'utf8')) as { engine: string })
+        .engine;
+    };
+    expect(await list('rules-a')).toMatchObject({ ok: true });
+    expect(await list('rules-a')).toMatchObject({ ok: true });
+    expect(await readFile(marker, 'utf8')).toBe('x');
+    expect(await recorded()).toBe('rules-a');
+    expect(await list('rules-b')).toMatchObject({ ok: true });
+    expect(await readFile(marker, 'utf8')).toBe('xx');
+    expect(await recorded()).toBe('rules-b');
+    expect(await list('rules-b')).toMatchObject({ ok: true });
+    expect(await readFile(marker, 'utf8')).toBe('xx');
+  });
+
+  it('digests engine code files by content and path and ignores source maps (#345)', async () => {
+    const root = await project();
+    const tree = join(root, 'engine');
+    await mkdir(join(tree, 'nested'), { recursive: true });
+    await writeFile(join(tree, 'a.ts'), 'export const a = 1;');
+    await writeFile(join(tree, 'nested', 'b.js'), 'export const b = 1;');
+    await writeFile(join(tree, 'a.js.map'), '{}');
+    await writeFile(join(tree, 'notes.md'), 'ignored');
+    const base = await engineCodeDigest(tree);
+    expect(await engineCodeDigest(tree)).toBe(base);
+    await writeFile(join(tree, 'a.js.map'), '{"changed":true}');
+    await writeFile(join(tree, 'notes.md'), 'still ignored');
+    expect(await engineCodeDigest(tree)).toBe(base);
+    await writeFile(join(tree, 'a.ts'), 'export const a = 2;');
+    const edited = await engineCodeDigest(tree);
+    expect(edited).not.toBe(base);
+    await writeFile(join(tree, 'nested', 'b.js'), 'export const b = 2;');
+    const editedJs = await engineCodeDigest(tree);
+    expect(editedJs).not.toBe(edited);
+    await writeFile(join(tree, 'c.d.ts'), 'export declare const c: number;');
+    const added = await engineCodeDigest(tree);
+    expect(added).not.toBe(editedJs);
+    await rename(join(tree, 'c.d.ts'), join(tree, 'd.d.ts'));
+    expect(await engineCodeDigest(tree)).not.toBe(added);
   });
 
   it('keeps scanning past a leaf package.json to fingerprint a workspace root lockfile', async () => {
