@@ -5,7 +5,8 @@ import { formatArgv, workflowArgv, type CommandLauncher } from '../runtime/comma
 import type { ProcessRunner } from '../runtime/exec-model.js';
 import { jsonValue } from '../runtime/json.js';
 import { answerCandidates } from '../runtime/inbox.js';
-import { isErrno } from '../runtime/lock.js';
+import { scanInterruptedRemovals } from '../runtime/interrupted-removal.js';
+import { inspectRunOwnership, isErrno } from '../runtime/lock.js';
 import type { JsonValue } from '../runtime/model.js';
 import {
   defaultStateDir,
@@ -19,6 +20,7 @@ import { ownershipHold, removalRefusal } from '../runtime/removal-decision.js';
 import { RunRefusedError, type CliErrorCode } from '../runtime/run-errors.js';
 import {
   deadTombstones,
+  finishInterruptedRemoval,
   removeRun,
   sweepTombstones,
   type RemovedCache,
@@ -125,6 +127,11 @@ export interface PruneResult {
   /** Absolute paths of abandoned rm tombstones swept (or, in a dry run, sweepable). */
   readonly tombstones: readonly string[];
   /**
+   * Absolute `<stateDir>/<runId>` paths of the interrupted flat-run removals prune finished (or, in
+   * a dry run, would finish), in scan order (ADR 0061). They are not runs and match no filter.
+   */
+  readonly unfinishedRemovals: readonly string[];
+  /**
    * Stale XDG project roots removed or kept, by root path; always empty unless both `missingCwd`
    * and `all` are set (ADR 0051).
    */
@@ -141,6 +148,8 @@ export type PruneOutcome =
       readonly removed: readonly PrunedRun[];
       /** Project roots removed before the interruption; they stay removed. */
       readonly roots: readonly string[];
+      /** Interrupted removals finished before the interruption, as in {@link PruneResult}. */
+      readonly unfinishedRemovals: readonly string[];
       readonly error: unknown;
     };
 
@@ -324,11 +333,80 @@ function refusalReason(code: CliErrorCode): PruneSkipReason {
   }
 }
 
+/** The codes with which a finish refuses a leftover that ownership holds or that changed. */
+const quietRefusals: ReadonlySet<CliErrorCode> = new Set([
+  'run.locked',
+  'run.orphans',
+  'run.exists',
+  'run.not_found',
+]);
+
+/**
+ * Finish (or, in a dry run, list) the interrupted flat-run removals in every scanned container
+ * (ADR 0061). A dry run lists the leftovers ownership does not hold; a real run finishes each one
+ * through `finishInterruptedRemoval`, which judges ownership and re-checks under the run lock. A
+ * leftover that is held or changed (usually a run being created) is skipped silently, and any other
+ * failure becomes a warning. A signal stops it between leftovers, or inside one, with `error` set.
+ * `attributed` holds every path of the listed leftovers, for the project-root judgement.
+ */
+async function sweepInterruptedRemovals(
+  stateDirs: readonly string[],
+  dryRun: boolean,
+  live: PruneRunsLive,
+  warnings: string[],
+): Promise<{
+  readonly paths: string[];
+  readonly attributed: string[];
+  readonly error?: unknown;
+}> {
+  const { signal } = live;
+  const paths: string[] = [];
+  const attributed: string[] = [];
+  for (const directory of stateDirs) {
+    const scan = await scanInterruptedRemovals(directory);
+    warnings.push(...scan.warnings);
+    for (const removal of scan.removals) {
+      if (signal?.aborted) return { paths, attributed, error: signal.reason };
+      const { runId, stateDir } = removal;
+      if (dryRun) {
+        const ownership = await inspectRunOwnership({ runId, stateDir }).catch(() => null);
+        if (ownership === null || ownershipHold(ownership)) continue;
+      } else
+        try {
+          const beforeLock = live.beforeLock;
+          await finishInterruptedRemoval(
+            removal,
+            {
+              signal,
+              processSupervisor: live.processSupervisor,
+              commandLauncher: live.commandLauncher,
+              ...(beforeLock === undefined
+                ? {}
+                : { beforeLock: () => beforeLock(runId, stateDir) }),
+            },
+            { force: false, refs: false, tombstones: [] },
+          );
+        } catch (error) {
+          if (signal?.aborted) return { paths, attributed, error };
+          if (!(error instanceof RunRefusedError && quietRefusals.has(error.code)))
+            warnings.push(
+              `Could not finish the interrupted removal of ${removal.path}: ${message(error)}`,
+            );
+          continue;
+        }
+      paths.push(removal.path);
+      attributed.push(...removal.paths);
+    }
+  }
+  return { paths, attributed };
+}
+
 /**
  * Select runs with {@link pruneDecision} and remove each through `removeRun`, oldest first, one at a
  * time and each under its own guard: prune never deletes a file itself and never forces. It lists
  * every scanned runs container through `listRuns` (whose failure to read a container fails the
- * prune), sweeps abandoned rm tombstones there, then removes the selected runs with
+ * prune), sweeps abandoned rm tombstones there and finishes the interrupted flat-run removals it
+ * finds there (ADR 0061, through `finishInterruptedRemoval`), then removes the selected runs with
  * `expectedUpdatedAt` pinned to the listed record. A refusal or a failure of one removal becomes a
  * skipped entry and the batch goes on. A signal stops it between removals (a removal past its
  * commit point still finishes) and reports the runs removed so far. A dry run passes `dryRun` to
@@ -385,12 +463,23 @@ export async function pruneRuns(
   for (const directory of stateDirs)
     for (const name of await (options.dryRun ? deadTombstones : sweepTombstones)(directory))
       tombstones.add(join(directory, name));
+  const unfinished = await sweepInterruptedRemovals(stateDirs, options.dryRun, live, warnings);
+  const unfinishedRemovals = unfinished.paths;
+  if (unfinished.error !== undefined)
+    return {
+      kind: 'interrupted',
+      removed: [],
+      roots: [],
+      unfinishedRemovals,
+      error: unfinished.error,
+    };
   const removed: PrunedRun[] = [];
   const skipped = protectedRows.map(([row, protection]) =>
     protectedEntry(row, protection, live.commandLauncher),
   );
   for (const row of selected) {
-    if (signal?.aborted) return { kind: 'interrupted', removed, roots: [], error: signal.reason };
+    if (signal?.aborted)
+      return { kind: 'interrupted', removed, roots: [], unfinishedRemovals, error: signal.reason };
     const { summary } = row;
     try {
       const beforeLock = live.beforeLock;
@@ -453,7 +542,8 @@ export async function pruneRuns(
         warnings: result.warnings,
       });
     } catch (error) {
-      if (signal?.aborted) return { kind: 'interrupted', removed, roots: [], error };
+      if (signal?.aborted)
+        return { kind: 'interrupted', removed, roots: [], unfinishedRemovals, error };
       skipped.push(
         error instanceof RunRefusedError
           ? {
@@ -486,6 +576,7 @@ export async function pruneRuns(
         attributed: new Set([
           ...removed.flatMap((run) => [...run.paths, ...run.caches.map((cache) => cache.path)]),
           ...tombstones,
+          ...unfinished.attributed,
         ]),
         dryRun: options.dryRun,
       },
@@ -496,6 +587,7 @@ export async function pruneRuns(
         kind: 'interrupted',
         removed,
         roots: outcome.roots.filter((root) => root.removed).map((root) => root.root),
+        unfinishedRemovals,
         error: outcome.error,
       };
     roots = outcome.roots;
@@ -517,6 +609,7 @@ export async function pruneRuns(
       skipped: skipped.sort(compareAge),
       bytes: removed.reduce((total, run) => total + run.bytes, 0),
       tombstones: [...tombstones],
+      unfinishedRemovals,
       roots,
       warnings,
     },

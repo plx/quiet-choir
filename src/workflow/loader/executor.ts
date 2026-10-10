@@ -412,10 +412,11 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
             stateDir: run.stateDir,
           }));
           const roots = [...outcome.roots];
+          const unfinishedRemovals = [...outcome.unfinishedRemovals];
           return workflowFailure(
             'workflow.interrupted',
-            `Prune was interrupted after removing ${String(removed.length)} runs${roots.length ? ` and ${String(roots.length)} project roots` : ''}; they stay removed, and prune can run again to continue.`,
-            { ...context, details: { removed, roots } },
+            `Prune was interrupted after removing ${String(removed.length)} runs${roots.length ? ` and ${String(roots.length)} project roots` : ''}${unfinishedRemovals.length ? ` and finishing ${String(unfinishedRemovals.length)} interrupted removals` : ''}; they stay removed, and prune can run again to continue.`,
+            { ...context, details: { removed, roots, unfinishedRemovals } },
           );
         }
         return { kind: 'workflow.prune.result', ok: true, ...outcome.result };

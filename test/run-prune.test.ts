@@ -675,7 +675,7 @@ describe('workflow prune removal', () => {
     assert(!failure.ok);
     expect(failure).toMatchObject({
       code: 'workflow.interrupted',
-      details: { removed: [], roots: [] },
+      details: { removed: [], roots: [], unfinishedRemovals: [] },
     });
     expect((await readRun({ stateDir, runId: 'second' })).id).toBe('second');
   });
@@ -711,6 +711,90 @@ describe('workflow prune removal', () => {
       expect((await readRun({ stateDir, runId: 'done' })).id).toBe('done');
     },
   );
+});
+
+describe('workflow prune and interrupted flat-run removals', () => {
+  /**
+   * What an rm of an unmigrated flat run leaves when it crashes after deleting the flat file:
+   * `<runId>/` with its primary lock, the legacy guard and a backup, both locks owned by a dead
+   * process (ADR 0061).
+   */
+  async function interruptedRemoval(runId: string, directory = stateDir): Promise<string> {
+    await plant(join(directory, runId, 'lock'), {});
+    await plant(join(directory, `${runId}.json.lock`), {});
+    await writeFile(join(directory, `${runId}.json.v1`), '{}');
+    return join(directory, runId);
+  }
+
+  it('finishes one even when no run matches the filters, after a preview that changes nothing', async () => {
+    await completedRun('young');
+    const leftover = await interruptedRemoval('ghost');
+    const before = await snapshot(stateDir);
+    const preview = await prune({ olderThanMs: 7 * day, dryRun: true });
+    expect(preview).toMatchObject({
+      removed: [],
+      skipped: [],
+      unfinishedRemovals: [leftover],
+      warnings: [],
+    });
+    const text = await command(['--older-than', '7d', '--state-dir', stateDir, '--dry-run']);
+    expect(text.error).toBeUndefined();
+    expect(text.stdout).toContain(`Unfinished removal: ${leftover}`);
+    expect(await snapshot(stateDir)).toEqual(before);
+
+    const result = await prune({ olderThanMs: 7 * day });
+    expect(result).toMatchObject({ removed: [], unfinishedRemovals: [leftover], warnings: [] });
+    expect((await readdir(stateDir)).sort()).toEqual(['.gitignore', 'young']);
+    expect((await readRun({ stateDir, runId: 'young' })).id).toBe('young');
+    expect((await prune({ olderThanMs: 7 * day })).unfinishedRemovals).toEqual([]);
+  });
+
+  it('reports a finished one in the text output', async () => {
+    const leftover = await interruptedRemoval('ghost');
+    const text = await command(['--status', 'completed', '--state-dir', stateDir]);
+    expect(text.error).toBeUndefined();
+    expect(text.stdout).toContain(`Finished interrupted removal: ${leftover}`);
+    expect(await gone(leftover)).toBe(true);
+  });
+
+  it('neither touches nor lists one that a live owner holds', async () => {
+    await interruptedRemoval('held');
+    await rm(join(stateDir, 'held', 'lock'), { recursive: true });
+    await plant(join(stateDir, 'held', 'lock'), { owner: liveOwner('creating') });
+    const before = await snapshot(stateDir);
+    for (const dryRun of [true, false]) {
+      const result = await prune({ statuses: ['completed'], dryRun });
+      expect(result).toMatchObject({ unfinishedRemovals: [], warnings: [] });
+    }
+    expect(await snapshot(stateDir)).toEqual(before);
+  });
+
+  it('skips one that became a run before the lock, keeping the run', async () => {
+    const leftover = await interruptedRemoval('raced');
+    const outcome = await pruneRuns(plan({ statuses: ['completed'] }), processRunner, {
+      beforeLock: async (runId) => {
+        if (runId === 'raced') await staleRecord('raced', root);
+      },
+    });
+    assert(outcome.kind === 'done');
+    expect(outcome.result).toMatchObject({ unfinishedRemovals: [], warnings: [] });
+    expect((await readRun({ stateDir, runId: 'raced' })).id).toBe('raced');
+    expect(await gone(leftover)).toBe(false);
+    expect(await gone(join(stateDir, 'raced', 'lock'))).toBe(true);
+  });
+
+  it('sweeps an additional scanned container too', async () => {
+    const other = join(root, 'legacy-runs');
+    await mkdir(other);
+    const here = await interruptedRemoval('here');
+    const there = await interruptedRemoval('there', other);
+    const result = await prune({ statuses: ['completed'], additionalStateDirs: [other] });
+    expect(result).toMatchObject({
+      stateDirs: [stateDir, other],
+      unfinishedRemovals: [here, there],
+    });
+    expect(await readdir(other)).toEqual(['.gitignore']);
+  });
 });
 
 describe('workflow prune project roots', () => {
