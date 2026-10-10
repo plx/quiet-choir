@@ -315,7 +315,11 @@ the directory) and deletes in the ordinary order. The result has `interrupted: t
 every other removal), `paths` naming the directory, guard and backups that exist, `bytes`, and empty
 `caches`, `refsRemoved` and `keptRefs`; `--refs`, `--force` and `--unreadable` change nothing. A dry
 run takes no lock and reports `remove`, `run.locked` or `run.orphans`. A directory that holds
-anything else, such as `journal.jsonl`, `inbox/` or `launch/`, is not such a leftover.
+anything else, such as `journal.jsonl`, `inbox/` or `launch/`, is not such a leftover. Legacy
+discovery keys on a record, which such a removal already deleted, so without `--state-dir` or
+`QUIET_CHOIR_STATE_DIR` rm also finds an interrupted removal in the legacy `<cwd>/.quiet-choir/runs`
+(with the legacy-directory warning) when the project's default container holds no record,
+interrupted removal or leftover launch directory of the ID.
 
 `workflow prune [--older-than DURATION] [--status S[,S]] [--missing-cwd] [--all] [--refs] [--dry-run] --json`
 removes finished runs in bulk without importing workflow code

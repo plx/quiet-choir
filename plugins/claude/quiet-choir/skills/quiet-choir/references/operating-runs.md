@@ -365,7 +365,8 @@ with `workflow clean`. An interrupted rm leaves an intact run (run rm again) or 
 an unmigrated flat run interrupted after deleting `<runId>.json` leaves an ID that no longer lists,
 with a directory holding only its lock and maybe `.json.v<N>` backups; `workflow rm ID` finishes
 that removal (`interrupted: true`, refusing `run.locked` or `run.orphans` while a live owner holds
-it).
+it). Without `--state-dir` or `QUIET_CHOIR_STATE_DIR`, rm also finds such a leftover in the legacy
+`<cwd>/.quiet-choir/runs` when the project's default container holds nothing for that ID.
 
 `workflow rm ID` also removes the leftover `<runId>/launch/` of a start that failed before its
 record, reporting `launchOnly: true`. While that start may still be in flight (its recorded runner

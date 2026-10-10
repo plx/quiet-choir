@@ -63,6 +63,15 @@ the candidates that ownership does not hold. rm does not scan its container: tel
 a directory run takes an lstat of `<runId>/run.json` per directory, too costly on every rm and
 quadratic across a prune's removals.
 
+**Legacy discovery.** Without `--state-dir` or `QUIET_CHOIR_STATE_DIR`, `resolveStateDir` picks the
+legacy `<cwd>/.quiet-choir/runs` only while a record of the ID exists there, and an unmigrated flat
+run, the one this leftover comes from, usually lives there. So rm alone resolves its container with
+`resolveRemovalStateDir`: when the ordinary resolution is the project's default container and that
+holds no record, interrupted removal or leftover launch directory of the ID, an interrupted removal
+in the legacy container is finished there, with the usual legacy-directory warning. The other
+commands keep `resolveStateDir`; prune already scans the legacy container of the project it runs in
+when neither is set.
+
 **Results.** `workflow.rm.result` gains `interrupted`: true only on this path (false everywhere
 else, like `launchOnly` and `unreadable`), with `paths` (the directory, the guard and the backups
 that exist), `bytes`, and empty `caches`, `refsRemoved` and `keptRefs`, since an ordinary rm removes
