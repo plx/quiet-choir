@@ -29,6 +29,8 @@ import {
 // The brand registry is a contract between quiet-choir copies (ADR 0028), not runtime state.
 import { brandError, isBranded } from '../workflow/runtime/error-brand.js';
 // So is the poll-identity registry key (ADR 0045): a wait's identity is a versioned constant.
+// The helper-refinements key is the same kind of contract: a rehearsal skips the marked schemas.
+import { helperRefinements } from '../workflow/runtime/helper-refinements.js';
 import { pollIdentityKey, type InternalPollIdentity } from '../workflow/runtime/poll-identity.js';
 import {
   codeScanningRead,
@@ -786,7 +788,7 @@ export function github(
     let raw: R;
     try {
       raw = await ctx.exec.json(id, spec.argv, {
-        schema: spec.schema,
+        schema: helperRefinements(spec.schema),
         meta: { integration: 'github', op: spec.op },
         ...(spec.okExitCodes === undefined ? {} : { okExitCodes: spec.okExitCodes }),
         ...(spec.maxOutputBytes === undefined ? {} : { maxOutputBytes: spec.maxOutputBytes }),
@@ -922,7 +924,7 @@ async function observeRead<R, T>(
   let raw: R;
   try {
     raw = await context.exec.json(spec.argv, {
-      schema: spec.schema,
+      schema: helperRefinements(spec.schema),
       ...(spec.okExitCodes === undefined ? {} : { okExitCodes: spec.okExitCodes }),
       ...(maxOutputBytes === undefined ? {} : { maxOutputBytes }),
     });

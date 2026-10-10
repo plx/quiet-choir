@@ -14,6 +14,7 @@ import type {
   HarnessResponse,
   JsonValue,
 } from '../runtime/model.js';
+import { helperRefinementsKey } from '../runtime/helper-refinements.js';
 import { matchesStepGlob, policyOverrideSchema, type ExecutionPolicy } from '../runtime/policy.js';
 import type { RunOptions, WorkflowEvent } from '../runtime/runner.js';
 import { readRequiredRun } from '../runtime/read-required-run.js';
@@ -207,6 +208,8 @@ export class RehearsalHarness extends FixtureHarness {
   private readonly replays: string[] = [];
   private readonly stubbedSteps = new Set<string>();
   private readonly skippedSleeps = new Set<string>();
+  /** Steps whose schema carries an authored refinement, in first-seen order. */
+  private readonly refinedSteps = new Set<string>();
   private readonly warnings = new Set<string>([
     'Local callbacks, file effects, poll observers, and workflow top-level code run for real. Temporary checkpoints do not roll back filesystem or external effects; use --stub-steps for selected local effects and poll observers (a stubbed poll completes with a synthesized value). Commands they issue through context.exec are synthesized like ctx.exec, except a poll observer call with live: true.',
     'The nominal Claude ceiling covers only attempted calls on the rehearsed path. One-item synthesized arrays can understate fan-out; Codex calls are counted, not priced. CLI budget limits can overshoot on a final turn.',
@@ -309,10 +312,7 @@ export class RehearsalHarness extends FixtureHarness {
       return { output: synthesizeOutput(schema, id) };
     },
     onSchema: (id, schema) => {
-      if (hasRefinement(schema))
-        this.warnings.add(
-          `Step ${id}: custom Zod refinements cannot be expressed in JSON Schema; fixture/synthesized values still undergo the original validation.`,
-        );
+      if (hasRefinement(schema)) this.refinedSteps.add(id);
     },
     onWorktree: (event) => {
       this.warnings.add(
@@ -351,6 +351,20 @@ export class RehearsalHarness extends FixtureHarness {
       this.replays.push(event.stepId);
     if (event.type === 'step.completed') this.skippedSleeps.add(event.stepId);
   }
+  /** One grouped line for every authored refinement; a large fan-out lists only the first ids. */
+  private refinementWarnings(): string[] {
+    if (this.refinedSteps.size === 0) return [];
+    const ids = [...this.refinedSteps];
+    const shown = ids.slice(0, REFINEMENT_WARNING_IDS).join(', ');
+    const more =
+      ids.length > REFINEMENT_WARNING_IDS
+        ? ` and ${String(ids.length - REFINEMENT_WARNING_IDS)} more`
+        : '';
+    return [
+      `${ids.length === 1 ? 'Step' : 'Steps'} ${shown}${more}: custom Zod refinements cannot be expressed in JSON Schema; fixture/synthesized values still undergo the original validation.`,
+    ];
+  }
+
   public report(record: RunRecord | null): RehearsalReport {
     for (const call of this.calls) {
       const policy = record?.steps[call.stepId]?.attemptHistory?.find(
@@ -438,7 +452,7 @@ export class RehearsalHarness extends FixtureHarness {
           (step?.kind === 'wait' && !step.question && !step.wait?.request.poll)
         );
       }),
-      warnings: [...this.warnings],
+      warnings: [...this.warnings, ...this.refinementWarnings()],
     });
   }
 }
@@ -457,10 +471,15 @@ function commandEntry(
   };
 }
 
+/** The most step ids the grouped refinement warning names. */
+const REFINEMENT_WARNING_IDS = 10;
+
 function hasRefinement(schema: z.ZodType): boolean {
   const seen = new Set<object>();
   function visit(value: unknown): boolean {
     if (value === null || typeof value !== 'object' || seen.has(value)) return false;
+    // A built-in helper's integrity checks, which synthesized values satisfy, do not warn.
+    if (Object.getOwnPropertyDescriptor(value, helperRefinementsKey)?.value === true) return false;
     seen.add(value);
     const node = value as Record<string, unknown>;
     if (node['check'] === 'custom') return true;

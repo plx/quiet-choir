@@ -794,6 +794,7 @@ export default defineWorkflow({
     );
     const result = await rehearse(file, { repo: REPO });
     expect(result.run.status).toBe('completed');
+    expect(result.warnings.filter((line) => line.includes('custom Zod refinements'))).toEqual([]);
     const commands = result.commands;
     for (const command of commands)
       expect(command).toMatchObject({

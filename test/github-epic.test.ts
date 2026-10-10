@@ -1521,8 +1521,9 @@ export default defineWorkflow({
 });
 `,
     );
-    const { run, commands } = await rehearse(file, { repo: REPO });
+    const { run, commands, warnings } = await rehearse(file, { repo: REPO });
     expect(run.status).toBe('completed');
+    expect(warnings.filter((line) => line.includes('custom Zod refinements'))).toEqual([]);
     expect(commands.map((command) => [command.stepId, command.outputSource])).toEqual([
       ['epic', 'synthesized'],
     ]);
