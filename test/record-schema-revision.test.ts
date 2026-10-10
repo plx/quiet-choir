@@ -1,6 +1,7 @@
 // Run records carry a schemaRevision (#167). A build refuses to rewrite a record with a newer
 // revision or with top-level fields it does not know, because its parse strips them and the next
-// compaction would delete them; reads tolerate both and report the hidden field names.
+// compaction would delete them; reads tolerate both and report the hidden field names. Nested
+// shapes are pinned too (#374): digests of the run-level and step JSON Schemas per revision.
 import { createHash, randomUUID } from 'node:crypto';
 import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -29,6 +30,7 @@ import { runNextCommands } from '../src/workflow/loader/next-commands.js';
 import { rehearsalState } from '../src/workflow/loader/rehearsal.js';
 import { JournalWriter } from '../src/workflow/runtime/journal.js';
 import { cleanWorktrees } from '../src/workflow/runtime/worktree-clean.js';
+import { recordedEngine } from '../src/workflow/runtime/engine.js';
 import { digest } from '../src/workflow/runtime/json.js';
 import { pollIdentityKey } from '../src/workflow/runtime/poll-identity.js';
 import { ReplayDivergenceError } from '../src/workflow/runtime/run-errors.js';
@@ -36,13 +38,16 @@ import {
   hiddenRecordFields,
   RECORD_FIELD_KEYS,
   recordSchemaDrift,
+  recordSchemaJson,
   recordSchemaRefusalMessage,
   recordSchemaWarning,
+  recordShapeSchemas,
   SUPPORTED_SCHEMA_REVISION,
 } from '../src/workflow/runtime/record.js';
 
 // sha256 of JSON.stringify(sorted keys) for each released revision. A past revision is never
-// edited in place: a new persisted field adds a revision and bumps SUPPORTED_SCHEMA_REVISION.
+// edited in place: a new persisted field adds a revision and bumps SUPPORTED_SCHEMA_REVISION. A
+// nested-only change repeats the previous key list but must pin new schema digests (below).
 const revisionDigests: Readonly<Record<string, string>> = {
   '1': '80010b03d1fa34c4b824b0682b5138e0c19d138186fb659c38d46eab204992ec',
   // Revision 2 (#168) changed only nested shapes (runBudget, budgetStop), so it repeats the keys.
@@ -117,6 +122,47 @@ const revisionFifteenReadDigest =
 const revisionSixteenReadDigest =
   'c03e6499db22babe14b26645b8b37693c59242be9386ac0270af84875cea71e9';
 
+// Digests of the run-level (without steps) and step JSON Schemas (recordShapeSchemas) per revision,
+// with the zod version that produced them. They start at revision 17: older revisions cannot be
+// recomputed without their sources. A released revision's pin is never edited, except to re-pin an
+// encoding-only change after a zod upgrade (see shapePinMessage).
+const shapeDigests: Readonly<Record<string, { zod: string; run: string; steps: string }>> = {
+  '17': {
+    zod: '4.5.4',
+    run: '563c2ce563e5f1fd7a6ac44d26f794fcf34701a74ef486cec88fffd3aa03cca0',
+    steps: 'b8c0698a4791f24bc30576a4258b7631cb2dea80a3a6ddd17d830fc9a120bc79',
+  },
+};
+const FIRST_SHAPE_PIN = 17;
+
+/** The assertion message for a shape digest that no longer matches its pin. */
+function shapePinMessage(
+  part: 'run' | 'steps',
+  actual: string,
+  pinnedZod: string,
+  installedZod: string,
+): string {
+  const next = SUPPORTED_SCHEMA_REVISION + 1;
+  const what =
+    part === 'run'
+      ? 'The run-level record schema (everything but steps, including schemas imported by record.ts)'
+      : 'The step schema (stepSchema in record.ts, including schemas it imports)';
+  const lines = [
+    `${what} changed without a new schema revision.`,
+    `Actual ${part} digest: ${actual}`,
+    `If revision ${String(SUPPORTED_SCHEMA_REVISION)} is already released, a persisted shape change needs a revision: bump SUPPORTED_SCHEMA_REVISION in src/workflow/runtime/record.ts,`,
+    `add revision ${String(next)} to test/fixtures/schema-revision/record-keys.json (repeat the key list for a nested-only change) with its key digest,`,
+    `and add the printed run/steps digests and the installed zod version (${installedZod}) under '${String(next)}' in shapeDigests.`,
+    `If revision ${String(SUPPORTED_SCHEMA_REVISION)} is not released yet (you bumped SUPPORTED_SCHEMA_REVISION in this change and are adding its pin), replace the run/steps digests under '${String(SUPPORTED_SCHEMA_REVISION)}' in shapeDigests with the printed ones instead of bumping again.`,
+    `Never edit a released revision's pin. See docs/storage.md#record-schema-revision.`,
+  ];
+  if (pinnedZod !== installedZod)
+    lines.push(
+      `The installed zod (${installedZod}) differs from the pinned one (${pinnedZod}): if record.ts and the schemas it imports did not change, re-pin revision ${String(SUPPORTED_SCHEMA_REVISION)}'s run/steps digests and zod version in place, because that is an encoding change and not a new revision.`,
+    );
+  return lines.join('\n');
+}
+
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex');
 
 let stateDir: string;
@@ -152,6 +198,171 @@ describe('record key snapshot', () => {
       // A revision may repeat the previous key list when it only changes a nested run-level shape.
     }
     expect(RECORD_FIELD_KEYS).toContain('schemaRevision');
+  });
+
+  it('pins the nested run-level and step schema digests per revision', () => {
+    const pinned = Object.keys(shapeDigests)
+      .map(Number)
+      .sort((a, b) => a - b);
+    // A bump of SUPPORTED_SCHEMA_REVISION must add its pin.
+    expect(
+      pinned,
+      `Pin revisions ${String(FIRST_SHAPE_PIN)} through ${String(SUPPORTED_SCHEMA_REVISION)} in shapeDigests: add the run/steps digests for the new revision.`,
+    ).toEqual(
+      Array.from(
+        { length: SUPPORTED_SCHEMA_REVISION - FIRST_SHAPE_PIN + 1 },
+        (_, index) => FIRST_SHAPE_PIN + index,
+      ),
+    );
+    const pin = shapeDigests[String(SUPPORTED_SCHEMA_REVISION)];
+    if (!pin) throw new Error('unreachable: contiguity checked above');
+    const shapes = recordShapeSchemas();
+    const installedZod = recordedEngine().zod;
+    const run = digest(shapes.run);
+    const steps = digest(shapes.step);
+    expect(run, shapePinMessage('run', run, pin.zod, installedZod)).toBe(pin.run);
+    expect(steps, shapePinMessage('steps', steps, pin.zod, installedZod)).toBe(pin.steps);
+  });
+
+  it('computes the same digests on every call', () => {
+    const first = recordShapeSchemas();
+    const second = recordShapeSchemas();
+    expect(digest(second.run)).toBe(digest(first.run));
+    expect(digest(second.step)).toBe(digest(first.step));
+  });
+
+  it('moves the digest for a nested addition, removal or type change but not a reorder', () => {
+    const base = z.object({
+      budget: z.object({ limit: z.number(), unit: z.string() }),
+      name: z.string(),
+    });
+    const baseline = digest(recordSchemaJson(base));
+    const variants = {
+      addition: z.object({
+        budget: z.object({ limit: z.number(), unit: z.string(), extra: z.boolean() }),
+        name: z.string(),
+      }),
+      removal: z.object({ budget: z.object({ limit: z.number() }), name: z.string() }),
+      typeChange: z.object({
+        budget: z.object({ limit: z.string(), unit: z.string() }),
+        name: z.string(),
+      }),
+      optionality: z.object({
+        budget: z.object({ limit: z.number(), unit: z.string().optional() }),
+        name: z.string(),
+      }),
+    };
+    for (const [name, schema] of Object.entries(variants))
+      expect(digest(recordSchemaJson(schema)), name).not.toBe(baseline);
+    const reordered = z.object({
+      name: z.string(),
+      budget: z.object({ unit: z.string(), limit: z.number() }),
+    });
+    expect(digest(recordSchemaJson(reordered))).toBe(baseline);
+  });
+
+  it('names generated definitions by structure, so reordering fields that need them is moot', () => {
+    // Recursive schemas (z.json(), z.lazy) become definitions whose generated names follow source
+    // order; the digest must not.
+    interface Tree {
+      label: string;
+      children: Tree[];
+    }
+    interface Ping {
+      pong: Pong | null;
+      at: number;
+    }
+    interface Pong {
+      ping: Ping | null;
+      by: string;
+    }
+    const recursive = (labelFirst: boolean, label: z.ZodType<string | number> = z.string()) => {
+      const tree: z.ZodType<Tree> = z.lazy(() =>
+        labelFirst
+          ? z.object({ label, children: z.array(tree) })
+          : z.object({ children: z.array(tree), label }),
+      ) as z.ZodType<Tree>;
+      const ping: z.ZodType<Ping> = z.lazy(() =>
+        labelFirst
+          ? z.object({ pong: pong.nullable(), at: z.number() })
+          : z.object({ at: z.number(), pong: pong.nullable() }),
+      );
+      const pong: z.ZodType<Pong> = z.lazy(() =>
+        labelFirst
+          ? z.object({ ping: ping.nullable(), by: z.string() })
+          : z.object({ by: z.string(), ping: ping.nullable() }),
+      );
+      return { tree, ping };
+    };
+    const forward = (variant: 'base' | 'jsonRemoved' | 'treeRetyped' | 'deepAddition' = 'base') => {
+      const { tree, ping } = recursive(true, variant === 'treeRetyped' ? z.number() : z.string());
+      return z.object({
+        input: z.json(),
+        nested: z.object({
+          meta: variant === 'jsonRemoved' ? z.string() : z.json(),
+          inner: z.object({
+            data: z.json(),
+            tree,
+            ...(variant === 'deepAddition' ? { extra: z.json() } : {}),
+          }),
+          ping,
+        }),
+        output: z.json(),
+        name: z.string(),
+      });
+    };
+    const reversed = () => {
+      const { tree, ping } = recursive(false);
+      return z.object({
+        name: z.string(),
+        output: z.json(),
+        nested: z.object({
+          ping,
+          inner: z.object({ tree, data: z.json() }),
+          meta: z.json(),
+        }),
+        input: z.json(),
+      });
+    };
+    const baseline = digest(recordSchemaJson(forward()));
+    expect(digest(recordSchemaJson(reversed()))).toBe(baseline);
+    for (const variant of ['jsonRemoved', 'treeRetyped', 'deepAddition'] as const)
+      expect(digest(recordSchemaJson(forward(variant))), variant).not.toBe(baseline);
+    // Every $ref still resolves to a renamed definition.
+    const json = recordSchemaJson(forward()) as { definitions: Record<string, unknown> };
+    const refs = new Set<string>();
+    JSON.stringify(json, (key, value: unknown) => {
+      if (key === '$ref' && typeof value === 'string') refs.add(value);
+      return value;
+    });
+    expect(refs.size).toBeGreaterThan(0);
+    expect([...refs].sort()).toEqual(
+      Object.keys(json.definitions)
+        .map((name) => `#/definitions/${name}`)
+        .sort(),
+    );
+  });
+
+  it('explains how to update a failing pin', () => {
+    const message = shapePinMessage('run', 'abc123', '4.5.4', '4.5.4');
+    expect(message).toContain('abc123');
+    expect(message).toContain('bump SUPPORTED_SCHEMA_REVISION in src/workflow/runtime/record.ts');
+    expect(message).toContain(
+      `If revision ${String(SUPPORTED_SCHEMA_REVISION)} is already released`,
+    );
+    expect(message).toContain('test/fixtures/schema-revision/record-keys.json');
+    expect(message).toContain(`'${String(SUPPORTED_SCHEMA_REVISION + 1)}' in shapeDigests`);
+    expect(message).toContain(
+      `If revision ${String(SUPPORTED_SCHEMA_REVISION)} is not released yet`,
+    );
+    expect(message).toContain(`under '${String(SUPPORTED_SCHEMA_REVISION)}' in shapeDigests`);
+    expect(message).toContain("Never edit a released revision's pin");
+    expect(message).toContain('docs/storage.md#record-schema-revision');
+    expect(message).not.toContain('encoding change');
+    expect(shapePinMessage('steps', 'abc123', '4.5.4', '4.6.0')).toContain(
+      'did not change, re-pin revision',
+    );
+    expect(shapePinMessage('steps', 'abc123', '4.5.4', '4.5.4')).toContain('step schema');
   });
 });
 

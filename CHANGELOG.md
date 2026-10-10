@@ -2,6 +2,11 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Contributors: `test/record-schema-revision.test.ts` now pins, from revision 17 on, a digest of the
+  run-level JSON Schema (without `steps`) and of the step schema per record schema revision, so a
+  nested shape change fails the test until `SUPPORTED_SCHEMA_REVISION` is bumped and the new digests
+  are pinned (#374, [storage](docs/storage.md#record-schema-revision)). `z.custom` validators,
+  refinements and transforms stay review-only. No runtime change.
 - New runs record a random `generation` (a UUID written once, when the run is created, including a
   fork), and answer delivery binds to it instead of `createdAt` alone (#371,
   [ADR 0049](docs/decisions/0049-guard-held-run-removal.md)). Answer envelopes carry `runGeneration`
