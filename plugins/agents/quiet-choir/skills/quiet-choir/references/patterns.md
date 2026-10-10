@@ -776,11 +776,12 @@ in full.
 **Rule:** run one ticket per run, with the deterministic run ID `ticket-N`, and drive the loop from
 outside. The run reads the epic snapshot under `before` and checks that `nextTicket` still picks
 this ticket. If not, it returns `skipped` with the current pick and makes no agent call: someone
-else moved the epic. Otherwise it reads the issue with every comment, makes one `edit` call, closes
-the issue and returns the next pick from an `after` snapshot. `gh.issue.close` is check-then-act: a
-resume after a crash finds the issue closed and does not write again. Each ID occurs once per run,
-so literal IDs are safe. The recipe keeps only the loop's shape. A real ticket opens and lands a
-pull request between the implement call and the close, with the
+else moved the epic. A `skipped` return still completes the run and saves it under `ticket-N`, so
+resuming it replays the same skip. Otherwise it reads the issue with every comment, makes one `edit`
+call, closes the issue and returns the next pick from an `after` snapshot. `gh.issue.close` is
+check-then-act: a resume after a crash finds the issue closed and does not write again. Each ID
+occurs once per run, so literal IDs are safe. The recipe keeps only the loop's shape. A real ticket
+opens and lands a pull request between the implement call and the close, with the
 [CI-gated fix loop](#ci-gated-fix-loop) and `gh.pr.create` and `gh.pr.merge`; when GitHub closes the
 issue on merge, `close` returns `acted: false`. Here `nextTicket` gets no `outside` states, so an
 item that depends on an issue outside the epic counts as waiting. The
@@ -803,6 +804,7 @@ export default defineWorkflow({
   async run(ctx, { repo, epic, ticket }) {
     const gh = github(ctx, { repo });
     // One run per ticket (run ID ticket-N): each snapshot ID occurs once in the run.
+    // A skip completes this run ID, so the driver removes the saved run to retry the ticket.
     const pick = async (id: string) =>
       nextTicket(await gh.epic.snapshot(id, { number: epic })).pick?.number ?? null;
     const before = await pick('before');
@@ -826,16 +828,21 @@ digits, `_` and `-`, so `ticket-N` cannot name the repository, and a resume reus
 The driver first creates a missing `$QC_RUNS` owner-only, so the output redirection always opens
 inside an existing directory. It records the repository and epic in `$QC_RUNS/scope` and exits with
 status 1, before any workflow command, when that file names another epic, rather than resume that
-epic's `ticket-N` records. Each pass resumes `ticket-$n` if its record exists, so a rerun after an
-interruption continues where it stopped, and otherwise starts it. The driver follows `next` from the
-last JSON line. The loop stops at `null` and at a skipped ticket, and exits with a run's nonzero
-status: 75 is a suspended run, so run `workflow tick` when it is due and then this loop again; 1 is
-a failure to fix before rerunning the loop, which resumes it. It also stops with status 1 when
-`next` names a ticket this pass already ran: the `after` snapshot still names the ticket it just
-closed, or an earlier ticket was reopened. Resuming that ticket's completed run would replay its
-saved `next` and go round in a cycle. Wait until GitHub shows the close, then rerun with `QC_TICKET`
-set to the epic's current pick. A reopened ticket whose run completed needs a fresh state directory,
-because its record would replay the same `next` again.
+epic's `ticket-N` records. Each pass inspects `ticket-$n` first. A run saved as completed with
+output status `skipped` made no agent call and changed nothing, so the driver removes it with
+[`workflow rm`](operating-runs.md#remove-a-run) and starts the ticket again, rather than replay the
+stale skip. Any other saved run is resumed, so a rerun after an interruption continues where it
+stopped, and a missing one is started. (Starting under a new run ID such as `ticket-N-2` is the
+manual alternative, which this driver does not follow.) The driver follows `next` from the last JSON
+line. The loop stops at `null` and at a skipped ticket, and exits with a run's nonzero status: 75 is
+a suspended run, so run `workflow tick` when it is due and then this loop again; 1 is a failure to
+fix before rerunning the loop, which resumes it. It also stops with status 1 when `next` names a
+ticket this pass already ran: the `after` snapshot still names the ticket it just closed, or an
+earlier ticket was reopened. Resuming that ticket's completed run would replay its saved `next` and
+go round in a cycle. Wait until GitHub shows the close, then rerun with `QC_TICKET` set to the
+epic's current pick. A reopened ticket whose run completed has a record that would replay the same
+`next` again: remove that run with `workflow rm ticket-N`, then rerun with `QC_TICKET` set to the
+epic's current pick.
 
 <!-- skills-check: example ticket-driver -->
 
@@ -854,7 +861,12 @@ seen=' '
 while [ "$n" != null ]; do
   seen="$seen$n "
   out="$QC_RUNS/ticket-$n.out"
-  if qc inspect "ticket-$n" >/dev/null 2>&1; then
+  saved=$(qc inspect "ticket-$n" 2>/dev/null | jq -r 'select(.status) | .status + "/" + (.output.status // "")')
+  if [ "$saved" = completed/skipped ]; then
+    qc rm "ticket-$n" >/dev/null || exit
+    saved=
+  fi
+  if [ -n "$saved" ]; then
     qc resume "ticket-$n" >"$out"
   else
     qc execute "$QC_WORKFLOW" --run-id "ticket-$n" --grant write \

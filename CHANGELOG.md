@@ -2,6 +2,11 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- The ticket-loop `ticket-driver` in both skill copies removes a run saved as `skipped` with
+  `workflow rm` and starts the ticket again, instead of resuming it and replaying the stale skip
+  (#360). The docs say a skip completes the run under `ticket-N` and is final for that run ID, name
+  `ticket-N-2` as the manual alternative, and point a reopened ticket whose run completed at
+  `workflow rm ticket-N` rather than a fresh state directory. Any other saved run is still resumed.
 - `quiet-choir/github`'s `epic.snapshot` parses the dependencies of a sub-issue of another
   repository against that sub-issue's own repository (#358). Its body and comments are written
   there, so a bare `#N` and an `<!-- epic:depends-on N -->` marker number now name that repository's

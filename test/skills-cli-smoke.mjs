@@ -360,9 +360,39 @@ async function portingRecipes(skillRoot) {
     const driven = shell(driver, { cwd: target, env: ticketEnv });
     assert.equal(driven.status, 0, `pass ${String(pass)}: ${driven.output}`);
     // ticket-163 closes and names #164; ticket-164 sees #163 still picked in the recording and skips.
+    // Pass 2 resumes ticket-163, and removes and re-executes the saved skip of ticket-164.
     assert.deepEqual((await last(163)).output, { status: 'closed', next: 164 });
     assert.deepEqual((await last(164)).output, { status: 'skipped', next: 163 });
   }
+
+  // A retry: ticket-164 was saved as skipped, then the epic picks 164. The driver removes the saved
+  // skip and runs the ticket afresh instead of replaying it.
+  const retryRuns = join(directory, 'retry-state');
+  const pages164 = structuredClone(pages);
+  for (const page of pages164) page.data.repository.issue.number = 164;
+  const allClosed = structuredClone(closed);
+  for (const item of allClosed.data.repository.issue.subIssues.nodes) item.state = 'CLOSED';
+  const retryFixtures = await write('ticket-retry.fixtures.json', {
+    ...JSON.parse(await readFile(ticketFixtures, 'utf8')),
+    exec: [
+      { step: 'before', json: closed },
+      { step: 'after', json: allClosed },
+      { step: 'issue', json: pages164 },
+      {
+        step: 'close',
+        argvPrefix: ['gh', 'api', 'graphql'],
+        json: {
+          data: { repository: { issue: { number: 164, state: 'OPEN', stateReason: null } } },
+        },
+      },
+      { step: 'close', argvPrefix: ['gh', 'api', '-X', 'PATCH'], json: { number: 164 } },
+    ],
+  });
+  const skipped = cli(
+    `execute "${ticketEnv.QC_WORKFLOW}" --run-id ticket-164 --state-dir "${retryRuns}" --grant write --harness fixture:"${ticketFixtures}" --input '{"repo":"octo-org/quiet-choir","epic":99,"ticket":164}' --json`,
+  );
+  assert.equal(skipped.status, 0, skipped.output);
+  assert.deepEqual(skipped.lines.at(-1).output, { status: 'skipped', next: 163 });
 
   // A lagging read: the recorded `after` snapshot still lists ticket 163 open, so the driver stops.
   const lagging = await write('ticket-lag.fixtures.json', {
@@ -437,11 +467,28 @@ process.exit(status ?? 1);
   assert.equal(await readFile(calls, 'utf8'), '');
   assert.deepEqual(await records(state), saved);
 
+  // The retry: inspect, rm, execute, with ticket-164 closing and no ticket left.
+  await writeFile(calls, '');
+  const retried = shell(driver.replace(ticketFixtures, retryFixtures), {
+    cwd: target,
+    env: { ...ticketEnv, QC_RUNS: retryRuns, QC_CHECKOUT: shim, QC_TICKET: '164' },
+  });
+  assert.equal(retried.status, 0, retried.output);
+  assert.deepEqual(
+    JSON.parse(
+      (await readFile(join(retryRuns, 'ticket-164.out'), 'utf8')).trim().split('\n').at(-1),
+    ).output,
+    { status: 'closed', next: null },
+  );
+  assert.deepEqual((await readFile(calls, 'utf8')).trim().split('\n'), [
+    'inspect',
+    'rm',
+    'execute',
+  ]);
+
   // A cycle across completed runs: ticket-163 names #164 and ticket-164, run after #163 reopened,
   // names #163 again. The driver resumes each once and stops instead of alternating forever.
   const cycleRuns = join(directory, 'cycle-state');
-  const pages164 = structuredClone(pages);
-  for (const page of pages164) page.data.repository.issue.number = 164;
   const reopened = await write('ticket-164.fixtures.json', {
     ...JSON.parse(await readFile(ticketFixtures, 'utf8')),
     exec: [

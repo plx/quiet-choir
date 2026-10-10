@@ -9,6 +9,7 @@ export default defineWorkflow({
   async run(ctx, { repo, epic, ticket }) {
     const gh = github(ctx, { repo });
     // One run per ticket (run ID ticket-N): each snapshot ID occurs once in the run.
+    // A skip completes this run ID, so the driver removes the saved run to retry the ticket.
     const pick = async (id: string) =>
       nextTicket(await gh.epic.snapshot(id, { number: epic })).pick?.number ?? null;
     const before = await pick('before');
