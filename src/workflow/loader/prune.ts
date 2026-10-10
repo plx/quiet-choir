@@ -374,7 +374,7 @@ async function sweepInterruptedRemovals(
       } else
         try {
           const beforeLock = live.beforeLock;
-          await finishInterruptedRemoval(
+          const outcome = await finishInterruptedRemoval(
             removal,
             {
               signal,
@@ -386,6 +386,15 @@ async function sweepInterruptedRemovals(
             },
             { force: false, refs: false, tombstones: [] },
           );
+          // The finisher touches no caches, so it cannot block; a warning (a guard that would not
+          // release after the commit point) still reaches the report, while the path is listed.
+          if (outcome.kind === 'removed') warnings.push(...outcome.result.warnings);
+          else {
+            warnings.push(
+              `Could not finish the interrupted removal of ${removal.path}: ${outcome.message}`,
+            );
+            continue;
+          }
         } catch (error) {
           if (signal?.aborted) return { paths, attributed, error };
           if (!(error instanceof RunRefusedError && quietRefusals.has(error.code)))

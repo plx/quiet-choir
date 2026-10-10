@@ -34,9 +34,16 @@ import { defaultPruneStatuses } from '../src/workflow/loader/prune-selection.js'
 import { answerPath, writeAnswer } from '../src/workflow/runtime/inbox.js';
 import { formatArgv } from '../src/workflow/runtime/commands.js';
 import { defaultStateDir } from '../src/workflow/runtime/paths.js';
+import * as lockStore from '../src/workflow/runtime/store.js';
 import { runBytes } from '../src/workflow/runtime/run-size.js';
 import { WorktreeGit } from '../src/worktrees/git.js';
 import { testInvocation } from './harness-invocation.js';
+
+vi.mock('../src/workflow/runtime/store.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof lockStore>();
+  return { ...actual, lockRun: vi.fn(actual.lockRun) };
+});
+const actualLockStore = await vi.importActual<typeof lockStore>('../src/workflow/runtime/store.js');
 
 const DEAD = 2_000_000_000;
 const day = 86_400_000;
@@ -781,6 +788,34 @@ describe('workflow prune and interrupted flat-run removals', () => {
     expect((await readRun({ stateDir, runId: 'raced' })).id).toBe('raced');
     expect(await gone(leftover)).toBe(false);
     expect(await gone(join(stateDir, 'raced', 'lock'))).toBe(true);
+  });
+
+  it('reports the warnings of a finished one, which stays listed', async () => {
+    const leftover = await interruptedRemoval('ghost');
+    vi.mocked(lockStore.lockRun).mockImplementation(async (...args) => {
+      const release = await actualLockStore.lockRun(...args);
+      return Object.assign(
+        async () => {
+          await release();
+          throw new Error('injected EACCES');
+        },
+        {
+          trackProcess: release.trackProcess.bind(release),
+          releaseOwner: release.releaseOwner.bind(release),
+        },
+      );
+    });
+    try {
+      const result = await prune({ statuses: ['completed'] });
+      expect(result.unfinishedRemovals).toEqual([leftover]);
+      expect(result.warnings).toEqual([
+        expect.stringContaining('Removed the run but could not release'),
+      ]);
+      expect(result.warnings[0]).toContain('injected EACCES');
+    } finally {
+      vi.mocked(lockStore.lockRun).mockImplementation(actualLockStore.lockRun);
+    }
+    expect(await gone(leftover)).toBe(true);
   });
 
   it('sweeps an additional scanned container too', async () => {
