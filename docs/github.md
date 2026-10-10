@@ -53,15 +53,15 @@ same parser.
 Every read takes `(id, args, policy?)` and runs `gh api`, either GraphQL or REST. gh's `--json`
 output for `pr view` or `pr list` hides nested page information, so the reads never use it.
 
-| Read                                       | Command                                                         | Result                                                                                                                                                                                                        |
-| ------------------------------------------ | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `repo.info(id)`                            | `gh api graphql`                                                | `{ host, owner, name, nameWithOwner, defaultBranch, isPrivate, viewer, viewerPermission }`                                                                                                                    |
-| `pr.view(id, { number })`                  | `gh api graphql`                                                | Title, URL, body, state, draft, `mergeable`, `mergeStateStatus`, head SHA and branches, `closingIssues` (number and repository) and `checks` for the head commit                                              |
-| `pr.list(id, { head?, base?, state? })`    | `gh api graphql --paginate --slurp`                             | Every matching pull request (number, title, state, draft, branches, head SHA, URL, body), sorted by number. `state` is `open` (default), `closed`, `merged` or `all`                                          |
-| `pr.reviewThreads(id, { number })`         | `gh api graphql --paginate --slurp`                             | Every thread with every comment: `id`, `isResolved`, `isOutdated`, `path`, `line` (current, else original), `author`, `isBot`, `lastAuthor`, the first comment's `alert`, `priority` badge, `title` and `url` |
-| `issue.view(id, { number, comments? })`    | `gh api graphql`, paginated over comments with `comments: true` | Number, title, state, body, URL, author and labels, plus every comment with `comments: true`                                                                                                                  |
-| `codeScanning.alerts(id, { ref, state? })` | `gh api --paginate repos/O/R/code-scanning/alerts?...`          | `{ status: 'ok', alerts }` with number, rule, severity, path, line, message, state and URL; or `{ status: 'unavailable', reason, alerts: [] }`                                                                |
-| `epic.snapshot(id, { number })`            | `gh api graphql` (no pagination)                                | The epic and its items: sub-issues with state, labels, assignees, blocked-by relations, linked pull requests, declared dependencies and split markers, in checklist order; see [epics](#epics)                |
+| Read                                            | Command                                                         | Result                                                                                                                                                                                                        |
+| ----------------------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `repo.info(id)`                                 | `gh api graphql`                                                | `{ host, owner, name, nameWithOwner, defaultBranch, isPrivate, viewer, viewerPermission }`                                                                                                                    |
+| `pr.view(id, { number })`                       | `gh api graphql`                                                | Title, URL, body, state, draft, `mergeable`, `mergeStateStatus`, head SHA and branches, `closingIssues` (number and repository) and `checks` for the head commit                                              |
+| `pr.list(id, { head?, base?, state? })`         | `gh api graphql --paginate --slurp`                             | Every matching pull request (number, title, state, draft, branches, head SHA, URL, body), sorted by number. `state` is `open` (default), `closed`, `merged` or `all`                                          |
+| `pr.reviewThreads(id, { number })`              | `gh api graphql --paginate --slurp`                             | Every thread with every comment: `id`, `isResolved`, `isOutdated`, `path`, `line` (current, else original), `author`, `isBot`, `lastAuthor`, the first comment's `alert`, `priority` badge, `title` and `url` |
+| `issue.view(id, { number, comments? })`         | `gh api graphql`, paginated over comments with `comments: true` | Number, title, state, body, URL, author and labels, plus every comment with `comments: true`                                                                                                                  |
+| `codeScanning.alerts(id, { ref, state? })`      | `gh api --paginate repos/O/R/code-scanning/alerts?...`          | `{ status: 'ok', alerts }` with number, rule, severity, path, line, message, state and URL; or `{ status: 'unavailable', reason, alerts: [] }`                                                                |
+| `epic.snapshot(id, { number, headRefPrefix? })` | `gh api graphql` (no pagination)                                | The epic and its items: sub-issues with state, labels, assignees, blocked-by relations, linked pull requests, declared dependencies and split markers, in checklist order; see [epics](#epics)                |
 
 `checks` follows one set of rules, exported as `summarizeChecks`: a commit status passes when
 `SUCCESS`, is pending when `PENDING` or `EXPECTED`, and fails otherwise; a check run is pending
@@ -157,11 +157,12 @@ writes such rules from a completed run, since the checkpoint holds the validated
 
 ## Epics
 
-`gh.epic.snapshot(id, { number }, policy?)` reads one epic for burning it down ticket by ticket, and
-the pure `nextTicket(snapshot, policy?)` picks the next ticket. The rules are those of the burn-down
-survey that ran epic #99: the epic body's checklist orders the items, "Depends on #N" lines and
-GitHub's blocked-by relations hold an item back, hold labels park it, a split marker replaces it
-with its slices, and work already under way is finished before new work starts.
+`gh.epic.snapshot(id, { number, headRefPrefix? }, policy?)` reads one epic for burning it down
+ticket by ticket, and the pure `nextTicket(snapshot, policy?)` picks the next ticket. The rules are
+those of the burn-down survey that ran epic #99: the epic body's checklist orders the items,
+"Depends on #N" lines and GitHub's blocked-by relations hold an item back, hold labels park it, a
+split marker replaces it with its slices, and work already under way is finished before new work
+starts.
 
 ### The snapshot
 
@@ -191,7 +192,45 @@ one stays in `checklist` with `isItem: false`. An epic with no sub-issues falls 
 checklist (`source: 'task-list'`): each line is an item whose title is the line's text, whose state
 is `CLOSED` when checked and `OPEN` otherwise, and which has no URL, labels, dependencies, linked
 pull requests or split. That fallback sees only checkboxes, so it cannot tell a ticket under way or
-blocked from a ready one.
+blocked from a ready one, unless the read passes `headRefPrefix` (below), which also links open pull
+requests to its items.
+
+#### Pull requests linked by branch name
+
+A pull request opened without a closing keyword is not in `closedByPullRequestsReferences`, so its
+ticket looks ready and can be picked again. Pass `headRefPrefix` to link by head branch as well:
+
+```ts
+const snapshot = await gh.epic.snapshot(ctx.id('epic', round), {
+  number: 172,
+  headRefPrefix: 'epic-172/',
+});
+```
+
+It is off by default, and without it the command, query and schema are the ones above. With it the
+same single `gh api graphql` also reads the repository's first 100 open pull requests
+(`pullRequests(states: OPEN, first: 100) { number state isDraft url headRefName isCrossRepository }`),
+and item N is linked to every one whose head branch is the prefix followed by N, either alone or
+followed by `-` and anything (`epic-172/357` and `epic-172/357-selector-by-branch` for item 357). N
+is written without leading zeros, so `epic-172/0357-x`, `epic-172/3570-x`, `epic-172/357x` and
+`epic-171/357-x` link nothing. The prefix must be nonempty, hold no NUL and not end in a digit (the
+number would be ambiguous); anything else throws before `gh` runs.
+
+- **Order and duplicates.** Each pull request appears once in an item's `pullRequests`: the
+  closing-reference entries come first, as before, then the branch-only matches in ascending number.
+  A pull request found both ways keeps its closing-reference entry.
+- **Open, same-repository only.** Closed and merged pull requests are not linked by branch, and
+  neither are pull requests from forks (`isCrossRepository`): anyone could otherwise park a ticket
+  by naming a fork branch. Items of other repositories get no branch matches.
+- **Task lists too.** Items of a `task-list` snapshot link as well, so an unchecked line with an
+  open pull request on its branch is `in-flight`.
+- **Selector.** `nextTicket` is unchanged: it sees a longer `pullRequests` list and reports the
+  ticket `in-flight` as for any open linked pull request.
+- **Not identity.** The prefix only filters in the mapper, so the recorded response keeps every open
+  pull request. A resumed run that passes another prefix replays the same step and re-maps it.
+- **Limit.** One page of 100 open pull requests: `hasNextPage` throws `IncompleteCollectionError`
+  with `connection: 'repository.pullRequests'`, so a repository with more open pull requests cannot
+  use the option.
 
 ### Text rules
 
@@ -295,11 +334,12 @@ keeps the snapshot one command and the selector pure.
 - **Complete or throw.** The read throws `IncompleteCollectionError` when the sub-issue page or any
   sub-issue's labels, assignees, blocked-by relations, linked pull requests or comments report
   another page (`connection` names it, such as `epic.subIssues[163].comments`), and when fewer
-  sub-issues are listed than `subIssuesSummary.total` (`epic.subIssues`). The count rule is "fewer
-  listed than counted" rather than "not equal": only a shortfall can hide an item, and a `--dry-run`
-  synthesizes one sub-issue with a total of 0, which equality would reject. `nextTicket` also throws
-  for a snapshot holding fewer items than its `total`, so an edited or hand-built snapshot cannot
-  report an incomplete epic as done.
+  sub-issues are listed than `subIssuesSummary.total` (`epic.subIssues`), and, with `headRefPrefix`,
+  when the repository has more than 100 open pull requests (`repository.pullRequests`). The count
+  rule is "fewer listed than counted" rather than "not equal": only a shortfall can hide an item,
+  and a `--dry-run` synthesizes one sub-issue with a total of 0, which equality would reject.
+  `nextTicket` also throws for a snapshot holding fewer items than its `total`, so an edited or
+  hand-built snapshot cannot report an incomplete epic as done.
 - **Size.** `maxOutputBytes` defaults to 8 MiB for this read; epic #99 measured 687 KB with 80
   sub-issues and their comments. An oversized response throws and never shrinks; raise the cap with
   the policy argument.
