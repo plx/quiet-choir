@@ -494,8 +494,10 @@ describe('latestRateLimits', () => {
       [
         'its attempt moved to another harness',
         (value: StepRecord) => {
-          for (const entry of value.attemptHistory ?? [])
-            entry.request = { harness: 'codex' } as never;
+          value.attemptHistory = (value.attemptHistory ?? []).map((entry) => ({
+            ...entry,
+            request: { harness: 'codex' } as never,
+          }));
         },
       ],
     ])('refuses to fold a step whose held report no longer stands when %s', (_name, rewrite) => {

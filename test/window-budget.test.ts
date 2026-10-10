@@ -891,8 +891,10 @@ describe('RunBudget rate-limit cache', () => {
     enumerations();
     // Redefined across harnesses: its report now belongs to Codex.
     moved.kind = 'codex';
-    for (const attempt of moved.attemptHistory ?? [])
-      attempt.request = { harness: 'codex' } as never;
+    moved.attemptHistory = (moved.attemptHistory ?? []).map((attempt) => ({
+      ...attempt,
+      request: { harness: 'codex' } as never,
+    }));
     budget.observe('moved');
     expect(budget.check('next', 'claude')).toBeUndefined();
     expect(budget.check('next', 'codex')?.stop).toMatchObject({ harness: 'codex', observed: 0.9 });
