@@ -535,8 +535,8 @@ describe('quiet-choir/github read identity', () => {
     },
     // The prefix filters in the mapper, so it is not here: only the variant query and schema are.
     'epic.snapshot headRefPrefix': {
-      command: 'TBD',
-      schema: 'TBD',
+      command: '7a14f501783f701183d652c79b9188d49c05633b7c6b6473ae9637861af57fa5',
+      schema: 'e20c6ea8d47bbf724b8587a28db2696b64138e30a25c49d8f56fb7555cbc70fd',
     },
   };
 
