@@ -15,9 +15,11 @@
   `CallOptions` a fifth, and `defineWorkflow` two trailing inferred ones; the new public types are
   `AddDirProfilesOf`, `AddDirRootedName`, `HasAddDirRoots`, `ProfileReferenceOf`,
   `ClaudeAddDirSelection` and `NoExtraKeys`, which keeps unknown keys in the inferred `profiles` and
-  `defaults` rejected. Explicit `defineWorkflow` type arguments leave `profiles` and `defaults`
-  uninferred, so a workflow that relies on rooted defaults must drop them. Both Workflow Lab batches
-  record the new `model.ts` hash.
+  `defaults` rejected. A generic factory that forwards a `P extends AgentProfile` or
+  `D extends AgentDefaults<never>` value takes a fallback overload that reads every profile as
+  rooted. Explicit `defineWorkflow` type arguments leave `profiles` and `defaults` uninferred, so a
+  workflow that relies on rooted defaults must drop them. Both Workflow Lab batches record the new
+  `model.ts` hash.
 - Fixture export and replay of failed steps inside `onError: 'return'` child frames are now covered
   by tests and documented (#383), with no behavior change. A replay, a `--dry-run` rehearsal and a
   fork rerun the frame body against the frame-prefixed rules and settle the same error kind, message

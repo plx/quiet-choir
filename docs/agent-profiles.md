@@ -59,8 +59,10 @@ together with a profile that accepts
 call that omits `profile`, a rooted `defaults.profile`. Under any other profile, including the
 implicit `text`, `addDirs` fails typecheck like the other keys, while every profile still compiles
 without it. `defineWorkflow` reads this from the literal `profiles` and `defaults`; when it cannot
-see their shape (a profiles object typed `Record<string, AgentProfile>`, a non-literal `extends`)
-the type stays permissive and the runtime check decides
+see their shape (a profiles object typed `Record<string, AgentProfile>`, a non-literal `extends`, or
+a generic `P extends AgentProfile` or `D extends AgentDefaults<never>` value that a factory
+forwards, which takes a fallback overload reading every profile as rooted) the type stays permissive
+and the runtime check decides
 ([ADR 0062](decisions/0062-type-call-site-adddirs-by-profile-roots.md)). Codex `addDirs` stay
 removed. A registered harness's literal `capabilityKeys` are removed the same way. The removed keys
 are typed as optional `never` properties, so a pre-built options variable or an explicit `undefined`

@@ -66,7 +66,14 @@ stays permissive and the runtime check remains the backstop. Runtime behavior is
    possibly present (a widened `AgentProfile` or `AgentDefaults`), a non-literal `extends` or
    `defaults.profile`, a union-typed profile or defaults any member of which is rooted (a member
    that omits `extends` or `profile` contributes `text`), a non-literal role name, and a role that
-   `TProfiles` does not describe.
+   `TProfiles` does not describe. A definition the inferring signature rejects falls back to a
+   second `defineWorkflow` overload that infers neither `profiles` nor `defaults` and leaves the
+   addDir parameter at its permissive default. That keeps generic factories compiling: a
+   `P extends AgentProfile` or `D extends AgentDefaults<never>` forwarded into `profiles` or
+   `defaults` leaves `NoExtraKeys` unresolved, which the inferring signature cannot accept. On the
+   fallback, ordinary excess-property checks still reject an unknown key in an inline literal, but a
+   non-literal value with an extra key (an interface-typed map, for example) compiles, as it did
+   before this decision, and a rejected definition reports the fallback's errors.
 5. **Variance.** The parameter appears only as the checked type of conditional types, never in an
    `extends` clause, so TypeScript does not measure contexts as invariant in it. Typed definitions
    stay assignable to `WorkflowDefinition<I, O>`, `WorkflowDeclaration`, `runWorkflow` and

@@ -899,6 +899,13 @@ export interface WorkflowDefinition<
  * type validates its values. Explicit type arguments are
  * all-or-nothing: a prefix such as `defineWorkflow<I, O>` leaves `TProfiles` and `TDefaults` empty,
  * so built-ins and an omitted profile then read as unrooted even when `defaults` roots them.
+ *
+ * A definition this signature rejects, such as a generic factory that forwards a `P extends
+ * AgentProfile` or `D extends AgentDefaults<never>` value into `profiles` or `defaults` (whose
+ * shape {@link NoExtraKeys} cannot resolve), falls back to a second overload that does not infer
+ * those literals. It reads every profile as rooted, so call-site Claude `addDirs` then typecheck
+ * under strict profiles and the runtime check decides; ordinary excess-property checks still reject
+ * an unknown key in an inline profile or defaults literal.
  */
 export function defineWorkflow<
   TInput,
@@ -943,7 +950,34 @@ export function defineWorkflow<
   TChildren,
   TName,
   AddDirProfilesOf<TProfile, TProfiles, TDefaults>
-> {
+>;
+/**
+ * Fallback for definitions whose `profiles` or `defaults` shape the first signature cannot check,
+ * such as generic profile or defaults values forwarded by a factory. It infers the same literals
+ * except `profiles` and `defaults`, and leaves the addDirs parameter at its permissive default.
+ */
+export function defineWorkflow<
+  TInput,
+  TOutput,
+  TProfile extends string = never,
+  const H extends readonly HarnessDeclaration[] = readonly [],
+  const TStrict extends boolean = true,
+  const TChildren extends readonly WorkflowDeclaration[] = readonly [],
+  const TName extends string = string,
+>(
+  definition: WorkflowDefinition<TInput, TOutput, TProfile, H, TStrict, TChildren, TName>,
+): WorkflowDefinition<TInput, TOutput, TProfile, H, TStrict, TChildren, TName>;
+export function defineWorkflow<
+  TInput,
+  TOutput,
+  TProfile extends string,
+  H extends readonly HarnessDeclaration[],
+  TStrict extends boolean,
+  TChildren extends readonly WorkflowDeclaration[],
+  TName extends string,
+>(
+  definition: WorkflowDefinition<TInput, TOutput, TProfile, H, TStrict, TChildren, TName>,
+): WorkflowDefinition<TInput, TOutput, TProfile, H, TStrict, TChildren, TName> {
   if (!definition.name.trim() || !definition.version.trim()) {
     throw new Error('Workflow name and version must be nonempty.');
   }

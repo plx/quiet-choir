@@ -339,13 +339,16 @@ export const unknownProfileKeys = defineWorkflow({
   run: () => Promise.resolve(null),
 });
 
-// The checks recurse into structured values such as env edits; open records stay open.
+// The checks recurse into structured values such as env edits; open records stay open. A rejected
+// definition reports the fallback overload's errors, which read a mistyped edit as the flat overlay,
+// so its well-formed sibling values fail as well.
 export const unknownEnvKeys = defineWorkflow({
   ...base,
   name: 'unknown-env-keys',
   defaults: {
     claude: {
       env: {
+        // @ts-expect-error -- the flat overlay takes only string values.
         set: { FOO: 'bar' },
         // @ts-expect-error -- defaults.claude.env edits have only set and unset.
         unest: ['BAZ'],
@@ -356,6 +359,7 @@ export const unknownEnvKeys = defineWorkflow({
     typo: {
       claude: {
         env: {
+          // @ts-expect-error -- the flat overlay takes only string values.
           set: { FOO: 'bar' },
           // @ts-expect-error -- a profile's claude.env edits have only set and unset.
           unest: ['BAZ'],
@@ -365,6 +369,7 @@ export const unknownEnvKeys = defineWorkflow({
     codexTypo: {
       codex: {
         env: {
+          // @ts-expect-error -- the flat overlay takes only string values.
           unset: ['BAZ'],
           // @ts-expect-error -- a profile's codex.env edits have only set and unset.
           sett: { FOO: 'bar' },
@@ -936,10 +941,129 @@ interface BadInterfaceProfiles {
   bad: { extends: 'readonly'; nope: true };
 }
 const badInterfaceProfiles: BadInterfaceProfiles = { bad: { extends: 'readonly', nope: true } };
+// A non-literal map with an unknown key fails the inferring signature but, being no fresh literal,
+// passes the fallback overload's ordinary assignability, which reads every profile as rooted.
 export const badInterfaceTypedProfiles = defineWorkflow({
   ...base,
   name: 'bad-interface-typed-profiles',
-  // @ts-expect-error -- unknown profile keys stay rejected for interface-typed maps.
   profiles: badInterfaceProfiles,
-  run: () => Promise.resolve(null),
+  async run(ctx) {
+    await ctx.claude.text('t', { prompt, profile: 'bad', addDirs });
+    await ctx.claude.text('t', { prompt, addDirs });
+    return null;
+  },
+});
+// A generic factory that forwards a profile or defaults value whose shape NoExtraKeys cannot resolve
+// falls back to the overload that infers neither; it reads every profile as rooted, so addDirs
+// typecheck and the runtime check decides. The other strict checks still apply.
+// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- the generic is the case.
+function genericProfileFactory<P extends AgentProfile>(profile: P) {
+  return defineWorkflow({
+    ...base,
+    name: 'generic-profile',
+    profiles: { worker: profile, plain: { extends: 'readonly' } },
+    async run(ctx) {
+      await ctx.claude.text('t', { prompt, profile: 'worker', addDirs });
+      await ctx.claude.text('t', { prompt, profile: 'plain', addDirs });
+      await ctx.claude.text('t', { prompt, profile: 'readonly', addDirs });
+      await ctx.claude.text('t', { prompt, addDirs });
+      // @ts-expect-error -- typo is still neither a built-in preset nor a declared role.
+      await ctx.claude.text('t', { prompt, profile: 'typo' });
+      // @ts-expect-error -- tools stay profile-owned under strict profiles.
+      await ctx.claude.text('t', { prompt, tools: ['Read'] });
+      return null;
+    },
+  });
+}
+// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- the generic is the case.
+function genericDefaultsFactory<D extends AgentDefaults<never>>(defaults: D) {
+  return defineWorkflow({
+    ...base,
+    name: 'generic-defaults',
+    defaults,
+    profiles: { plain: { extends: 'readonly' } },
+    async run(ctx) {
+      await ctx.claude.text('t', { prompt, addDirs });
+      await ctx.claude.text('t', { prompt, profile: 'plain', addDirs });
+      return null;
+    },
+  });
+}
+// On the fallback, ordinary excess-property checks still reject unknown keys in inline literals.
+function genericFactoryTypos<P extends AgentProfile, D extends AgentDefaults<never>>(
+  profile: P,
+  defaults: D,
+) {
+  const profiles = defineWorkflow({
+    ...base,
+    name: 'generic-profile-typos',
+    profiles: {
+      worker: profile,
+      // @ts-expect-error -- a profile has no such top-level key.
+      plain: { extends: 'readonly', addDirRoots: ['runs'] },
+    },
+    run: () => Promise.resolve(null),
+  });
+  const env = defineWorkflow({
+    ...base,
+    name: 'generic-env-typos',
+    profiles: {
+      worker: profile,
+      // @ts-expect-error -- the edit object matches neither env shape.
+      edits: { claude: { env: { unest: ['BAZ'] } } },
+    },
+    run: () => Promise.resolve(null),
+  });
+  const withDefaults = defineWorkflow({
+    ...base,
+    name: 'generic-defaults-typos',
+    defaults,
+    // @ts-expect-error -- a profile has no such top-level key.
+    profiles: { plain: { extends: 'readonly', nope: true } },
+    run: () => Promise.resolve(null),
+  });
+  return [profiles, env, withDefaults];
+}
+
+it('falls back to permissive addDirs only where defineWorkflow cannot see the shapes', () => {
+  // Literal declarations keep the inferring signature and its computed addDir set.
+  expectTypeOf(rootedCalls).toEqualTypeOf<
+    WorkflowDefinition<
+      null,
+      null,
+      'reader' | 'nested' | 'plain',
+      readonly [],
+      true,
+      readonly [],
+      'rooted-calls',
+      'reader' | 'nested'
+    >
+  >();
+  // The fallback leaves the addDir parameter at its permissive default.
+  expectTypeOf(genericProfileFactory({ extends: 'readonly' })).toEqualTypeOf<
+    WorkflowDefinition<
+      null,
+      null,
+      'worker' | 'plain',
+      readonly [],
+      true,
+      readonly [],
+      'generic-profile'
+    >
+  >();
+  expectTypeOf(genericDefaultsFactory({})).toEqualTypeOf<
+    WorkflowDefinition<null, null, 'plain', readonly [], true, readonly [], 'generic-defaults'>
+  >();
+  expectTypeOf(badInterfaceTypedProfiles).toEqualTypeOf<
+    WorkflowDefinition<
+      null,
+      null,
+      'bad',
+      readonly [],
+      true,
+      readonly [],
+      'bad-interface-typed-profiles'
+    >
+  >();
+  expect(genericFactoryTypos({}, {})).toHaveLength(3);
 });
