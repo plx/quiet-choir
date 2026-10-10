@@ -201,11 +201,11 @@ end in a digit; anything else throws before `gh` runs.
 
 Issue bodies and comments are read as Markdown with these rules:
 
-- **Code is never read.** Text in fenced blocks, indented code and inline code spans is ignored,
-  following CommonMark: a fence is three or more backticks or tildes and closes only on the same
-  character at least as long; it ends with the block quote or list item it opens in; HTML blocks
-  (including `<!-- ... -->` comments) are tracked and have no inline code. A run with no closer is
-  literal text.
+- **Code is ignored.** Text in fenced blocks, indented code and inline code spans is ignored (except
+  that dependency phrases are read from indented code; see Dependencies), following CommonMark: a
+  fence is three or more backticks or tildes and closes only on the same character at least as long;
+  it ends with the block quote or list item it opens in; HTML blocks (including `<!-- ... -->`
+  comments) are tracked and have no inline code. A run with no closer is literal text.
 - **Checklist.** Lines `- [ ] ...`, `* [x] ...` or `+ [X] ...` outside fenced code. Each line counts
   for its first reference to the repository, `#N` or `OWNER/REPO#N` (case-insensitive); lines naming
   only other repositories, anchors such as `page#12`, and the epic itself are skipped, and the first
