@@ -1348,9 +1348,11 @@ export function withProjectInstructions(
  * Revision 14 (#311) changed only a nested shape: the error kind `configuration` in
  * `rootCause.errorKind` and step attempt `errorKind`.
  * Revision 15 (#317) changed only a nested shape: the step field `innerCommands` in `steps`.
+ * Revision 16 (#337) changed only a nested shape: the optional `scrubEnv` list of an exec summary
+ * in `steps` (step and attempt `exec`) and in a command poll's wait request (`poll.command.exec`).
  * @internal
  */
-export const SUPPORTED_SCHEMA_REVISION = 15;
+export const SUPPORTED_SCHEMA_REVISION = 16;
 
 /**
  * Whether a run recorded any work: at least one step or settled map. A failed run without any gets

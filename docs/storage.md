@@ -428,7 +428,12 @@ and either the raw process result (`code`, `signal`, `stdout`, `stderr`, `trunca
 the rest counted in `omitted`. Only `workflow fixtures` reads it ([rehearsal](rehearsal.md)); step
 identity, replay, resume and fork reuse ignore it. Revision-14 records read and resume unchanged. A
 revision-14 build reads a revision-15 record, but its parse strips `innerCommands`, so it refuses to
-rewrite it.
+rewrite it. Revision 16 (#337) changes only a nested shape: the exec summary in `steps[].exec` (and
+a step attempt's `exec`) and in a command poll's wait request (`poll.command.exec`) may carry
+`scrubEnv`, the sorted extra names of an opted-in host agent-session scrub (empty for
+`scrubEnv: true`; [command effects](command-effects.md)). It is present only when the scrub is
+enabled, so revision-15 records read and resume unchanged with the same identities. A revision-15
+build reads a revision-16 record, but its parse strips `scrubEnv`, so it refuses to rewrite it.
 
 **Refusals.** A build must not rewrite a record it cannot fully read: its parse strips unknown
 top-level fields, and the next compaction would write the record back without them. When a record

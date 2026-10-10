@@ -73,6 +73,8 @@ const revisionDigests: Readonly<Record<string, string>> = {
   '14': '01979d40f27afb4d663d424a519d1b89a7d840c34dfdb7f4d206d99bc60a27a5',
   // Revision 15 (#317) changed only the nested steps shape (innerCommands), so it repeats 14.
   '15': '01979d40f27afb4d663d424a519d1b89a7d840c34dfdb7f4d206d99bc60a27a5',
+  // Revision 16 (#337) changed only the nested exec summary shape (scrubEnv), so it repeats 15.
+  '16': '01979d40f27afb4d663d424a519d1b89a7d840c34dfdb7f4d206d99bc60a27a5',
 };
 // digest(readRun(...)) of the installed pre-revision fixture, computed on unmodified main 91a6d2f.
 const preRevisionReadDigest = '714b6cb068de5c933b7ba04a26d1f931f589f7c9910f76f0e5c8cc493eb13016';
@@ -106,6 +108,9 @@ const revisionThirteenReadDigest =
 // digest(readRun(...)) of the installed revision-fourteen fixture, computed on unmodified main d84b659.
 const revisionFourteenReadDigest =
   '9c3dd6e794b3c2d923c5ed012ed2acc1d482947b4a143354cab46ac3de8aa7a5';
+// digest(readRun(...)) of the installed revision-fifteen fixture, computed on unmodified main 5e1b8c0.
+const revisionFifteenReadDigest =
+  '6800d39fe25dc76f4660388cdb8138cd367ecbee24126e390e1c7f05168c6bc0';
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex');
 
@@ -1513,7 +1518,7 @@ describe('revision-nine records (a grant failure before recoveryCause, #284)', (
     expect(saved.recoveryCause).toBeUndefined();
     expect(recordSchemaDrift(saved)).toBeUndefined();
     expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
-    expect(SUPPORTED_SCHEMA_REVISION).toBe(15);
+    expect(SUPPORTED_SCHEMA_REVISION).toBe(16);
   });
 
   it('round-trip every recovery cause through the record parser', async () => {
@@ -1951,5 +1956,100 @@ describe('revision-fourteen records (a step callback with an inner command befor
       await setInner({ attempt: 1, commands });
       await expect(readRun({ stateDir, runId })).rejects.toThrow();
     }
+  });
+});
+
+describe('revision-fifteen records (a completed exec before scrubEnv, #337)', () => {
+  const runId = 'revision-fifteen';
+  async function install(): Promise<void> {
+    const fixture = await readFile(
+      new URL('./fixtures/schema-revision/revision-fifteen-checkpoint.json', import.meta.url),
+      'utf8',
+    );
+    await mkdir(join(stateDir, runId));
+    await writeFile(paths(runId).snapshot, fixture);
+    await writeFile(paths(runId).journal, '');
+  }
+  const probe = (scrubEnv?: boolean) =>
+    defineWorkflow({
+      name: 'schema-revision',
+      version: '1',
+      input: z.null(),
+      output: z.null(),
+      async run(ctx) {
+        await ctx.now('prepare');
+        await ctx.exec(
+          'probe',
+          ['fixture-tool', 'status'],
+          scrubEnv === undefined ? {} : { scrubEnv },
+        );
+        return null;
+      },
+    });
+  const unexpected = {
+    run: () => Promise.reject(new Error('the completed exec must not run again')),
+  };
+
+  it('read exactly as on main, with a completed exec summary and no scrubEnv', async () => {
+    await install();
+    const record = await readRun({ stateDir, runId });
+    expect(record.schemaRevision).toBe(15);
+    expect(recordSchemaDrift(record)).toBeUndefined();
+    expect(digest(record)).toBe(revisionFifteenReadDigest);
+    expect(record.steps['probe']).toMatchObject({ status: 'completed', kind: 'exec' });
+    expect(record.steps['probe']?.exec).not.toHaveProperty('scrubEnv');
+  });
+
+  it('resume at the current revision, replaying the exec without running it', async () => {
+    await install();
+    const original = await readRun({ stateDir, runId });
+    for (const scrubEnv of [undefined, false]) {
+      const result = await runWorkflow(probe(scrubEnv), {
+        ...options,
+        stateDir,
+        runId,
+        input: null,
+        resume: true,
+        execRunner: unexpected,
+      });
+      expect(result.status).toBe('completed');
+    }
+    const saved = await readRun({ stateDir, runId });
+    expect(saved.steps['prepare']).toEqual(original.steps['prepare']);
+    expect(saved.steps['probe']).toEqual(original.steps['probe']);
+    expect(recordSchemaDrift(saved)).toBeUndefined();
+    expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
+  });
+
+  it('refuse a resume that enables the scrub on the completed exec', async () => {
+    await install();
+    await expect(
+      runWorkflow(probe(true), {
+        ...options,
+        stateDir,
+        runId,
+        input: null,
+        resume: true,
+        execRunner: unexpected,
+      }),
+    ).rejects.toThrow('changed on a completed step');
+  });
+
+  it('validate a saved scrubEnv list and keep it through a read', async () => {
+    await install();
+    await editSnapshot(runId, (raw) => {
+      const steps = raw['steps'] as Record<string, Record<string, unknown>>;
+      const exec = steps['probe']?.['exec'] as Record<string, unknown>;
+      steps['probe'] = { ...steps['probe'], exec: { ...exec, scrubEnv: ['EXTRA_NAME'] } };
+    });
+    expect((await readRun({ stateDir, runId })).steps['probe']?.exec?.scrubEnv).toEqual([
+      'EXTRA_NAME',
+    ]);
+    await editSnapshot(runId, (raw) => {
+      const steps = raw['steps'] as Record<string, Record<string, unknown>>;
+      const exec = steps['probe']?.['exec'] as Record<string, unknown>;
+      steps['probe'] = { ...steps['probe'], exec: { ...exec, scrubEnv: ['NOT-VALID'] } };
+    });
+    await expect(readRun({ stateDir, runId })).rejects.toThrow();
   });
 });
