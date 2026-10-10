@@ -61,11 +61,12 @@ context parameter widens to `Pick<WorkflowContext, 'exec' | 'poll'>`.
   (or `done`'s) source text; the request schema is unchanged and polls without the key keep their
   identity. Each wait uses `{ helper: 'github.waitChecks', version: 1 }` and the like, so its
   identity does not depend on the helper's formatting or loader. Its input carries the
-  meaning-changing options (repository, `pr`, `sha`, `graceMs`, `staleGraceMs`, `until`, `since`)
-  and each reviewer's name, login, reads and `identity`, or the SHA-256 of its `observe` source when
-  it gives none. Policy stays out. A change to a wait's meaning must bump its version;
-  `test/builtin-identity.test.ts` pins the fingerprints. The integrations import exception grows to
-  this key, alongside the error-brand registry (ADR 0028), and to the pure `github-wait-model.ts`.
+  meaning-changing options (repository, `pr`, `sha`, `graceMs`, `staleGraceMs`, `requiredChecks`
+  when nonempty, `until`, `since`) and each reviewer's name, login, reads and `identity`, or the
+  SHA-256 of its `observe` source when it gives none. Policy stays out. A change to a wait's meaning
+  must bump its version; `test/builtin-identity.test.ts` pins the fingerprints. The integrations
+  import exception grows to this key, alongside the error-brand registry (ADR 0028), and to the pure
+  `github-wait-model.ts`.
 - **Wall clock in observers.** Observers have no run clock, and adding one would change the public
   model. Each observer reads `Date.now()` once per check and passes it to the pure rules; the first
   check stores `startedAt` in the note, and the no-checks grace, the stale grace and the CodeQL
@@ -81,7 +82,17 @@ context parameter widens to `Pick<WorkflowContext, 'exec' | 'poll'>`.
   the head check at the same observation, so `since` must be taken at or after the push of `sha`. A
   late review of the previous head could still read as clean, as in merge-down.
 - The checks rollup sees only checks GitHub has registered: right after a push, one fast check can
-  roll up as success before slower workflows register. Required-check lists are a follow-up.
+  roll up as success before slower workflows register. `waitChecks`' `requiredChecks` (#351) closes
+  this gap: the names add to the rollup and never filter it, `success` also needs a check of every
+  name, a name that has not registered is listed in `pending` (and in the note's `missing`), and
+  once nothing registered is pending and `graceMs` has passed with a name still missing the wait
+  ends with `no-checks`. A failure of the registered checks still ends the wait at once. Reusing
+  `no-checks` rather than adding a status keeps the result schema, which is part of every
+  `waitChecks` identity, and callers' exhaustive switches unchanged. The sorted, unique list enters
+  the input only when nonempty, and `WAIT_VERSION` stays 1: no wait recorded before the option could
+  carry it, so no recorded wait changes meaning, while a bump of the version that all three waits
+  share would make every in-flight wait refuse to resume with no change in behaviour. The pinned
+  `waitChecks` fingerprint without the option is unchanged.
 - Dry runs synthesize a head that never equals `sha`, so a rehearsed wait reports `head-moved` (or,
   for `waitPr` with `until: 'closed'`, suspends) unless exec fixture rules answer its reads.
 - A future change to a wait's rules must bump its version, which makes in-flight waits of that kind

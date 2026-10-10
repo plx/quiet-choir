@@ -624,6 +624,14 @@ describe('quiet-choir/github wait identity', () => {
   const sha = 'c5c2233fa0c0b9e89b688f2c40ca9364275efd87';
   const waits: Readonly<Record<string, (gh: GithubClient) => Promise<unknown>>> = {
     waitChecks: (gh) => gh.waitChecks('wait', { pr: 7, sha, timeoutMs: 3_600_000 }),
+    // Captured with #351: requiredChecks enters the input, the helper identity stays version 1.
+    'waitChecks requiredChecks': (gh) =>
+      gh.waitChecks('wait', {
+        pr: 7,
+        sha,
+        timeoutMs: 3_600_000,
+        requiredChecks: ['Tests', 'Quality'],
+      }),
     waitPr: (gh) => gh.waitPr('wait', { pr: 7, sha, until: 'merged', timeoutMs: 3_600_000 }),
     waitReview: (gh) =>
       gh.waitReview('wait', {
@@ -639,6 +647,7 @@ describe('quiet-choir/github wait identity', () => {
   // is not part of it. A deliberate change bumps the helper's version and moves these values.
   const golden: Readonly<Record<string, string>> = {
     waitChecks: 'f9f2cf35c8bc2cedb690af8828560cd522a15b85a3b85f1c8e82cb980f674f1e',
+    'waitChecks requiredChecks': 'cd05548b36ef977494a68f91c563baae5371048cc486357f10fd870936d49cb4',
     waitPr: '47a4d9226695eb1181357d0474c22bc92b3f3f63cec4a9b93a394600b0965676',
     waitReview: '1db7a3d0436d20e00257e6d2fb5da681a2c90f265f4cd06a6c16810cd4cdc00d',
   };
@@ -648,19 +657,43 @@ describe('quiet-choir/github wait identity', () => {
     async (name) => {
       const wait = waits[name];
       if (!wait) throw new Error(`unknown wait ${name}`);
-      const result = await runWorkflow(
-        workflow((ctx) => wait(github(ctx, { repo: 'octo-org/quiet-choir' }))),
-        options({ runId: name, processRunner }),
-      );
-      expect(result.status).toBe('suspended');
-      const run = await readRun({ stateDir, runId: name });
-      const step = run.steps['wait'];
+      const step = await recordedWait(name, wait);
       expect(step?.kind).toBe('wait');
-      const helper = { helper: `github.${name}`, version: 1 };
+      // The case key names the wait method first, then any option it adds.
+      const helper = { helper: `github.${name.split(' ')[0] ?? name}`, version: 1 };
       expect(step?.wait?.request.poll?.observe).toBe(digest({ helper }));
       pinned(`quiet-choir/github ${name}`, step?.fingerprint, golden[name]);
     },
   );
+
+  it('keys requiredChecks by its sorted unique names, and an empty list as none', async () => {
+    const fingerprint = async (runId: string, requiredChecks: readonly string[]) =>
+      (
+        await recordedWait(runId, (gh) =>
+          gh.waitChecks('wait', { pr: 7, sha, timeoutMs: 3_600_000, requiredChecks }),
+        )
+      )?.fingerprint;
+    pinned(
+      'quiet-choir/github waitChecks requiredChecks, reordered with a duplicate',
+      await fingerprint('reordered', ['Quality', 'Tests', 'Tests']),
+      golden['waitChecks requiredChecks'],
+    );
+    pinned(
+      'quiet-choir/github waitChecks with requiredChecks []',
+      await fingerprint('empty', []),
+      golden['waitChecks'],
+    );
+    expect(golden['waitChecks requiredChecks']).not.toBe(golden['waitChecks']);
+  });
+
+  async function recordedWait(runId: string, wait: (gh: GithubClient) => Promise<unknown>) {
+    const result = await runWorkflow(
+      workflow((ctx) => wait(github(ctx, { repo: 'octo-org/quiet-choir' }))),
+      options({ runId: runId.replace(/\W/gu, '-'), processRunner }),
+    );
+    expect(result.status).toBe('suspended');
+    return (await readRun({ stateDir, runId: runId.replace(/\W/gu, '-') })).steps['wait'];
+  }
 });
 
 describe('quiet-choir/github write identity', () => {

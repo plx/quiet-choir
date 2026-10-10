@@ -2,6 +2,17 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `quiet-choir/github`'s `waitChecks` accepts `requiredChecks`, check run or status context names
+  that must exist before a successful rollup counts (#351; amends
+  [ADR 0045](docs/decisions/0045-head-pinned-github-waits.md)). It closes the race where a fast
+  check rolls up as success right after a push, before slower workflows register. The names add to
+  the rollup and never filter it; a name that has not registered is listed in `pending` and in the
+  note's new `missing` field; a failure of the registered checks still ends the wait at once; and
+  once nothing registered is pending and `graceMs` has passed with a name still missing, the wait
+  ends with the existing `no-checks` status, so the result type and schema are unchanged. Invalid
+  names throw before the wait opens. The sorted, unique list enters the wait's identity only when
+  nonempty and `WAIT_VERSION` stays 1, so a wait without the option keeps its identity, notes and
+  behaviour.
 - `exec.json` now classifies a failure whose exit code was accepted (`okExitCodes` lists it, or is
   `'any'`) but nonzero, and whose stdout is not JSON, as kind `process` instead of `schema`, with
   the message `Command exited with N without JSON on stdout: ...` (#349; amends

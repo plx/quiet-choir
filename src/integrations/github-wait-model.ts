@@ -403,8 +403,11 @@ export interface GithubCheckFailure {
 
 /**
  * Result of `waitChecks`. `success` and `failure` are reported only for the pinned head; `failure`
- * only once nothing is pending. `no-checks` only after `graceMs`. `closed` when the pull request
- * closed or merged before CI finished; `timeout` at the deadline, with the last progress.
+ * only once nothing is pending; `success` only once every name in `requiredChecks` has registered.
+ * `no-checks` only after `graceMs`, when the head has no checks or, with `requiredChecks`, when
+ * nothing registered is pending and a required check has still not registered. `closed` when the
+ * pull request closed or merged before CI finished; `timeout` at the deadline, with the last
+ * progress.
  */
 export interface WaitChecksResult {
   /** Outcome. */
@@ -413,7 +416,10 @@ export interface WaitChecksResult {
   readonly headRefOid: string | null;
   /** Failed checks of the pinned head. */
   readonly failed: readonly GithubCheckFailure[];
-  /** Names of checks still pending. */
+  /**
+   * Names of checks still pending, then the names in `requiredChecks` that have not registered on
+   * the head (those have no run yet).
+   */
   readonly pending: readonly string[];
 }
 
@@ -520,6 +526,9 @@ export const checksNoteSchema = z.object({
   headRefOid: sha,
   failed: z.array(failureSchema),
   pending: z.array(z.string()),
+  // Required checks that have not registered; written only when `requiredChecks` is given, so
+  // notes of waits without it, and of waits recorded before it existed, have no such key.
+  missing: z.array(z.string()).optional(),
 });
 /** Note of `waitChecks`. @internal */
 export type ChecksNote = z.infer<typeof checksNoteSchema>;
@@ -604,7 +613,13 @@ export type ChecksDecision =
   | { readonly done: true; readonly value: WaitChecksTerminal }
   | {
       readonly done: false;
-      readonly progress: Pick<WaitChecksResult, 'headRefOid' | 'failed' | 'pending'>;
+      readonly progress: Pick<WaitChecksResult, 'headRefOid' | 'failed' | 'pending'> & {
+        /**
+         * Required checks that have not registered on the head, also listed in `pending`; present
+         * only when `requiredChecks` is nonempty.
+         */
+        readonly missing?: readonly string[];
+      };
     };
 
 function failures(checks: GithubChecks): GithubCheckFailure[] {
@@ -616,8 +631,13 @@ function failures(checks: GithubChecks): GithubCheckFailure[] {
 /**
  * Roll up the checks of the pinned head as `ciSummary` does. Never terminal-successful unless both
  * the pull request head and the rollup's commit are `sha`: a rollup for another commit is a stale
- * view and keeps polling. `failure` only once nothing is pending; `closed` when the pull request
- * is no longer open and CI has not finished; `no-checks` only after `graceMs` from `startedAt`.
+ * view and keeps polling. `requiredChecks` adds to the rollup and never filters it: `success` also
+ * needs a check of each required name (a check run or status context, matched exactly), and a
+ * required name that has not registered is listed in `pending` and `missing`. `failure` only once
+ * nothing registered is pending, even while a required check is missing; `closed` when the pull
+ * request is no longer open and CI has not finished; `no-checks` only after `graceMs` from
+ * `startedAt`, once nothing registered is pending and the head has no checks or a required check
+ * is still missing.
  * @internal
  */
 export function decideChecks(
@@ -627,27 +647,36 @@ export function decideChecks(
     readonly now: number;
     readonly startedAt: number;
     readonly graceMs: number;
+    readonly requiredChecks?: readonly string[];
   },
 ): ChecksDecision {
   const open = view.state === 'OPEN';
+  const required = options.requiredChecks ?? [];
+  // Without required checks the progress keeps its shape from before the option existed.
+  const tracked = (missing: readonly string[]) => (required.length ? { missing } : {});
   const waiting = { headRefOid: view.headRefOid, failed: [], pending: [] };
-  if (view.headRefOid !== options.sha) return { done: false, progress: waiting };
+  if (view.headRefOid !== options.sha)
+    return { done: false, progress: { ...waiting, ...tracked([]) } };
   if (view.rollupOid !== options.sha)
     return open
-      ? { done: false, progress: waiting }
+      ? { done: false, progress: { ...waiting, ...tracked([]) } }
       : { done: true, value: { status: 'closed', ...waiting } };
   const checks = view.checks;
+  const registered = new Set(checks.items.map((item) => item.name));
+  const missing = required.filter((name) => !registered.has(name));
   const progress = {
     headRefOid: view.headRefOid,
     failed: failures(checks),
-    pending: [...checks.pending],
+    pending: [...checks.pending, ...missing],
   };
-  if (checks.state === 'success') return { done: true, value: { status: 'success', ...progress } };
+  if (checks.state === 'success' && missing.length === 0)
+    return { done: true, value: { status: 'success', ...progress } };
   if (checks.state === 'failure') return { done: true, value: { status: 'failure', ...progress } };
   if (!open) return { done: true, value: { status: 'closed', ...progress } };
-  if (checks.state === 'none' && options.now - options.startedAt >= options.graceMs)
+  // Here the state is `none`, `pending`, or `success` with a required check missing.
+  if (checks.state !== 'pending' && options.now - options.startedAt >= options.graceMs)
     return { done: true, value: { status: 'no-checks', ...progress } };
-  return { done: false, progress };
+  return { done: false, progress: { ...progress, ...tracked(missing) } };
 }
 
 // ---------------------------------------------------------------------------------------------
