@@ -507,6 +507,7 @@ test('a link into the repository docs tree is rejected in references, SKILL.md a
     `[waits][docs]\n\n[docs]: ${docsUrl}`,
     `<a href="https://github.com/plx/quiet-choir/tree/main/docs">docs</a>`,
     `[waits](https://github.com/plx/quiet-choir/blob/feature/foo/docs/github.md#waits)`,
+    `<${docsUrl}>`,
   ];
   for (const link of links)
     await fixture(async (root) => {

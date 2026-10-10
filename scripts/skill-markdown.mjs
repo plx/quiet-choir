@@ -169,6 +169,8 @@ export async function checkLinks(file, text, packageRoot) {
     /<(?:a|img)\b(?:[^>"']|"[^"]*"|'[^']*')*?\s(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))(?:[^>"']|"[^"]*"|'[^']*')*>/giu,
   ))
     destinations.push(match[1] ?? match[2] ?? match[3]);
+  for (const match of body.matchAll(/<((?:https?|mailto):[^\s<>]*)>/giu))
+    destinations.push(match[1]);
   const root = await realpath(packageRoot);
   for (const destination of new Set(destinations)) {
     if (repositoryDocsLink.test(destination))
