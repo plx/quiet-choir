@@ -4,7 +4,7 @@ import { writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { defineWorkflow, readRun, runWorkflow } from '../src/index.js';
+import { defineWorkflow, readRun, runWorkflow, type AgentProgress } from '../src/index.js';
 import { ClaudeAdapter, CodexAdapter } from '../src/harnesses/builtins/adapters.js';
 import {
   assertHarnessConformance,
@@ -16,6 +16,7 @@ import {
   runProcess,
   standaloneInvocation,
   defineHarness,
+  HarnessError,
   z,
   type AgentRequest,
   type HarnessAdapter,
@@ -35,8 +36,25 @@ const conformance = {
 function builtinEvents(harness: Builtin, scenario: HarnessConformanceCase): unknown[] {
   const text = scenario === 'structured' ? '{"ok":true}' : 'hello';
   const failure = scenario === 'protocol-error' || scenario === 'nonzero-stdout';
+  const burst = scenario === 'progress';
   if (harness === 'claude')
     return [
+      // The progress scenario's burst: native activity the adapter reports through onProgress.
+      ...(burst
+        ? [
+            { type: 'system', subtype: 'init', session_id: 'fake-session', model: 'fake-model' },
+            ...['Read', 'Grep', 'Edit'].map((name) => ({
+              type: 'assistant',
+              message: { content: [{ type: 'tool_use', name, input: { file_path: 'a.ts' } }] },
+              session_id: 'fake-session',
+            })),
+            {
+              type: 'assistant',
+              message: { content: [{ type: 'text', text }] },
+              session_id: 'fake-session',
+            },
+          ]
+        : []),
       scenario === 'rate-limit'
         ? {
             type: 'result',
@@ -57,6 +75,12 @@ function builtinEvents(harness: Builtin, scenario: HarnessConformanceCase): unkn
     ];
   return [
     { type: 'thread.started', thread_id: 'fake-thread' },
+    ...(burst
+      ? ['ls', 'pwd', 'date'].map((command) => ({
+          type: 'item.completed',
+          item: { type: 'command_execution', command, status: 'completed' },
+        }))
+      : []),
     ...(scenario === 'rate-limit'
       ? [
           {
@@ -139,7 +163,7 @@ function builtinFixture(
   };
 }
 
-// measured: 2.4-2.6 s alone, 2.3 s in the full coverage run (twelve fake-CLI launches plus the
+// measured: 2.9-3.1 s alone (2.4-2.6 s before the progress scenario; thirteen fake-CLI launches plus the
 // 250 ms registration hold and the 250 ms timeout)
 const builtinSuiteTimeoutMs = 7_000;
 // measured: 'ignores the timeout' 4.1 s alone, 3.9 s in the full coverage run (it waits out the
@@ -237,7 +261,10 @@ type Defect =
   | 'double-session'
   | 'no-expected-stdout'
   | 'wrong-transcript'
-  | 'unclassified-429';
+  | 'unclassified-429'
+  | 'propagating-progress'
+  | 'unthrottled-progress'
+  | 'silent-progress';
 
 /**
  * An in-process adapter that honors every scenario before the one its defect breaks, so each
@@ -266,7 +293,18 @@ function scripted(defect: Defect): ConformanceOptions['fixture'] {
               reject(new Error('aborted'));
             });
           });
-        if (scenario === 'rate-limit') throw new Error('HTTP 429 without a classified kind');
+        if (scenario === 'rate-limit') {
+          if (defect === 'unclassified-429') throw new Error('HTTP 429 without a classified kind');
+          throw new HarnessError({
+            harness: 'scripted',
+            kind: 'rate-limit',
+            exit: { code: 1, signal: null },
+            failure: null,
+            reason: 'HTTP 429',
+            stderr: '',
+            stdout: '',
+          });
+        }
         if (scenario === 'registration-before-input') {
           writeFileSync(probe.started, '');
           // A reaped child's PID stands in for a finished process; the test runner's is still alive.
@@ -287,6 +325,31 @@ function scripted(defect: Defect): ConformanceOptions['fixture'] {
           await invocation.onSession?.('scripted-session');
           if (defect === 'double-session') await invocation.onSession?.('scripted-session');
           return { text: 'hello', sessionId: 'scripted-session' };
+        }
+        if (scenario === 'env') writeFileSync(probe.environment, '[]');
+        if (scenario === 'progress' && defect !== 'silent-progress') {
+          const burst: readonly AgentProgress[] = [
+            { kind: 'init', summary: 'scripted initialized' },
+            ...['Read', 'Grep', 'Edit', 'Bash'].map((name) => ({
+              kind: 'tool' as const,
+              summary: `scripted tool: ${name}`,
+            })),
+          ];
+          if (defect === 'propagating-progress')
+            // Calls the observer directly, so the observer's exception escapes the call.
+            for (const event of burst) invocation.onProgress?.(event);
+          else if (defect === 'unthrottled-progress')
+            // Swallows observer exceptions but delivers the whole burst.
+            for (const event of burst)
+              try {
+                invocation.onProgress?.(event);
+              } catch {
+                // Isolated, like createInvocationStream, but not throttled.
+              }
+          else {
+            const stream = createInvocationStream({ invocation });
+            for (const event of burst) stream.progress(event);
+          }
         }
         if (scenario === 'transcript')
           await invocation.onOutput?.(
@@ -318,6 +381,12 @@ it.each([
   ['no-expected-stdout', /^Conformance scenario transcript: .*expectedStdout/u],
   ['wrong-transcript', /^Conformance scenario transcript: .*stdout bytes/u],
   ['unclassified-429', /^Conformance scenario rate-limit: .*'rate-limit'/u],
+  ['propagating-progress', /^Conformance scenario progress: .*onProgress/u],
+  [
+    'unthrottled-progress',
+    /^Conformance scenario progress: Adapter delivered progress events \d+ms apart; after the first init event at most one event per 100 ms may reach invocation\.onProgress/u,
+  ],
+  ['silent-progress', /^Conformance scenario progress: .*native activity.*onProgress/u],
 ] as const)('fails an in-process adapter with defect %s', async (defect, message) => {
   await expect(
     assertHarnessConformance({ ...conformance, fixture: scripted(defect) }),

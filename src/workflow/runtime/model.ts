@@ -330,7 +330,12 @@ export interface HarnessInvocation {
   readonly policy?: ExecutionPolicy;
   /** Persist the first observed native ID before consuming further output. */
   readonly onSession?: (sessionId: string) => Promise<void>;
-  /** Deliver a lossy bounded activity observation; observer exceptions cannot fail the call. */
+  /**
+   * Deliver a lossy bounded activity observation. The first `init` event may always be delivered;
+   * after that at most one event per 100 ms may reach the observer, and an exception the observer
+   * throws cannot fail the call. `createInvocationStream` implements both; the conformance suite's
+   * `progress` scenario asserts them.
+   */
   readonly onProgress?: (event: AgentProgress) => void;
   /** Tee raw bytes with backpressure; a rejected write must terminate the child. */
   readonly onOutput?: (stream: 'stdout' | 'stderr', chunk: Uint8Array) => Promise<void>;

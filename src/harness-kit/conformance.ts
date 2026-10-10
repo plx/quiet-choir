@@ -15,7 +15,12 @@ import type { AgentProgress } from '../workflow/runtime/agent-stream-model.js';
 import { errorKind } from '../workflow/runtime/step-error.js';
 import { groupState } from '../processes/identity.js';
 
-/** Required fake CLI scenarios; do not point this suite at an inference-capable installation. */
+/**
+ * Required fake CLI scenarios; do not point this suite at an inference-capable installation. In
+ * `progress` the fake emits a burst of at least two progress-producing native events with no delay,
+ * then succeeds with `options.text`; the suite's `onProgress` observer throws after recording each
+ * event, and the call must still resolve. The adapter must report at least one event.
+ */
 export type HarnessConformanceCase =
   | 'text'
   | 'structured'
@@ -28,7 +33,8 @@ export type HarnessConformanceCase =
   | 'transcript'
   | 'timeout'
   | 'rate-limit'
-  | 'env';
+  | 'env'
+  | 'progress';
 
 /**
  * Absolute paths, in a private per-scenario directory, of the marker files a fake CLI writes so the
@@ -64,7 +70,10 @@ export interface HarnessConformanceFixture<O extends AgentOptions> {
 export interface HarnessConformanceOptions<O extends AgentOptions> {
   /**
    * Construct a fake-backed adapter and request for each scenario. Abort and timeout fakes must
-   * remain running until stopped. The probe names the marker files the fake writes.
+   * remain running until stopped. The probe names the marker files the fake writes. The progress
+   * fake emits a burst of native activity (at least two progress-producing events, no delay), then
+   * succeeds. Every scenario also checks that `invocation.onProgress` deliveries respect the
+   * throttle: after the first `init` event, at most one event per 100 ms.
    */
   readonly fixture: (
     scenario: HarnessConformanceCase,
@@ -98,6 +107,7 @@ const scenarios: readonly HarnessConformanceCase[] = [
   'timeout',
   'rate-limit',
   'env',
+  'progress',
 ];
 /** Host agent-session variables the env scenario sets; none may reach the fake. */
 const hostVariables = [
@@ -107,6 +117,16 @@ const hostVariables = [
   'CODEX_COMPANION_SESSION_ID',
   'CODEX_COMPANION_TRANSCRIPT_PATH',
 ] as const;
+/**
+ * Minimum gap, in milliseconds, between delivered progress events after the first `init` event. The
+ * contract is one event per 100 ms (`createInvocationStream` throttles to it); the 20 ms of
+ * slack covers the observer's timestamp lagging the adapter's throttle clock by a synchronous call
+ * that a GC pause can stretch. Load only widens gaps, while an unthrottled burst lands within a few
+ * milliseconds.
+ */
+const progressFloorMs = 80;
+/** The documented bound the throttle assertion enforces, for its failure message. */
+const progressIntervalMs = 100;
 /** How long registration waits for the fake's started marker before failing the fixture. */
 const startDeadlineMs = 10_000;
 /** How long registration is held, after the fake started, while watching for early input. */
@@ -133,7 +153,9 @@ class Recording {
   public readonly registrations: Registration[] = [];
   public readonly sessions: { readonly id: string; readonly late: boolean }[] = [];
   public readonly stdout: Uint8Array[] = [];
-  public readonly progress: AgentProgress[] = [];
+  public readonly progress: { readonly event: AgentProgress; readonly at: number }[] = [];
+  /** What the throwing progress observer throws, so a rejection can be traced back to it. */
+  public readonly observerFailure = new Error('conformance progress observer failure');
   /** Pending registration holds, awaited before assertions. */
   public readonly holds: Promise<void>[] = [];
   public inputBeforeRegistration = false;
@@ -142,6 +164,7 @@ class Recording {
   public constructor(
     private readonly probe: HarnessConformanceProbe,
     private readonly hold: boolean,
+    private readonly throwFromProgress: boolean,
   ) {}
 
   public invocation(
@@ -167,7 +190,8 @@ class Recording {
         return Promise.resolve();
       },
       onProgress: (event) => {
-        this.progress.push(event);
+        this.progress.push({ event, at: performance.now() });
+        if (this.throwFromProgress) throw this.observerFailure;
       },
     };
   }
@@ -221,6 +245,39 @@ function named(scenario: HarnessConformanceCase, error: unknown): assert.Asserti
   return failure;
 }
 
+/** The assertion for a progress-scenario rejection, noting whether the observer's error escaped. */
+function progressRejection(error: unknown, marker: Error): assert.AssertionError {
+  let escaped = false;
+  for (let current: unknown = error, depth = 0; depth < 8; depth++) {
+    if (current === marker) escaped = true;
+    current = current instanceof Error ? current.cause : undefined;
+  }
+  const detail = error instanceof Error ? error.message : String(error);
+  const failure = new assert.AssertionError({
+    message: `Adapter must swallow exceptions thrown by invocation.onProgress, but the call rejected with "${detail}"${escaped ? ' (the observer error escaped)' : ''}.`,
+  });
+  failure.cause = error;
+  return failure;
+}
+
+/**
+ * Fail when progress was delivered faster than the documented throttle: after the first `init`
+ * event, at most one event per 100 ms may reach `invocation.onProgress`.
+ */
+function assertThrottled(
+  progress: readonly { readonly event: AgentProgress; readonly at: number }[],
+) {
+  const firstInit = progress.findIndex(({ event }) => event.kind === 'init');
+  for (let index = 1; index < progress.length; index++) {
+    if (index === firstInit) continue;
+    const gap = (progress[index]?.at ?? 0) - (progress[index - 1]?.at ?? 0);
+    assert.ok(
+      gap >= progressFloorMs,
+      `Adapter delivered progress events ${String(Math.round(gap))}ms apart; after the first init event at most one event per ${String(progressIntervalMs)} ms may reach invocation.onProgress (createInvocationStream throttles this).`,
+    );
+  }
+}
+
 /**
  * Run portable adapter contract assertions against caller-owned fakes, without a test-framework
  * dependency. Every scenario passes the adapter a recording {@link HarnessInvocation} as its third
@@ -267,7 +324,11 @@ async function runScenario<O extends AgentOptions>(
       ? { ...fixture.request, options: { ...fixture.request.options, timeoutMs } }
       : fixture.request;
   const controller = new AbortController();
-  const recording = new Recording(probe, scenario === 'registration-before-input');
+  const recording = new Recording(
+    probe,
+    scenario === 'registration-before-input',
+    scenario === 'progress',
+  );
   const invocation = recording.invocation(
     request,
     controller.signal,
@@ -353,7 +414,11 @@ async function runScenario<O extends AgentOptions>(
         `Adapter must reject ${scenario}, preserving native failure evidence.`,
       );
     } else {
-      const result = await invoked;
+      const result = await (scenario === 'progress'
+        ? invoked.catch((error: unknown) => {
+            throw progressRejection(error, recording.observerFailure);
+          })
+        : invoked);
       assert.equal(typeof result.text, 'string');
       assert.ok(
         result.sessionId === null || typeof result.sessionId === 'string',
@@ -376,6 +441,11 @@ async function runScenario<O extends AgentOptions>(
           'Adapter must call invocation.onSession exactly once with the reported session ID before settling.',
         );
       }
+      if (scenario === 'progress')
+        assert.ok(
+          recording.progress.length > 0,
+          'The progress fixture must make the fake emit native activity that the adapter reports through invocation.onProgress; no event was delivered, so the swallow check would be vacuous.',
+        );
       const expected = fixture.expectedStdout;
       if (scenario === 'transcript' && expected !== undefined)
         assert.ok(
@@ -391,6 +461,7 @@ async function runScenario<O extends AgentOptions>(
       recording.sessions.length <= 1,
       'Adapter must call invocation.onSession at most once.',
     );
+    assertThrottled(recording.progress);
     if (scenario === 'registration-before-input') {
       await invoked.then(
         () => undefined,
