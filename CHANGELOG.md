@@ -2,6 +2,17 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `quiet-choir/github`'s `checks.rerunFailed` accepts `attempts`, a per-run baseline map from
+  workflow run ID to the attempt the caller saw that run fail (#356; amends
+  [ADR 0047](docs/decisions/0047-pull-request-writes-and-head-pinned-merge.md)). A run in the map is
+  rerun only when it is a completed failure at exactly its baseline and is skipped once it is past
+  it, so runs that failed at different attempts are rerun strictly once across a crash, retry or
+  resume. A run not in the map keeps the scalar `attempt` rule unchanged (at or below it is rerun,
+  past it is skipped). A mapped run below its baseline is left alone and a mapped ID that is not a
+  run of the commit is ignored. Keys must be canonical positive integer run IDs and values positive
+  integers; anything else throws before the step opens. The step version is now
+  `github.checks.rerunFailed/2`, so a recorded run whose `checks.rerunFailed` step completed under
+  `/1` refuses to resume with "changed on a completed step"; start a new run for it.
 - `quiet-choir/github`'s `issue.create` reads a `parent` before creating the issue (#353; amends
   [ADR 0046](docs/decisions/0046-reconciled-github-writes.md)). A parent that does not exist, or is
   a pull request, now throws before any write instead of leaving an unlinked issue that the rerun

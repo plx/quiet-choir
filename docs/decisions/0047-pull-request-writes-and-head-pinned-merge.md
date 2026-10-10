@@ -23,9 +23,9 @@ these after a crash has none of the relay's protection.
 Add `pr.create`, `pr.edit`, `pr.merge` and `checks.rerunFailed` to the client, built the way 0046
 built its writes: each op is one `ctx.step` with the internal `identity: 'version'`, a version
 constant (`github.pr.create/1`, `github.pr.edit/1`, `github.pr.merge/1`,
-`github.checks.rerunFailed/1`), the repository and normalized arguments as input, `meta`
-`{ integration: 'github', op }`, and every gh command through `StepContext.exec`, so `--dry-run`
-lists them. They use only `gh api`; no op runs `gh pr` or `gh run`.
+`github.checks.rerunFailed/2`, bumped from `/1` by #356), the repository and normalized arguments as
+input, `meta` `{ integration: 'github', op }`, and every gh command through `StepContext.exec`, so
+`--dry-run` lists them. They use only `gh api`; no op runs `gh pr` or `gh run`.
 
 - **REST reads inside the writes.** `GET repos/O/R/pulls/N` reports `merged`, `merge_commit_sha` and
   `head.sha` after a merge, and the list `GET .../pulls?head=OWNER:BRANCH&state=all` filters on the
@@ -72,14 +72,19 @@ lists them. They use only `gh api`; no op runs `gh pr` or `gh run`.
   baseline through `POST .../rerun-failed-jobs` (a plain exec, since GitHub answers 201 with no
   body), and reports runs past the baseline that failed again or are running as `skipped`. A run
   past the baseline was rerun already, by this step before a crash, by a person or by an earlier
-  round, so it is never rerun again. The at-most-once guarantee holds for runs at the baseline: a
-  run below it that this step reran before a crash and that failed again before the retry or resume
-  is still at or below the baseline, so it is rerun again. A caller that needs strictly once-only
-  reruns across mixed attempts passes the lowest failing attempt it saw. The plan asked for exactly
-  the baseline; at or below it also reruns a failed run no earlier round saw, which no round can
-  have rerun. The step then confirms, with the merge's bounds, that every rerun run is queued,
-  running or at a higher attempt, so a following `waitChecks` does not read the stale failure; that
-  is best effort and reported as `confirmed`.
+  round, so it is never rerun again. The scalar baseline alone is at-most-once only for runs at it:
+  a run below it that this step reran before a crash and that failed again before the retry or
+  resume is still at or below the baseline, so it is rerun again. #356 added the optional per-run
+  map `attempts` (run ID to the attempt the caller saw fail) to close that window: a mapped run is
+  rerun only at exactly its baseline and skipped past it, a mapped run below its baseline is left
+  alone, a mapped ID that is not a run of the commit is ignored, and a run not in the map follows
+  the scalar. The map is validated before the step opens and recorded in the input in ascending run
+  ID order, so the identity moved to `/2`; a caller builds the next round's map from the previous
+  result (`run.attempt + 1` for each rerun run), since a `waitChecks` failure carries no run
+  attempt. The plan asked for exactly the baseline; at or below it also reruns a failed run no
+  earlier round saw, which no round can have rerun. The step then confirms, with the merge's bounds,
+  that every rerun run is queued, running or at a higher attempt, so a following `waitChecks` does
+  not read the stale failure; that is best effort and reported as `confirmed`.
 - **Guarantee classes.** `docs/github.md` names a class for every op, 0046's included: reconciled,
   conditional (check-then-act), conditional (atomic, the merge's `sha`), or at-least-once.
 
@@ -87,9 +92,9 @@ lists them. They use only `gh api`; no op runs `gh pr` or `gh run`.
 
 - A crash between a merge or a create and its checkpoint no longer repeats it on retry or resume,
   and a merge can never land a head other than the one named. A rerun is not repeated for a run at
-  the baseline; a run below the baseline that failed again after the crashed attempt's rerun is
-  rerun again. Crash-window tests drive the stateful fake `gh`, which commits the write and exits 1
-  without output.
+  the baseline or for a run in the `attempts` map; an unmapped run below the baseline that failed
+  again after the crashed attempt's rerun is rerun again. Crash-window tests drive the stateful fake
+  `gh`, which commits the write and exits 1 without output.
 - The completeness check on the runs list counts distinct run IDs, not rows: a run created between
   pages repeats a row, and counting rows would let that repeat hide an omitted run. More distinct
   runs than `total_count` are tolerated, and a synthesized list is one row with a count of 0; only
