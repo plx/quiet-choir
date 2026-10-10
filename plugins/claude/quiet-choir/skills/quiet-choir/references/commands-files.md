@@ -58,8 +58,8 @@ runs one command per check, and an observer can run its commands through `contex
 `meta` attaches JSON labels to the step record, like `StepDefinition.meta`. It is neither identity
 nor policy, so relabelling never refuses a resume. `inspect` shows a step with a string
 `integration` label as `integration.op`; integration helpers such as
-[`quiet-choir/github`](https://github.com/plx/quiet-choir/blob/main/docs/github.md) record
-`{ integration, op }`. A non-JSON value is rejected before the command runs.
+[`quiet-choir/github`](github.md) record `{ integration, op }`. A non-JSON value is rejected before
+the command runs.
 
 The default environment inherits the parent plus `env`. `inheritEnv: false` supplies only that
 overlay and engine metadata (the selected executable or shell may itself add variables). Rotating

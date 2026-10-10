@@ -662,8 +662,7 @@ returns a typed result, and throws `IncompleteCollectionError` instead of a sile
 that must observe new state by round or head SHA, and make IDs in a loop unique per iteration. Code
 scanning that is not set up returns `status: 'unavailable'`; every other `gh` failure rejects and
 reruns on resume. This is a read example, not a GitHub write authorization. Environment credentials
-remain inherited; do not put tokens in argv. See
-[GitHub reads](https://github.com/plx/quiet-choir/blob/main/docs/github.md).
+remain inherited; do not put tokens in argv. See [GitHub reads](github.md).
 
 <!-- skills-check: example pattern-github-snapshot -->
 
@@ -766,10 +765,8 @@ more than a second away (30 seconds at first); `workflow tick` resumes it when d
 give it more by reading the logs in a step first. To also wait for review bots and merge at the
 gated head, add `gh.waitReview` with `codexReviewer()` and `codeqlReviewer()`, then `gh.pr.merge`;
 the [bundled `quiet-choir/github` summary](extensions.md#service-helper-pattern) covers their
-arguments. The repository's
-[gate](https://github.com/plx/quiet-choir/blob/main/docs/github.md#gate-example) and
-[land](https://github.com/plx/quiet-choir/blob/main/docs/github.md#land-example) examples show them
-in full.
+arguments. The bundled [gate](github.md#gate-example) and [land](github.md#land-example) examples
+show them in full.
 
 ## Ticket loop
 

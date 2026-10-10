@@ -429,8 +429,7 @@ call.
 authentication stays in `gh`. A truncated connection throws `IncompleteCollectionError` and is never
 checkpointed, and code scanning that is not set up returns `status: 'unavailable'`. A completed read
 replays forever under its ID, so observe new state with a fresh ID keyed by round or head SHA. See
-[GitHub snapshots](patterns.md#github-snapshots-through-gh) and
-[GitHub reads](https://github.com/plx/quiet-choir/blob/main/docs/github.md).
+[GitHub snapshots](patterns.md#github-snapshots-through-gh) and [GitHub reads](github.md).
 
 Its waits `gh.waitChecks(id, { pr, sha, timeoutMs })`, `gh.waitPr(id, { pr, sha, until })` and
 `gh.waitReview(id, { pr, sha, since, reviewers })` are one `ctx.poll` each, so one `wait` record
@@ -442,8 +441,7 @@ before a successful rollup counts. Reviewers are `ReviewerBot` adapters (`name`,
 pure `observe(activity, context)` returning `pending`, `running`, `clean`, `findings` or `error`,
 with a note kept in the wait's checkpoint); `codexReviewer()` keeps Codex's two-check debounce and
 `codeqlReviewer({ settleMs })` counts alerts that land after the CodeQL check. Take `since` from
-`ctx.now` after pushing `sha`. See
-[GitHub waits](https://github.com/plx/quiet-choir/blob/main/docs/github.md#waits).
+`ctx.now` after pushing `sha`. See [GitHub waits](github.md#waits).
 
 Its writes are one version-identified `ctx.step` each (`github.comment/1` and so on), so pass the
 full workflow context (`github(ctx, ...)` needs `exec`, `poll` and `step`).
@@ -460,7 +458,7 @@ to change, returning `acted: false` or `dismissed: false` otherwise; GitHub has 
 concurrent change between the read and the write is not detected. Bodies go to gh on stdin. Pass
 `{ retry: { maxAttempts: 3 } }` as the third argument; the writes are safe to repeat. A fork
 re-posts writes its source left unfinished, and a rehearsed `issue.reopen` skips. See
-[GitHub writes](https://github.com/plx/quiet-choir/blob/main/docs/github.md#writes).
+[GitHub writes](github.md#writes).
 
 Pull request writes use only `gh api`. `gh.pr.create(id, { head, base, title, body, draft? })`
 returns the pull request carrying its marker in any state and base, else an open one for the
@@ -475,8 +473,7 @@ base, threads and alerts yourself first. `gh.checks.rerunFailed(id, { sha, attem
 reruns failed runs at or below the run attempt you saw failing and skips runs past it, so pass the
 round number. Pass `attempts` (run ID to the attempt you saw that run fail) when runs failed at
 different attempts: a mapped run is rerun only at exactly its attempt, so none is rerun twice. A
-rehearsed edit or merge reports `head-moved`. See
-[merging](https://github.com/plx/quiet-choir/blob/main/docs/github.md#merging).
+rehearsed edit or merge reports `head-moved`. See [merging](github.md#merging).
 
 Its epic read `gh.epic.snapshot(id, { number })` is one `ctx.exec.json` (one `gh api graphql`) that
 returns the epic's sub-issues with state, labels, linked pull requests, blocked-by relations,
@@ -492,4 +489,4 @@ link open same-repository, non-fork pull requests on a branch named `<prefix><N>
 `<prefix><N>-...` to item N (off by default; the read throws above 100 open pull requests). A
 dependency outside the epic counts as open until you read it: pass the `gh.issue.view` results for
 `outsideReferences(snapshot)` as `outside`. Key the snapshot by round (`ctx.id('epic', n, round)`)
-to see fresh state. See [epics](https://github.com/plx/quiet-choir/blob/main/docs/github.md#epics).
+to see fresh state. See [epics](github.md#epics).
