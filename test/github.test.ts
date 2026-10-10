@@ -855,6 +855,7 @@ export default defineWorkflow({
     const issue = await gh.issue.view('issue', { number: pr.closingIssues[0]?.number ?? 1 });
     const comments = await gh.issue.view('comments', { number: issue.number, comments: true });
     const alerts = await gh.codeScanning.alerts('alerts', { ref: 'refs/pull/1/merge' });
+    await ctx.step('refined', { input: null, schema: z.object({ n: z.number() }).refine(() => true), run: () => ({ n: 1 }) });
     return { info, pr, list, threads, issue, comments, alerts };
   },
 });
@@ -886,6 +887,10 @@ export default defineWorkflow({
       throw new Error(JSON.stringify(result));
     expect(spawned).toEqual([]);
     expect(result.run.status).toBe('completed');
+    // The built-in reads add no refinement warning; the authored step still adds its one line.
+    expect(
+      result.rehearsal.warnings.filter((line) => line.includes('custom Zod refinements')),
+    ).toEqual([expect.stringMatching(/^Step refined: custom Zod refinements/u)]);
     expect(
       result.rehearsal.commands.map((command) => [command.stepId, command.outputSource]),
     ).toEqual(

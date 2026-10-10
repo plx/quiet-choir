@@ -10,6 +10,8 @@
  * lists the reads and writes and spawns nothing.
  */
 import { setTimeout as delay } from 'node:timers/promises';
+// The helper-refinements key is a cross-instance contract, not runtime state: a rehearsal skips the marked schemas.
+import { helperRefinements } from '../workflow/runtime/helper-refinements.js';
 import type { ExecOptions, JsonValue, StepContext, WorkflowContext, z } from '../index.js';
 import {
   choice,
@@ -359,15 +361,19 @@ export function githubWrites(
       key: context.idempotencyKey,
       async read(argv, schema) {
         try {
-          return await context.exec.json(argv, { schema, ...limits });
+          return await context.exec.json(argv, { schema: helperRefinements(schema), ...limits });
         } catch (error) {
           return helpers.rethrow(error, id);
         }
       },
       write: (request, schema) =>
-        context.exec.json(request.argv, { schema, input: request.input, ...limits }),
+        context.exec.json(request.argv, {
+          schema: helperRefinements(schema),
+          input: request.input,
+          ...limits,
+        }),
       json: (argv, schema, okExitCodes) =>
-        context.exec.json(argv, { schema, okExitCodes, ...limits }),
+        context.exec.json(argv, { schema: helperRefinements(schema), okExitCodes, ...limits }),
       async run(argv) {
         await context.exec(argv, limits);
       },

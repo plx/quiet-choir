@@ -369,8 +369,10 @@ are bounded to avoid unbounded recursive schemas or oversized allocations.
 
 Unsatisfied constraints, including patterns/formats, fail with a step ID, output JSON pointer, and
 fixture guidance. This is a deterministic sampler, not a solver for every schema. Original Zod
-validation remains authoritative. Custom refinements emit warnings because JSON Schema cannot
-represent their code; transforms and non-JSON schema types still fail at their call site.
+validation remains authoritative. Custom refinements warn because JSON Schema cannot represent their
+code: a workflow's refinements produce one warning listing the affected step IDs (the first ten,
+then a count), while the built-in `quiet-choir/github` completeness checks, which synthesized
+responses satisfy, raise none. Transforms and non-JSON schema types still fail at their call site.
 
 Successful `--dry-run --json` output is `{kind:"workflow.rehearsal", ok:true, ...report, run}`. The
 report contains:

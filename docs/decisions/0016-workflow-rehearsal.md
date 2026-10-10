@@ -447,3 +447,24 @@ rehearsal are unchanged. Signals keep their precedence on each check (under rehe
 empty), `--stub-steps` still completes a poll on its first check, and each check still records one
 `commands` entry per command it runs. A poll that never turns terminal now makes five observations
 in a dry run, so a local observer's read-only work runs five times.
+
+## Amendment: built-in helper refinements and one grouped warning (#348)
+
+A dry run warned once per step whose schema carried a custom refinement. Every `quiet-choir/github`
+read and write schema enforces complete-or-throw with `superRefine`, so a snapshot run buried the
+warnings that matter under about five of them. Those refinements are integrity checks on real `gh`
+output, and a synthesized response reports no next page and so satisfies them; the rehearsal author
+has no contract to meet.
+
+Built-in helpers now mark their schemas with the internal registry key
+`Symbol.for('quiet-choir.helper-refinements')` (`workflow/runtime/helper-refinements.ts`) at the
+exec boundary: `read`, `observeRead` and the write commands. The marker is a non-enumerable symbol
+property on the schema instance, so it never reaches the JSON Schema, a step's identity or a
+fingerprint, and a registry symbol works across module instances like the error-brand and
+poll-identity registries. The refinement walk skips a marked schema's subtree, so a refinement an
+author adds around or beside a marked schema still warns. The key is not public, and the decision
+helper's probability-sum refinement stays unmarked because a synthesized value fails it.
+
+The remaining refinement warnings are one line listing the step IDs in first-seen order, capped at
+ten followed by a count, so a refined schema in a fan-out cannot produce an unbounded line. The line
+is built when the report is produced, so the report's warnings order places it after the others.

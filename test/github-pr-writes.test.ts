@@ -1255,6 +1255,7 @@ export default defineWorkflow({
     );
     const result = await rehearse(file, { repo: REPO, sha: HEAD });
     expect(result.run.status).toBe('completed');
+    expect(result.warnings.filter((line) => line.includes('custom Zod refinements'))).toEqual([]);
     for (const command of result.commands)
       expect(command).toMatchObject({ parentStepId: command.stepId, outputSource: 'synthesized' });
     // A synthesized list row is closed and unmarked, so create posts; a synthesized head is never

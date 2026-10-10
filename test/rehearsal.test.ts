@@ -38,6 +38,8 @@ import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
 import { TypecheckProgramCache } from '../src/workflow/typecheck/program-cache.js';
 import { RehearsalHarness, rehearsalState } from '../src/workflow/loader/rehearsal.js';
+import { helperRefinements } from '../src/workflow/runtime/helper-refinements.js';
+import { schemaJson } from '../src/workflow/runtime/schema.js';
 import { fixturesFromRun } from '../src/workflow/loader/fixtures.js';
 import {
   readHarnessSelection,
@@ -1122,6 +1124,70 @@ describe('rehearsal execution and isolation', () => {
     expect(harness.report(await readRun(options)).warnings.join(' ')).toContain(
       'custom Zod refinements',
     );
+  });
+
+  const refinementLines = (harness: RehearsalHarness): string[] =>
+    harness.report(null).warnings.filter((line) => line.includes('custom Zod refinements'));
+  const refined = (): z.ZodType => z.object({ n: z.number() }).refine(() => true);
+
+  it('groups refinements from several authored steps into one warning', async () => {
+    const options = await setup();
+    const harness = new RehearsalHarness({ kind: 'cli', config: {} });
+    await runWorkflow(
+      workflow(async (ctx) => {
+        for (const id of ['first', 'second', 'third'])
+          await ctx.step(id, {
+            input: null,
+            schema: z.object({ n: z.number() }).refine(() => true),
+            run: () => ({ n: 1 }),
+          });
+        return 'done';
+      }),
+      { ...options, harness, rehearsal: harness.hooks },
+    );
+    const lines = refinementLines(harness);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/^Steps first, second, third: custom Zod refinements/u);
+  });
+
+  it('caps the grouped refinement warning at ten step ids', () => {
+    const harness = new RehearsalHarness({ kind: 'cli', config: {} });
+    for (let index = 1; index <= 12; index += 1)
+      harness.hooks.onSchema?.(`s${String(index)}`, refined());
+    const lines = refinementLines(harness);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/^Steps s1, s2, s3, s4, s5, s6, s7, s8, s9, s10 and 2 more: custom/u);
+    expect(lines[0]).not.toContain('s11');
+  });
+
+  it('skips helper-marked refinements but not authored ones around them, and reports stably', () => {
+    const harness = new RehearsalHarness({ kind: 'cli', config: {} });
+    const marked = helperRefinements(refined());
+    harness.hooks.onSchema?.('marked', marked);
+    harness.hooks.onSchema?.('embedded', z.object({ inner: marked }));
+    expect(refinementLines(harness)).toEqual([]);
+    harness.hooks.onSchema?.(
+      'wrapped',
+      z.object({ inner: marked }).refine(() => true),
+    );
+    harness.hooks.onSchema?.('plain', refined());
+    const first = harness.report(null).warnings;
+    expect(refinementLines(harness)).toEqual([
+      expect.stringMatching(/^Steps wrapped, plain: custom Zod refinements/u),
+    ]);
+    expect(harness.report(null).warnings).toEqual(first);
+  });
+
+  it('marks a schema without changing its identity or JSON Schema', () => {
+    const schema = refined();
+    const before = schemaJson(schema);
+    expect(helperRefinements(schema)).toBe(schema);
+    expect(helperRefinements(schema)).toBe(schema);
+    expect(schemaJson(schema)).toEqual(before);
+    expect(Object.keys(schema)).not.toContain(String(Symbol.for('quiet-choir.helper-refinements')));
+    const frozen = Object.freeze({});
+    expect(() => helperRefinements(frozen)).not.toThrow();
+    expect(Object.getOwnPropertySymbols(frozen)).toEqual([]);
   });
 
   it('guards changes before the completed fast path and fork reuse, with explicit opt-in', async () => {

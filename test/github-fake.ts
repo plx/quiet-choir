@@ -59,6 +59,7 @@ export interface Setup {
 export interface Rehearsal {
   readonly run: RunRecord;
   readonly commands: readonly RehearsalCommand[];
+  readonly warnings: readonly string[];
 }
 
 /** What {@link useGithubFake} gives a test file. */
@@ -176,7 +177,11 @@ export function useGithubFake(prefix: string): GithubFake {
     if (result.kind !== 'workflow.run.result' || !result.rehearsal)
       throw new Error(JSON.stringify(result));
     expect(spawned).toEqual([]);
-    return { run: result.run, commands: result.rehearsal.commands };
+    return {
+      run: result.run,
+      commands: result.rehearsal.commands,
+      warnings: result.rehearsal.warnings,
+    };
   }
 
   /** Make `cwd()` a module project that resolves this checkout's dependencies. */

@@ -130,9 +130,10 @@ Each read records `meta: { integration: 'github', op }` on its step (`ExecOption
 
 `--dry-run` lists every read in the report's `commands` and synthesizes its response from the
 schema: booleans are false, arrays have one item, and every connection reports no next page, so the
-synthesized values pass the completeness checks and the mappers. Synthesized strings never match
-real data; a branch that compares two of them (such as a closing issue's repository with the
-repository's name) takes the "different" path.
+synthesized values pass the completeness checks and the mappers. Those refinements raise no dry-run
+warning about custom Zod refinements. Synthesized strings never match real data; a branch that
+compares two of them (such as a closing issue's repository with the repository's name) takes the
+"different" path.
 
 To rehearse a specific path, answer a read with an exec fixture rule whose `json` is the raw `gh`
 response: one object for `repo.info`, `pr.view`, `issue.view` and `epic.snapshot`, an array of pages

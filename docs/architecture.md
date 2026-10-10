@@ -16,9 +16,11 @@ definitions to a particular agent harness.
   including the pull request writes, the head-pinned merge and the failed-run rerun
   ([ADR 0047](decisions/0047-pull-request-writes-and-head-pinned-merge.md)). The epic snapshot's
   query, schema, parsers and the `nextTicket` selector live in the pure `github-epic-model.ts`
-  ([ADR 0048](decisions/0048-epic-snapshot-and-next-ticket-selector.md)). It may also import two
-  cross-instance registries: error brands ([ADR 0044](decisions/0044-gh-backed-github-reads.md)) and
-  the internal poll-identity key ([ADR 0045](decisions/0045-head-pinned-github-waits.md)). See
+  ([ADR 0048](decisions/0048-epic-snapshot-and-next-ticket-selector.md)). It may also import three
+  cross-instance registries: error brands ([ADR 0044](decisions/0044-gh-backed-github-reads.md)),
+  the internal poll-identity key ([ADR 0045](decisions/0045-head-pinned-github-waits.md)) and the
+  helper-refinements key that keeps their schemas out of the rehearsal's refinement warning
+  ([ADR 0016](decisions/0016-workflow-rehearsal.md)). See
   [GitHub reads, waits and writes](github.md).
 - `src/application/` contains framework-independent execution contracts and small executors.
 - `src/workflow/` contains workflow-specific plans, results, analysis, and executors.
