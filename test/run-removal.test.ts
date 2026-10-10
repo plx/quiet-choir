@@ -36,7 +36,8 @@ import {
   writeAnswer,
 } from '../src/workflow/runtime/inbox.js';
 import { formatArgv } from '../src/workflow/runtime/commands.js';
-import { defaultStateDir } from '../src/workflow/runtime/paths.js';
+import { resolveRemovalStateDir } from '../src/workflow/runtime/interrupted-removal.js';
+import { defaultStateDir, resolveStateDir } from '../src/workflow/runtime/paths.js';
 import { readRequiredRun } from '../src/workflow/runtime/read-required-run.js';
 import {
   removeRun,
@@ -1017,6 +1018,66 @@ describe('workflow rm of an interrupted flat-run removal', () => {
       removeRun({ runId: 'pinned', stateDir, expectedUpdatedAt: 'x' }, processRunner),
     ).rejects.toMatchObject({ code: 'run.not_found' });
     expect(await snapshot(stateDir)).toEqual(before);
+  });
+
+  describe('in the legacy in-workspace container', () => {
+    let project: string;
+    let legacy: string;
+    beforeEach(async () => {
+      vi.stubEnv('QUIET_CHOIR_STATE_DIR', undefined);
+      project = join(root, 'project');
+      legacy = join(project, '.quiet-choir', 'runs');
+      await mkdir(project);
+    });
+
+    it('is found without a state directory, previewed and finished', async () => {
+      stateDir = legacy;
+      await crashedRemoval('flat', true);
+      // Legacy discovery keys on a record, which the interrupted removal already deleted.
+      expect(resolveStateDir({ runId: 'flat', cwd: project })).toBe(defaultStateDir(project));
+      expect(await resolveRemovalStateDir({ runId: 'flat', cwd: project })).toBe(legacy);
+      const before = await snapshot(root);
+      expect(removed(await remove('flat', { dryRun: true }))).toMatchObject({
+        removed: false,
+        verdict: 'remove',
+        interrupted: true,
+        paths: [join(legacy, 'flat'), join(legacy, 'flat.json.lock'), join(legacy, 'flat.json.v1')],
+      });
+      expect(await snapshot(root)).toEqual(before);
+      expect(removed(await remove('flat'))).toMatchObject({ removed: true, interrupted: true });
+      await onlyIgnoreFileLeft();
+      // Nothing left in either container: ordinary resolution again.
+      expect(await resolveRemovalStateDir({ runId: 'flat', cwd: project })).toBe(
+        defaultStateDir(project),
+      );
+    });
+
+    it('keeps an explicit or environment container', async () => {
+      stateDir = legacy;
+      await crashedRemoval('flat');
+      expect(
+        await resolveRemovalStateDir({ runId: 'flat', cwd: project, stateDir: 'elsewhere' }),
+      ).toBe(join(project, 'elsewhere'));
+      vi.stubEnv('QUIET_CHOIR_STATE_DIR', join(root, 'environment'));
+      expect(await resolveRemovalStateDir({ runId: 'flat', cwd: project })).toBe(
+        join(root, 'environment'),
+      );
+    });
+
+    it.for([
+      ['a record', () => flatRecord('flat', 'completed')],
+      ['an interrupted removal', () => crashedRemoval('flat')],
+      [
+        'a leftover launch directory',
+        () => mkdir(join(stateDir, 'flat', 'launch'), { recursive: true }),
+      ],
+    ] as const)('yields to the default container when it holds %s of the ID', async ([, make]) => {
+      stateDir = legacy;
+      await crashedRemoval('flat');
+      stateDir = defaultStateDir(project);
+      await make();
+      expect(await resolveRemovalStateDir({ runId: 'flat', cwd: project })).toBe(stateDir);
+    });
   });
 });
 

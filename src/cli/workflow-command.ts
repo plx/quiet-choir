@@ -219,10 +219,15 @@ export abstract class WorkflowCommand extends BaseCommand {
       process.env['QUIET_CHOIR_STATE_DIR'] === undefined &&
       resolved === resolve('.quiet-choir/runs')
     )
-      this.logToStderr(
-        `Warning: legacy state directory ${resolved}; new runs use project-specific XDG storage.`,
-      );
+      this.warnLegacyStateDir(resolved);
     return resolved;
+  }
+
+  /** Warn on stderr that a run was found in the legacy in-workspace runs container. */
+  protected warnLegacyStateDir(stateDir: string): void {
+    this.logToStderr(
+      `Warning: legacy state directory ${stateDir}; new runs use project-specific XDG storage.`,
+    );
   }
 
   protected validateRunId(runId: string): void {

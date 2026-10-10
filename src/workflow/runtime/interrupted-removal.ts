@@ -1,9 +1,15 @@
 import type { Dirent, Stats } from 'node:fs';
 import { lstat, readdir } from 'node:fs/promises';
-import { resolve } from 'node:path';
-import { runRecordPresent } from './launch-leftovers.js';
+import { join, resolve } from 'node:path';
+import { inspectLaunchLeftover, runRecordPresent } from './launch-leftovers.js';
 import { isErrno, isLockStray } from './lock.js';
-import { runDirectory } from './paths.js';
+import {
+  defaultStateDir,
+  projectCwd,
+  resolveStateDir,
+  runDirectory,
+  type StateDirectoryOptions,
+} from './paths.js';
 import {
   interruptedRemovalShape,
   type InterruptedRemovalEntry,
@@ -96,6 +102,34 @@ export async function inspectInterruptedRemoval(
   for (const candidate of [path, guard, ...siblings.backups])
     if ((await lstatIfPresent(candidate)) !== null) paths.push(candidate);
   return { runId, stateDir: root, path, paths, bytes: await runBytes(root, runId, entries) };
+}
+
+/**
+ * The runs container `workflow rm` uses for `runId`: {@link resolveStateDir}'s, except that with no
+ * explicit or `QUIET_CHOIR_STATE_DIR` container it finds an interrupted removal in the legacy
+ * `<cwd>/.quiet-choir/runs` (ADR 0061). Legacy discovery keys on a record, which such a removal of
+ * an unmigrated flat run already deleted. The project's default container still wins whenever it
+ * holds a record, an interrupted removal or a leftover launch directory of the ID; a container that
+ * cannot be inspected counts as holding one in the default and as holding none in the legacy one,
+ * so rm keeps its ordinary resolution. @internal
+ */
+export async function resolveRemovalStateDir(
+  options: StateDirectoryOptions & { readonly runId: string },
+): Promise<string> {
+  const resolved = resolveStateDir(options);
+  if (options.stateDir !== undefined || process.env['QUIET_CHOIR_STATE_DIR'] !== undefined)
+    return resolved;
+  const cwd = projectCwd(options.cwd);
+  if (resolved !== defaultStateDir(cwd)) return resolved;
+  const { runId } = options;
+  const occupied = await (async () =>
+    (await runRecordPresent(resolved, runId)) ||
+    (await inspectInterruptedRemoval(resolved, runId)) !== null ||
+    (await inspectLaunchLeftover(resolved, runId)) !== null)().catch(() => true);
+  if (occupied) return resolved;
+  const legacy = join(cwd, '.quiet-choir', 'runs');
+  const leftover = await inspectInterruptedRemoval(legacy, runId).catch(() => null);
+  return leftover === null ? resolved : legacy;
 }
 
 /**

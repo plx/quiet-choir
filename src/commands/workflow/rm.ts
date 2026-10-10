@@ -2,6 +2,7 @@ import { Args, Flags, type Interfaces } from '@oclif/core';
 import { WorkflowCommand } from '../../cli/workflow-command.js';
 import { formatBytes } from '../../cli/inspection-view.js';
 import { WorkflowExecutor } from '../../workflow/loader/executor.js';
+import { resolveRemovalStateDir } from '../../workflow/runtime/interrupted-removal.js';
 
 export default class WorkflowRm extends WorkflowCommand {
   public static override readonly args: Interfaces.ArgInput<{ readonly runId: string }> = {
@@ -42,7 +43,17 @@ export default class WorkflowRm extends WorkflowCommand {
     'Deletes the run directory (record, journal, attempts/ transcripts, artifacts, launch/, inbox), its legacy flat files and its worktree caches; pinned refs only with --refs. Refuses (exit 3, run.locked) while any lock owner or recoverer is alive, unverifiable or on a foreign host, even with --force; (exit 3, run.orphans) while a dead owner’s recorded child is alive or unverifiable; and, without --force, (exit 3, run.active) for a running or suspended run or one with a waiting step. A cache Git cannot remove while its repository exists stops the removal before the run is deleted (exit 74, workflow.storage): caches Git already removed stay removed, no ref is deleted, and the record stays for workflow clean. An ID with no record whose directory holds only the launch/ of a start that failed before its record is a leftover launch directory: rm removes it under the same guard (launchOnly in the result; --refs changes nothing), and refuses it (exit 3, run.active), even with --force, while the start’s runner is alive, unverifiable or remote, or, for a launch without a runner record, its files are younger than an hour. A run whose record file is present but whose content is damaged (invalid JSON or schema, a journal gap, a format-7 marker without its directory, run.json without journal.jsonl) is refused (exit 3, run.unreadable) with the --unreadable command in error.details.next; with --unreadable rm removes it without reading it, under the same lock and liveness refusals, and refuses (exit 3, run.active), even with --force, while a launch in its launch/ may still be in flight. Its worktree caches and pinned refs are not removed (a warning says how to find them), and a record unreadable for access or I/O reasons is still refused. An ID with no record whose directory holds only its lock, or that has only .json.v<N> backups, is what a removal of an unmigrated flat run left when it stopped after deleting the flat file: rm finishes that removal under the run lock (interrupted in the result; --refs, --force and --unreadable change nothing), and refuses it (exit 3, run.locked or run.orphans) while a lock owner or recoverer, or a dead owner’s child, is alive, unverifiable or remote. --dry-run exits 0 with the verdict whenever the run or leftover exists.';
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(WorkflowRm);
-    const stateDir = this.runContext(args.runId, flags['state-dir']);
+    const explicit = flags['state-dir'];
+    const discovered = this.runContext(args.runId, explicit);
+    // An interrupted removal of an unmigrated flat run has no record left to discover it by (ADR 0061).
+    const stateDir = await resolveRemovalStateDir({
+      runId: args.runId,
+      ...(explicit === undefined ? {} : { stateDir: explicit }),
+    });
+    if (stateDir !== discovered) {
+      this.failureContext = { runId: args.runId, stateDir };
+      this.warnLegacyStateDir(stateDir);
+    }
     const executor = new WorkflowExecutor({
       logger: this.createExecutionLogger(flags),
       commandLauncher: this.commandLauncher,
