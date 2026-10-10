@@ -777,9 +777,20 @@ export interface GithubRerunFailedOptions {
   /**
    * The baseline: the run attempt the caller observed failing, a positive integer, default 1.
    * Only failed runs at or below it are rerun; a run whose attempt is past it was rerun already.
-   * Pass 2 for a second round after a first rerun.
+   * Pass 2 for a second round after a first rerun. It applies to every run not listed in
+   * {@link GithubRerunFailedOptions.attempts}.
    */
   readonly attempt?: number;
+  /**
+   * Per-run baselines: workflow run ID to the run attempt the caller saw that run fail, each a
+   * positive integer. A run in the map is rerun only when it is a completed failure at exactly its
+   * baseline, and is skipped (rerun already) once its attempt is past it; a run below its baseline
+   * is left alone. A run not in the map follows `attempt`. A mapped ID that is not among the
+   * commit's runs is ignored. Use it when runs failed at different attempts, so a crash between the
+   * `POST` and the checkpoint can never rerun a run twice. For the next round, build the map from
+   * the previous result: `Object.fromEntries(previous.rerun.map((run) => [run.id, run.attempt + 1]))`.
+   */
+  readonly attempts?: Readonly<Record<number, number>>;
 }
 
 /** A workflow run `checks.rerunFailed` acted on or skipped. */
@@ -1154,18 +1165,30 @@ export function runRefOf(run: WorkflowRunRow): GithubWorkflowRunRef {
 }
 
 /**
- * Which runs `checks.rerunFailed` reruns: completed with conclusion `failure` at or below the
- * baseline `attempt`. Runs past the baseline that failed again or are still running are
- * `skipped`: they were rerun already. Successful, cancelled and other runs are neither. @internal
+ * Which runs `checks.rerunFailed` reruns. A run in `attempts` (run ID to the attempt the caller saw
+ * it fail) is rerun when it is completed with conclusion `failure` at exactly that baseline, and is
+ * `skipped` when its attempt is past it and it failed again or is still running; a run below its
+ * baseline is neither. Any other run follows the scalar `attempt`: rerun when completed with
+ * conclusion `failure` at or below it, `skipped` when past it and failed or still running (rerun
+ * already). Successful, cancelled and other runs are neither. @internal
  */
 export function rerunSelection(
   runs: readonly WorkflowRunRow[],
   attempt: number,
+  attempts: ReadonlyMap<number, number> = new Map(),
 ): { readonly rerun: WorkflowRunRow[]; readonly skipped: WorkflowRunRow[] } {
+  const baseline = (run: WorkflowRunRow): number | undefined => attempts.get(run.id);
   return {
-    rerun: runs.filter((run) => failed(run) && run.run_attempt <= attempt),
+    rerun: runs.filter((run) => {
+      const mapped = baseline(run);
+      return (
+        failed(run) &&
+        (mapped === undefined ? run.run_attempt <= attempt : run.run_attempt === mapped)
+      );
+    }),
     skipped: runs.filter(
-      (run) => run.run_attempt > attempt && (failed(run) || run.status !== 'completed'),
+      (run) =>
+        run.run_attempt > (baseline(run) ?? attempt) && (failed(run) || run.status !== 'completed'),
     ),
   };
 }

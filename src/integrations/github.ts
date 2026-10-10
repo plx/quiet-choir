@@ -494,12 +494,13 @@ export interface GithubChecksWrites {
    * `ctx.step` under `id`: list every run (complete or throw), and rerun each completed run with
    * conclusion `failure` at or below the baseline `attempt` (default 1). A run past the baseline was
    * rerun already, by this step before a crash, a person or an earlier round, and is reported in
-   * `skipped`, never rerun again. At most once holds for runs at the baseline: a run below it that
-   * this step reran before a crash and that failed again before the retry or resume is rerun again,
-   * so a caller that needs strictly once-only reruns across mixed attempts passes the lowest failing
-   * attempt it saw. Then it reads the runs until each rerun shows (bounded, best
-   * effort; see `confirmed`). Check-then-act on the baseline: a rerun started between the list and
-   * the `POST` is not detected.
+   * `skipped`, never rerun again. The optional `attempts` map gives a run its own baseline, the
+   * attempt the caller saw it fail: a mapped run is rerun only at exactly that attempt and skipped
+   * past it, so runs that failed at different attempts are rerun strictly once. At most once holds
+   * for mapped runs and for runs at the scalar baseline; an unmapped run below the scalar baseline
+   * that this step reran before a crash and that failed again before the retry or resume is rerun
+   * again. Then it reads the runs until each rerun shows (bounded, best effort; see `confirmed`).
+   * Check-then-act on the baseline: a rerun started between the list and the `POST` is not detected.
    */
   rerunFailed(
     id: string,
