@@ -91,7 +91,15 @@ package, and the recipe smoke in the CLI smokes job. The skill check:
   the file; put the command in a shell fence for the model to run. `SKILL.md` is held to the same
   rule. The summary counts command files.
 - Rejects symlinks and verifies Markdown links/anchors stay inside their physical installed package.
-  External URLs are syntax-checked; validation does not depend on network availability.
+  External URLs are syntax-checked; validation does not depend on network availability. A link into
+  the repository's `docs/` tree (`https://github.com/plx/quiet-choir/blob/main/docs/...` or `tree`)
+  is rejected in skill and command Markdown, because the repository is private and an installed
+  plugin cannot open it: bundle a skill-relative reference instead, as `references/github.md` does
+  for [GitHub reads, waits and writes](github.md).
+- Keeps the write, gate and land `ts` fences of the bundled `references/github.md` equal to the ones
+  in [docs/github.md](github.md), in both copies. The vitest suites run the `docs/github.md` fences,
+  so equality carries that coverage to the bundle; the rest of the bundled file is a condensed
+  rewrite that is reviewed with the guide.
 - Compares the physical skill trees against the narrow difference allowlist.
 - Compiles every complete `ts`/`typescript` fence from both copies against `src/index.ts`, with the
   repository's strict compiler options. Only recognized module import specifiers are redirected;
@@ -113,10 +121,10 @@ harness and captured native protocol bytes. No credentials or paid calls are nee
 a POSIX shell must be on PATH for that smoke test (available on the CI Ubuntu runner).
 
 Mutation tests prove rejection of broken TypeScript, both invalid manifests, a bad marketplace path,
-dangling links/anchors, package escapes, unintended differences, malformed annotations, duplicate
-frontmatter, symlinked deliverables, each command rule above (and the pre-execution rule in
-`SKILL.md`), and that a differing manifest `description` is accepted while a differing `version` is
-not.
+dangling links/anchors, package escapes, links into the `docs/` tree, a drifted bundled GitHub
+example, unintended differences, malformed annotations, duplicate frontmatter, symlinked
+deliverables, each command rule above (and the pre-execution rule in `SKILL.md`), and that a
+differing manifest `description` is accepted while a differing `version` is not.
 
 Host-side Claude packaging checks remain useful when its CLI is installed:
 

@@ -18,6 +18,11 @@ For epics, [`epic.snapshot`](#epics) reads an epic's items in one command and th
 picks the next ticket, saying why every other open one was skipped
 ([ADR 0048](decisions/0048-epic-snapshot-and-next-ticket-selector.md)).
 
+The skills bundle a condensed copy of this guide as `references/github.md` in
+[each plugin](../plugins/agents/quiet-choir/skills/quiet-choir/references/github.md), because an
+installed plugin cannot open this repository. Update both copies with this page: `skills:check`
+keeps only the write, gate and land examples equal to the ones here.
+
 ## Install and authenticate
 
 Install [gh](https://cli.github.com/) and sign in with `gh auth login` (add `--hostname HOST` for
