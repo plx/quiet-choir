@@ -50,7 +50,9 @@ stays permissive and the runtime check remains the backstop. Runtime behavior is
    - The omitted case is rooted when `defaults.profile` (or `text` when absent) is rooted.
 4. **Permissive fallbacks.** These count as rooted: a `claude` block whose `addDirRoots` key is
    possibly present (a widened `AgentProfile` or `AgentDefaults`), a non-literal `extends` or
-   `defaults.profile`, a non-literal role name, and a role that `TProfiles` does not describe.
+   `defaults.profile`, a union-typed profile or defaults any member of which is rooted (a member
+   that omits `extends` or `profile` contributes `text`), a non-literal role name, and a role that
+   `TProfiles` does not describe.
 5. **Variance.** The parameter appears only as the checked type of conditional types, never in an
    `extends` clause, so TypeScript does not measure contexts as invariant in it. Typed definitions
    stay assignable to `WorkflowDefinition<I, O>`, `WorkflowDeclaration`, `runWorkflow` and
@@ -62,9 +64,10 @@ stays permissive and the runtime check remains the backstop. Runtime behavior is
    seven parameters and accept narrow definitions through the default. A child stays typed by its
    own definition; delegation is not narrowed at type level.
 
-The new public types are `AddDirProfilesOf`, its helpers `AddDirRootedName` and `HasAddDirRoots`,
-and `ClaudeAddDirSelection`. They are public rather than `@internal` because `stripInternal` would
-remove them from the emitted declarations that `CallOptions` and `defineWorkflow` reference.
+The new public types are `AddDirProfilesOf`, its helpers `AddDirRootedName`, `HasAddDirRoots` and
+`ProfileReferenceOf`, and `ClaudeAddDirSelection`. They are public rather than `@internal` because
+`stripInternal` would remove them from the emitted declarations that `CallOptions` and
+`defineWorkflow` reference.
 
 ## Alternatives
 

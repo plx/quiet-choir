@@ -220,6 +220,18 @@ export type HasAddDirRoots<X> = X extends {
   : false;
 
 /**
+ * The profile name that key `K` (`extends` of a profile, `profile` of defaults) holds in profile or
+ * defaults type `X`, with `undefined` for a member that omits it (meaning `text`). It distributes
+ * over unions, so a union-typed profile yields every name one of its members may name, instead of
+ * losing a key the members do not share. A helper of {@link AddDirProfilesOf}.
+ */
+export type ProfileReferenceOf<X, K extends 'extends' | 'profile'> = X extends unknown
+  ? K extends keyof X
+    ? Extract<X[K], string | undefined>
+    : undefined
+  : never;
+
+/**
  * Whether the role named `N` has `claude.addDirRoots` from its own layer or its `extends` chain in
  * the profiles type `TProfiles`, ignoring workflow defaults (which {@link AddDirProfilesOf} checks
  * first). It mirrors profile resolution, where a layer replaces a parent's roots but cannot remove
@@ -243,7 +255,7 @@ export type AddDirRootedName<
           ? true extends HasAddDirRoots<TProfiles[N]>
             ? true
             : true extends AddDirRootedName<
-                  Extract<TProfiles[N]['extends' & keyof TProfiles[N]], string | undefined>,
+                  ProfileReferenceOf<TProfiles[N], 'extends'>,
                   TProfiles,
                   Seen | N
                 >
@@ -265,10 +277,11 @@ export type AddDirRootedName<
  * - `undefined` is included when `defaults.profile` (or `text` when absent) is rooted.
  *
  * When the types cannot prove a profile unrooted, it counts as rooted: a widened
- * {@link AgentProfile} or {@link AgentDefaults}, a non-literal `extends` or `defaults.profile`, and a
- * role in `TProfile` that `TProfiles` does not describe. `defineWorkflow` computes this from the
- * inferred `profiles` and `defaults` and passes it as the last `WorkflowDefinition` type parameter;
- * the runtime check stays the backstop.
+ * {@link AgentProfile} or {@link AgentDefaults}, a non-literal `extends` or `defaults.profile`, a
+ * union-typed profile or defaults any member of which is rooted, and a role in `TProfile` that
+ * `TProfiles` does not describe. `defineWorkflow` computes this from the inferred `profiles` and
+ * `defaults` and passes it as the last `WorkflowDefinition` type parameter; the runtime check stays
+ * the backstop.
  */
 export type AddDirProfilesOf<TProfile extends string, TProfiles, TDefaults> =
   true extends HasAddDirRoots<TDefaults>
@@ -276,9 +289,6 @@ export type AddDirProfilesOf<TProfile extends string, TProfiles, TDefaults> =
     : | {
           [N in BuiltinProfile | TProfile]: true extends AddDirRootedName<N, TProfiles> ? N : never;
         }[BuiltinProfile | TProfile]
-      | (true extends AddDirRootedName<
-          Extract<TDefaults['profile' & keyof TDefaults], string | undefined>,
-          TProfiles
-        >
+      | (true extends AddDirRootedName<ProfileReferenceOf<TDefaults, 'profile'>, TProfiles>
           ? undefined
           : never);

@@ -757,6 +757,28 @@ it('carries strictness, profiles and declared children into authoring types', ()
   expectTypeOf<
     AddDirProfilesOf<'x', { readonly x: { readonly extends: string } }, NoDefaults>
   >().toEqualTypeOf<'x'>();
+  // A union-typed profile or defaults is rooted when any member may be.
+  interface UnionProfiles extends Profiles {
+    readonly either: { readonly extends: 'reader' } | { readonly description: string };
+    readonly neither: { readonly extends: 'plain' } | { readonly description: string };
+  }
+  expectTypeOf<AddDirProfilesOf<keyof UnionProfiles, UnionProfiles, NoDefaults>>().toEqualTypeOf<
+    'reader' | 'nested' | 'either'
+  >();
+  expectTypeOf<
+    AddDirProfilesOf<
+      Names,
+      Profiles,
+      { readonly profile: 'reader' } | { readonly description: string }
+    >
+  >().toEqualTypeOf<'reader' | 'nested' | undefined>();
+  expectTypeOf<
+    AddDirProfilesOf<
+      Names,
+      Profiles,
+      { readonly profile: 'plain' } | { readonly description: string }
+    >
+  >().toEqualTypeOf<'reader' | 'nested'>();
   expectTypeOf<
     Extract<Settable<StrictCodex>, (typeof codexCapabilityKeys)[number]>
   >().toEqualTypeOf<'isolation'>();
