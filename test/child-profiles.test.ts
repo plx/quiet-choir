@@ -6,7 +6,7 @@ import { z } from '../src/index.js';
 import type { WorkflowDeclaration } from '../src/workflow/runtime/child-model.js';
 import { delegateCapabilities } from '../src/workflow/runtime/child-profiles.js';
 import { profileGrantDigest, resolveCapabilities } from '../src/workflow/runtime/profiles.js';
-import type { AgentProfile } from '../src/workflow/runtime/profiles-model.js';
+import type { AgentProfile, ResolvedProfile } from '../src/workflow/runtime/profiles-model.js';
 import type { ClaudeOptions, ExecutionPolicy } from '../src/workflow/runtime/model.js';
 
 function declaration(
@@ -343,6 +343,68 @@ it('keeps literal Claude directory delegation working through every ancestor (#3
     expect(() => chain([nested], [nested], base)).not.toThrow();
     expect(() => chain([nested], [nested])).toThrow(
       'Child profile leaf.reader exceeds ancestor profile reader: claude.addDirRoots.',
+    );
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+it('reads only own keys when a role is named like an Object.prototype member (#391)', () => {
+  const base = mkdtempSync(join(tmpdir(), 'choir-ancestor-proto-'));
+  try {
+    const allowed = join(base, 'allowed');
+    const outside = join(base, 'outside');
+    const link = join(allowed, 'link');
+    mkdirSync(join(allowed, 'inner'), { recursive: true });
+    mkdirSync(outside);
+    symlinkSync(join(allowed, 'inner'), link);
+    const top = resolveCapabilities({
+      profiles: { toString: { extends: 'readonly', claude: { addDirRoots: [allowed] } } },
+    });
+    const topRole = Reflect.get(top.profiles, 'toString') as ResolvedProfile | undefined;
+    if (!topRole) throw new Error('top role missing');
+    // The same role name is delegated without a mapping and with no inherited ancestry.
+    const middle = delegateCapabilities(
+      declaration('middle', {
+        toString: { extends: 'readonly', claude: { addDirRoots: [link] } },
+      }),
+      top,
+      ['toString'],
+      { toString: profileGrantDigest(topRole) },
+      [],
+      {},
+      base,
+    );
+    expect(Object.getPrototypeOf(middle.ancestry)).toBeNull();
+    expect(Reflect.get(middle.ancestry, 'toString')).toEqual([
+      { profile: 'toString', addDirs: [], addDirRoots: [allowed] },
+    ]);
+    // An unrelated role does not pick up a prototype member as its ancestry or parent name.
+    expect(Object.hasOwn(middle.ancestry, 'valueOf')).toBe(false);
+    // A grandchild role maps onto the prototype-named parent role through two levels.
+    const delegateLeaf = () =>
+      delegateCapabilities(
+        declaration('leaf', {
+          reader: { extends: 'readonly', claude: { addDirRoots: [link] } },
+        }),
+        middle.manifest,
+        middle.grants,
+        middle.pins,
+        middle.overrides,
+        { profiles: { reader: 'toString' } },
+        base,
+        middle.ancestry,
+      );
+    const leaf = delegateLeaf();
+    expect(leaf.ancestry['reader']).toEqual([
+      { profile: 'toString', addDirs: [], addDirRoots: [allowed] },
+      { profile: 'toString', addDirs: [], addDirRoots: [link] },
+    ]);
+    // The ancestor ceiling under that name still refuses a retargeted root.
+    rmSync(link);
+    symlinkSync(outside, link);
+    expect(() => delegateLeaf()).toThrow(
+      'Child profile leaf.reader exceeds ancestor profile toString: claude.addDirRoots.',
     );
   } finally {
     rmSync(base, { recursive: true, force: true });

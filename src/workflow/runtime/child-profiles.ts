@@ -259,13 +259,18 @@ export function delegateCapabilities(
     if (!Object.hasOwn(manifest.profiles, name))
       throw new Error(`Unknown child profile mapping: ${name}.`);
   const bounds = new Map<string, ResolvedProfile>();
+  // Own-key lookups only: roles named toString or valueOf must not read Object.prototype members.
+  const parentNameOf = (name: string): string =>
+    (Object.hasOwn(mapping, name) ? mapping[name] : name) ?? name;
+  const ancestorsOf = (parentName: string): readonly DirCeiling[] =>
+    Object.hasOwn(parentAncestry, parentName) ? (parentAncestry[parentName] ?? []) : [];
   const grants: string[] = [];
   const pins: Record<string, string> = {};
   const overrides: ProfileOverride[] = [];
   const bound = (name: string): ResolvedProfile => {
     const cached = bounds.get(name);
     if (cached) return cached;
-    const parentName = mapping[name] ?? name;
+    const parentName = parentNameOf(name);
     const role = parent.profiles[parentName];
     if (!Object.hasOwn(parent.profiles, parentName) || !role)
       throw new Error(
@@ -304,7 +309,7 @@ export function delegateCapabilities(
     const inherited = inheritDenials(name, role, ceiling);
     const label = `${definition.name}.${name}`;
     subset(inherited, ceiling, label, rootCwd);
-    withinAncestors(inherited, parentAncestry[mapping[name] ?? name] ?? [], label, rootCwd);
+    withinAncestors(inherited, ancestorsOf(parentNameOf(name)), label, rootCwd);
     requireGrant(ceiling, parentGrants, parentPins);
     return inherited;
   };
@@ -316,7 +321,10 @@ export function delegateCapabilities(
     if (role) checkProfile(name, role);
   }
   const delegated: Record<string, ResolvedProfile> = {};
-  const ancestry: Record<string, readonly DirCeiling[]> = {};
+  const ancestry: Record<string, readonly DirCeiling[]> = Object.create(null) as Record<
+    string,
+    readonly DirCeiling[]
+  >;
   for (const [name, declared] of Object.entries(manifest.profiles)) {
     // Remove unavailable optional built-ins as well: a grandchild must not inherit phantom authority.
     let role: ResolvedProfile;
@@ -369,8 +377,8 @@ export function delegateCapabilities(
       },
     };
     delegated[name] = inherited;
-    const parentName = mapping[name] ?? name;
-    ancestry[name] = [...(parentAncestry[parentName] ?? []), ceilingOf(parentName, ceiling)];
+    const parentName = parentNameOf(name);
+    ancestry[name] = [...ancestorsOf(parentName), ceilingOf(parentName, ceiling)];
     grants.push(name);
     pins[name] = profileGrantDigest(inherited);
   }
