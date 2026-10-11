@@ -102,7 +102,10 @@ effects. Tools, permissions, sandbox and native escape controls cannot exceed th
 opaque controls require matching configuration. A child's Claude `addDirRoots` must lie inside the
 parent role's roots, and a child call's Claude directories must be listed by the parent role or,
 when absolute, lie canonically inside its roots (`claude.addDirRoots`, `claude.addDirs`); Codex
-directories need literal membership. Missing or insufficient roles fail explicitly. Optional
+directories need literal membership. A grandchild's Claude directories and roots must also pass the
+same check, at delegation and at every call, against every ancestor role in the chain, each
+canonicalized when checked (`exceeds ancestor profile …`), so a retargeted symlink root cannot widen
+a descendant beyond the top-level root. Missing or insufficient roles fail explicitly. Optional
 built-ins that the parent cannot delegate disappear from the child's available roles, so a
 grandchild cannot recover them. Raw call-site capabilities are checked too, even with
 `strictProfiles: false`.

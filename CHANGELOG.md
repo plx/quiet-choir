@@ -2,6 +2,15 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- A grandchild's (any descendant's) Claude `addDirs` and `addDirRoots` are rechecked, at delegation
+  and at every call, against every ancestor role's roots, canonicalized when checked, not only
+  against the immediate parent's (#391,
+  [ADR 0054](docs/decisions/0054-bounded-call-site-adddirs.md)). A symlink root a child narrowed to
+  and later retargeted can no longer hand a descendant a directory outside the run's top-level root;
+  the delegation or call fails with `Child profile … exceeds ancestor profile …: claude.addDirs` (or
+  `claude.addDirRoots`) before any harness call. As for direct children, a completed grandchild step
+  whose ancestor root was retargeted fails resolution on resume. Records, step identities and grant
+  pins are unchanged.
 - Restricted Claude is verified to load no instructions or skills from `addDirs` directories, static
   or bounded call-site (#386). The opt-in isolation contract gains canaries for `CLAUDE.md`,
   `.claude/CLAUDE.md`, `CLAUDE.local.md`, `.claude/rules`, `.claude/skills` and `.claude/commands`
