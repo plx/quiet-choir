@@ -288,6 +288,7 @@ export class RunChildren {
           parent?.authority.overrides ?? d.overrides,
           options.profiles === undefined ? {} : { profiles: options.profiles },
           d.cwd,
+          parent?.authority.ancestry ?? {},
         );
         d.used.add(id);
         this.#visited.add(id);

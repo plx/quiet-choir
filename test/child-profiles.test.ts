@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
@@ -213,5 +213,138 @@ it('delegates Claude directories by containment in the parent roots (#171)', () 
     }).toThrow('claude.addDirs');
   } finally {
     rmSync(tree, { recursive: true, force: true });
+  }
+});
+
+it('rechecks every ancestor role root when delegating to grandchildren (#391)', () => {
+  const base = mkdtempSync(join(tmpdir(), 'choir-ancestor-roots-'));
+  try {
+    const allowed = join(base, 'allowed');
+    const inner = join(allowed, 'inner');
+    const outside = join(base, 'outside');
+    const link = join(allowed, 'link');
+    mkdirSync(inner, { recursive: true });
+    mkdirSync(outside);
+    symlinkSync(inner, link);
+    const top = resolveCapabilities({
+      profiles: { reader: { extends: 'readonly', claude: { addDirRoots: [allowed] } } },
+    });
+    const topReader = top.profiles['reader'];
+    if (!topReader) throw new Error('top role missing');
+    const middle = delegateCapabilities(
+      declaration('middle', { reader: { extends: 'readonly', claude: { addDirRoots: [link] } } }),
+      top,
+      ['reader'],
+      { reader: profileGrantDigest(topReader) },
+      [],
+      {},
+      base,
+    );
+    // A root-level child carries only its parent's ceiling; its own checks see no ancestors.
+    expect(middle.ancestry['reader']).toEqual([
+      { profile: 'reader', addDirs: [], addDirRoots: [allowed] },
+    ]);
+    const delegateLeaf = (options: { profiles?: Record<string, string> } = {}, role = 'reader') =>
+      delegateCapabilities(
+        declaration('leaf', { [role]: { extends: 'readonly', claude: { addDirRoots: [link] } } }),
+        middle.manifest,
+        middle.grants,
+        middle.pins,
+        middle.overrides,
+        options,
+        base,
+        middle.ancestry,
+      );
+    const leaf = delegateLeaf();
+    expect(leaf.ancestry['reader']).toEqual([
+      { profile: 'reader', addDirs: [], addDirRoots: [allowed] },
+      { profile: 'reader', addDirs: [], addDirRoots: [link] },
+    ]);
+    const insideDir = join(realpathSync.native(inner), 'x');
+    expect(() => {
+      leaf.check('reader', 'claude', { prompt: 'x', addDirs: [insideDir] });
+    }).not.toThrow();
+
+    // Retarget the narrowed root outside the top-level root after the leaf's delegation.
+    rmSync(link);
+    symlinkSync(outside, link);
+    const outsideDir = join(realpathSync.native(outside), 'x');
+    expect(() => {
+      leaf.check('reader', 'claude', { prompt: 'x', addDirs: [outsideDir] });
+    }).toThrow(
+      'Child profile leaf.reader exceeds ancestor profile reader: claude.addDirs. Delegate a sufficient parent role explicitly.',
+    );
+    // The leaf's own root is rechecked on calls that add no directory.
+    expect(() => {
+      leaf.check('reader', 'claude', { prompt: 'x' });
+    }).toThrow('Child profile leaf.reader exceeds ancestor profile reader: claude.addDirRoots.');
+    // A fresh delegation is refused, also through a mapped role name.
+    expect(() => delegateLeaf()).toThrow(
+      'Child profile leaf.reader exceeds ancestor profile reader: claude.addDirRoots.',
+    );
+    expect(() => delegateLeaf({ profiles: { scan: 'reader' } }, 'scan')).toThrow(
+      'Child profile leaf.scan exceeds ancestor profile reader: claude.addDirRoots.',
+    );
+    // The middle's own calls were already refused against its immediate parent.
+    expect(() => {
+      middle.check('reader', 'claude', { prompt: 'x' });
+    }).toThrow('Child profile middle.reader exceeds parent profile reader: claude.addDirRoots.');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+it('keeps literal Claude directory delegation working through every ancestor (#391)', () => {
+  const base = mkdtempSync(join(tmpdir(), 'choir-ancestor-literal-'));
+  try {
+    const allowed = join(base, 'allowed');
+    mkdirSync(join(allowed, 'inner'), { recursive: true });
+    const top = resolveCapabilities({
+      profiles: {
+        reader: { extends: 'readonly', claude: { addDirs: ['docs'], addDirRoots: [allowed] } },
+      },
+    });
+    const topReader = top.profiles['reader'];
+    if (!topReader) throw new Error('top role missing');
+    const chain = (middleRoots: string[], leafRoots: string[], rootCwd?: string) => {
+      const middle = delegateCapabilities(
+        declaration('middle', {
+          reader: { extends: 'readonly', claude: { addDirs: ['docs'], addDirRoots: middleRoots } },
+        }),
+        top,
+        ['reader'],
+        { reader: profileGrantDigest(topReader) },
+        [],
+        {},
+        base,
+      );
+      return delegateCapabilities(
+        declaration('leaf', {
+          reader: { extends: 'readonly', claude: { addDirs: ['docs'], addDirRoots: leafRoots } },
+        }),
+        middle.manifest,
+        middle.grants,
+        middle.pins,
+        middle.overrides,
+        {},
+        rootCwd,
+        middle.ancestry,
+      );
+    };
+    // A relative static directory listed literally at every level delegates with or without cwd.
+    for (const rootCwd of [base, undefined]) {
+      const leaf = chain([allowed], [allowed], rootCwd);
+      expect(() => {
+        leaf.check('reader', 'claude', { prompt: 'x', addDirs: ['docs'] });
+      }).not.toThrow();
+    }
+    // Without the run cwd, only literal membership delegates, at the ancestor level too.
+    const nested = join(allowed, 'inner');
+    expect(() => chain([nested], [nested], base)).not.toThrow();
+    expect(() => chain([nested], [nested])).toThrow(
+      'Child profile leaf.reader exceeds ancestor profile reader: claude.addDirRoots.',
+    );
+  } finally {
+    rmSync(base, { recursive: true, force: true });
   }
 });
