@@ -8,6 +8,7 @@
   [0052](0052-run-record-schema-revision.md) (schema revision)
 - Amended by [0062](0062-type-call-site-adddirs-by-profile-roots.md) (#385): §7's types are precise
   per profile.
+- Amended by #391: §6 rechecks every ancestor role's roots.
 
 ## Context
 
@@ -57,7 +58,15 @@ writable sandbox roots, so any Codex directory makes the call `write`.
    because they resolve against an effect cwd that is unknown at delegation. Each child root must
    lie canonically inside some parent root, otherwise
    `Child profile … exceeds parent profile …: claude.addDirRoots`. Codex directories keep literal
-   membership. Without a run cwd (direct callers), only literal membership delegates.
+   membership. Without a run cwd (direct callers), only literal membership delegates. A descendant's
+   Claude directories and roots are checked by the same rules, at delegation and at every call,
+   against every ancestor role in the delegation chain, not only the immediate parent; each
+   ancestor's roots are canonicalized when the check runs, otherwise
+   `Child profile … exceeds ancestor profile …: claude.addDirs` (or `claude.addDirRoots`). A root a
+   child narrowed to may be a symlink that is retargeted between delegations, so containment in the
+   parent's declared roots alone could hand a grandchild a directory outside the run's top-level
+   root (#391). The ancestor ceilings live only on the live child authority: records, identities and
+   grant pins are unchanged.
 7. **Types.** Under strict profiles, Claude `addDirs` is a permitted call-site key only together
    with a profile that declares, inherits or defaults `claude.addDirRoots`, as `defineWorkflow`
    infers from `profiles` and `defaults` (ADR 0062, #385); shapes the types cannot see stay

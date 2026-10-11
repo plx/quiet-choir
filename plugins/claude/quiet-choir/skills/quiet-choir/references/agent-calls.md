@@ -58,10 +58,11 @@ inherited through `extends`, or from `defaults.claude`) or, with `profile` omitt
 `defaults.profile`; elsewhere, including the implicit `text`, it fails typecheck, and shapes the
 types cannot see (a widened profiles object, or a generic profile or defaults value a factory
 forwards) are checked when the call runs. Codex cannot declare roots, because its directories are
-writable. Roots are pinned by named grants and bound child roles by containment. `ctx.agent(name)`
-profiles accept only built-in or declared roles. A bare `WorkflowContext` helper stays permissive
-(the runtime still checks); `WorkflowContext<'role', BuiltInHarnesses, true>` is a strict helper
-contract. Explicit `defineWorkflow` type arguments are all-or-nothing: with a shorter prefix such as
+writable. Roots are pinned by named grants and bound child roles by containment in every ancestor's
+roots, rechecked at each call. `ctx.agent(name)` profiles accept only built-in or declared roles. A
+bare `WorkflowContext` helper stays permissive (the runtime still checks);
+`WorkflowContext<'role', BuiltInHarnesses, true>` is a strict helper contract. Explicit
+`defineWorkflow` type arguments are all-or-nothing: with a shorter prefix such as
 `defineWorkflow<Input, Output>`, the rest take the strict, childless defaults, so
 `strictProfiles: false` or a nonempty `children` list fails typecheck; drop the type arguments
 (preferred) or spell all seven. They also leave `profiles`/`defaults` uninferred, so rooted defaults

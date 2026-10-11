@@ -1,5 +1,5 @@
-import { realpathSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { realpathSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
@@ -1806,4 +1806,91 @@ it('delegates root-bounded Claude directories to children and refuses wider chil
   });
   expect(run.status).toBe('completed');
   expect(requests).toEqual([[join(realpathSync.native(root), 'pr-1', 'state')]]);
+});
+
+// A middle child narrows the top root to a symlink inside it; the link is then retargeted outside.
+async function ancestorRoots(retarget: 'none' | 'middle' | 'leaf') {
+  const stateDir = await directory();
+  const tree = await directory();
+  const allowed = join(tree, 'allowed');
+  const inner = join(allowed, 'inner');
+  const outside = join(tree, 'outside');
+  const link = join(allowed, 'link');
+  await mkdir(inner, { recursive: true });
+  await mkdir(outside);
+  await symlink(inner, link);
+  const requests: (readonly string[] | undefined)[] = [];
+  const retargetStep = {
+    input: null,
+    schema: z.null(),
+    run: () => {
+      rmSync(link);
+      symlinkSync(outside, link);
+      return null;
+    },
+  };
+  const leaf = defineWorkflow({
+    name: 'leaf',
+    ...base,
+    profiles: { reader: { extends: 'readonly', claude: { addDirRoots: [link] } } },
+    async run(ctx) {
+      if (retarget === 'leaf') await ctx.step('retarget', retargetStep);
+      await ctx.claude.text('read', { profile: 'reader', prompt: 'x', addDirs: [link] });
+      return null;
+    },
+  });
+  const middle = defineWorkflow({
+    name: 'middle',
+    ...base,
+    profiles: { reader: { extends: 'readonly', claude: { addDirRoots: [link] } } },
+    async run(ctx) {
+      if (retarget === 'middle') await ctx.step('retarget', retargetStep);
+      await ctx.workflow('leaf', leaf, null);
+      return null;
+    },
+  });
+  const parent = defineWorkflow({
+    name: 'parent',
+    ...base,
+    profiles: { reader: { extends: 'readonly', claude: { addDirRoots: [allowed] } } },
+    async run(ctx) {
+      await ctx.workflow('middle', middle, null);
+      return null;
+    },
+  });
+  const run = () =>
+    runWorkflow(parent, {
+      stateDir,
+      runId: 'ancestor-roots',
+      input: null,
+      harness: {
+        invoke: (request) => {
+          requests.push((request.options as { readonly addDirs?: readonly string[] }).addDirs);
+          return Promise.resolve({ text: 'ok', sessionId: null });
+        },
+      },
+    });
+  return { run, requests, inner };
+}
+
+it('refuses a grandchild whose narrowed symlink root was retargeted outside an ancestor root (#391)', async () => {
+  const { run, requests } = await ancestorRoots('middle');
+  await expect(run()).rejects.toThrow(
+    'Child profile leaf.reader exceeds ancestor profile reader: claude.addDirRoots.',
+  );
+  expect(requests).toEqual([]);
+});
+
+it('rechecks ancestor roots at call time when the link is retargeted after delegation (#391)', async () => {
+  const { run, requests } = await ancestorRoots('leaf');
+  await expect(run()).rejects.toThrow(
+    /Step .*read.*: Child profile leaf\.reader exceeds ancestor profile reader: claude\.addDirs\./u,
+  );
+  expect(requests).toEqual([]);
+});
+
+it('delegates a narrowed symlink root to a grandchild while it stays inside every ancestor (#391)', async () => {
+  const { run, requests, inner } = await ancestorRoots('none');
+  expect((await run()).status).toBe('completed');
+  expect(requests).toEqual([[realpathSync.native(inner)]]);
 });

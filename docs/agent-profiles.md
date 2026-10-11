@@ -174,7 +174,11 @@ await ctx.claude.text('review', { profile: 'reader', prompt, addDirs: [`.state/r
   grant. A tool-less rooted role is `read`. Roots are part of the named grant pin.
 - **Children.** A child's `addDirRoots` must lie inside the parent role's roots, and a child call's
   canonical directories inside the parent's roots; otherwise delegation fails with
-  `Child profile … exceeds parent profile …: claude.addDirRoots` (or `claude.addDirs`).
+  `Child profile … exceeds parent profile …: claude.addDirRoots` (or `claude.addDirs`). A grandchild
+  or deeper descendant is also checked, at delegation and at every call, against every ancestor
+  role's roots, each canonicalized when checked, so a symlink root an intermediate child narrowed to
+  and later retargeted cannot reach outside the top-level root; that fails with
+  `Child profile … exceeds ancestor profile …: claude.addDirs` (or `claude.addDirRoots`).
 - **Limits.** The check runs when the call is resolved, not when the CLI opens the directory, so a
   concurrent writer that swaps a path component for a symlink in between is not caught. Resolution
   also runs on replay: a completed step whose directory is now outside its roots (a retargeted
