@@ -30,9 +30,8 @@ is not yet dog-fooded, so this record is deliberately small.
    ```
 
    `defineTeam` takes slot names with one-line descriptions and returns a value carrying `slots`
-   (for documentation and `validate` output) and a `from` helper. `TeamOf` derives the record type.
-   Nothing is registered with the runtime and no runtime check compares a slot to the agent that
-   fills it.
+   (plain data for documentation) and a `from` helper. `TeamOf` derives the record type. Nothing is
+   registered with the runtime and no runtime check compares a slot to the agent that fills it.
 
 2. **Filling is explicit at the call site.**
 
@@ -74,6 +73,7 @@ is not yet dog-fooded, so this record is deliberately small.
 ## Consequences
 
 - One small public module and no runtime change.
-- Standard-library patterns gain a uniform parameterization, and a pattern's `slots` appear in
-  package validation output beside its roster.
+- Standard-library patterns gain a uniform parameterization. Nothing declares teams to the runtime,
+  so validation output does not list them in this revision; a declaration can come with the
+  child-workflow record if discoverability proves worth it.
 - A later record covers child workflows that take teams, once a port shows the need.

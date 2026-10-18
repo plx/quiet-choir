@@ -54,12 +54,24 @@ type BoundCallOptions = Pick<
   AgentOptions,
   'prompt' | 'cwd' | 'addDirs' | 'worktree' | 'onError' | 'retry' | 'timeoutMs' | 'idleTimeoutMs'
 >;
-type Agent = AgentClient<BoundCallOptions>; // value(), text(), object(), the existing overloads
+// The same capability conditional as RegisteredAgentClient: text-only harnesses bind to a text-only agent.
+type Agent<C extends HarnessCapabilities = BuiltInCapabilities> = RegisteredAgentClient<
+  BoundCallOptions,
+  C
+>;
 ```
 
 - The prompt and the schema are the work. `cwd`, `addDirs` and `worktree` are placement: a fan-out
   over per-task directories, or a batch over an existing inventory of task directories, chooses them
   per call. `timeoutMs` and `idleTimeoutMs` are execution policy, never identity (ADR 0005).
+- Two groups of keys. **Per-call only**: `prompt`, the schema, `cwd`, `worktree`, `onError`, `retry`
+  and Codex `images`; neither `bind` nor a roster entry can set them. **Both sides**: `addDirs`,
+  `timeoutMs` and `idleTimeoutMs`; an entry or `bind` sets the default, a call may set its own, the
+  call's deadline wins and its `addDirs` append.
+- `Agent` is generic over the harness's capabilities exactly as `RegisteredAgentClient` is today. A
+  registered harness whose `structuredOutput` is `none` binds to a text-only agent without `object`
+  or schema-bearing `value`, and a team slot (ADR 0067) typed as a structured `Agent` rejects it at
+  typecheck. Built-in harnesses bind to the full interface.
 - Nothing else is callable. Model, effort, tools, skills, plugins, system prompts, permissions,
   sandbox, isolation, environment and escape arguments are fixed by construction.
 - `addDirs` keeps its harness meaning: Claude reads them, Codex may write to them. A call's entries
@@ -73,10 +85,10 @@ const reviewer = ctx.claude.bind({ model: 'opus', effort: 'high', tools: ['Read'
 const verdict = await reviewer.value('review', { prompt, schema: Review });
 ```
 
-`AgentClient` gains `bind(options): Agent` on `ctx.claude`, `ctx.codex` and `ctx.agent(name)`.
-`options` is that client's full option type minus `prompt` and the per-call keys above. Binding is
-pure: it closes over the options, and each call fingerprints exactly as if they had been spelled at
-the call site.
+`AgentClient` gains `bind(options)` on `ctx.claude`, `ctx.codex` and `ctx.agent(name)`. `options` is
+that client's full option type minus the per-call-only keys of §1; the both-sides keys may be set
+here as defaults. The result keeps the client's capability conditional. Binding is pure: it closes
+over the options, and each call fingerprints exactly as if they had been spelled at the call site.
 
 ### 3. The roster: the one inventory
 
@@ -115,11 +127,12 @@ export default defineWorkflow({
 ```
 
 - An entry is `{ harness, description?, expectsToolUse? }` plus **that harness's own option type**
-  minus `prompt` and the per-call keys of §1. The `harness` discriminant selects the type:
-  `ClaudeOptions` for `'claude'`, `CodexOptions` for `'codex'`, and a registered harness's declared
-  schema for its name (pass the harness list to `defineRoster` to type those entries). There is no
-  cross-harness block and no `extends`; TypeScript object spread is the inheritance, and the
-  standard library ships entries to spread into.
+  minus the per-call-only keys of §1 (the both-sides keys are allowed, as the `timeoutMs` on
+  `Mechanic` shows). The `harness` discriminant selects the type: `ClaudeOptions` for `'claude'`,
+  `CodexOptions` for `'codex'`, and a registered harness's declared schema for its name (pass the
+  harness list to `defineRoster` to type those entries). There is no cross-harness block and no
+  `extends`; TypeScript object spread is the inheritance, and the standard library ships entries to
+  spread into.
 - Entries hold concrete values only. A standing prompt comes from a template (ADR 0064) rendered
   with literal parameters when the module loads, so `defineRoster` sees a string.
 - `defineWorkflow` gains a `roster` field and infers its keys. `ctx.roster` is

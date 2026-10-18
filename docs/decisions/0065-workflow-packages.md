@@ -26,7 +26,7 @@ A package is a directory named `<name>.quiet-choir` with a `package.ts` manifest
 
 ```
 merge-down.quiet-choir/
-  package.ts            definePackage: name, version, description, whenToUse, workflows, entry
+  package.ts            definePackage: root, name, version, description, whenToUse, workflows, entry
   workflows/
     merge-down-pr.ts    control flow only; default-exports defineWorkflow
     merge-down-stack.ts
@@ -43,6 +43,7 @@ merge-down.quiet-choir/
 ```ts
 // package.ts
 export default definePackage({
+  root: import.meta.dirname, // the loader refuses a manifest whose root is not its own directory
   name: 'merge-down',
   version: '1',
   description: 'Merge a reviewed PR stack down to main.',
@@ -59,10 +60,13 @@ export default definePackage({
   `defineWorkflow` that imports the package's roster, prompts and contracts, and a single-file
   workflow can use the same `roster` and `prompts` fields with an adjacent directory. The package
   adds a manifest, discovery, whole-directory fingerprinting and a conventional layout.
-- `definePackage` validates the name (`/^[a-z][a-z0-9-]{0,63}$/`), the version, that workflow names
-  are unique, that `entry` is one of `workflows`, and the declared prompt sets (ADR 0064 checks).
-  The returned value also exposes `root` and `resource(relativePath)`, which resolves a path
-  confined to `resources/`, for workflows that read package files.
+- `definePackage` takes `root` explicitly (`import.meta.dirname`), because a module cannot otherwise
+  learn its own location at evaluation time, and the loader refuses a manifest whose declared root
+  is not the directory it was imported from. It validates the name (`/^[a-z][a-z0-9-]{0,63}$/`), the
+  version, that workflow names are unique, that `entry` is one of `workflows`, and the declared
+  prompt sets (ADR 0064 checks). The returned value exposes `root` and `resource(relativePath)`,
+  which resolves a path confined to `resources/`; both are usable during module initialization
+  because the root is known at the call.
 
 ### 2. Loading and the CLI
 
