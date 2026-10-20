@@ -50,6 +50,11 @@ interface Dependencies {
   readonly visitedMaps: Set<string>;
   /** Whether an error is this run's own checkpoint failure, not a domain error reusing the class. */
   readonly isCheckpointFailure: (error: unknown) => boolean;
+  /**
+   * Record a skip refusal where it is thrown, for the accepted-replay preflight (#502); a no-op
+   * outside the preflight's probe.
+   */
+  readonly divergence: (error: ReplaySkippedError) => void;
   /** Claim a replayed leaf step: emits step.replayed and marks matched policy, as map replay does. */
   readonly replayed: (id: string, step: StepRecord) => void;
   readonly isInEffect: () => boolean;
@@ -551,10 +556,13 @@ export class RunChildren {
           (frame.status === 'completed' || frame.settled !== undefined) && !this.#visited.has(id),
       )
       .map(([id]) => id);
-    if (missing.length)
-      throw new ReplaySkippedError(
+    if (missing.length) {
+      const error = new ReplaySkippedError(
         `Replay skipped completed or settled child frames (${missing.join(', ')}); workflow control flow changed.`,
         { kind: 'child-frames', skipped: missing },
       );
+      this.#deps.divergence(error);
+      throw error;
+    }
   }
 }

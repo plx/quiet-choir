@@ -232,8 +232,9 @@ metadata and harness-kind provenance live outside semantic fingerprints. See
 also owns one small synthesizing probe (a dry-run harness, process runner and stub-everything hooks)
 for the accepted-replay preflight that `runWorkflow` runs before an accepted code change mutates a
 run (ADR 0006). Under that probe alone the runtime synthesizes every worktree effect
-(`ctx.worktree`, handle isolation and merges of captured commits too) without running Git, and the
-probe's disposable copy carries the run's pending answer deliveries.
+(`ctx.worktree`, handle isolation and merges of captured commits too) without running Git and
+records each accepted-replay divergence where it is thrown, so a body that catches one is still
+refused (#502); the probe's disposable copy carries the run's pending answer deliveries.
 
 ## Deferred configuration discovery
 

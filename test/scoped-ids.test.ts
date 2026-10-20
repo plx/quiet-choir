@@ -657,6 +657,73 @@ it.each([
   },
 );
 
+it.each([
+  ['items', { n: 2 }],
+  ['mapper', { mapper: true }],
+] as const)(
+  'treats a caught %s change to a committed settled map under acceptCodeChange as uncaught (#502)',
+  async (changed, edit) => {
+    const runId = `caught-${changed}`;
+    let current = { n: 1, mapper: false, tail: true };
+    const work = vi.fn(() => 'saved');
+    const fallback = vi.fn(() => 'fallback');
+    const definition = workflow(async (ctx) => {
+      const { n, mapper, tail } = current;
+      const step = () => ctx.step('work', { input: null, schema: z.string(), run: work });
+      let result: unknown;
+      try {
+        result = await ctx.map(
+          'items',
+          [{ id: 'a', n }],
+          { concurrency: 1, onError: 'return', key: (item) => item.id },
+          mapper ? async () => `${await step()}!` : step,
+        );
+      } catch {
+        result = await ctx.step('fallback', { input: null, schema: z.string(), run: fallback });
+      }
+      if (tail) throw new Error('tail');
+      return result;
+    });
+    await expect(runWorkflow(definition, { ...options(), runId })).rejects.toThrow('tail');
+    const before = {
+      bytes: await runFiles(runId),
+      run: await readRun({ ...options(), runId }),
+    };
+    current = { ...current, ...edit, tail: false };
+    const resume = runWorkflow(definition, {
+      ...options(),
+      runId,
+      resume: true,
+      acceptCodeChange: true,
+    });
+    if (changed === 'items') {
+      // The body catches the refusal, but its throw site recorded it, so the preflight refuses.
+      await expectAcceptedMapRefusal(
+        resume,
+        runId,
+        {
+          mapId: 'items',
+          components: ['items'],
+          legacy: false,
+          message:
+            'Settled map items changed after an item completed (changed: items); --accept-code-change accepts only a mapper change. Fork a new run.',
+        },
+        before,
+      );
+    } else {
+      // A mapper-only change is accepted and never recorded: the resume completes over the map.
+      const result = await resume;
+      expect(result).toMatchObject({
+        status: 'completed',
+        output: [{ ok: true, value: 'saved' }],
+      });
+      expect(result.codeChanges).toMatchObject([{ components: ['mapper'], map: 'items' }]);
+    }
+    expect(work).toHaveBeenCalledTimes(1);
+    expect(fallback).not.toHaveBeenCalled();
+  },
+);
+
 it('refuses a changed settled-map cwd component before changing the run under acceptCodeChange', async () => {
   const definition = workflow(async (ctx) => {
     await ctx.map('items', ['a'], { concurrency: 1, onError: 'return' }, () =>

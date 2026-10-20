@@ -25,7 +25,12 @@ import {
   type WorkflowContext,
   writeAnswer,
 } from '../src/index.js';
-import { disposableRunCopy } from '../src/workflow/runtime/accepted-replay-preflight.js';
+import {
+  disposableRunCopy,
+  isPreflightProbe,
+  preflightProbe,
+  recordAcceptedReplayDivergence,
+} from '../src/workflow/runtime/accepted-replay-preflight.js';
 import { answerCandidates } from '../src/workflow/runtime/inbox.js';
 import {
   findAcceptedReplayDivergence,
@@ -1394,6 +1399,157 @@ it.each([
     expect((await readRun(options())).status).toBe(status);
   },
 );
+
+it('records accepted-replay divergences only under a preflight probe, first one wins, apart per probe (#502)', () => {
+  const identity = new StepIdentityChangedError('step', {
+    stepId: 'local',
+    components: ['callback'],
+    status: 'completed',
+  });
+  const skipped = new ReplaySkippedError('skip', { kind: 'steps', skipped: ['early'] });
+  const changed = new SettledMapChangedError('items changed', {
+    mapId: 'items',
+    components: ['items'],
+    legacy: false,
+  });
+  const mapperOnly = new SettledMapChangedError('mapper changed', {
+    mapId: 'items',
+    components: ['mapper'],
+    legacy: false,
+  });
+  const user: NonNullable<RunOptions['rehearsal']> = { localStep: () => undefined };
+  expect(isPreflightProbe(undefined)).toBe(false);
+  expect(isPreflightProbe(user)).toBe(false);
+  // Recording under anything but a probe's own hooks is a no-op.
+  recordAcceptedReplayDivergence(undefined, identity);
+  recordAcceptedReplayDivergence(user, identity);
+  const first = preflightProbe(stateDir);
+  const second = preflightProbe(stateDir);
+  expect(isPreflightProbe(first.options.rehearsal)).toBe(true);
+  expect(isPreflightProbe(second.options.rehearsal)).toBe(true);
+  expect(first.options.rehearsal).not.toBe(second.options.rehearsal);
+  expect(first.options).toMatchObject({
+    stateDir,
+    resume: true,
+    acceptCodeChange: true,
+    allowHarnessChange: true,
+    waitMode: 'suspend',
+  });
+  expect(first.divergence()).toBeUndefined();
+  // A mapper-only change is admitted by the accepted resume, so it is never recorded.
+  recordAcceptedReplayDivergence(first.options.rehearsal, mapperOnly);
+  expect(first.divergence()).toBeUndefined();
+  for (const [error, other] of [
+    [identity, skipped],
+    [skipped, changed],
+    [changed, identity],
+  ] as const) {
+    const probe = preflightProbe(stateDir);
+    recordAcceptedReplayDivergence(probe.options.rehearsal, error);
+    recordAcceptedReplayDivergence(probe.options.rehearsal, other);
+    expect(probe.divergence()).toBe(error);
+  }
+  recordAcceptedReplayDivergence(second.options.rehearsal, skipped);
+  expect(second.divergence()).toBe(skipped);
+  // Two probes never share a record.
+  expect(first.divergence()).toBeUndefined();
+});
+
+it.each([
+  { first: 'completes', tail: false },
+  { first: 'fails at a tail', tail: true },
+] as const)(
+  'refuses an accepted resume whose body catches a changed completed step and falls back, when the first run $first (#502)',
+  async ({ tail }) => {
+    let callback = (): string => 'one';
+    const fallback = vi.fn(() => 'fallback');
+    let failing = tail;
+    const definition = workflow(async (ctx) => {
+      let value: string;
+      try {
+        value = await ctx.step('local', { input: null, schema: z.string(), run: callback });
+      } catch {
+        value = await ctx.step('fallback', { input: null, schema: z.string(), run: fallback });
+      }
+      if (failing) throw new Error('tail');
+      return value;
+    });
+    await runWorkflow(definition, options()).catch(() => undefined);
+    const before = { record: await readRun(options()), files: await runFiles('source') };
+    expect(before.record.status).toBe(tail ? 'failed' : 'completed');
+    callback = () => 'two';
+    failing = false;
+    const rejected = await acceptedRejection(definition);
+    await expectUnchanged(rejected, before, {
+      stepId: 'local',
+      components: ['callback'],
+      status: 'completed',
+    });
+    expect((rejected as Error).message).toContain(
+      '--fork-from RUN --reuse matching --invalidate local',
+    );
+    // The probe synthesized the fallback, and the real run never started.
+    expect(fallback).not.toHaveBeenCalled();
+  },
+);
+
+it('refuses an accepted resume whose body catches a changed step inside a child and falls back (#502)', async () => {
+  let callback = (): string => 'one';
+  const fallback = vi.fn(() => 'fallback');
+  const child = defineWorkflow({
+    name: 'replay-child',
+    version: '1',
+    input: z.null(),
+    output: z.string(),
+    run: (ctx) => ctx.step('inner', { input: null, schema: z.string(), run: callback }),
+  });
+  const definition = workflow(async (ctx) => {
+    try {
+      return await ctx.workflow('review', child, null);
+    } catch {
+      return ctx.step('fallback', { input: null, schema: z.string(), run: fallback });
+    }
+  });
+  expect((await runWorkflow(definition, options())).output).toBe('one');
+  const before = { record: await readRun(options()), files: await runFiles('source') };
+  expect(before.record.children?.['review']?.status).toBe('completed');
+  callback = () => 'two';
+  await expectUnchanged(await acceptedRejection(definition), before, {
+    stepId: 'review/inner',
+    components: ['callback'],
+    status: 'completed',
+  });
+  expect(fallback).not.toHaveBeenCalled();
+});
+
+it('refuses a caught changed step even when the copy then fails at a synthesis gap (#502)', async () => {
+  let callback = (): string => 'one';
+  let gap = false;
+  const fallback = vi.fn(() => 'fallback');
+  const definition = workflow(async (ctx) => {
+    let value: string;
+    try {
+      value = await ctx.step('local', { input: null, schema: z.string(), run: callback });
+    } catch {
+      value = await ctx.step('fallback', { input: null, schema: z.string(), run: fallback });
+    }
+    // A pattern the preflight cannot synthesize: its copy fails here, after the caught refusal.
+    if (gap)
+      await ctx.step('gap', { input: null, schema: z.string().regex(/^x$/u), run: () => 'x' });
+    return value;
+  });
+  expect((await runWorkflow(definition, options())).output).toBe('one');
+  const before = { record: await readRun(options()), files: await runFiles('source') };
+  gap = true;
+  callback = () => 'two';
+  await expectUnchanged(await acceptedRejection(definition), before, {
+    stepId: 'local',
+    components: ['callback'],
+    status: 'completed',
+  });
+  expect(fallback).not.toHaveBeenCalled();
+  expect((await readRun(options())).steps['gap']).toBeUndefined();
+});
 
 it('still fails and changes the run when the preflight cannot reach a changed completed step', async () => {
   let callback = (): string => 'one';

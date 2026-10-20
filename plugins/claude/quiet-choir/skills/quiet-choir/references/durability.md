@@ -272,6 +272,13 @@ recording the acceptance: the fingerprint, `codeChanges`, output and steps stay 
 saved run gains an execution entry with that outcome and a `run.cancelled` or `run.suspended` event,
 also sent to `onEvent`.
 
+The CLI and embedded accepted-resume refusals hold even when the body catches the error and falls
+back, or a settled boundary (an `onError: 'return'` child or map item) absorbs it: the preflight's
+copy records each of these divergences where it is thrown, so a fallback cannot hide it. A skip is
+always raised after the body returns, so a body cannot catch one. The
+`--dry-run --resume --accept-code-change` preview still reports only a divergence that escapes the
+body, so it can admit a resume whose caught refusal the real accepted resume refuses.
+
 ## Settled map replay
 
 `ctx.map(id, items, { concurrency, onError: 'return', key?, version? }, mapper)` journals each

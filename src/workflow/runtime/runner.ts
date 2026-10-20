@@ -111,10 +111,11 @@ import {
   acceptedReplayRefusal,
   disposableRunCopy,
   isPreflightProbe,
-  preflightProbeOptions,
+  preflightProbe,
   preflightRunOptions,
+  recordAcceptedReplayDivergence,
+  type AcceptedReplayDivergence,
 } from './accepted-replay-preflight.js';
-import type { SettledMapChangedError } from './run-errors.js';
 import {
   findAcceptedReplayDivergence,
   isValidRunId,
@@ -608,8 +609,10 @@ export interface RunOptions extends WorkflowCodeOptions {
    * version or cwd changed (or whose journal predates per-component fingerprints) after an item
    * completed, with a bare {@link SettledMapChangedError}; if it finishes without revisiting a
    * completed step, settled map or completed or settled child frame, with a bare
-   * {@link ReplaySkippedError}. Either way the run is left unchanged. A mapper-only map change is
-   * accepted. Top-level code outside effects therefore runs one extra
+   * {@link ReplaySkippedError}. Either way the run is left unchanged. The refusal holds even when
+   * the body catches the error, or a settled boundary (an `onError: 'return'` child or map item)
+   * absorbs it, and falls back: the copy records each divergence where it is thrown. A mapper-only
+   * map change is accepted. Top-level code outside effects therefore runs one extra
    * time.
    */
   readonly acceptCodeChange?: boolean;
@@ -1058,25 +1061,36 @@ export async function runWorkflow<
         existing.engine.tsx !== engine.tsx);
     // #215: every gate above has passed and nothing has touched `existing` yet. An accepted replay
     // that would meet a changed completed step, a settled map changed beyond its mapper (#303), or
-    // skip a completed step, settled map or child frame (#216), is found on a disposable copy of the record read under this lock, and refused
-    // before the acceptance is recorded. The probe's own nested run
-    // carries rehearsal hooks, as does a dry run, which is already a disposable copy.
+    // skip a completed step, settled map or child frame (#216), is found on a disposable copy of
+    // the record read under this lock, and refused before the acceptance is recorded, even when the
+    // copy's body catches it (#502). The probe's own nested run carries rehearsal hooks, as does a
+    // dry run, which is already a disposable copy.
     if (options.acceptCodeChange && existing && options.rehearsal === undefined) {
       let copy: Awaited<ReturnType<typeof disposableRunCopy>> | undefined;
-      let change:
-        StepIdentityChangedError | ReplaySkippedError | SettledMapChangedError | undefined;
+      let escaped: unknown;
+      let preflight: ReturnType<typeof preflightProbe> | undefined;
       try {
         copy = await disposableRunCopy(existing, stateDir);
-        await runWorkflow(definition, {
-          ...preflightRunOptions(options),
-          ...preflightProbeOptions(copy.stateDir),
-        });
+        preflight = preflightProbe(copy.stateDir);
+        await runWorkflow(definition, { ...preflightRunOptions(options), ...preflight.options });
       } catch (error) {
-        change = findAcceptedReplayDivergence(error);
+        escaped = error;
       } finally {
         // A temporary directory left behind must not fail the real run.
         await copy?.dispose().catch(() => undefined);
       }
+      // An escaped divergence first, so an uncaught case reports what it always did; then the
+      // first one a throw site recorded, which the body caught or a settled boundary absorbed
+      // (#502), whether the copy completed, suspended or failed for another reason. A skip is
+      // raised only after the body returned, so a divergence recorded before it was caught on
+      // the way, and is the one the uncaught body would report, such as a refused settled map
+      // whose unclaimed leaves the skip then names.
+      const escapedChange = findAcceptedReplayDivergence(escaped);
+      const recorded = preflight?.divergence();
+      const change =
+        escapedChange instanceof ReplaySkippedError
+          ? (recorded ?? escapedChange)
+          : (escapedChange ?? recorded);
       if (options.signal?.aborted) {
         // The copy may hold an interrupted or cancelled record; the abort belongs to the real run.
         // It ends this execution as the body's catch would (suspended for a marked interruption,
@@ -1531,6 +1545,13 @@ export async function runWorkflow<
       },
       () => children.frame,
     );
+    // The accepted-replay probe synthesizes every Git effect, and its throw sites record each
+    // divergence out of band, so its preflight finds one the body catches (#502).
+    const probe = isPreflightProbe(options.rehearsal);
+    const divergence = <E extends AcceptedReplayDivergence>(error: E): E => {
+      if (probe) recordAcceptedReplayDivergence(options.rehearsal, error);
+      return error;
+    };
     const children: RunChildren = new RunChildren({
       definition: checkedDefinition(definition),
       capabilities,
@@ -1550,6 +1571,7 @@ export async function runWorkflow<
       used,
       visitedMaps,
       isCheckpointFailure: (error) => checkpointProblems.includes(error as CheckpointError),
+      divergence,
       replayed: (id, step) => {
         replayedStep(id, step);
       },
@@ -1699,7 +1721,6 @@ export async function runWorkflow<
     // Dry-run synthesizes fresh isolation with read-only Git only, makes the real ledger and merge
     // target checks (#312), and previews merges in a quarantined temporary object store (#310).
     // The accepted-replay probe synthesizes every Git effect and gets no runner, so it runs no Git.
-    const probe = isPreflightProbe(options.rehearsal);
     const rehearsalWorktrees =
       options.rehearsal === undefined
         ? undefined
@@ -1945,11 +1966,13 @@ export async function runWorkflow<
           throw refusal.reason === 'rehearsal-git'
             ? new ConfigurationError(replayRefusalMessage(id, refusal))
             : refusal.reason === 'terminal-redefined'
-              ? new StepIdentityChangedError(replayRefusalMessage(id, refusal), {
-                  stepId: id,
-                  components: refusal.changed,
-                  status: refusal.status,
-                })
+              ? divergence(
+                  new StepIdentityChangedError(replayRefusalMessage(id, refusal), {
+                    stepId: id,
+                    components: refusal.changed,
+                    status: refusal.status,
+                  }),
+                )
               : new Error(replayRefusalMessage(id, refusal));
         // decideReplay refuses this way only while a divergence is recorded.
         if (strictHealedDivergence) {
@@ -3324,6 +3347,7 @@ export async function runWorkflow<
       nextSeq: () => nextSeq++,
       frame: () => children.frame,
       isCheckpointFailure: (error) => checkpointProblems.includes(error as CheckpointError),
+      divergence,
       replayChild: (id) => {
         children.replay(id);
       },
@@ -4024,17 +4048,21 @@ export async function runWorkflow<
             maps[id]?.items.some((item) => item.status === 'completed')),
       );
       if (missingMaps.length)
-        throw new ReplaySkippedError(
-          `Replay skipped settled maps (${missingMaps.join(', ')}); workflow control flow changed.`,
-          { kind: 'maps', skipped: missingMaps },
+        throw divergence(
+          new ReplaySkippedError(
+            `Replay skipped settled maps (${missingMaps.join(', ')}); workflow control flow changed.`,
+            { kind: 'maps', skipped: missingMaps },
+          ),
         );
       const missing = Object.entries(record.steps)
         .filter(([id, step]) => !used.has(id) && isTerminalStep(step))
         .map(([id]) => id);
       if (missing.length)
-        throw new ReplaySkippedError(
-          `Replay skipped recorded steps (${missing.join(', ')}); workflow control flow changed.${healed.size ? ` Healed steps: ${[...healed].join(', ')}.` : ''}`,
-          { kind: 'steps', skipped: missing, healed: [...healed] },
+        throw divergence(
+          new ReplaySkippedError(
+            `Replay skipped recorded steps (${missing.join(', ')}); workflow control flow changed.${healed.size ? ` Healed steps: ${[...healed].join(', ')}.` : ''}`,
+            { kind: 'steps', skipped: missing, healed: [...healed] },
+          ),
         );
       warnUnmatched();
       record.output = jsonValue(definition.output.parse(output), 'Workflow output');
