@@ -2,6 +2,16 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- A rare race can no longer mark another process's freshly published run or worktree administration
+  lock released (#446, [ADR 0030](docs/decisions/0030-rename-published-run-locks.md)). The
+  released-owner rewrite, shared by a run lock's release with live children and the administration
+  lock's hand-off after a failed retire, now creates its temporary file before it checks the token
+  and then renames that uniquely named file, so a stale retire that moves the lock aside and a third
+  owner's publish between the check and the rewrite leave the new lock untouched. The run lock's
+  release then fails with "ownership was lost" (or `ENOENT`, a warning) instead of reporting
+  orphans, and the administration lock's release throws the retire's original error. A rewrite can
+  still land in the wrong lock only if the lock path flips twice within one call, which ADR 0030
+  documents. Nothing changes when no race happens.
 - A grandchild's (any descendant's) Claude `addDirs` and `addDirRoots` are rechecked, at delegation
   and at every call, against every ancestor role's roots, canonicalized when checked, not only
   against the immediate parent's (#391,
