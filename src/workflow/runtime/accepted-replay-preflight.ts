@@ -9,20 +9,23 @@
  *
  * The probe needs no fixtures and no live integration: its harness, process runner and rehearsal
  * hooks synthesize every unfinished agent call, command, local step, file effect and poll observer
- * from its schema. The runtime recognizes the probe's hooks ({@link isPreflightProbe}) and
+ * from its schema. The runtime recognizes each preflight's own hooks ({@link isPreflightProbe}) and
  * synthesizes every Git worktree effect with placeholders and no Git command (#217): `ctx.worktree`,
  * isolation on a fresh checkout or a handle, and any merge, which a `--dry-run` partly refuses.
  * The copy also holds the pending answer deliveries of the run's waiting questions, so it consumes
  * a delivered but unconsumed answer as the real run would. Only a completed-step identity change
  * ({@link StepIdentityChangedError}) or a skipped completed step, settled map or child frame
  * ({@link ReplaySkippedError}) or a non-mapper settled-map change ({@link SettledMapChangedError};
- * a mapper-only change is accepted) counts as a finding.
+ * a mapper-only change is accepted) counts as a finding: one that escapes the copy's body, or,
+ * failing that, the first one its throw site recorded under the probe
+ * ({@link recordAcceptedReplayDivergence}), so a body that catches the refusal, or a settled
+ * boundary that absorbs it, cannot fail the preflight open (#502).
  *
- * Completion, suspension, a refusal, a synthesis gap, a rehearsal limitation or any other failure
- * finds nothing, so the real run proceeds and reproduces any genuine problem itself; only an abort
- * propagates. What can still stop the probe before a changed step: a synthesized value that fails
- * validation (such as a refinement), a question with no delivery, an unresolved external wait, or
- * a failure to copy the run. Synthesized values can also
+ * Completion, suspension, another refusal, a synthesis gap, a rehearsal limitation or any other
+ * failure with nothing recorded finds nothing, so the real run proceeds and reproduces any genuine
+ * problem itself; only an abort propagates. What can still stop the probe before a changed step: a
+ * synthesized value that fails validation (such as a refinement), a question with no delivery, an
+ * unresolved external wait, or a failure to copy the run. Synthesized values can also
  * steer the copy onto a different branch from a real run, so a finding is as good as the
  * rehearsal's path parity (ADR 0006). @internal
  */
@@ -36,6 +39,7 @@ import type { Harness, HarnessResponse } from './model.js';
 import { runDirectory } from './paths.js';
 import type { RunRecord } from './record.js';
 import {
+  isMapperOnlyChange,
   ReplaySkippedError,
   SettledMapChangedError,
   StepIdentityChangedError,
@@ -136,52 +140,90 @@ const probeProcessRunner: ProcessRunner = {
     }),
 };
 
-/** Stub every unfinished local step, file effect and poll observer, as `--stub-steps '**'` does. */
-const probeHooks: NonNullable<RunOptions['rehearsal']> = {
-  localStep: (stepId, schema) => ({ output: synthesizeOutput(schema, stepId) }),
-  onWorktree: () => undefined,
-};
+/** A divergence an accepted resume refuses before it changes the run. @internal */
+export type AcceptedReplayDivergence =
+  StepIdentityChangedError | ReplaySkippedError | SettledMapChangedError;
+
+type RehearsalHooks = NonNullable<RunOptions['rehearsal']>;
 
 /**
- * Whether `hooks` are the probe's own rehearsal hooks, so the runner may synthesize every Git
- * worktree effect (#217). Detected by identity: no public option can ask for it. @internal
+ * Each live preflight's hooks and the first divergence recorded under them. Keyed by the hooks
+ * object, so two preflights in one process never see each other's records, and an entry goes away
+ * with its hooks. The outer run, its nested probe run, `map.ts` and `children.ts` share this module
+ * instance, unlike a CLI workflow's own import of the error classes.
+ */
+const probes = new WeakMap<RehearsalHooks, { first?: AcceptedReplayDivergence }>();
+
+/**
+ * Whether `hooks` are a preflight's own rehearsal hooks, so the runner may synthesize every Git
+ * worktree effect (#217) and record divergences out of band (#502). Detected by identity: no
+ * public option can ask for it. @internal
  */
 export function isPreflightProbe(hooks: RunOptions['rehearsal']): boolean {
-  return hooks === probeHooks;
+  return hooks !== undefined && probes.has(hooks);
 }
 
 /**
- * The options that point a preflight's nested run at a disposable copy: the probe harness, hooks
- * and process runner, a suspending wait, and an accepted resume. @internal
+ * Record `error` for the preflight that owns `hooks`, at the site that throws it, so the preflight
+ * still finds it when the body catches it or a settled boundary absorbs it (#502). A no-op unless
+ * `hooks` are a preflight's own; a mapper-only settled-map change, which the accepted resume
+ * admits, is ignored, and only the first divergence is kept. @internal
  */
-export function preflightProbeOptions(
-  stateDir: string,
-): Required<
-  Pick<
-    RunOptions,
-    | 'stateDir'
-    | 'harness'
-    | 'rehearsal'
-    | 'processRunner'
-    | 'execRunner'
-    | 'allowHarnessChange'
-    | 'waitMode'
-    | 'resume'
-    | 'acceptCodeChange'
-  >
-> {
+export function recordAcceptedReplayDivergence(
+  hooks: RunOptions['rehearsal'],
+  error: AcceptedReplayDivergence,
+): void {
+  const state = hooks === undefined ? undefined : probes.get(hooks);
+  if (!state || state.first) return;
+  if (error instanceof SettledMapChangedError && isMapperOnlyChange(error)) return;
+  state.first = error;
+}
+
+/**
+ * A fresh probe for one preflight: the options that point its nested run at the disposable copy in
+ * `stateDir` (the probe harness, its own rehearsal hooks and process runner, a suspending wait,
+ * and an accepted resume), and `divergence`, which reads the first divergence its throw sites
+ * recorded. @internal
+ */
+export function preflightProbe(stateDir: string): {
+  readonly options: Required<
+    Pick<
+      RunOptions,
+      | 'stateDir'
+      | 'harness'
+      | 'rehearsal'
+      | 'processRunner'
+      | 'execRunner'
+      | 'allowHarnessChange'
+      | 'waitMode'
+      | 'resume'
+      | 'acceptCodeChange'
+    >
+  >;
+  readonly divergence: () => AcceptedReplayDivergence | undefined;
+} {
+  // Stub every unfinished local step, file effect and poll observer, as `--stub-steps '**'` does.
+  const hooks: RehearsalHooks = {
+    localStep: (stepId, schema) => ({ output: synthesizeOutput(schema, stepId) }),
+    onWorktree: () => undefined,
+  };
+  const state: { first?: AcceptedReplayDivergence } = {};
+  probes.set(hooks, state);
   return {
-    stateDir,
-    harness: probeHarness,
-    rehearsal: probeHooks,
-    processRunner: probeProcessRunner,
-    execRunner: probeProcessRunner,
-    // The copy's adapter kind is the probe's; the real run keeps its own harness checks.
-    allowHarnessChange: true,
-    // A blocking wait would never end: rehearsal skips timers and nobody answers the copy.
-    waitMode: 'suspend',
-    resume: true,
-    acceptCodeChange: true,
+    options: {
+      stateDir,
+      harness: probeHarness,
+      rehearsal: hooks,
+      processRunner: probeProcessRunner,
+      execRunner: probeProcessRunner,
+      // The copy's adapter kind is the probe's; the real run keeps its own harness checks.
+      allowHarnessChange: true,
+      // A blocking wait would never end: rehearsal skips timers and nobody answers the copy.
+      waitMode: 'suspend',
+      resume: true,
+      acceptCodeChange: true,
+    },
+    divergence: () => state.first,
   };
 }
 
@@ -249,9 +291,9 @@ const refusals = new WeakSet<Error>();
  * step's message already does. @internal
  */
 export function acceptedReplayRefusal(
-  change: StepIdentityChangedError | ReplaySkippedError | SettledMapChangedError,
+  change: AcceptedReplayDivergence,
   runId: string,
-): StepIdentityChangedError | ReplaySkippedError | SettledMapChangedError {
+): AcceptedReplayDivergence {
   const refused = `${change.message} The accepted replay was refused before run ${runId} was changed.`;
   const error =
     change instanceof ReplaySkippedError

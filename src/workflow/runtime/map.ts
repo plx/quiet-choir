@@ -68,6 +68,11 @@ interface MapDependencies {
   readonly frame: () => string | null;
   /** Whether an error is this run's own checkpoint failure, not a domain error reusing the class. */
   readonly isCheckpointFailure: (error: unknown) => boolean;
+  /**
+   * Record a settled-map refusal where it is thrown, so the accepted-replay preflight finds it even
+   * when the body catches it (#502); a no-op outside the preflight's probe.
+   */
+  readonly divergence: (error: SettledMapChangedError) => void;
   readonly replayed: (id: string, step: StepRecord) => void;
   readonly replayChild: (id: string) => void;
 }
@@ -94,6 +99,7 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
     nextSeq,
     frame,
     isCheckpointFailure,
+    divergence,
     replayed,
     replayChild,
   } = dependencies;
@@ -275,6 +281,7 @@ export function createMap(dependencies: MapDependencies): WorkflowContext['map']
                 },
               );
               origins.markFatal(error);
+              divergence(error);
               throw error;
             }
             case 'reset':

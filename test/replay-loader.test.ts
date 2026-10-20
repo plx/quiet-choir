@@ -321,6 +321,46 @@ describe('source-aware loader recovery', { timeout: 50_000 }, () => {
     },
   );
 
+  it('refuses an accepted resume whose body catches the changed completed step and falls back (#502)', async () => {
+    const caught = (callback: string) =>
+      `import { defineWorkflow, z } from ${JSON.stringify(join(repository, 'src/index.js'))};
+export default defineWorkflow({ name: 'loader-replay', version: '1', input: z.null(), output: z.string(), async run(ctx) {
+try {
+  return await ctx.step('effect', { input: null, schema: z.string(), run: ${callback} });
+} catch {
+  return 'fallback';
+}
+}});`;
+    await writeFile(file, caught('() => "one"'));
+    expect(await execute('source')).toMatchObject({ ok: true, run: { output: 'one' } });
+    const saved = await readRun({ stateDir, runId: 'source' });
+    await writeFile(file, caught('() => "two"'));
+    const bytes = await runFiles('source');
+    const refused = await execute('source', { resume: true, acceptCodeChange: true });
+    if (refused.ok) throw new Error(JSON.stringify(refused));
+    expect(refused).toMatchObject({
+      code: 'run.incompatible',
+      message: expect.stringContaining('callback changed on a completed step') as unknown,
+      details: { divergent: [{ stepId: 'effect', components: ['callback'] }] },
+    });
+    expect(workflowExitCodes[refused.code]).toBe(3);
+    const next = (refused.details as { next: string[][] }).next[0] ?? [];
+    const at = next.indexOf('--fork-from');
+    expect(next.slice(at, at + 6)).toEqual([
+      '--fork-from',
+      'source',
+      '--reuse',
+      'matching',
+      '--invalidate',
+      'effect',
+    ]);
+    expect(await runFiles('source')).toEqual(bytes);
+    const kept = await readRun({ stateDir, runId: 'source' });
+    expect(kept).toMatchObject({ status: 'completed', output: 'one' });
+    expect(kept.workflow.fingerprint).toBe(saved.workflow.fingerprint);
+    expect(kept.codeChanges).toEqual(saved.codeChanges);
+  });
+
   /** A workflow whose settled map `reviews` is completed; each option is one component the edit can move. */
   const settledSource = ({
     items = "[{ id: 'a', n: 1 }, { id: 'b', n: 2 }]",
