@@ -215,7 +215,10 @@ imports the workflow, and derives each line from what the record keeps:
   one line. `run.failed` carries its root step and error message, and, for a root step, the pair:
   the latest execution reads `rootCause`; an earlier execution, whose `rootCause` a later resume may
   have replaced, takes the kind of the root step's last failed attempt recorded in that execution,
-  and writes no pair when the record has no such attempt.
+  and writes no pair when the record has no such attempt. That is the kind the live line carried:
+  `rootCause.errorKind` classifies the root step's remembered error, the one its last failed attempt
+  recorded, also through nested maps and mapper wrappers, while a refusal raised before any attempt
+  (such as `configuration`) leaves no attempt, so no pair.
 - **Tolerated poll errors.** Each tolerated poll error is a `wait.tolerated` entry in the same event
   list, saved with the wait's `lastError`, so it becomes one line in order before the wait settles.
   It shares the 500-entry cap below with phase and log entries.

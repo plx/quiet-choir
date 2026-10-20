@@ -173,10 +173,11 @@ export class FailureOrigins {
 
   /**
    * The original error and effect behind a failure; `effect` is the remembered call-site label and
-   * `beforeAttempt` whether that error was remembered outside an attempt. A fan-out failure resolves
-   * to its first non-cancellation failure, looking through nested fan-outs to the leaf's own origin.
-   * When a mapper wrapped the remembered error, `error` is the mapper's error and `remembered` the
-   * remembered error its cause chain reaches; `remembered` is absent when `error` is that error.
+   * `beforeAttempt` whether that error was remembered outside an attempt. A fan-out failure
+   * resolves to its first non-cancellation failure, looking through nested fan-outs to the leaf's
+   * own origin. When a mapper wrapped the remembered error, `error` is the mapper's error and
+   * `remembered` the remembered error its cause chain reaches; `remembered` is absent when `error`
+   * is that error.
    */
   public find(
     error: unknown,
@@ -223,9 +224,9 @@ export class FailureOrigins {
   /**
    * Attribute a run's failure. `classify` is the runtime's root-cause classifier, passed in because
    * step-error.ts imports this module; it learns whether the originating error was remembered
-   * outside an attempt. The kind classifies the remembered root error, the one the root step's last
-   * failed attempt also classified, through nested maps and mapper wrappers; the message stays the
-   * error {@link find} reports.
+   * outside an attempt. The kind classifies the remembered root error, through nested maps and
+   * mapper wrappers; for an error an attempt recorded, that is the kind the root step's last failed
+   * attempt saved. The message stays that of the error {@link find} reports.
    */
   public root(
     error: unknown,

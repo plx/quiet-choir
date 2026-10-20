@@ -29,6 +29,12 @@
   the same identity on the first read after the cleanup lands, so a cleanup warning is never
   dropped. It also releases the line once the run reads as stale (its owner gone), since the cleanup
   can then never land.
+- Amended by #476: the earlier-execution `run.failed` fallback equals the live kind because
+  `rootCause.errorKind` classifies the root step's remembered error, the same error its last failed
+  attempt recorded, including through nested maps (the root resolves to the leaf, not the inner
+  map's `FanOutError`) and mapper wrappers (the message stays the wrapper's, the kind the
+  attempt's). A refusal raised before any attempt, such as a `configuration` root cause, has no
+  attempt in that execution, so the follower writes no pair.
 
 ## Context
 

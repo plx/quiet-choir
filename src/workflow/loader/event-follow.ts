@@ -104,7 +104,10 @@ function runMessage(record: RunRecord, event: RunEvent): string | undefined {
  * the event names no root effect or the record cannot supply it. The latest execution reads the
  * run's root cause, as the live event did. An earlier execution's root cause may have been
  * overwritten or cleared by a later resume, so it takes the kind of the root step's last failed
- * attempt recorded in that execution, which is the classification the live line carried.
+ * attempt recorded in that execution. That equals the live line's kind: `rootCause.errorKind`
+ * classifies the remembered root error, the same error that step's last failed attempt recorded,
+ * also through nested maps and mapper wrappers. A refusal raised before any attempt (such as a
+ * `configuration` root cause) has no attempt in that execution, so no pair is written.
  */
 function runFailedKind(record: RunRecord, event: RunEvent): ErrorKind | null | undefined {
   const stepId = event.stepId;
@@ -308,7 +311,8 @@ function stepCandidates(
  * failure, the last two with the attempt's recorded error as `msg`, and `step.failed` with that
  * attempt's recorded `errorKind`, null when it has none); a `run.failed` entry that names a root
  * effect carries the root cause's kind in the latest execution, or the kind of that step's last
- * failed attempt in an earlier execution, and no kind when the record has neither; and every
+ * failed attempt in an earlier execution (the kind the live line carried, as the root cause
+ * classifies the error that attempt recorded), and no kind when the record has neither; and every
  * question that notified (`wait.opened`). Completed and failed attempts also carry the attempt's
  * recorded `diagnostics.toolUses` when its own recorded request names a harness, whatever kind the
  * step has now, and a `step.completed` line carries the step's warnings as its
