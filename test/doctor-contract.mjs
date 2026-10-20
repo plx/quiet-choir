@@ -66,8 +66,14 @@ try {
         ),
         `${name}: ${argv?.message}`,
       );
-      // A process or stderr warning fails the argv check on its own; it depends on the CLI
-      // version and host, not on the sentinel, so it is reported rather than asserted.
+      // Codex's curated-plugin sync outlived the leader and was reaped with this warning until the
+      // probe disabled plugins (#494); a leftover group member must not come back.
+      assert(
+        !argv?.message.includes('Reaping leftover process group'),
+        `${name}: ${argv?.message}`,
+      );
+      // Any other process or stderr warning fails the argv check on its own; it depends on the
+      // CLI version and host, not on the sentinel, so it is reported rather than asserted.
       if (argv?.status !== 'pass') {
         assert.match(argv?.message ?? '', /; process\/stderr warning: /u, name);
         console.log(

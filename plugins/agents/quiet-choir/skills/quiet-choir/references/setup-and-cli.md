@@ -224,10 +224,11 @@ fresh nonexistent model (`quiet-choir-nonexistent-<uuid>`) and an invalid effort
 rejection the Codex enums check warns (drift unverified, nothing spent). `zeroInference` is still
 judged after the call; the remaining exposure is a CLI that substitutes a known model, which
 `npm run build && npm run test:contract:doctor` detects against a loopback fake API. Current tested
-bounds are Claude 2.1.283 and Codex 0.157.1; to widen them, run
+bounds are Claude 2.1.283 and Codex 0.157.1..0.160.0; to widen them, run
 `npm run build && npm run test:contract` (and, for Codex, `npm run test:contract -- --tools`) from a
 checkout, review the captures, then raise `testedHarnessVersions`. Codex's argv probe uses private
-temporary copies of config/auth and an empty native profile; selected user/profile defaults are
+temporary copies of config/auth and an empty native profile, and sets `features.plugins=false` so
+Codex's background plugin sync leaves no process behind; selected user/profile defaults are
 inspected separately, without printing secrets. Project/managed layers can override those defaults.
 Exported `probeHarnessContracts` supports CI. `harnesses` in run metadata and inspect records first
 live-use binary/version; version drift warns on resume without invalidating completed results, and a

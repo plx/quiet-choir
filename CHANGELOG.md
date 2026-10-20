@@ -2,6 +2,12 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- The doctor's Codex exact-argv probe now passes `features.plugins=false`, so codex-cli 0.160.0
+  passes the argv check (#494). `codex exec` starts a background curated-plugin git sync
+  (`ls-remote`/`fetch` of github.com/openai/plugins) and exits without waiting; the git processes
+  stayed in Codex's process group, so `runProcess` reaped them and the "Reaping leftover process
+  group" warning failed the check. Disabling plugins also stops the probe contacting github.com.
+  Every other process warning still fails the check. The tested Codex range is now 0.157.1..0.160.0.
 - A nested `ctx.map` failure's `rootCause` and live `run.failed` line now name the leaf's real error
   kind, such as `timeout`/`retryable: true` rather than `unknown`/`false` (#476,
   [ADR 0038](docs/decisions/0038-code-free-event-follower.md)), so `workflow events` following an
