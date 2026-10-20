@@ -15,14 +15,18 @@ import {
   runWorkflow,
   writeAnswer,
   z,
+  type FanOutFailure,
   type MapStepError,
   type Settled,
   type WorkflowContext,
+  type WorkflowEvent,
 } from '../src/index.js';
 import { validateRunRecord } from '../src/workflow/runtime/record.js';
 import { FailureOrigins } from '../src/workflow/runtime/fan-out.js';
 import { ConfigurationError } from '../src/workflow/runtime/configuration-error.js';
 import { rootCauseKind } from '../src/workflow/runtime/step-error.js';
+import { EventLineMemory, formatEventLine } from '../src/workflow/loader/events.js';
+import type { EventLine } from '../src/workflow/loader/event-line.js';
 
 let stateDir: string;
 const options = () => ({ stateDir, runId: 'fanout', input: null });
@@ -924,6 +928,85 @@ it("records the root step's classified kind when a map failure surfaces through 
   expect(saved.steps['item/0/run']?.attemptHistory?.at(-1)?.errorKind).toBe('timeout');
 });
 
+it("records the leaf's classified kind when a nested map failure surfaces through FanOutError", async () => {
+  const events: WorkflowEvent[] = [];
+  const definition = workflow((ctx) =>
+    ctx.map('outer', [0], { concurrency: 1 }, () =>
+      ctx.map('inner', [0, 1], { concurrency: 2 }, (index) =>
+        ctx.step('run', {
+          input: index,
+          schema: z.number(),
+          retry: { maxAttempts: 1 },
+          run: async () => {
+            await delay(index * 20);
+            throw Object.assign(new Error('slow'), { code: 'ETIMEDOUT' });
+          },
+        }),
+      ),
+    ),
+  );
+  const error: unknown = await runWorkflow(definition, {
+    ...options(),
+    onEvent: (event) => {
+      events.push(event);
+    },
+  }).catch((cause: unknown) => cause);
+  expect(error).toBeInstanceOf(WorkflowRunError);
+  if (!(error instanceof WorkflowRunError)) throw error;
+  expect(error.cause).toBeInstanceOf(FanOutError);
+  const saved = await readRun(options());
+  // The kind is the leaf's, not the inner map's FanOutError (#476).
+  expect(saved.rootCause).toEqual({
+    stepId: 'outer/0/inner/0/run',
+    error: 'slow',
+    errorKind: 'timeout',
+    effect: 'step',
+  });
+  expect(saved.steps['outer/0/inner/0/run']?.attemptHistory?.at(-1)?.errorKind).toBe('timeout');
+  const failed = events.filter((event) => event.type === 'run.failed');
+  expect(failed).toMatchObject([{ stepId: 'outer/0/inner/0/run', errorKind: 'timeout' }]);
+  const memory = new EventLineMemory();
+  const lines = events
+    .map((event) => formatEventLine(event, memory))
+    .filter((line): line is string => line !== null)
+    .map((line) => JSON.parse(line) as EventLine);
+  expect(lines.filter((line) => line.ev === 'run.failed')).toMatchObject([
+    { step: 'outer/0/inner/0/run', errorKind: 'timeout', retryable: true },
+  ]);
+});
+
+it('saves a run interrupted inside a nested map as cancelled, as it does for a single map', async () => {
+  const controller = new AbortController();
+  let started = 0;
+  const definition = workflow((ctx) =>
+    ctx.map('outer', [0], { concurrency: 1 }, () =>
+      ctx.map('inner', [0, 1], { concurrency: 2 }, (index) =>
+        ctx.step('run', {
+          input: index,
+          schema: z.number(),
+          run: ({ signal }) =>
+            new Promise<number>((_, reject) => {
+              signal.addEventListener('abort', () => {
+                reject(signal.reason as Error);
+              });
+              if (++started === 2) controller.abort(new Error('stop'));
+            }),
+        }),
+      ),
+    ),
+  );
+  const error: unknown = await runWorkflow(definition, {
+    ...options(),
+    signal: controller.signal,
+  }).catch((cause: unknown) => cause);
+  expect(error).toBeInstanceOf(WorkflowRunError);
+  const saved = await readRun(options());
+  // The interruption check now sees the leaf's cancellation through the inner FanOutError (#476);
+  // before, the run was saved as failed with "Workflow cancelled." as its root cause.
+  expect(saved.status).toBe('cancelled');
+  expect(saved.rootCause).toEqual({ stepId: null, error: 'stop', errorKind: null, effect: null });
+});
+
 it('records a null kind for a failure of the workflow body itself', async () => {
   const error: unknown = await runWorkflow(
     workflow(() => Promise.reject(new Error('body bug'))),
@@ -1339,8 +1422,8 @@ describe('FailureOrigins root-cause kinds (#311)', () => {
       errorKind: 'configuration',
       effect: 'worktree',
     });
-    // A mapper that wrapped the error: the root cause reports the mapper's error, while the flag and
-    // the effect label come from the remembered error its cause chain reaches.
+    // A mapper that wrapped the error: the root cause reports the mapper's error, while the flag, the
+    // effect label and the kind come from the remembered error its cause chain reaches.
     const wrapped = new Error('item failed', { cause: error });
     const fanOut = new FanOutError(
       'drain',
@@ -1365,6 +1448,80 @@ describe('FailureOrigins root-cause kinds (#311)', () => {
       error: error.message,
       errorKind: 'configuration',
       effect: 'worktree',
+    });
+  });
+  // #476: a nested map's failure surfaces as a FanOutError inside a FanOutError. The root cause
+  // names the leaf's own failure and kind, the one its last attempt saved.
+  const leaf = 'outer/0/inner/0/run';
+  const timedOut = () => Object.assign(new Error('slow'), { code: 'ETIMEDOUT' });
+  const fanOut = (error: unknown, stepId: string | null = leaf) =>
+    new FanOutError('drain', [{ index: 0, stepId, error }], []);
+  const leafRoot = { stepId: leaf, error: 'slow', errorKind: 'timeout', effect: 'step' };
+
+  it('classifies a two-level nested fan-out by the leaf error', () => {
+    const origins = new FailureOrigins();
+    const error = timedOut();
+    origins.remember(error, leaf, 'step');
+    const outer = fanOut(fanOut(error));
+    expect(origins.find(outer)).toMatchObject({ error, stepId: leaf, effect: 'step' });
+    expect(origins.root(outer, rootCauseKind)).toEqual(leafRoot);
+  });
+
+  it('classifies a three-level nested fan-out by the leaf error', () => {
+    const origins = new FailureOrigins();
+    const error = timedOut();
+    origins.remember(error, leaf, 'step');
+    expect(origins.root(fanOut(fanOut(fanOut(error))), rootCauseKind)).toEqual(leafRoot);
+  });
+
+  it("takes the attempt's kind for a mapper that wrapped an attempt-recorded error", () => {
+    const origins = new FailureOrigins();
+    const error = timedOut();
+    origins.remember(error, 'items/0/run', 'step');
+    const wrapped = new Error('item failed', { cause: error });
+    expect(origins.find(fanOut(wrapped, 'items/0/run'))).toMatchObject({
+      error: wrapped,
+      remembered: error,
+    });
+    expect(origins.root(fanOut(wrapped, 'items/0/run'), rootCauseKind)).toEqual({
+      stepId: 'items/0/run',
+      error: 'item failed',
+      errorKind: 'timeout',
+      effect: 'step',
+    });
+  });
+
+  it("keeps an inner mapper's wrapper message and the leaf kind through a nested fan-out", () => {
+    const origins = new FailureOrigins();
+    const error = timedOut();
+    origins.remember(error, leaf, 'step');
+    const wrapped = new Error('item failed', { cause: error });
+    expect(origins.root(fanOut(fanOut(wrapped)), rootCauseKind)).toEqual({
+      ...leafRoot,
+      error: 'item failed',
+    });
+  });
+
+  it('ends on a fan-out that contains itself or a fan-out that contains it', () => {
+    const origins = new FailureOrigins();
+    const self = fanOut(new Error('placeholder'), 'items/0/run');
+    (self.failures as FanOutFailure[])[0] = { index: 0, stepId: 'items/0/run', error: self };
+    expect(origins.find(self)).toEqual({ error: self, stepId: 'items/0/run' });
+    expect(origins.root(self, rootCauseKind)).toEqual({
+      stepId: 'items/0/run',
+      error: 'placeholder',
+      errorKind: 'unknown',
+      effect: null,
+    });
+    // Two fan-outs that reference each other: the walk stops when it revisits the outer one, so the
+    // inner failure, whose own error was already visited, is the origin.
+    const outer = fanOut(new Error('outer'), 'outer/0');
+    const inner = fanOut(outer, 'outer/0/inner/0');
+    (outer.failures as FanOutFailure[])[0] = { index: 0, stepId: 'outer/0', error: inner };
+    expect(origins.find(outer)).toEqual({ error: outer, stepId: 'outer/0/inner/0' });
+    expect(origins.root(outer, rootCauseKind)).toMatchObject({
+      stepId: 'outer/0/inner/0',
+      errorKind: 'unknown',
     });
   });
 });
