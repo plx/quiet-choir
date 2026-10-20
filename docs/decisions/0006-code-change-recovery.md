@@ -248,7 +248,9 @@ limits; since #217 the preflight passes both, see its amendment below.) The pref
 the writer lock, so like check-resume it is a snapshot, not a reservation against concurrent
 writers. The workflow body, but no unfinished callback, runs once more per accepted resume. #215
 moved this preflight into `runWorkflow`, so embedded callers get the same guarantee; see its
-amendment below.
+amendment below. Until #502 a refusal the body caught, or a settled boundary absorbed, was not seen
+and so also admitted the real invocation; since then its throw site records it for the preflight
+(see that amendment below).
 
 ## Amendment: recovery hints by typed cause (#276)
 
@@ -380,16 +382,16 @@ yet consumed suspended the copy where the real run would continue. An edit to a 
 either point still recorded the acceptance and then failed the run.
 
 The probe now synthesizes every Git worktree effect. The runtime recognizes the probe by the
-identity of its rehearsal hooks (no public option asks for this), and gives its `WorktreeRehearsal`
-no process runner, so no Git command can be issued, not even `rev-parse`. `ctx.worktree` returns a
-placeholder handle whose directory is never created and whose base is a `{ commit }` base's commit
-or forty zeros. An agent call, command or local step isolated on a handle gets a lease in the
-handle's directory whose capture reports an unchanged tree. Any merge returns the clean-integration
-shape: the placeholder commit, every captured input commit as merged in order (a handle contributes
-none, since its latest commit is unknown without Git), and no conflicts. The replay decision admits
-a `worktree` effect only when the runner marks it synthesized, which only the probe does. A
-`--dry-run` keeps its refusals and report: its synthesized values would misreport a preview to a
-user, while the probe reports nothing.
+identity of each preflight's own rehearsal hooks (no public option asks for this), and gives its
+`WorktreeRehearsal` no process runner, so no Git command can be issued, not even `rev-parse`.
+`ctx.worktree` returns a placeholder handle whose directory is never created and whose base is a
+`{ commit }` base's commit or forty zeros. An agent call, command or local step isolated on a handle
+gets a lease in the handle's directory whose capture reports an unchanged tree. Any merge returns
+the clean-integration shape: the placeholder commit, every captured input commit as merged in order
+(a handle contributes none, since its latest commit is unknown without Git), and no conflicts. The
+replay decision admits a `worktree` effect only when the runner marks it synthesized, which only the
+probe does. A `--dry-run` keeps its refusals and report: its synthesized values would misreport a
+preview to a user, while the probe reports nothing.
 
 The disposable copy also holds the pending answer deliveries of the run's waiting questions. For
 each waiting question the copy gets the first existing answer candidate, in the order the question
@@ -398,14 +400,15 @@ relative path. The copy consumes or rejects only its own file, and the real run 
 source delivery. Rejected deliveries and cancel requests are not copied. A copy failure other than a
 delivery withdrawn mid-copy is treated as no finding.
 
-The preflight stays fail-open, and still reports nothing about why it stopped. What can still stop
-it before a changed step is a synthesized value that fails validation (such as a refinement), a
-question with no delivery, an unresolved external wait, a non-mapper settled-map refusal (#303), or
-a failure to copy the run. The path-parity caveat now covers synthesized worktree values too: a
-placeholder handle or a conflict-free merge result can steer the copy onto a branch the real run
-would not take, which can miss a divergence or, when that branch skips completed work, refuse an
-edit the real run would accept. That needs completed work ordered after an unfinished Git effect
-whose result decides the branch; the fork in `details.next` is the escape.
+The preflight stays fail-open, and still reports nothing about why it stopped. (A refusal the body
+catches no longer fails it open; see the #502 amendment below.) What can still stop it before a
+changed step is a synthesized value that fails validation (such as a refinement), a question with no
+delivery, an unresolved external wait, a non-mapper settled-map refusal (#303), or a failure to copy
+the run. The path-parity caveat now covers synthesized worktree values too: a placeholder handle or
+a conflict-free merge result can steer the copy onto a branch the real run would not take, which can
+miss a divergence or, when that branch skips completed work, refuse an edit the real run would
+accept. That needs completed work ordered after an unfinished Git effect whose result decides the
+branch; the fork in `details.next` is the escape.
 
 ## Amendment: refuse non-mapper settled-map changes (#303)
 
@@ -451,7 +454,54 @@ synthesized value can steer the copy onto another branch. A map whose items depe
 effect's synthesized output can be refused in the copy although a real run would compute matching
 items, or the reverse; the fork in `details.next` is the escape. The frame-boundary refusal
 (`committed work in child frame`) and duplicate map IDs are not settled-map changes and stay
-fail-open.
+fail-open. A body that caught the map's refusal, and completed with its own fallback, also failed
+the preflight open until #502; see its amendment below.
+
+## Amendment: record accepted-replay divergences out of band (#502)
+
+The preflight found a refusal only by inspecting what escaped the copy's body. A body that wrapped a
+changed completed step, a child frame or a settled map in `try`/`catch` and fell back made the copy
+complete, so the preflight admitted the real run. That run then met the same refusal, caught it the
+same way and completed with the fallback: correct, but the early typed refusal and its fork recipe
+were lost. (A caught settled-map refusal was usually still refused, but as the skip of the map's
+unclaimed leaf steps, naming a leaf instead of the map.)
+
+Each preflight now builds its own rehearsal hooks and a recorder for them, registered in a
+module-local `WeakMap` keyed by the hooks object. `isPreflightProbe` is membership in that map, so
+it still works by identity, no public option can ask for it, and two preflights in one process never
+see each other's records. A module-local map is safe here, unlike the #303 refusal tracking: the
+outer `runWorkflow`, the nested run it calls and the runner's map and child-frame modules share one
+module instance. Under the probe, every site that throws one of the three findings also records it:
+the runner's terminal-redefined `StepIdentityChangedError`, the end-of-body `ReplaySkippedError` for
+skipped settled maps and steps, the skipped-child-frame check, and the settled map's
+`SettledMapChangedError`. Each is recorded just before it is thrown, in the same synchronous scope,
+so a refusal in one fan-out sibling is recorded even when another fails first. The recorder ignores
+any other hooks, keeps only the first divergence and ignores a mapper-only settled-map change, which
+the accepted resume admits (#146) and so is never a finding. The rehearsal-Git `ConfigurationError`,
+other replay refusals and strict replay's healed-divergence stop are not recorded.
+
+After the nested run settles, whether it completed, suspended or failed, the preflight takes the
+escaped divergence first, found as before (first-found in the error chain, so every uncaught case,
+including a user-thrown error of the same class, is reported as before), and otherwise the first
+recorded one. One exception: an escaped skip gives way to an earlier recorded divergence. A skip is
+raised only after the body returned, so any divergence recorded before it was caught on the way, and
+is the one the uncaught body would have reported, such as a refused settled map whose unclaimed
+leaves the skip then names. The abort branch still runs first, and the result goes through the same
+refusal wrapping as before: the same error class and fields, the copy's error as cause, the
+refused-before-change text and the fork recipe, which the CLI maps to `run.incompatible`. A copy
+that fails for an unrelated reason after a caught refusal, such as a synthesis gap, is therefore
+refused too. This is a deliberate behavior change: an accepted resume that used to complete through
+the body's own fallback is now refused before the run changes, and the fork in `details.next` is the
+way to adopt the edit. Under the path-parity caveat above, a divergence the copy meets only because
+synthesized values steered it onto another branch is now refused even when the body caught it.
+
+A skip cannot actually be caught by the body, because all three skip checks run after the body has
+returned; it is recorded for uniformity. The `--dry-run --resume --accept-code-change` preview is
+not the probe: it runs under the caller's rehearsal hooks and still finds only a divergence that
+escapes the body, so a caught refusal previews as an admitted resume although the real accepted
+resume refuses it. The other fail-open causes are unchanged: a synthesized value that fails
+validation before the first divergence, a question with no delivery, an unresolved external wait, a
+failure to copy the run, the frame-boundary refusal and duplicate map IDs.
 
 ## Amendment: run-budget recovery cause (#283)
 

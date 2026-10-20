@@ -2,6 +2,19 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- An accepted resume (`--resume --accept-code-change`, or embedded
+  `resume: true, acceptCodeChange: true`) is now refused before the run changes even when the
+  workflow body catches the refusal and falls back (#502,
+  [ADR 0006](docs/decisions/0006-code-change-recovery.md)). The preflight's copy records a changed
+  completed or settled-failed step, a non-mapper settled-map change and a skipped completed step,
+  settled map or child frame where it is thrown, so a body that wrapped the changed `ctx.step`,
+  `ctx.workflow` child or `ctx.map` in `try`/`catch`, which used to complete through its own
+  fallback, now gets the same bare typed error, `run.incompatible` refusal and fork recipe as the
+  uncaught case. That holds when the copy later fails for an unrelated reason, such as a synthesis
+  gap, and a caught settled-map refusal now names the map instead of the skip of its unclaimed leaf
+  steps. A mapper-only map change is still accepted. Fork with `details.next` to adopt such an edit.
+  The `--dry-run --resume --accept-code-change` preview still reports only a refusal that escapes
+  the body.
 - The doctor's Codex exact-argv probe now passes `features.plugins=false`, so codex-cli 0.160.0
   passes the argv check (#494). `codex exec` starts a background curated-plugin git sync
   (`ls-remote`/`fetch` of github.com/openai/plugins) and exits without waiting; the git processes
