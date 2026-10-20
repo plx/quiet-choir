@@ -76,12 +76,16 @@ export async function writeRunnerIdentity(
  * unbound or partial one is removed. Returns whether it removed a record; best effort, so an absent
  * record or any error returns false.
  *
- * Removing by path is safe only here: allocation skips an `n` whose runner record exists, so a
- * record that appeared in start's slot after allocation can only be a stale writer's, and no other
- * legitimate writer targets the slot. `workflow rm` cannot remove the directory meanwhile, since the
- * launch is in flight either way (an unparsable record or files younger than the floor). A stale
- * writer whose open already succeeded writes into the unlinked file harmlessly. Call it only after
- * start's own write failed. @internal
+ * It first checks, with a bigint `lstat`, that the slot's current `<n>.log` is still `log`. When
+ * that log is gone or another, the caller is itself the stale generation (its directory was removed
+ * and the slot reused), so the record there is the newer start's and is left alone. Otherwise
+ * removing by path is safe: allocation skips an `n` whose runner record exists, so a record that
+ * appeared in start's slot after allocation can only be a stale writer's, and no other legitimate
+ * writer targets the slot. `workflow rm` cannot remove the directory meanwhile, since the launch is
+ * in flight either way (an unparsable record or files younger than the floor). A stale writer whose
+ * open already succeeded writes into the unlinked file harmlessly. A small window remains between
+ * the `lstat` and the unlink, which would need another removal and reuse of the slot inside it.
+ * Call it only after start's own write failed. @internal
  */
 export async function discardForeignRunnerRecord(
   launchDir: string,
@@ -90,6 +94,8 @@ export async function discardForeignRunnerRecord(
 ): Promise<boolean> {
   const path = join(launchDir, runnerFileName(n));
   try {
+    const current = await logIdentityIfPresent(join(launchDir, `${String(n)}.log`));
+    if (current === null || !sameLaunchLog(current, log)) return false;
     const recorded = parseRunnerIdentity(await readFile(path, 'utf8'));
     if (recorded?.log !== undefined && sameLaunchLog(recorded.log, log)) return false;
     await rm(path, { force: true });

@@ -536,7 +536,8 @@ export class StartWorkflowExecutor implements Executor<
     });
     // Best effort: without it, the leftover of a pre-record failure is judged by age (ADR 0055).
     // A failed write may mean a stale start's record took this slot; discard any record not bound
-    // to this launch's log, so the launch is left to the age rule rather than to that record.
+    // to this launch's log, so the launch is left to the age rule rather than to that record. The
+    // discard keeps the record when the slot's log is no longer this launch's.
     const launchDir = dirname(files.log);
     const recorded = await (this.#options.recordRunner ?? writeRunnerIdentity)(
       launchDir,

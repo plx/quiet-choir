@@ -504,6 +504,32 @@ describe('StartWorkflowExecutor', () => {
     ]);
   });
 
+  it("keeps a newer generation's record when its own log was replaced", async () => {
+    const launch = join(stateDir, 'r1', 'launch');
+    let newer = '';
+    const result = started(
+      await executor({
+        // This start is the stale one: its directory was removed and a newer start took the slot,
+        // with its own log and a record bound to it, before this start's discard.
+        recordRunner: async (launchDir, n) => {
+          const log = join(launchDir, `${String(n)}.log`);
+          await rm(log);
+          await writeFile(log, '');
+          newer = JSON.stringify({
+            pid: process.pid,
+            host: hostname(),
+            osStartTime: null,
+            log: await logIdentity(log),
+          });
+          await writeFile(join(launchDir, `${String(n)}.runner.json`), newer);
+          return false;
+        },
+      }).execute(plan(`${own} ${forever}`)),
+    );
+    expect(result.status).toBe('running');
+    expect(await readFile(join(launch, '1.runner.json'), 'utf8')).toBe(newer);
+  });
+
   it('tracks the runner before the runner record write settles', async () => {
     const tracked: number[] = [];
     const supervisor = new ProcessSupervisor();
@@ -583,6 +609,28 @@ describe('StartWorkflowExecutor', () => {
       await writeFile(record, text);
       expect(await discardForeignRunnerRecord(launch, 1, mine)).toBe(true);
       expect(existsSync(record)).toBe(false);
+    }
+  });
+
+  it("leaves the record alone when the slot's log is not the given one", async () => {
+    const launch = join(stateDir, 'r1', 'launch');
+    await mkdir(launch, { recursive: true });
+    const log = join(launch, '1.log');
+    await writeFile(log, '');
+    const stale = await logIdentity(log);
+    const record = join(launch, '1.runner.json');
+    const identity = { pid: process.pid, host: hostname(), osStartTime: null };
+    // The stale generation's log is gone; the slot holds no log yet, then a newer one.
+    await rm(log);
+    await writeFile(record, JSON.stringify({ ...identity, log: foreignLog }));
+    expect(await discardForeignRunnerRecord(launch, 1, stale)).toBe(false);
+    expect(existsSync(record)).toBe(true);
+    await writeFile(log, '');
+    const kept = JSON.stringify({ ...identity, log: await logIdentity(log) });
+    await writeFile(record, kept);
+    for (const old of [stale, foreignLog]) {
+      expect(await discardForeignRunnerRecord(launch, 1, old)).toBe(false);
+      expect(await readFile(record, 'utf8')).toBe(kept);
     }
   });
 
