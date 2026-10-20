@@ -14,7 +14,9 @@
   now saved as `cancelled` (or suspended, for an interruption such as a tick deadline) as it is for
   a single map, instead of `failed` with "Workflow cancelled."; the recovery hint can name the
   leaf's kind; and a return-mode map item or `onError: 'return'` child whose body threw a nested
-  map's `FanOutError` settles with the leaf's kind instead of `unknown`. Saved records replay as
+  map's `FanOutError` settles with the leaf's kind instead of `unknown`. When that leaf is a
+  cancellation, such as a step's own `AbortError`, an `onError: 'return'` child now fails instead of
+  attempting to settle a cancelled outcome that the checkpoint rejected. Saved records replay as
   stored.
 - A stale start's runner record can no longer make a later start of the same run ID look settled
   (#465, [ADR 0055](docs/decisions/0055-remove-leftover-launch-directories.md)). `workflow start`

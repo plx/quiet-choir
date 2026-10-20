@@ -2,7 +2,7 @@
  * The settle rules a settled map item and an `onError: 'return'` child frame share, so the two
  * cannot drift (ADR 0007, ADR 0008).
  */
-import type { FailureOrigins, MapStepError } from './fan-out.js';
+import { rememberedError, type FailureOrigins, type MapStepError } from './fan-out.js';
 import type { MapperScope } from './scopes.js';
 import type { RunRecord } from './record.js';
 import { errorKind, stepError } from './step-error.js';
@@ -33,6 +33,21 @@ export function settlesFailure(error: unknown, facts: SettleFacts): boolean {
     (errorKind(error) !== 'cancelled' || facts.ownCancellation) &&
     !facts.checkpointFailure &&
     !facts.origins.isFatal(error)
+  );
+}
+
+/**
+ * Whether a {@link FailureOrigins.find} origin is a cancellation: its reported error, or the
+ * remembered error a mapper wrapped, classifies as `cancelled`. A nested map's failure resolves to
+ * its leaf, so a leaf cancellation behind a fan-out is caught here even when the fan-out itself is
+ * not one. @internal
+ */
+export function cancelledOrigin(origin: {
+  readonly error: unknown;
+  readonly remembered?: unknown;
+}): boolean {
+  return (
+    errorKind(origin.error) === 'cancelled' || errorKind(rememberedError(origin)) === 'cancelled'
   );
 }
 

@@ -262,8 +262,8 @@ function isCancellation(origin: FailureOrigin): boolean {
   );
 }
 
-/** The remembered error behind a {@link FailureOrigins.find} origin: `remembered` when present. */
-function rememberedError(origin: {
+/** The remembered error behind a {@link FailureOrigins.find} origin: `remembered` when present. @internal */
+export function rememberedError(origin: {
   readonly error: unknown;
   readonly remembered?: unknown;
 }): unknown {
