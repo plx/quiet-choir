@@ -35,8 +35,12 @@ it.each([
   ['2.3.9', wide, 'warn'],
   ['2.4.0', wide, 'fail'],
   ['0.157.1', testedHarnessVersions.codex, 'pass'],
-  ['0.157.2', testedHarnessVersions.codex, 'warn'],
-  ['0.158.0', testedHarnessVersions.codex, 'fail'],
+  ['0.158.0', testedHarnessVersions.codex, 'pass'],
+  ['0.160.0', testedHarnessVersions.codex, 'pass'],
+  ['0.157.0', testedHarnessVersions.codex, 'warn'],
+  ['0.160.1', testedHarnessVersions.codex, 'warn'],
+  ['0.161.0', testedHarnessVersions.codex, 'fail'],
+  ['0.156.9', testedHarnessVersions.codex, 'fail'],
 ] as const)('grades %s against %j as %s', (version, bounds, grade) => {
   expect(gradeHarnessVersion(version, bounds)).toBe(grade);
 });

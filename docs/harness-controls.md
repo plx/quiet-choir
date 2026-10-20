@@ -176,7 +176,7 @@ quiet-choir configuration doctor --harness codex --codex-home /path/to/.codex --
 The exported `probeHarnessContracts(options)` runs the same checks for CI. It returns five checks
 per requested provider: tested version, exact adapter argv, hidden/plumbing flags, enum drift and
 inherited defaults. `testedHarnessVersions` is the contract-tested range, currently Claude 2.1.283
-and Codex 0.157.1 (minimum and maximum are inclusive and may differ).
+and Codex 0.157.1..0.160.0 (minimum and maximum are inclusive and may differ).
 
 The version check grades what `--version` reports. Inside the range is `PASS`. Outside it but on the
 same major.minor as a bound (an untested patch such as 2.1.285) is `WARN`. Another major.minor, an
@@ -191,6 +191,9 @@ server rejects either one first: a 400 with the supported effort list, or a 400 
 exact sentinel model with not-found wording (the API error code `model_not_found`, or
 `does not exist` in the message). After a model rejection the effort list is unavailable, so the
 Codex enums check reports `WARN` (enum drift unverified; nothing was spent) and `--strict` fails it.
+The Codex probe passes `features.plugins=false`: otherwise `codex exec` starts a background
+curated-plugin git sync (contacting github.com) that outlives the leader in its process group and
+would be reaped with a process warning, which fails the check. Other process warnings still fail it.
 The probes exercise all applicable typed flags through the production argument builder, with
 representative permission/effort choices. Codex's probe layers an empty native profile over
 temporary private copies of user config/auth files, sends the sentinel through the adapter's

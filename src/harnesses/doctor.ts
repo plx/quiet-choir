@@ -379,7 +379,11 @@ export async function probeHarnessContracts(options: DoctorOptions = {}): Promis
                   networkAccess: false,
                   addDirs: [directory],
                   images: [image],
-                  config: { 'features.remote_models': false },
+                  // codex exec also starts a curated-plugin git sync (ls-remote and fetch of
+                  // github.com/openai/plugins) and exits without waiting. Those processes stay in
+                  // the leader's group, so runProcess reaps them and warns, which fails this check.
+                  // Disabling plugins keeps the probe offline apart from the API it probes.
+                  config: { 'features.remote_models': false, 'features.plugins': false },
                   env: { QUIET_CHOIR_DOCTOR: '1' },
                   extraArgs: ['--strict-config'],
                 },

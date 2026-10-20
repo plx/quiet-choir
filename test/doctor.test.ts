@@ -82,6 +82,7 @@ if(provider==='codex'&&model){
   out=[{type:'thread.started',thread_id:'00000000-0000-4000-8000-000000000000'},{type:'item.completed',item:{id:'item_0',type:'error',message:'Model metadata for '+q+sent+q+' not found. Defaulting to fallback metadata; this can degrade performance and cause issues.'}},{type:'turn.started'},{type:'error',message:error},{type:'turn.failed',error:{message:error}}].map((line)=>JSON.stringify(line)).join('\\n')+'\\n';
 }
 if(provider==='codex'&&(has('tokens')||has('output'))) out=out.replace('{"type":"turn.failed",','{"type":"turn.failed","usage":{"input_tokens":'+(has('tokens')?1:0)+',"cached_input_tokens":0,"output_tokens":'+(has('output')?1:0)+'},');
+if(provider==='codex'&&a.includes('--output-schema')&&(mode==='linger'||(mode==='plugin-sync'&&!a.includes('features.plugins=false')))) require('node:child_process').spawn('/bin/sleep',['5'],{stdio:'ignore'}).unref();
 process.stdout.write(out);process.exit(1);
 `,
     { mode: 0o700 },
@@ -144,6 +145,7 @@ it('runs five checks per harness using full adapter argv and proves zero inferen
       'quiet-choir-probe',
       '--strict-config',
       'sandbox_workspace_write.network_access=false',
+      'features.plugins=false',
     ]),
   );
   // The profile probe needs the inherited role restricted isolation would skip.
@@ -327,6 +329,25 @@ it('rejects invalid Codex config with a redacted error before spawning the argv 
 it('fails the Codex argv check on a stderr warning but keeps zero inference', async () => {
   const report = await probeHarnessContracts(await probeOptions('codex', 'model-first+warning'));
   expect(argv(report)).toMatchObject({ status: 'fail', ok: false });
+  expect(report.zeroInference).toBe(true);
+});
+it('passes the Codex argv check when disabling plugins leaves no process group member', async () => {
+  // plugin-sync emulates codex-cli 0.160.0: a detached-in-group curated-plugin sync outlives the
+  // leader unless the plugins feature is off.
+  const report = await probeHarnessContracts(await probeOptions('codex', 'plugin-sync'));
+  expect(argv(report)).toMatchObject({ status: 'pass', ok: true });
+  expect(argv(report)?.message).not.toContain('Reaping');
+  expect(report.zeroInference).toBe(true);
+});
+it('fails the Codex argv check on a leftover process group member but keeps zero inference', async () => {
+  const report = await probeHarnessContracts({
+    ...(await probeOptions('codex', 'linger')),
+    killGraceMs: 200,
+  });
+  expect(argv(report)).toMatchObject({ status: 'fail', ok: false });
+  expect(argv(report)?.message).toContain(
+    'process/stderr warning: Reaping leftover process group after leader exit.',
+  );
   expect(report.zeroInference).toBe(true);
 });
 it('blocks an argv probe failure and still reports the probe check', async () => {

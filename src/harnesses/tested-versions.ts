@@ -16,7 +16,7 @@ export const testedHarnessVersions = {
     /** Oldest verified version. */
     minimum: '0.157.1',
     /** Newest verified version. */
-    maximum: '0.157.1',
+    maximum: '0.160.0',
   },
 } as const;
 
