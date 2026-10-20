@@ -109,9 +109,12 @@ runner record, when its newest file is more than an hour old. A runner that is a
 or on another host, or an unreadable runner record, keeps the launch in flight. A record bound to a
 different log (another dev, inode or birth time than the current `<n>.log`), or found in a launch
 with no `<n>.log`, counts as unreadable: it belongs to an earlier generation of a reused run ID.
-Records from older builds carry no binding and are judged by their runner alone. Once every launch
-is settled, `workflow list` reports the leftover (`leftoverLaunches` in JSON, a `Leftover launch`
-line in text, with the `workflow rm` command) and `workflow rm ID` removes it; see
+Where Node takes the birth time from the change time (no real birth time), a birth time that alone
+differs while the current log's birth time equals its change time is ambiguous: the launch then
+settles only when the runner is dead and its newest file is more than an hour old. Records from
+older builds carry no binding and are judged by their runner alone. Once every launch is settled,
+`workflow list` reports the leftover (`leftoverLaunches` in JSON, a `Leftover launch` line in text,
+with the `workflow rm` command) and `workflow rm ID` removes it; see
 [ADR 0055](decisions/0055-remove-leftover-launch-directories.md). Anything else in the directory (a
 lock, a journal, an unknown file) leaves it alone, and rm keeps reporting `run.not_found`.
 

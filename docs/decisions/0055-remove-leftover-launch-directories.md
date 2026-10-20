@@ -50,9 +50,12 @@ start.
   it in flight. A record whose `log` binding differs from the current `<n>.log` (by dev, inode or
   birth time, read with a bigint `lstat`), or whose launch has no `<n>.log`, counts as unparsable:
   it belongs to another generation, so it keeps the launch in flight and its runner's liveness is
-  not read. This applies equally to the launch judgement of an unreadable run (ADR 0060). An empty
-  `launch/` is judged by its own age. A leftover is removable only when every launch is settled. The
-  rules live in the pure module `launch-leftover-decision.ts`.
+  not read. When only the birth time differs and the current log's birth time equals its change time
+  (`ctimeNs`, from the same `lstat` and never stored), the binding is ambiguous instead: the
+  runner's liveness is read, and a dead runner settles the launch only once its newest file is also
+  older than the floor. This applies equally to the launch judgement of an unreadable run (ADR
+  0060). An empty `launch/` is judged by its own age. A leftover is removable only when every launch
+  is settled. The rules live in the pure module `launch-leftover-decision.ts`.
 - `workflow list` reports removable leftovers in `leftoverLaunches`, from every scanned container,
   and prints a launcher-correct `workflow rm ID --state-dir DIR` line for each. In-flight leftovers
   are omitted; with `--status` the array is empty.
@@ -90,8 +93,19 @@ start.
   interleaving deletes the first generation's log before the second creates its own, and a
   filesystem such as ext4 often reuses a freed inode number at once. Birth times are compared
   exactly as nanosecond strings; `fstat` at start and `lstat` at the judgement read the same inode,
-  so they agree. A filesystem that reports no birth time gives `0`, and the binding then rests on
-  dev and inode alone.
+  so they agree where the birth time is real. A filesystem that reports no birth time gives `0`, and
+  the binding then rests on dev and inode alone.
+- Where the platform reports no birth time at all, Node can fall back to the change time (libuv does
+  where it reads `stat` instead of `statx`), so the log's birth time moves with every write and a
+  record never matches its own log exactly. Hence the ambiguous case: a birth time that equals the
+  current change time is that fallback's signature, which a log never changed since its creation
+  also shows. Settling such a launch only with a dead runner past the floor trusts the record no
+  further than the age rule trusts a launch without one, so a stale record in a young reused launch
+  still keeps it in flight; a live runner in the record keeps it in flight longer. A birth time that
+  differs while the current log's birth and change times differ is another generation's, as before.
+  Start's discard likewise treats an ambiguous current log as its own and keeps a bound record whose
+  binding is not `different` from the current log: a record it keeps is one the judgement weighs by
+  its runner, and a newer start's record bound to the log now in the slot is never removed.
 - Records from builds before #465 have no `log`. They still parse and are judged by their runner's
   liveness as before, so a stale unbound record can still settle a reused launch.
 - A stale record that lands in a slot before start allocates makes start skip that `n`. The slot is

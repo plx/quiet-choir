@@ -264,7 +264,8 @@ with the `workflow rm ID --state-dir DIR` command behind the invocation's launch
 no `run.json` or `<runId>.json` and names a leftover, rm takes a separate path instead of reporting
 `run.not_found`. It refuses with `run.active` (exit 3), even with `--force`, while any launch may
 still be in flight (a recorded runner that is alive, unverifiable or remote, an unreadable runner
-record, or, without one, files less than an hour old); `error.details` is
+record, a dead runner whose record's log binding is ambiguous with files less than an hour old, or,
+without a record, files less than an hour old); `error.details` is
 `{status:"starting", waiting:[], launches}` with each launch as `{n, pid, host, state, inFlight}`.
 Otherwise it takes only the legacy guard, without registering a project (a held or unreadable guard,
 or a lock beside it, is refused as `run.locked` before the guard is taken), re-checks under it
