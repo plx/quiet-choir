@@ -591,6 +591,12 @@ describe('StartWorkflowExecutor', () => {
     const launch = join(stateDir, 'r1', 'launch');
     await mkdir(launch, { recursive: true });
     await writeFile(join(launch, '1.log'), '');
+    // The runner wrote to the log after its birth, so its change time moved past its birth time and
+    // a record with another birth time is another generation's, not an ambiguous one.
+    await delay(20);
+    await writeFile(join(launch, '1.log'), 'runner output\n', { flag: 'a' });
+    const stats = await lstat(join(launch, '1.log'), { bigint: true });
+    expect(stats.ctimeNs).not.toBe(stats.birthtimeNs);
     const mine = await logIdentity(join(launch, '1.log'));
     const record = join(launch, '1.runner.json');
     const identity = { pid: process.pid, host: hostname(), osStartTime: null };

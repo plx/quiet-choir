@@ -8,10 +8,11 @@ import {
   judgeLaunch,
   launchSettleFloorMs,
   leftoverRemovable,
+  matchLaunchLog,
   parseRunnerIdentity,
-  sameLaunchLog,
   type LaunchEntry,
   type LaunchLogIdentity,
+  type LaunchLogObservation,
   type RunnerLiveness,
 } from '../src/workflow/runtime/launch-leftover-decision.js';
 
@@ -25,6 +26,8 @@ const log: LaunchLogIdentity = {
   birthtimeNs: '1760918400123456789',
 };
 const bound = { ...identity, log };
+/** The current log as a scan observes it: written since its creation, so it changed after birth. */
+const current: LaunchLogObservation = { ...log, ctimeNs: '1760918460000000000' };
 
 describe('leftover launch directory shape', () => {
   it('accepts only a lone launch/ directory', () => {
@@ -125,10 +128,19 @@ describe('runner records', () => {
     expect(parseRunnerIdentity(runner({ ...identity, log: binding }))).toBeNull();
   });
 
-  it('compares log identities by dev, inode and birth time', () => {
-    expect(sameLaunchLog(log, { ...log })).toBe(true);
+  it('compares a log binding with the current log by dev, inode and birth time', () => {
+    expect(matchLaunchLog(log, { ...current })).toBe('same');
     for (const key of ['dev', 'ino', 'birthtimeNs'] as const)
-      expect(sameLaunchLog(log, { ...log, [key]: '7' })).toBe(false);
+      expect(matchLaunchLog(log, { ...current, [key]: '7' })).toBe('different');
+  });
+
+  it('calls a birth time ambiguous only when the current one equals the change time', () => {
+    // Node reports the change time as the birth time where the platform has none.
+    const fallback = { ...log, birthtimeNs: '7', ctimeNs: '7' };
+    expect(matchLaunchLog(log, fallback)).toBe('ambiguous');
+    expect(matchLaunchLog({ ...log, birthtimeNs: '7' }, fallback)).toBe('same');
+    for (const key of ['dev', 'ino'] as const)
+      expect(matchLaunchLog(log, { ...fallback, [key]: '8' })).toBe('different');
   });
 });
 
@@ -148,7 +160,10 @@ describe('judging a launch', () => {
   ] as const)('a recorded runner that is %s is %s, whatever its age', ([state, expected]) => {
     for (const newestMtimeMs of [0, now])
       expect(
-        judgeLaunch({ n: 3, runnerText: runner(identity), newestMtimeMs, log }, context(state)),
+        judgeLaunch(
+          { n: 3, runnerText: runner(identity), newestMtimeMs, log: current },
+          context(state),
+        ),
       ).toEqual({ n: 3, state: expected, runner: state, pid: 42, host: 'here' });
   });
 
@@ -156,7 +171,7 @@ describe('judging a launch', () => {
     let read = false;
     expect(
       judgeLaunch(
-        { n: 1, runnerText: '{"pid":', newestMtimeMs: 0, log },
+        { n: 1, runnerText: '{"pid":', newestMtimeMs: 0, log: current },
         {
           nowMs: now,
           floorMs: launchSettleFloorMs,
@@ -171,17 +186,28 @@ describe('judging a launch', () => {
   });
 
   it.for([
-    ['another device', { ...log, dev: '16777235' }],
-    ['another inode', { ...log, ino: '18446744073709551556' }],
-    ['another birth time, as for a reused inode', { ...log, birthtimeNs: '1760918400123456790' }],
+    ['another device', { ...current, dev: '16777235' }],
+    ['another inode', { ...current, ino: '18446744073709551556' }],
+    [
+      'another birth time, as for a reused inode',
+      { ...current, birthtimeNs: '1760918400123456790' },
+    ],
+    [
+      'another device, where the birth time is the change time',
+      { ...current, dev: '16777235', ctimeNs: log.birthtimeNs },
+    ],
+    [
+      'another inode, where the birth time is the change time',
+      { ...current, ino: '18446744073709551556', ctimeNs: log.birthtimeNs },
+    ],
     ['no current log', null],
   ] as const)(
     'a record bound to %s is unparsable even with a dead runner and old files, reading no liveness',
-    ([, current]) => {
+    ([, observed]) => {
       let read = false;
       expect(
         judgeLaunch(
-          { n: 2, runnerText: runner(bound), newestMtimeMs: 0, log: current },
+          { n: 2, runnerText: runner(bound), newestMtimeMs: 0, log: observed },
           {
             nowMs: now,
             floorMs: launchSettleFloorMs,
@@ -199,7 +225,7 @@ describe('judging a launch', () => {
   it('a record bound to the current log follows its runner', () => {
     const judge = (state: RunnerLiveness) =>
       judgeLaunch(
-        { n: 1, runnerText: runner(bound), newestMtimeMs: now, log: { ...log } },
+        { n: 1, runnerText: runner(bound), newestMtimeMs: now, log: { ...current } },
         context(state),
       );
     expect(judge('dead')).toEqual({
@@ -212,11 +238,56 @@ describe('judging a launch', () => {
     expect(judge('alive')).toMatchObject({ state: 'in-flight', runner: 'alive' });
   });
 
-  it('an unbound record from an older build follows its runner whatever the log', () => {
-    for (const current of [log, null])
+  it('an ambiguous birth time settles a dead runner only once the files pass the floor', () => {
+    // The log's birth time moved with its change time, as where Node has no real birth time.
+    const fallback = { ...log, birthtimeNs: '1760918460000000000', ctimeNs: '1760918460000000000' };
+    const judge = (state: RunnerLiveness, age: number) =>
+      judgeLaunch(
+        { n: 1, runnerText: runner(bound), newestMtimeMs: now - age, log: fallback },
+        context(state),
+      );
+    expect(judge('dead', 0)).toEqual({
+      n: 1,
+      state: 'in-flight',
+      runner: 'dead',
+      pid: 42,
+      host: 'here',
+    });
+    expect(judge('dead', launchSettleFloorMs).state).toBe('in-flight');
+    expect(judge('dead', launchSettleFloorMs + 1)).toEqual({
+      n: 1,
+      state: 'settled',
+      runner: 'dead',
+      pid: 42,
+      host: 'here',
+    });
+    for (const state of ['alive', 'unknown', 'remote'] as const)
+      expect(judge(state, launchSettleFloorMs + 1)).toMatchObject({
+        state: 'in-flight',
+        runner: state,
+      });
+    const message = inFlightLeftoverMessage('reused', [judge('dead', 0)]);
+    expect(message).toContain('launch 1: runner PID 42 on here is dead, but its record may be');
+    expect(message).toContain('younger than the settle floor');
+  });
+
+  it('a birth time that differs while the log changed since its birth stays unparsable', () => {
+    const reused = { ...current, birthtimeNs: '1760918430000000000' };
+    expect(reused.birthtimeNs).not.toBe(reused.ctimeNs);
+    for (const age of [0, launchSettleFloorMs + 1])
       expect(
         judgeLaunch(
-          { n: 1, runnerText: runner(identity), newestMtimeMs: 0, log: current },
+          { n: 1, runnerText: runner(bound), newestMtimeMs: now - age, log: reused },
+          context('dead'),
+        ),
+      ).toEqual({ n: 1, state: 'in-flight', runner: 'unparsable', pid: null, host: null });
+  });
+
+  it('an unbound record from an older build follows its runner whatever the log', () => {
+    for (const observed of [current, null])
+      expect(
+        judgeLaunch(
+          { n: 1, runnerText: runner(identity), newestMtimeMs: 0, log: observed },
           context('dead'),
         ),
       ).toEqual({ n: 1, state: 'settled', runner: 'dead', pid: 42, host: 'here' });
@@ -224,8 +295,10 @@ describe('judging a launch', () => {
 
   it('without a runner record, settles only once the newest file is older than the floor', () => {
     const judge = (age: number) =>
-      judgeLaunch({ n: 1, runnerText: null, newestMtimeMs: now - age, log }, context('alive'))
-        .state;
+      judgeLaunch(
+        { n: 1, runnerText: null, newestMtimeMs: now - age, log: current },
+        context('alive'),
+      ).state;
     expect(judge(0)).toBe('in-flight');
     expect(judge(launchSettleFloorMs)).toBe('in-flight');
     expect(judge(launchSettleFloorMs + 1)).toBe('settled');
@@ -233,7 +306,7 @@ describe('judging a launch', () => {
 
   it('one launch in flight keeps the whole leftover in flight', () => {
     const settled = judgeLaunch(
-      { n: 1, runnerText: runner(identity), newestMtimeMs: 0, log },
+      { n: 1, runnerText: runner(identity), newestMtimeMs: 0, log: current },
       context('dead'),
     );
     const flying = judgeLaunch(

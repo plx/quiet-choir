@@ -14,8 +14,11 @@
  * A runner record is bound to its launch generation: start stores the dev, inode and birth time of
  * the `<n>.log` it allocated. A bound record whose binding does not match the `<n>.log` now in the
  * directory, or whose launch has no `<n>.log`, belongs to another generation (a stale start's write
- * into a reused directory) and is judged unparsable, so it never settles a later launch. Records
- * from builds that wrote no binding are judged by their runner alone.
+ * into a reused directory) and is judged unparsable, so it never settles a later launch. A birth
+ * time that alone differs while the current log's birth time equals its change time is ambiguous
+ * (Node falls back to the change time where the platform reports no birth time): the record's
+ * runner keeps the launch in flight unless it is dead, and a dead one settles it only past the
+ * floor. Records from builds that wrote no binding are judged by their runner alone.
  *
  * ESLint keeps this module free of I/O; the liveness of a recorded runner is passed in.
  */
@@ -133,9 +136,33 @@ export function parseRunnerIdentity(text: string): RunnerIdentity | null {
   return parsed.success ? parsed.data : null;
 }
 
-/** Whether two log identities name the same file generation: equal dev, inode and birth time. @internal */
-export function sameLaunchLog(a: LaunchLogIdentity, b: LaunchLogIdentity): boolean {
-  return a.dev === b.dev && a.ino === b.ino && a.birthtimeNs === b.birthtimeNs;
+/**
+ * A launch's current `<n>.log` as a judgement observes it: its identity plus its change time in
+ * nanoseconds, from the same bigint `lstat`. The change time is never stored in a runner record.
+ * @internal
+ */
+export interface LaunchLogObservation extends LaunchLogIdentity {
+  readonly ctimeNs: string;
+}
+
+/** How a record's log binding relates to the current `<n>.log`. @internal */
+export type LaunchLogMatch = 'same' | 'different' | 'ambiguous';
+
+/**
+ * Compare a record's log binding with the current `<n>.log`. Another dev or inode is `different`;
+ * equal dev, inode and birth time is `same`. When only the birth time differs, the current log
+ * decides: a birth time equal to its change time is `ambiguous`, since Node reports the change time
+ * as the birth time where the platform has none (so it moves with every write), and a log never
+ * changed since its creation looks the same; otherwise it is `different`, another generation of a
+ * reused inode. @internal
+ */
+export function matchLaunchLog(
+  bound: LaunchLogIdentity,
+  current: LaunchLogObservation,
+): LaunchLogMatch {
+  if (bound.dev !== current.dev || bound.ino !== current.ino) return 'different';
+  if (bound.birthtimeNs === current.birthtimeNs) return 'same';
+  return current.birthtimeNs === current.ctimeNs ? 'ambiguous' : 'different';
 }
 
 /** What the judgement of one launch number observed. @internal */
@@ -160,15 +187,17 @@ export interface LaunchObservation {
   readonly runnerText: string | null;
   /** The newest modification time among the launch's files, in epoch milliseconds. */
   readonly newestMtimeMs: number;
-  /** The identity of the launch's current `<n>.log`; null when the launch has none. */
-  readonly log: LaunchLogIdentity | null;
+  /** The launch's current `<n>.log`; null when the launch has none. */
+  readonly log: LaunchLogObservation | null;
 }
 
 /**
  * Judge one launch number. With a runner record, only a parsable record whose runner is `dead`
  * settles it; without one, a newest file older than `floorMs` does. A record bound to a log that is
  * not the current `<n>.log` (another generation's, or none is left) is unparsable, so the launch
- * stays in flight and the runner's liveness is never read. @internal
+ * stays in flight and the runner's liveness is never read. A record whose binding is `ambiguous`
+ * ({@link matchLaunchLog}) settles only when its runner is dead and the newest file is also older
+ * than `floorMs`, so it is never trusted further than a launch without a record. @internal
  */
 export function judgeLaunch(
   observation: LaunchObservation,
@@ -179,25 +208,23 @@ export function judgeLaunch(
   },
 ): LaunchJudgement {
   const { n } = observation;
+  const aged = context.nowMs - observation.newestMtimeMs > context.floorMs;
   if (observation.runnerText === null)
-    return {
-      n,
-      state: context.nowMs - observation.newestMtimeMs > context.floorMs ? 'settled' : 'in-flight',
-      runner: 'none',
-      pid: null,
-      host: null,
-    };
+    return { n, state: aged ? 'settled' : 'in-flight', runner: 'none', pid: null, host: null };
   const identity = parseRunnerIdentity(observation.runnerText);
-  if (
-    identity === null ||
-    (identity.log !== undefined &&
-      (observation.log === null || !sameLaunchLog(identity.log, observation.log)))
-  )
+  // A record from an older build has no binding and is judged by its runner alone.
+  const match: LaunchLogMatch =
+    identity?.log === undefined
+      ? 'same'
+      : observation.log === null
+        ? 'different'
+        : matchLaunchLog(identity.log, observation.log);
+  if (identity === null || match === 'different')
     return { n, state: 'in-flight', runner: 'unparsable', pid: null, host: null };
   const runner = context.liveness(identity);
   return {
     n,
-    state: runner === 'dead' ? 'settled' : 'in-flight',
+    state: runner === 'dead' && (match === 'same' || aged) ? 'settled' : 'in-flight',
     runner,
     pid: identity.pid,
     host: identity.host,
@@ -248,7 +275,9 @@ function describeInFlight(launches: readonly LaunchJudgement[], none: string): s
             ? `launch ${String(launch.n)}: no runner record, files younger than the settle floor`
             : launch.runner === 'unparsable'
               ? `launch ${String(launch.n)}: unreadable runner record`
-              : `launch ${String(launch.n)}: runner PID ${String(launch.pid)} on ${launch.host ?? 'unknown'} is ${launch.runner}`,
+              : launch.runner === 'dead'
+                ? `launch ${String(launch.n)}: runner PID ${String(launch.pid)} on ${launch.host ?? 'unknown'} is dead, but its record may be another launch's and the files are younger than the settle floor`
+                : `launch ${String(launch.n)}: runner PID ${String(launch.pid)} on ${launch.host ?? 'unknown'} is ${launch.runner}`,
         )
         .join('; ')
     : none;
