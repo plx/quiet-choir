@@ -7,17 +7,18 @@ import {
   readFile,
   readdir,
   realpath,
+  rename,
   rm,
   writeFile,
 } from 'node:fs/promises';
 import type * as fs from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProcessSupervisor } from '../src/processes/supervisor.js';
 import type { ProcessRunner } from '../src/workflow/runtime/exec-model.js';
 import type { HarnessProcess } from '../src/workflow/runtime/model.js';
-import { observeUnlock, removeObservedLock } from '../src/workflow/runtime/lock.js';
+import { observeUnlock, publishLock, removeObservedLock } from '../src/workflow/runtime/lock.js';
 import { WorktreeAdminLockRefusedError } from '../src/workflow/runtime/run-errors.js';
 import {
   acquireWorktreeAdminLock,
@@ -34,10 +35,23 @@ const renameHook = vi.hoisted(() => ({
     | { readonly matches: (from: string, to: string) => boolean; readonly before: () => unknown }
     | undefined,
 }));
+/** A one-shot hook run just before a matching open, which then proceeds for real. */
+const openHook = vi.hoisted(() => ({
+  current: undefined as
+    { readonly matches: (path: string) => boolean; readonly before: () => unknown } | undefined,
+}));
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof fs>();
   return {
     ...actual,
+    open: async (...args: Parameters<typeof fs.open>) => {
+      const hook = openHook.current;
+      if (hook?.matches(String(args[0]))) {
+        openHook.current = undefined;
+        await hook.before();
+      }
+      return actual.open(...args);
+    },
     rename: async (...[from, to]: Parameters<typeof fs.rename>): Promise<void> => {
       const hook = renameHook.current;
       if (hook?.matches(String(from), String(to))) {
@@ -64,6 +78,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   renameHook.current = undefined;
+  openHook.current = undefined;
   vi.restoreAllMocks();
   await chmod(dirname(lockPath), 0o700).catch(() => undefined);
   await chmod(lockPath, 0o700).catch(() => undefined);
@@ -207,6 +222,46 @@ it('never hands off a lock that a failed retire left to another owner', async ()
   expect(await readdir(lockPath)).toEqual(['owner.json']);
   expect(await readFile(join(lockPath, 'owner.json'), 'utf8')).toBe(replacement);
 });
+
+/** A name the hand-off's temporary file in the lock directory can have. */
+const handOffTemporary = /^owner\.[0-9a-f-]{36}\.tmp$/u;
+
+it.for(['the temporary file', 'the rename'] as const)(
+  'never marks released a lock that replaced this one just before the hand-off creates %s',
+  async (point) => {
+    const release = await acquireWorktreeAdminLock(common, { signal });
+    const mine = await ownerJson();
+    const third = { pid: process.ppid, host: hostname(), token: randomUUID(), osStartTime: null };
+    const failure = Object.assign(new Error('EIO: injected i/o error, rename'), { code: 'EIO' });
+    const tombstone = `${lockPath}.gone`;
+    // A stale mismatching retire moves this live lock aside, and a third owner publishes a new one.
+    const swap = async (): Promise<void> => {
+      await rename(lockPath, tombstone);
+      expect(await publishLock(lockPath, third)).toBe('published');
+    };
+    beforeRename(lockPath, '.gone', () => {
+      if (point === 'the temporary file')
+        openHook.current = {
+          matches: (path) => dirname(path) === lockPath && handOffTemporary.test(basename(path)),
+          before: swap,
+        };
+      else
+        renameHook.current = {
+          matches: (from, to) =>
+            handOffTemporary.test(basename(from)) && to === join(lockPath, 'owner.json'),
+          before: swap,
+        };
+      throw failure;
+    });
+    await expect(release()).rejects.toBe(failure);
+    expect(openHook.current ?? renameHook.current).toBeUndefined();
+    // The new lock is exactly as published, with no temporary file left in it.
+    expect(await readdir(lockPath)).toEqual(['owner.json']);
+    expect(await readFile(join(lockPath, 'owner.json'), 'utf8')).toBe(JSON.stringify(third));
+    // The moved lock keeps this acquire's owner unreleased.
+    expect(JSON.parse(await readFile(join(tombstone, 'owner.json'), 'utf8'))).toEqual(mine);
+  },
+);
 
 /** Directory modes do not stop writes: on Windows, or as root. */
 const modesUnenforced = process.platform === 'win32' || process.getuid?.() === 0;

@@ -81,6 +81,10 @@ hand-off fails too. The rewrite happens before the token leaves the set, so no o
 in this process judges the lock leaked mid-rewrite; a lock that the retire moved or replaced before
 failing is left alone. The release still throws the retire's error (or, when the hand-off failed
 too, an error naming both with the retire's as its cause); a hand-off is not a successful release.
+Amended by #446: the hand-off no longer re-reads `owner.json` itself. `markOwnerReleased` checks the
+token after its temporary file exists and renames that uniquely named file, so a live lock that a
+stale mismatching retire moves aside and a third owner replaces is never the one marked released
+(ADR 0030, "Amended by #446").
 
 **Rejected: bounded retry.** Retrying Git's transient "failed to read .../commondir" errors would
 absorb the race without new lock state, but with real serialization among quiet-choir processes it

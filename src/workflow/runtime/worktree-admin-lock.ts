@@ -185,24 +185,22 @@ export async function acquireWorktreeAdminLock(
 
 /**
  * After a failed retire, mark this acquire's lock released, so every process recovers it at once
- * instead of waiting for this live process to exit. The lock at `lockPath` is re-verified to carry
- * this acquire's token first: a retire that moved it before failing, or that renamed back another
- * owner's lock, leaves nothing of this acquire's to hand off, and a lock carrying this live,
- * unreleased token cannot be retired by anyone else meanwhile. Returns the error the release
- * throws: the retire's own when the hand-off worked or was skipped, otherwise one that names both
- * failures, with the retire's as its cause; `judge` then still recovers the lock in this process.
+ * instead of waiting for this live process to exit. `markOwnerReleased` verifies that the lock at
+ * `lockPath` still carries this acquire's token only after its temporary file exists: a retire that
+ * moved the lock before failing, or that renamed back another owner's lock, leaves nothing of this
+ * acquire's to hand off (`changed`). Another process's stale, mismatching retire can still move this
+ * live lock aside and a third owner publish over it; the helper's ordering keeps the rewrite out of
+ * the lock that replaced it (ADR 0030, "Amended by #446"). Returns the error the release throws: the
+ * retire's own when the hand-off worked or was skipped, otherwise one that names both failures, with
+ * the retire's as its cause; `judge` then still recovers the lock in this process.
  */
 async function handOff(lockPath: string, owner: Owner, failure: unknown): Promise<unknown> {
   try {
-    if ((await readOwner(lockPath)).token !== owner.token) return failure;
-  } catch {
-    return failure;
-  }
-  try {
+    // Released or changed, the release reports the retire's own failure.
     await markOwnerReleased(lockPath, owner);
     return failure;
   } catch (error) {
-    // The lock vanished between the check and the rewrite; there is nothing left to hand off.
+    // The lock vanished during the rewrite; there is nothing left to hand off.
     if (isErrno(error, 'ENOENT')) return failure;
     return new Error(
       `Worktree administration lock ${lockPath} could not be released (${message(failure)}) or handed to recovery (${message(error)}); other processes wait until this one exits.`,

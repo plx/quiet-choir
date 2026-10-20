@@ -561,24 +561,55 @@ export async function retire(
 }
 
 /**
- * Hand a lock whose ownership the caller has just verified to recovery: rewrite its `owner.json` as
- * `{ ...owner, released: true }` through a durable temporary file in the lock directory and a rename
- * within it, so every process judges the owner `released` (see `ownerState`). Never re-creates a
- * vanished lock: an `open` inside a missing directory fails with ENOENT. A failure removes the
- * temporary file as a best effort and keeps its errno. @internal
+ * Hand a lock owned by `owner` to recovery: rewrite its `owner.json` as `{ ...owner, released: true }`
+ * through a durable temporary file in the lock directory and a rename within it, so every process
+ * judges the owner `released` (see `ownerState`). Returns `changed`, leaving `owner.json` alone,
+ * when the lock at `lockPath` does not carry `owner.token` (or its `owner.json` is unreadable); an owner
+ * already released under the same token is `released` again.
+ *
+ * The token is checked after the temporary file exists, and the final rename names that file
+ * through `lockPath`. The temporary name is unique, so the rename fails with ENOENT whenever its
+ * source lookup misses the directory the file was created in, and the check shows that directory
+ * still carried this token afterwards. A single retire-and-republish swap between syscalls
+ * therefore makes the call return `changed` or fail with ENOENT, never mark the new lock released.
+ * Two residual windows remain, because Node has no `openat`/`renameat` to pin the directory. One is
+ * a path that flips away, back to the verified lock and away again inside the call (several
+ * concurrent stale retires). The other is a retire-and-republish that completes between the
+ * kernel's separate source-parent and target-parent lookups inside the one rename, which can move
+ * the released file into the new lock's `owner.json`. The tests force swaps between syscalls, not
+ * inside one. See ADR 0030 ("Amended by #446").
+ *
+ * Never re-creates a vanished lock: an `open` inside a missing directory, and a rename whose
+ * temporary file is not there, fail with ENOENT, and a missing `owner.json` rethrows ENOENT only
+ * when no lock is at `lockPath`. Every other outcome but success removes the temporary file by path
+ * as a best effort, and failures keep their errno. @internal
  */
-export async function markOwnerReleased(lockPath: string, owner: Owner): Promise<void> {
+export async function markOwnerReleased(
+  lockPath: string,
+  owner: Owner,
+): Promise<'released' | 'changed'> {
   const temporary = join(lockPath, `owner.${randomUUID()}.tmp`);
+  let renamed = false;
   try {
     {
       await using file = await open(temporary, 'wx', 0o600);
       await file.writeFile(JSON.stringify({ ...owner, released: true }));
       await syncHandle(file);
     }
+    let current: Owner;
+    try {
+      current = await readOwner(lockPath);
+    } catch (error) {
+      if (isErrno(error, 'ENOENT') && (await lockGone(lockPath))) throw error;
+      return 'changed';
+    }
+    if (current.token !== owner.token) return 'changed';
+    // One syscall naming the unique temporary file: never split it or look up the directory apart.
     await rename(temporary, join(lockPath, 'owner.json'));
-  } catch (error) {
-    await rm(temporary, { force: true }).catch(() => undefined);
-    throw error;
+    renamed = true;
+    return 'released';
+  } finally {
+    if (!renamed) await rm(temporary, { force: true }).catch(() => undefined);
   }
 }
 
@@ -888,7 +919,7 @@ async function acquireLock(
       const processes = await inspectProcesses(lockPath, runId, owner.token);
       if (processes.some((entry) => entry.state === 'alive' || entry.state === 'unknown')) {
         // The workflow no longer owns work, but its child records must survive even in a long-lived embedder.
-        await markOwnerReleased(lockPath, owner);
+        if ((await markOwnerReleased(lockPath, owner)) === 'changed') throw lost();
         throw new OrphanProcessesError(runId, processes);
       }
       await retire(lockPath, { owner: owner.token }, lost);
