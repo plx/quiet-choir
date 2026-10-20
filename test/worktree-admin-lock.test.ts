@@ -38,8 +38,7 @@ const renameHook = vi.hoisted(() => ({
 /** A one-shot hook run just before a matching open, which then proceeds for real. */
 const openHook = vi.hoisted(() => ({
   current: undefined as
-    | { readonly matches: (path: string) => boolean; readonly before: () => unknown }
-    | undefined,
+    { readonly matches: (path: string) => boolean; readonly before: () => unknown } | undefined,
 }));
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof fs>();
@@ -243,8 +242,7 @@ it.for(['the temporary file', 'the rename'] as const)(
     beforeRename(lockPath, '.gone', () => {
       if (point === 'the temporary file')
         openHook.current = {
-          matches: (path) =>
-            dirname(path) === lockPath && handOffTemporary.test(basename(path)),
+          matches: (path) => dirname(path) === lockPath && handOffTemporary.test(basename(path)),
           before: swap,
         };
       else

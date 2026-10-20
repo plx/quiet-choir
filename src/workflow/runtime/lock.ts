@@ -563,8 +563,8 @@ export async function retire(
 /**
  * Hand a lock owned by `owner` to recovery: rewrite its `owner.json` as `{ ...owner, released: true }`
  * through a durable temporary file in the lock directory and a rename within it, so every process
- * judges the owner `released` (see `ownerState`). Returns `changed`, and writes nothing, when the
- * lock at `lockPath` does not carry `owner.token` (or its `owner.json` is unreadable); an owner
+ * judges the owner `released` (see `ownerState`). Returns `changed`, leaving `owner.json` alone,
+ * when the lock at `lockPath` does not carry `owner.token` (or its `owner.json` is unreadable); an owner
  * already released under the same token is `released` again.
  *
  * The token is checked after the temporary file exists, and the final rename resolves both names
