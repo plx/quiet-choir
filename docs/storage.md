@@ -111,7 +111,9 @@ different log (another dev, inode or birth time than the current `<n>.log`), or 
 with no `<n>.log`, counts as unreadable: it belongs to an earlier generation of a reused run ID.
 Where Node takes the birth time from the change time (no real birth time), a birth time that alone
 differs while the current log's birth time equals its change time is ambiguous: the launch then
-settles only when the runner is dead and its newest file is more than an hour old. Records from
+settles only when the runner is dead and its newest file is more than an hour old. Against such an
+ambiguous log, start's discard keeps an empty or partial record, since a newer start may still be
+writing it, and removes only one that parses and is unbound or bound to another log. Records from
 older builds carry no binding and are judged by their runner alone. Once every launch is settled,
 `workflow list` reports the leftover (`leftoverLaunches` in JSON, a `Leftover launch` line in text,
 with the `workflow rm` command) and `workflow rm ID` removes it; see

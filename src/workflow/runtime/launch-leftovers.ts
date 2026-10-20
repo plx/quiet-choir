@@ -83,8 +83,9 @@ export async function writeRunnerIdentity(
  * that is not bound to `log`, the `<n>.log` start allocated, so the launch has no runner record and
  * is judged by its age (ADR 0055). A record whose binding matches the slot's current `<n>.log`
  * (`same` or `ambiguous`, {@link matchLaunchLog}) is kept, since the judgement does not keep it in
- * flight for good; a foreign, unbound or partial one is removed. Returns whether it removed a
- * record; best effort, so an absent record or any error returns false.
+ * flight for good; a foreign, unbound or partial one is removed (a partial one only when the slot's
+ * log is `same`, see below). Returns whether it removed a record; best effort, so an absent record
+ * or any error returns false.
  *
  * It first checks, with a bigint `lstat`, that the slot's current `<n>.log` is still `log`, or is
  * `ambiguous` against it, as start's own log is wherever Node takes the birth time from the change
@@ -97,18 +98,29 @@ export async function writeRunnerIdentity(
  * in flight either way (an unparsable record or files younger than the floor). A stale writer whose
  * open already succeeded writes into the unlinked file harmlessly. A small window remains between
  * the `lstat` and the unlink, which would need another removal and reuse of the slot inside it.
- * Call it only after start's own write failed. @internal
+ *
+ * When the slot's log is only `ambiguous` against `log`, the caller cannot tell its own log from a
+ * newer generation's that reused the inode, so ownership of the slot is not proven: a newer start
+ * may be writing its record there right now. It then removes only a record that parses and is
+ * unbound or bound to a log `different` from the current one, and keeps an empty or partial record;
+ * if that record was a stale writer's after all, the launch stays in flight until it is removed by
+ * hand. Call it only after start's own write failed. `observeLog` is a test seam replacing the
+ * bigint `lstat` of `<n>.log`. @internal
  */
 export async function discardForeignRunnerRecord(
   launchDir: string,
   n: number,
   log: LaunchLogIdentity,
+  observeLog: (path: string) => Promise<LaunchLogObservation | null> = logObservationIfPresent,
 ): Promise<boolean> {
   const path = join(launchDir, runnerFileName(n));
   try {
-    const current = await logObservationIfPresent(join(launchDir, `${String(n)}.log`));
-    if (current === null || matchLaunchLog(log, current) === 'different') return false;
+    const current = await observeLog(join(launchDir, `${String(n)}.log`));
+    const slot = current && matchLaunchLog(log, current);
+    if (current === null || slot === 'different') return false;
     const recorded = parseRunnerIdentity(await readFile(path, 'utf8'));
+    // Without proof that the slot is the caller's, a record still being written is not foreign.
+    if (recorded === null && slot === 'ambiguous') return false;
     if (recorded?.log !== undefined && matchLaunchLog(recorded.log, current) !== 'different')
       return false;
     await rm(path, { force: true });

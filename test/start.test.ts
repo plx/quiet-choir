@@ -29,7 +29,10 @@ import type { HarnessProcess } from '../src/workflow/runtime/model.js';
 import { groupState, pidState, processIdentity } from '../src/processes/identity.js';
 import type { WorkflowFailure } from '../src/workflow/loader/failure.js';
 import { listRuns } from '../src/workflow/loader/inspection.js';
-import type { LaunchLogIdentity } from '../src/workflow/runtime/launch-leftover-decision.js';
+import type {
+  LaunchLogIdentity,
+  LaunchLogObservation,
+} from '../src/workflow/runtime/launch-leftover-decision.js';
 import {
   discardForeignRunnerRecord,
   inspectRunLaunches,
@@ -614,6 +617,38 @@ describe('StartWorkflowExecutor', () => {
     ]) {
       await writeFile(record, text);
       expect(await discardForeignRunnerRecord(launch, 1, mine)).toBe(true);
+      expect(existsSync(record)).toBe(false);
+    }
+  });
+
+  it("keeps a partial record when the slot's log is only ambiguous against the given one", async () => {
+    const launch = join(stateDir, 'r1', 'launch');
+    await mkdir(launch, { recursive: true });
+    // The birth time is the change time (Node's fallback) and differs from the caller's: the slot's
+    // log may be the caller's own after a write, or a newer generation's on a reused inode.
+    const mine: LaunchLogIdentity = { dev: '10', ino: '20', birthtimeNs: '30' };
+    const current: LaunchLogObservation = { ...mine, birthtimeNs: '50', ctimeNs: '50' };
+    const observeLog = (): Promise<LaunchLogObservation> => Promise.resolve(current);
+    const record = join(launch, '1.runner.json');
+    const identity = { pid: process.pid, host: hostname(), osStartTime: null };
+    // A newer start may be writing its record: an empty or partial one does not prove it foreign.
+    for (const text of ['', '{"pid":']) {
+      await writeFile(record, text);
+      expect(await discardForeignRunnerRecord(launch, 1, mine, observeLog)).toBe(false);
+      expect(await readFile(record, 'utf8')).toBe(text);
+    }
+    for (const log of [mine, current]) {
+      const bound = JSON.stringify({ ...identity, log });
+      await writeFile(record, bound);
+      expect(await discardForeignRunnerRecord(launch, 1, mine, observeLog)).toBe(false);
+      expect(await readFile(record, 'utf8')).toBe(bound);
+    }
+    for (const text of [
+      JSON.stringify(identity),
+      JSON.stringify({ ...identity, log: foreignLog }),
+    ]) {
+      await writeFile(record, text);
+      expect(await discardForeignRunnerRecord(launch, 1, mine, observeLog)).toBe(true);
       expect(existsSync(record)).toBe(false);
     }
   });

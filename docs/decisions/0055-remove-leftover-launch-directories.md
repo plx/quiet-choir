@@ -105,7 +105,12 @@ start.
   differs while the current log's birth and change times differ is another generation's, as before.
   Start's discard likewise treats an ambiguous current log as its own and keeps a bound record whose
   binding is not `different` from the current log: a record it keeps is one the judgement weighs by
-  its runner, and a newer start's record bound to the log now in the slot is never removed.
+  its runner, and a newer start's record bound to the log now in the slot is never removed. An
+  ambiguous log does not prove the slot is start's, though: it may be a newer generation's on a
+  reused inode whose start is still writing its record. So against an ambiguous log the discard
+  removes only a record that parses and is unbound or bound to a `different` log, and keeps an empty
+  or partial one; should that record be a stale writer's after all, the launch stays in flight until
+  it is removed by hand, like a damaged record.
 - Records from builds before #465 have no `log`. They still parse and are judged by their runner's
   liveness as before, so a stale unbound record can still settle a reused launch.
 - A stale record that lands in a slot before start allocates makes start skip that `n`. The slot is
