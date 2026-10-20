@@ -10,8 +10,9 @@
   owner's publish between the check and the rewrite leave the new lock untouched. The run lock's
   release then fails with "ownership was lost" (or `ENOENT`, a warning) instead of reporting
   orphans, and the administration lock's release throws the retire's original error. A rewrite can
-  still land in the wrong lock only if the lock path flips twice within one call, which ADR 0030
-  documents. Nothing changes when no race happens.
+  still land in the wrong lock only if the lock path flips twice within one call, or a swap
+  completes between the two directory lookups inside the final rename; ADR 0030 documents both.
+  Nothing changes when no race happens.
 - A grandchild's (any descendant's) Claude `addDirs` and `addDirRoots` are rechecked, at delegation
   and at every call, against every ancestor role's roots, canonicalized when checked, not only
   against the immediate parent's (#391,

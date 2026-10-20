@@ -567,14 +567,17 @@ export async function retire(
  * when the lock at `lockPath` does not carry `owner.token` (or its `owner.json` is unreadable); an owner
  * already released under the same token is `released` again.
  *
- * The token is checked after the temporary file exists, and the final rename resolves both names
- * in whatever directory is at `lockPath` at that instant. The temporary name is unique, so that
- * rename succeeds only in the directory the file was created in, and the check shows that directory
- * still carried this token afterwards. A single retire-and-republish swap at any point therefore
- * makes the call return `changed` or fail with ENOENT, never mark the new lock released. Only a path
- * that flips away, back to the verified lock and away again inside the call (several concurrent
- * stale retires) can still mislead it; Node has no `openat`/`renameat` to pin the directory. See
- * ADR 0030 ("Amended by #446").
+ * The token is checked after the temporary file exists, and the final rename names that file
+ * through `lockPath`. The temporary name is unique, so the rename fails with ENOENT whenever its
+ * source lookup misses the directory the file was created in, and the check shows that directory
+ * still carried this token afterwards. A single retire-and-republish swap between syscalls
+ * therefore makes the call return `changed` or fail with ENOENT, never mark the new lock released.
+ * Two residual windows remain, because Node has no `openat`/`renameat` to pin the directory. One is
+ * a path that flips away, back to the verified lock and away again inside the call (several
+ * concurrent stale retires). The other is a retire-and-republish that completes between the
+ * kernel's separate source-parent and target-parent lookups inside the one rename, which can move
+ * the released file into the new lock's `owner.json`. The tests force swaps between syscalls, not
+ * inside one. See ADR 0030 ("Amended by #446").
  *
  * Never re-creates a vanished lock: an `open` inside a missing directory, and a rename whose
  * temporary file is not there, fail with ENOENT, and a missing `owner.json` rethrows ENOENT only
@@ -601,7 +604,7 @@ export async function markOwnerReleased(
       return 'changed';
     }
     if (current.token !== owner.token) return 'changed';
-    // One syscall naming the unique temporary file: never split it or resolve the directory apart.
+    // One syscall naming the unique temporary file: never split it or look up the directory apart.
     await rename(temporary, join(lockPath, 'owner.json'));
     renamed = true;
     return 'released';

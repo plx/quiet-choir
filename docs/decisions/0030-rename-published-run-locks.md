@@ -55,22 +55,25 @@ handle file APIs (`openat`/`renameat`), so the order of three steps does the bin
 helper first creates and fsyncs `owner.<uuid>.tmp` inside whatever directory is at the lock path. It
 then re-reads `owner.json` and requires this owner's token (a repeated release of an owner already
 released under that token still succeeds). Last, it renames the temporary file onto `owner.json`.
-That rename is one syscall that resolves both names in whichever directory is at the path at that
-instant, and the temporary name is unique, so it succeeds only in the directory where the file was
-created. The token check after the creation shows that directory was the verified lock. A
-mismatching retire that moves the lock aside, followed by a third owner's publish, therefore cannot
-get its new lock marked released, wherever the swap falls. Before the temporary file, it lands in
-the new lock and the check sees the new token. Between the file and the check, the check sees the
-new token. Between the check and the rename, the rename finds no temporary file and fails with
-`ENOENT`. A token mismatch or unreadable metadata in a present lock returns `changed`, which the run
-lock reports as "ownership was lost" and the worktree administration lock's hand-off (ADR 0032)
-treats as nothing to hand off. A vanished lock keeps `ENOENT` and is never re-created, and every
-outcome except success removes the temporary file by path as a best effort; one stranded in a moved
-lock leaves with that tombstone. The residual risk is a double flip inside one call: another lock at
-the path when the temporary file is created, the verified lock back for the check, and another lock
-again for the rename. That takes several concurrent stale retires, each with its own rename back,
-and is accepted rather than changing the lock layout (for example a token-named anchor file) or
-adding a native helper.
+The temporary name is unique, so that rename fails with `ENOENT` whenever its source lookup misses
+the directory where the file was created, and otherwise it succeeds only in that directory. The
+token check after the creation shows that directory was the verified lock. A mismatching retire that
+moves the lock aside, followed by a third owner's publish, therefore cannot get its new lock marked
+released, wherever the swap falls between syscalls. Before the temporary file, it lands in the new
+lock and the check sees the new token. Between the file and the check, the check sees the new token.
+Between the check and the rename, the rename finds no temporary file and fails with `ENOENT`. A
+token mismatch or unreadable metadata in a present lock returns `changed`, which the run lock
+reports as "ownership was lost" and the worktree administration lock's hand-off (ADR 0032) treats as
+nothing to hand off. A vanished lock keeps `ENOENT` and is never re-created, and every outcome
+except success removes the temporary file by path as a best effort; one stranded in a moved lock
+leaves with that tombstone. Two residual risks remain, and both are accepted rather than changing
+the lock layout (for example a token-named anchor file) or adding a native helper such as
+`renameat`. The first is a double flip inside one call: another lock at the path when the temporary
+file is created, the verified lock back for the check, and another lock again for the rename. That
+takes several concurrent stale retires, each with its own rename back. The second is a swap that
+completes inside the one rename: POSIX `rename(2)` looks up the source parent and the target parent
+separately, so a retire-and-republish between those two lookups can move the released file into the
+new lock's `owner.json`. The tests force swaps between syscalls, not inside one.
 
 **Sweep.** After publishing, the new owner removes the stray siblings of its own lock path, next to
 the existing sweep of abandoned atomic-write files: every `.gone` tombstone, and every `.tmp`
