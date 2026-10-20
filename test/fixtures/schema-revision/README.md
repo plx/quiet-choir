@@ -482,6 +482,32 @@ answer, so a delivery written to it binds to the run's `createdAt`. The journal 
 read-view digest in `test/record-schema-revision.test.ts` was computed on the same unmodified main
 from this file. No harness was invoked.
 
+`revision-seventeen-checkpoint.json` was generated the same way at origin/main `ecebb3e`, before
+opt-in grants (#577) added the top-level `requireGrants` field in revision 18 and stopped requiring
+grants unless a run or its definition opts in. Its run ID is `revision-seventeen`, and it ran this
+definition once with `grants: ['fixer']`:
+
+```ts
+defineWorkflow({
+  name: 'schema-revision',
+  version: '1',
+  input: z.null(),
+  output: z.null(),
+  profiles: { fixer: { extends: 'edit' } },
+  async run(ctx) {
+    await ctx.now('prepare');
+    throw new Error('fixture tail');
+  },
+});
+```
+
+It carries `schemaRevision: 17`, no `requireGrants`, the saved grant `fixer` with its pin in
+`grantedProfiles`, a manifest whose `requiredGrants` lists `fixer`, the completed `ctx.now` effect
+`prepare` and a workflow-body failure after it. The journal was empty, so only `run.json` is checked
+in. Stack paths are scrubbed to `/fixture/...` and the file was formatted with Prettier; its
+read-view digest in `test/record-schema-revision.test.ts` was computed on the same unmodified main
+from this file. No harness was invoked.
+
 `record-keys.json` lists the top-level run-record keys of each schema revision. Adding or changing a
 persisted run-level field adds a revision there and bumps `SUPPORTED_SCHEMA_REVISION`; a revision
 that only changes a nested shape repeats the previous key list. See `docs/storage.md`.
