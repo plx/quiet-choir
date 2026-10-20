@@ -2,6 +2,20 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- A stale start's runner record can no longer make a later start of the same run ID look settled
+  (#465, [ADR 0055](docs/decisions/0055-remove-leftover-launch-directories.md)). `workflow start`
+  now binds `launch/<n>.runner.json` to the `<n>.log` it allocated with a `log` field of
+  `{dev, ino, birthtimeNs}` decimal strings. `workflow rm` and `workflow list` judge a record whose
+  binding differs from the current `<n>.log`, or whose launch has no log, as an unreadable runner
+  record, so the launch stays in flight and rm refuses it with `run.active` even with `--force`.
+  When start's own record write fails, it removes any record in that slot not bound to its log, so
+  the launch is judged by its age, unless the slot's log is no longer its own, in which case start
+  is the stale one and keeps the newer start's record. Records from older builds carry no binding
+  and are judged as before. Where Node reports the change time as the birth time, a birth time that
+  alone differs from a log whose birth and change times are equal is ambiguous: a dead runner then
+  settles the launch only past the one-hour floor. A launch that holds only a stale bound record and
+  no log now stays in flight for good, as a damaged record does; remove it by hand. The start
+  outcome and the CLI details are unchanged.
 - A rare race can no longer mark another process's freshly published run or worktree administration
   lock released (#446, [ADR 0030](docs/decisions/0030-rename-published-run-locks.md)). The
   released-owner rewrite, shared by a run lock's release with live children and the administration

@@ -1,4 +1,4 @@
-import type { Dirent, Stats } from 'node:fs';
+import type { BigIntStats, Dirent, Stats } from 'node:fs';
 import { lstat, open, readdir, readFile, rm } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -9,9 +9,13 @@ import {
   judgeLaunch,
   launchSettleFloorMs,
   leftoverRemovable,
+  matchLaunchLog,
+  parseRunnerIdentity,
   runnerFileName,
   type LaunchEntry,
   type LaunchJudgement,
+  type LaunchLogIdentity,
+  type LaunchLogObservation,
   type RunnerIdentity,
 } from './launch-leftover-decision.js';
 import { isErrno, liveness } from './lock.js';
@@ -20,17 +24,39 @@ import { isValidRunId } from './run-errors.js';
 import { runBytes, runSiblingPaths } from './run-size.js';
 
 /**
+ * The identity of a launch's `<n>.log` from a bigint `stat` or `fstat`: dev, inode and birth time in
+ * nanoseconds, as decimal strings. @internal
+ */
+export function launchLogIdentity(stats: BigIntStats): LaunchLogIdentity {
+  return {
+    dev: String(stats.dev),
+    ino: String(stats.ino),
+    birthtimeNs: String(stats.birthtimeNs),
+  };
+}
+
+/**
+ * The current `<n>.log` as a judgement observes it, from a bigint `lstat`: its identity plus its
+ * change time in nanoseconds, which tells a birth time that Node took from the change time. @internal
+ */
+export function launchLogObservation(stats: BigIntStats): LaunchLogObservation {
+  return { ...launchLogIdentity(stats), ctimeNs: String(stats.ctimeNs) };
+}
+
+/**
  * Record the runner that `workflow start` just spawned as `launch/<n>.runner.json` (0600, created
- * exclusively): its PID, this host and its OS birth identity. Best effort: a failure returns false
- * and changes nothing else, since a launch without a runner record is judged by its age (ADR 0055).
- * A failed write removes the partial record this call created, so it never reads as a runner record;
- * a record that already existed is never touched. `openFile` is a test seam replacing `open`.
- * @internal
+ * exclusively): its PID, this host, its OS birth identity and `log`, the identity of the `<n>.log`
+ * that start allocated, which binds the record to that launch generation. Best effort: a failure
+ * returns false and changes nothing else, since a launch without a runner record is judged by its
+ * age (ADR 0055). A failed write removes the partial record this call created, so it never reads as
+ * a runner record; a record that already existed is never touched (start then calls
+ * {@link discardForeignRunnerRecord}). `openFile` is a test seam replacing `open`. @internal
  */
 export async function writeRunnerIdentity(
   launchDir: string,
   n: number,
   pid: number,
+  log: LaunchLogIdentity,
   openFile: typeof open = open,
 ): Promise<boolean> {
   const path = join(launchDir, runnerFileName(n));
@@ -40,6 +66,7 @@ export async function writeRunnerIdentity(
       pid,
       host: hostname(),
       osStartTime: processIdentity(pid)?.start ?? null,
+      log,
     };
     await using handle = await openFile(path, 'wx', 0o600);
     created = true;
@@ -47,6 +74,58 @@ export async function writeRunnerIdentity(
     return true;
   } catch {
     if (created) await rm(path, { force: true }).catch(() => undefined);
+    return false;
+  }
+}
+
+/**
+ * After start's own {@link writeRunnerIdentity} failed, remove a record at `launch/<n>.runner.json`
+ * that is not bound to `log`, the `<n>.log` start allocated, so the launch has no runner record and
+ * is judged by its age (ADR 0055). A record whose binding matches the slot's current `<n>.log`
+ * (`same` or `ambiguous`, {@link matchLaunchLog}) is kept, since the judgement does not keep it in
+ * flight for good; a foreign, unbound or partial one is removed (a partial one only when the slot's
+ * log is `same`, see below). Returns whether it removed a record; best effort, so an absent record
+ * or any error returns false.
+ *
+ * It first checks, with a bigint `lstat`, that the slot's current `<n>.log` is still `log`, or is
+ * `ambiguous` against it, as start's own log is wherever Node takes the birth time from the change
+ * time. When that log is gone or another, the caller is itself the stale generation (its directory
+ * was removed and the slot reused), so the record there is the newer start's and is left alone; a
+ * newer record bound to the current log is kept by the record check too. Otherwise
+ * removing by path is safe: allocation skips an `n` whose runner record exists, so a record that
+ * appeared in start's slot after allocation can only be a stale writer's, and no other legitimate
+ * writer targets the slot. `workflow rm` cannot remove the directory meanwhile, since the launch is
+ * in flight either way (an unparsable record or files younger than the floor). A stale writer whose
+ * open already succeeded writes into the unlinked file harmlessly. A small window remains between
+ * the `lstat` and the unlink, which would need another removal and reuse of the slot inside it.
+ *
+ * When the slot's log is only `ambiguous` against `log`, the caller cannot tell its own log from a
+ * newer generation's that reused the inode, so ownership of the slot is not proven: a newer start
+ * may be writing its record there right now. It then removes only a record that parses and is
+ * unbound or bound to a log `different` from the current one, and keeps an empty or partial record;
+ * if that record was a stale writer's after all, the launch stays in flight until it is removed by
+ * hand. Call it only after start's own write failed. `observeLog` is a test seam replacing the
+ * bigint `lstat` of `<n>.log`. @internal
+ */
+export async function discardForeignRunnerRecord(
+  launchDir: string,
+  n: number,
+  log: LaunchLogIdentity,
+  observeLog: (path: string) => Promise<LaunchLogObservation | null> = logObservationIfPresent,
+): Promise<boolean> {
+  const path = join(launchDir, runnerFileName(n));
+  try {
+    const current = await observeLog(join(launchDir, `${String(n)}.log`));
+    const slot = current && matchLaunchLog(log, current);
+    if (current === null || slot === 'different') return false;
+    const recorded = parseRunnerIdentity(await readFile(path, 'utf8'));
+    // Without proof that the slot is the caller's, a record still being written is not foreign.
+    if (recorded === null && slot === 'ambiguous') return false;
+    if (recorded?.log !== undefined && matchLaunchLog(recorded.log, current) !== 'different')
+      return false;
+    await rm(path, { force: true });
+    return true;
+  } catch {
     return false;
   }
 }
@@ -116,6 +195,16 @@ export async function runRecordPresent(stateDir: string, runId: string): Promise
 async function lstatIfPresent(path: string): Promise<Stats | null> {
   try {
     return await lstat(path);
+  } catch (error) {
+    if (isErrno(error, 'ENOENT') || isErrno(error, 'ENOTDIR')) return null;
+    throw error;
+  }
+}
+
+/** The log at `path` as a judgement observes it, from a bigint `lstat`, or null when it is gone. */
+async function logObservationIfPresent(path: string): Promise<LaunchLogObservation | null> {
+  try {
+    return launchLogObservation(await lstat(path, { bigint: true }));
   } catch (error) {
     if (isErrno(error, 'ENOENT') || isErrno(error, 'ENOTDIR')) return null;
     throw error;
@@ -194,8 +283,9 @@ export async function inspectLaunchLeftover(
 }
 
 /**
- * Judge each launch number's files in `launchDir` by its runner record or its age; null when a file
- * vanished during the scan, so the directory changed under it.
+ * Judge each launch number's files in `launchDir` by its runner record or its age, reading the
+ * current `<n>.log`'s identity and change time for the record's generation binding; null when a file vanished
+ * during the scan, so the directory changed under it.
  */
 async function judgeLaunchGroups(
   launchDir: string,
@@ -211,13 +301,20 @@ async function judgeLaunchGroups(
       if (stat === null) return null;
       newestMtimeMs = Math.max(newestMtimeMs, stat.mtimeMs);
     }
+    const logName = `${String(group.n)}.log`;
+    let log: LaunchLogObservation | null = null;
+    if (group.files.includes(logName)) {
+      log = await logObservationIfPresent(join(launchDir, logName));
+      // The log vanished meanwhile, like any other file: judge the directory again.
+      if (log === null) return null;
+    }
     const runnerName = runnerFileName(group.n);
     // A runner record that vanished or cannot be read is judged as unparsable: in flight.
     const runnerText = group.files.includes(runnerName)
       ? await readFile(join(launchDir, runnerName), 'utf8').catch(() => '')
       : null;
     const judgement = judgeLaunch(
-      { n: group.n, runnerText, newestMtimeMs },
+      { n: group.n, runnerText, newestMtimeMs, log },
       { ...context, liveness },
     );
     launches.push({

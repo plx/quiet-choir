@@ -66,7 +66,7 @@ retains typechecking, code/schema checks, grants, and step identity validation.
       launch/<n>.log                 # workflow start: the runner's stderr (0600)
       launch/<n>.result.json         # workflow start: the runner's final JSON document (0600)
       launch/<n>.input.json          # workflow start --input -: the stdin input (0600)
-      launch/<n>.runner.json         # workflow start: the spawned runner's PID, host, birth (0600)
+      launch/<n>.runner.json         # workflow start: the spawned runner's PID, host, birth, log binding (0600)
       attempts/<sha256-full-step-id>/<attempt>.<provider>.jsonl
       artifacts/<encoded-id>--<hash>/<attempt>/
       worktrees/                     # reserved; no automatic checkout creation
@@ -93,18 +93,30 @@ root stays outside the checkout.
 launch's evidence, and skips an `n` whose `<n>.runner.json` survives. Numbering continues across
 `workflow start --resume` launches of the same run: a run started with start and then resumed
 detached has `launch/1.*` and `launch/2.*`. Right after spawning the runner it records
-`{pid, host, osStartTime}` in `<n>.runner.json` (best effort; a failed write changes nothing else).
-A launch that failed before the record existed (for example a type error) leaves `<runId>/launch/`
-without `run.json`, and the log keeps the only copy of the compiler output. `inspect` reports
-`run.not_found` for it. Such a directory is a leftover launch directory when the ID has no
-`run.json` or `<runId>.json`, no `<runId>.inbox/`, `<runId>.cancel.json` or `<runId>.json.v<N>`
-sibling, and `<runId>/` holds only `launch/` with nothing but numbered `<n>.log`, `<n>.result.json`,
-`<n>.input.json` and `<n>.runner.json` files. Each launch number is settled when its
-`<n>.runner.json` names a runner that is dead, or, without a runner record, when its newest file is
-more than an hour old. A runner that is alive, unverifiable or on another host, or an unreadable
-runner record, keeps the launch in flight. Once every launch is settled, `workflow list` reports the
-leftover (`leftoverLaunches` in JSON, a `Leftover launch` line in text, with the `workflow rm`
-command) and `workflow rm ID` removes it; see
+`{pid, host, osStartTime, log}` in `<n>.runner.json`, where `log` = `{dev, ino, birthtimeNs}`
+(decimal strings) binds the record to the `<n>.log` it allocated. The write is best effort; when it
+fails and the slot's `<n>.log` is still the one start allocated, start removes any record in that
+slot that is not bound to its own log, so the launch is judged by its age. When that log is gone or
+another, start is the stale generation and leaves the newer start's record alone; only a small
+window between that check and the removal remains. A launch that failed before the record existed
+(for example a type error) leaves `<runId>/launch/` without `run.json`, and the log keeps the only
+copy of the compiler output. `inspect` reports `run.not_found` for it. Such a directory is a
+leftover launch directory when the ID has no `run.json` or `<runId>.json`, no `<runId>.inbox/`,
+`<runId>.cancel.json` or `<runId>.json.v<N>` sibling, and `<runId>/` holds only `launch/` with
+nothing but numbered `<n>.log`, `<n>.result.json`, `<n>.input.json` and `<n>.runner.json` files.
+Each launch number is settled when its `<n>.runner.json` names a runner that is dead, or, without a
+runner record, when its newest file is more than an hour old. A runner that is alive, unverifiable
+or on another host, or an unreadable runner record, keeps the launch in flight. A record bound to a
+different log (another dev, inode or birth time than the current `<n>.log`), or found in a launch
+with no `<n>.log`, counts as unreadable: it belongs to an earlier generation of a reused run ID.
+Where Node takes the birth time from the change time (no real birth time), a birth time that alone
+differs while the current log's birth time equals its change time is ambiguous: the launch then
+settles only when the runner is dead and its newest file is more than an hour old. Against such an
+ambiguous log, start's discard keeps an empty or partial record, since a newer start may still be
+writing it, and removes only one that parses and is unbound or bound to another log. Records from
+older builds carry no binding and are judged by their runner alone. Once every launch is settled,
+`workflow list` reports the leftover (`leftoverLaunches` in JSON, a `Leftover launch` line in text,
+with the `workflow rm` command) and `workflow rm ID` removes it; see
 [ADR 0055](decisions/0055-remove-leftover-launch-directories.md). Anything else in the directory (a
 lock, a journal, an unknown file) leaves it alone, and rm keeps reporting `run.not_found`.
 

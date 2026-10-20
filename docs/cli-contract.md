@@ -264,7 +264,8 @@ with the `workflow rm ID --state-dir DIR` command behind the invocation's launch
 no `run.json` or `<runId>.json` and names a leftover, rm takes a separate path instead of reporting
 `run.not_found`. It refuses with `run.active` (exit 3), even with `--force`, while any launch may
 still be in flight (a recorded runner that is alive, unverifiable or remote, an unreadable runner
-record, or, without one, files less than an hour old); `error.details` is
+record, a dead runner whose record's log binding is ambiguous with files less than an hour old, or,
+without a record, files less than an hour old); `error.details` is
 `{status:"starting", waiting:[], launches}` with each launch as `{n, pid, host, state, inFlight}`.
 Otherwise it takes only the legacy guard, without registering a project (a held or unreadable guard,
 or a lock beside it, is refused as `run.locked` before the guard is taken), re-checks under it
@@ -610,9 +611,12 @@ appends `--run-id` and `--state-dir` when absent, and always appends `--json`. T
 flags), never a PATH lookup, in its own session with stdin from `/dev/null`. Its stdout and stderr
 go to `<stateDir>/<runId>/launch/<n>.result.json` and `<n>.log`, created exclusively for the
 smallest free `n` (0600 files, 0700 directories); `--input -` is read by start and passed as
-`--input @<n>.input.json`. Right after spawning the runner, start records `{pid, host, osStartTime}`
-in `<n>.runner.json` (0600, created exclusively), which judges whether the launch is still in
-flight; a failed write changes nothing else.
+`--input @<n>.input.json`. Right after spawning the runner, start records
+`{pid, host, osStartTime, log: {dev, ino, birthtimeNs}}` in `<n>.runner.json` (0600, created
+exclusively), which judges whether the launch is still in flight; `log` holds decimal strings that
+bind the record to the allocated `<n>.log`, and a record bound to another log counts as unreadable.
+When the write fails, start removes any record in that slot not bound to its log, leaving the launch
+to the age rule, unless the slot's `<n>.log` is no longer its own; nothing else changes.
 
 Readiness: start polls every 50 ms. While the runner lives, start succeeds once the record is
 readable and the run lock's owner is the runner's PID; another process's lock does not count. After
