@@ -615,7 +615,7 @@ smallest free `n` (0600 files, 0700 directories); `--input -` is read by start a
 exclusively), which judges whether the launch is still in flight; `log` holds decimal strings that
 bind the record to the allocated `<n>.log`, and a record bound to another log counts as unreadable.
 When the write fails, start removes any record in that slot not bound to its log, leaving the launch
-to the age rule; nothing else changes.
+to the age rule, unless the slot's `<n>.log` is no longer its own; nothing else changes.
 
 Readiness: start polls every 50 ms. While the runner lives, start succeeds once the record is
 readable and the run lock's owner is the runner's PID; another process's lock does not count. After

@@ -27,14 +27,18 @@ start.
   bigint `fstat` of its handle and stored as decimal strings, so a 64-bit inode keeps its precision.
   It binds the record to that launch generation (#465). The write is best effort. Allocation skips
   an `n` whose `<n>.runner.json` survives, so a stale record never describes a new launch.
-- When its own write fails (or rejects), start reads `<n>.runner.json` and removes it unless it
-  parses with a binding equal to its own log. A record in that slot can then only come from a stale
-  start whose single `open(path, 'wx')` stalled across a full run lifecycle, a `workflow rm` and the
-  reuse of the same run ID and launch number. The launch is left with no runner record and is judged
-  by its age. Removing by path is safe only there: allocation skipped every slot that held a record,
-  so no other legitimate writer targets it, and rm cannot remove the directory meanwhile because the
-  launch is in flight either way. A stale writer whose open already succeeded writes into the
-  unlinked file harmlessly. Otherwise the write never touches an existing record.
+- When its own write fails (or rejects), start first checks with a bigint `lstat` that the slot's
+  current `<n>.log` is still the one it allocated. When that log is gone or another, start is itself
+  the stale generation, so it leaves the record alone: it is the newer start's. Otherwise it reads
+  `<n>.runner.json` and removes it unless it parses with a binding equal to its own log. A record in
+  that slot can then only come from a stale start whose single `open(path, 'wx')` stalled across a
+  full run lifecycle, a `workflow rm` and the reuse of the same run ID and launch number. The launch
+  is left with no runner record and is judged by its age. Removing by path is safe only there:
+  allocation skipped every slot that held a record, so no other legitimate writer targets it, and rm
+  cannot remove the directory meanwhile because the launch is in flight either way. A stale writer
+  whose open already succeeded writes into the unlinked file harmlessly. A small window remains
+  between the `lstat` and the unlink; losing a newer record in it needs another removal and reuse of
+  the slot inside that window. Otherwise the write never touches an existing record.
 - A leftover launch directory is `<stateDir>/<runId>/` for a valid run ID with no `run.json`, no
   flat `<runId>.json`, no `<runId>.inbox/`, `<runId>.cancel.json` or `<runId>.json.v<N>` sibling,
   holding exactly one entry, the directory `launch/`, whose entries are all regular files named

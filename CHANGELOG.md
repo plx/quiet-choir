@@ -9,9 +9,11 @@
   binding differs from the current `<n>.log`, or whose launch has no log, as an unreadable runner
   record, so the launch stays in flight and rm refuses it with `run.active` even with `--force`.
   When start's own record write fails, it removes any record in that slot not bound to its log, so
-  the launch is judged by its age. Records from older builds carry no binding and are judged as
-  before. A launch that holds only a stale bound record and no log now stays in flight for good, as
-  a damaged record does; remove it by hand. The start outcome and the CLI details are unchanged.
+  the launch is judged by its age, unless the slot's log is no longer its own, in which case start
+  is the stale one and keeps the newer start's record. Records from older builds carry no binding
+  and are judged as before. A launch that holds only a stale bound record and no log now stays in
+  flight for good, as a damaged record does; remove it by hand. The start outcome and the CLI
+  details are unchanged.
 - A rare race can no longer mark another process's freshly published run or worktree administration
   lock released (#446, [ADR 0030](docs/decisions/0030-rename-published-run-locks.md)). The
   released-owner rewrite, shared by a run lock's release with live children and the administration
