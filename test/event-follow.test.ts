@@ -1,10 +1,14 @@
+import { setTimeout as delay } from 'node:timers/promises';
+
 import { describe, expect, it } from 'vitest';
+import { defineWorkflow, readRun, z, type WorkflowEvent } from '../src/index.js';
 import {
   recordEventLines,
   type EventFollowCursor,
   type EventFollowStart,
 } from '../src/workflow/loader/event-follow.js';
 import { EVENT_LINE_MAX_BYTES, type EventLine } from '../src/workflow/loader/event-line.js';
+import { EventLineMemory, formatEventLine } from '../src/workflow/loader/events.js';
 import type { AttemptRecord, RunRecord, StepRecord } from '../src/workflow/runtime/record.js';
 import { rootCauseSummary } from '../src/workflow/loader/failure-kind.js';
 import type { ErrorKind } from '../src/workflow/runtime/model.js';
@@ -13,6 +17,7 @@ import type {
   RequestSummary,
   RunEvent,
 } from '../src/workflow/runtime/observability-model.js';
+import { it as stateIt } from './setup/state-dir.js';
 
 /** Fields a test may set, including to undefined to model an older record that lacks them. */
 type Loose<T> = { [K in keyof T]?: T[K] | undefined };
@@ -904,4 +909,68 @@ describe('recordEventLines following', () => {
       expect(JSON.parse(line)).toHaveProperty('run', 'r1');
     }
   });
+});
+
+describe('recordEventLines parity with the live stream', () => {
+  // #476: a nested ctx.map failure's root cause is the leaf's own failure, so the follower's
+  // earlier-execution run.failed line, which reads the leaf's last failed attempt, matches the line
+  // --events printed live, even after a resume replaced the root cause.
+  stateIt(
+    'derives an earlier execution nested-map run.failed line that matches the live one',
+    async ({ stateDir, runs }) => {
+      let failing = true;
+      const definition = defineWorkflow({
+        name: 'nested',
+        version: '1',
+        input: z.null(),
+        output: z.unknown(),
+        run: (ctx) =>
+          ctx.map('outer', [0], { concurrency: 1 }, () =>
+            ctx.map('inner', [0, 1], { concurrency: 2 }, (index) =>
+              ctx.step('run', {
+                input: index,
+                schema: z.number(),
+                retry: { maxAttempts: 1 },
+                run: async () => {
+                  await delay(index * 20);
+                  if (failing) throw Object.assign(new Error('slow'), { code: 'ETIMEDOUT' });
+                  return index;
+                },
+              }),
+            ),
+          ),
+      });
+      const options = { stateDir, runId: 'nested', input: null };
+      const events: WorkflowEvent[] = [];
+      await expect(
+        runs.run(definition, { ...options, onEvent: (event) => void events.push(event) }),
+      ).rejects.toThrow('slow');
+      const memory = new EventLineMemory();
+      const live = parse(
+        events
+          .map((event) => formatEventLine(event, memory))
+          .filter((line): line is string => line !== null),
+      ).filter((line) => line.ev === 'run.failed');
+      expect(live).toMatchObject([
+        { step: 'outer/0/inner/0/run', errorKind: 'timeout', retryable: true },
+      ]);
+
+      failing = false;
+      await runs.run(definition, { ...options, resume: true });
+      const final = await readRun(options);
+      expect(final.status).toBe('completed');
+      expect(final.rootCause ?? null).toBeNull();
+      const recorded = parse(recordEventLines(final, null, 'all').lines).filter(
+        (line) => line.ev === 'run.failed',
+      );
+      // The live ms reads the event times and the recorded one the execution's start and end, each
+      // sampled from the clock separately, so the two agree only to within a few milliseconds.
+      const withoutMs = (lines: EventLine[]) => lines.map((line) => ({ ...line, ms: null }));
+      expect(withoutMs(recorded)).toEqual(withoutMs(live));
+      const [recordedMs, liveMs] = [recorded[0]?.ms, live[0]?.ms];
+      expect(recordedMs).toEqual(expect.any(Number));
+      expect(liveMs).toEqual(expect.any(Number));
+      expect(Math.abs((recordedMs ?? 0) - (liveMs ?? 0))).toBeLessThanOrEqual(10);
+    },
+  );
 });

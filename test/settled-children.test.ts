@@ -286,6 +286,65 @@ it('rejects cancellation, budget stops, invalid input and depth violations witho
   expect((await readRun({ stateDir, runId: 'depth' })).children?.['child']).toBeUndefined();
 });
 
+it.each([
+  { depth: 1, leaf: 'child/inner/0/leaf' },
+  { depth: 2, leaf: 'child/outer/0/inner/0/leaf' },
+])(
+  'fails a return child whose nested map (depth $depth) only saw a leaf AbortError',
+  async ({ depth, leaf }) => {
+    const child = defineWorkflow({
+      name: 'mapper',
+      version: '1',
+      input: z.null(),
+      output: z.unknown(),
+      async run(ctx) {
+        const inner = () =>
+          ctx.map('inner', [0], { concurrency: 1 }, () =>
+            ctx.step('leaf', {
+              input: null,
+              schema: z.null(),
+              retry: { maxAttempts: 1 },
+              run: () => {
+                throw Object.assign(new Error('leaf aborted'), { name: 'AbortError' });
+              },
+            }),
+          );
+        return depth === 1 ? inner() : ctx.map('outer', [0], { concurrency: 1 }, inner);
+      },
+    });
+    let settled: unknown = 'not returned';
+    const root = defineWorkflow({
+      name: 'root',
+      version: '1',
+      input: z.null(),
+      output: z.null(),
+      async run(ctx) {
+        settled = await ctx.workflow('child', child, null, { onError: 'return' });
+        return null;
+      },
+    });
+    const events: WorkflowEvent[] = [];
+    const error: unknown = await runWorkflow(root, {
+      stateDir,
+      runId: 'abort',
+      input: null,
+      onEvent: (event) => {
+        events.push(event);
+      },
+    }).catch((cause: unknown) => cause);
+    // The resolved leaf is a cancellation, so the child call fails instead of settling it.
+    expect(error).toBeInstanceOf(WorkflowRunError);
+    expect(settled).toBe('not returned');
+    expect((error as Error).message).not.toMatch(/checkpoint/i);
+    expect(types(events)).toContain('child.failed');
+    expect(types(events)).not.toContain('child.settled');
+    const saved = await readRun({ stateDir, runId: 'abort' });
+    expect(saved.children?.['child']?.status).toBe('failed');
+    expect(saved.children?.['child']).not.toHaveProperty('settled');
+    expect(saved.rootCause).toMatchObject({ stepId: leaf, error: 'leaf aborted' });
+  },
+);
+
 it('refuses a changed settled frame and lets an unsettled failed frame start settling', async () => {
   const state = { broken: true, bodies: 0, effects: 0 };
   const root = (version: string, input: string, mode: 'return' | 'throw' | undefined) =>

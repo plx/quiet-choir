@@ -105,6 +105,15 @@ export type MapStepError = StepError & {
 
 /** Runtime attribution; only RootCause's plain data crosses into checkpoints. @internal */
 export class FailureOrigins {
+  /**
+   * `isCancelled` is the runtime's cancellation test, which {@link find} uses to pass over
+   * cancellations; the runner passes `errorKind(error) === 'cancelled'`, injected because
+   * step-error.ts imports this module. The default recognizes only a {@link CancelledError}.
+   */
+  public constructor(
+    private readonly isCancelled: (error: unknown) => boolean = (error) =>
+      error instanceof CancelledError,
+  ) {}
   private readonly fatalErrors = new Set<unknown>();
   public markFatal(error: unknown): void {
     this.fatalErrors.add(error);
@@ -173,30 +182,31 @@ export class FailureOrigins {
 
   /**
    * The original error and effect behind a failure; `effect` is the remembered call-site label and
-   * `beforeAttempt` whether that error was remembered outside an attempt.
+   * `beforeAttempt` whether that error was remembered outside an attempt. A fan-out failure
+   * resolves to its first failure whose own origin is not a cancellation (its reported or
+   * remembered error meets the constructor's cancellation test, for the runner errorKind
+   * `cancelled`, so an AbortError leaf counts too), looking through nested
+   * fan-outs to the leaf's own origin, so a nested map that only saw cancellations never masks a
+   * sibling's real failure at any nesting level; only when every failure resolves to a
+   * cancellation is the first one the origin. When a mapper wrapped the remembered error, `error`
+   * is the mapper's error and `remembered` the remembered error its cause chain reaches;
+   * `remembered` is absent when `error` is that error.
    */
-  public find(
-    error: unknown,
-    visited = new Set<unknown>(),
-  ): { error: unknown; stepId: string | null; effect?: string; beforeAttempt?: boolean } {
+  public find(error: unknown, visited = new Set<unknown>()): FailureOrigin {
     if (visited.has(error)) return { error, stepId: null };
     visited.add(error);
     const known = this.failures.find((failure) => Object.is(failure.error, error));
     if (known) return known;
     if (error instanceof FanOutError && error.failures.length) {
-      const first =
-        error.failures.find((failure) => !(failure.error instanceof CancelledError)) ??
-        error.failures[0];
-      if (first) {
-        // The mapper may have wrapped the remembered error, so its label comes from the cause chain.
-        const nested = first.stepId === null ? undefined : this.find(first.error, visited);
-        return {
-          error: first.error,
-          stepId: first.stepId,
-          ...(nested?.effect === undefined ? {} : { effect: nested.effect }),
-          ...(nested?.beforeAttempt === undefined ? {} : { beforeAttempt: nested.beforeAttempt }),
-        };
+      let fallback: FailureOrigin | undefined;
+      for (const failure of error.failures) {
+        // Each failure is probed with its own copy of the walk so far: siblings may share an error
+        // object, and one probe must not make it look revisited to the next.
+        const origin = this.fanOutFailureOrigin(failure, new Set(visited));
+        if (!this.isCancellation(origin)) return origin;
+        fallback ??= origin;
       }
+      if (fallback) return fallback;
     }
     if (error instanceof Error && error.cause !== undefined) {
       const cause = this.find(error.cause, visited);
@@ -205,10 +215,35 @@ export class FailureOrigins {
     return { error, stepId: null };
   }
 
+  /** Whether an origin is a cancellation: its reported error or the remembered error behind it. */
+  private isCancellation(origin: FailureOrigin): boolean {
+    return this.isCancelled(origin.error) || this.isCancelled(rememberedError(origin));
+  }
+
+  /** The origin of one fan-out failure, as {@link find} reports it when it chooses that failure. */
+  private fanOutFailureOrigin(failure: FanOutFailure, visited: Set<unknown>): FailureOrigin {
+    // The failure may be a nested map's fan-out, or the mapper may have wrapped the remembered
+    // error. A nested fan-out yields the leaf's own origin. A wrapper keeps the mapper's error,
+    // while the label, the flag and the remembered error come from its cause chain.
+    const nested = failure.stepId === null ? undefined : this.find(failure.error, visited);
+    const resolved = nested?.stepId === null ? undefined : nested;
+    if (failure.error instanceof FanOutError && resolved !== undefined) return resolved;
+    const remembered = resolved === undefined ? failure.error : rememberedError(resolved);
+    return {
+      error: failure.error,
+      stepId: failure.stepId,
+      ...(nested?.effect === undefined ? {} : { effect: nested.effect }),
+      ...(nested?.beforeAttempt === undefined ? {} : { beforeAttempt: nested.beforeAttempt }),
+      ...(Object.is(remembered, failure.error) ? {} : { remembered }),
+    };
+  }
+
   /**
    * Attribute a run's failure. `classify` is the runtime's root-cause classifier, passed in because
    * step-error.ts imports this module; it learns whether the originating error was remembered
-   * outside an attempt.
+   * outside an attempt. The kind classifies the remembered root error, through nested maps and
+   * mapper wrappers; for an error an attempt recorded, that is the kind the root step's last failed
+   * attempt saved. The message stays that of the error {@link find} reports.
    */
   public root(
     error: unknown,
@@ -219,10 +254,29 @@ export class FailureOrigins {
       stepId: origin.stepId,
       error: errorMessage(origin.error),
       errorKind:
-        origin.stepId === null ? null : classify(origin.error, origin.beforeAttempt === true),
+        origin.stepId === null
+          ? null
+          : classify(rememberedError(origin), origin.beforeAttempt === true),
       effect: origin.stepId === null ? null : (origin.effect ?? null),
     };
   }
+}
+
+/** The original error and effect behind a failure, as {@link FailureOrigins.find} reports it. */
+interface FailureOrigin {
+  error: unknown;
+  stepId: string | null;
+  effect?: string;
+  beforeAttempt?: boolean;
+  remembered?: unknown;
+}
+
+/** The remembered error behind a {@link FailureOrigins.find} origin: `remembered` when present. @internal */
+export function rememberedError(origin: {
+  readonly error: unknown;
+  readonly remembered?: unknown;
+}): unknown {
+  return 'remembered' in origin ? origin.remembered : origin.error;
 }
 
 /** Preserve messages from unknown thrown values. @internal */

@@ -14,7 +14,12 @@ import type { OperationTracker } from './tracking.js';
 import { CancelledError, type FailureOrigins, type MapStepError } from './fan-out.js';
 import { ReplaySkippedError, RunRefusedError } from './run-errors.js';
 import { duplicateStepId } from './identity.js';
-import { ownedRecords, settledFailure, settlesFailure } from './settled-outcome.js';
+import {
+  cancelledOrigin,
+  ownedRecords,
+  settledFailure,
+  settlesFailure,
+} from './settled-outcome.js';
 import { frameRedefinition, type FrameRedefinition } from './child-identity.js';
 import type { Settled } from './model.js';
 
@@ -397,6 +402,9 @@ export class RunChildren {
           frame.status = cause instanceof CancelledError ? 'cancelled' : 'failed';
           frame.finishedAt = new Date().toISOString();
           frame.error = cause instanceof Error ? cause.message : String(cause);
+          // A nested map's failure resolves to its leaf, which may be a cancellation even when the
+          // fan-out is not; that leaf must fail the frame rather than become settled data.
+          const origin = d.origins.find(cause);
           if (
             mode === 'return' &&
             settlesFailure(cause, {
@@ -404,9 +412,10 @@ export class RunChildren {
               ownCancellation: false,
               checkpointFailure: d.isCheckpointFailure(cause),
               origins: d.origins,
-            })
+            }) &&
+            !cancelledOrigin(origin)
           ) {
-            const outcome = settledFailure(d.origins.find(cause), d.record);
+            const outcome = settledFailure(origin, d.record);
             // The schema requires a started attempt; a body error without an effect counts as one.
             outcome.error = { ...outcome.error, attempts: Math.max(1, outcome.error.attempts) };
             frame.settled = { outcome, ...ownedRecords(owner, d.record) };
