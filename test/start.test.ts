@@ -593,20 +593,18 @@ describe('StartWorkflowExecutor', () => {
   it('discards only a runner record that is not bound to the given log', async () => {
     const launch = join(stateDir, 'r1', 'launch');
     await mkdir(launch, { recursive: true });
-    await writeFile(join(launch, '1.log'), '');
-    // The runner wrote to the log after its birth, so its change time moved past its birth time and
-    // a record with another birth time is another generation's, not an ambiguous one.
-    await delay(20);
-    await writeFile(join(launch, '1.log'), 'runner output\n', { flag: 'a' });
-    const stats = await lstat(join(launch, '1.log'), { bigint: true });
-    expect(stats.ctimeNs).not.toBe(stats.birthtimeNs);
-    const mine = await logIdentity(join(launch, '1.log'));
+    // A log written after its birth: its change time differs from a real birth time, so a record
+    // with another birth time is another generation's, not an ambiguous one. The observation is
+    // given rather than read, so the case holds where Node takes the birth time from the change time.
+    const mine: LaunchLogIdentity = { dev: '10', ino: '20', birthtimeNs: '30' };
+    const observeLog = (): Promise<LaunchLogObservation> =>
+      Promise.resolve({ ...mine, ctimeNs: '40' });
     const record = join(launch, '1.runner.json');
     const identity = { pid: process.pid, host: hostname(), osStartTime: null };
-    expect(await discardForeignRunnerRecord(launch, 1, mine)).toBe(false);
+    expect(await discardForeignRunnerRecord(launch, 1, mine, observeLog)).toBe(false);
     const kept = JSON.stringify({ ...identity, log: mine });
     await writeFile(record, kept);
-    expect(await discardForeignRunnerRecord(launch, 1, mine)).toBe(false);
+    expect(await discardForeignRunnerRecord(launch, 1, mine, observeLog)).toBe(false);
     expect(await readFile(record, 'utf8')).toBe(kept);
     for (const text of [
       JSON.stringify({ ...identity, log: foreignLog }),
@@ -616,7 +614,7 @@ describe('StartWorkflowExecutor', () => {
       '',
     ]) {
       await writeFile(record, text);
-      expect(await discardForeignRunnerRecord(launch, 1, mine)).toBe(true);
+      expect(await discardForeignRunnerRecord(launch, 1, mine, observeLog)).toBe(true);
       expect(existsSync(record)).toBe(false);
     }
   });
