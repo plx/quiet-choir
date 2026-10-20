@@ -379,7 +379,10 @@ async function relay(label, phaseName, steps, render = RUN_STEPS, tier = TIER.cl
   const missing = [];
   let failedEarlier = false;
   for (const s of steps) {
-    const data = verify(copied[s.id], s.nonce);
+    // A clerk relaying one command sometimes copies its line without the id wrapper; the nonce and
+    // hash still prove the copy, so accept it rather than paying for a re-read.
+    const data =
+      verify(copied[s.id], s.nonce) ?? (steps.length === 1 ? verify(copied, s.nonce) : null);
     if (data) {
       verified[s.id] = data;
       failedEarlier ||= Boolean(data.error);
