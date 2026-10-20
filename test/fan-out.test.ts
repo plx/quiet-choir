@@ -1059,6 +1059,32 @@ it("fails, not suspends, a run whose sibling nested map only saw the interruptio
   });
 });
 
+it("settles a return-mode item whose body threw a nested map's failure with the leaf's kind", async () => {
+  const definition = workflow((ctx) =>
+    ctx.map('outer', [0], { concurrency: 1, onError: 'return' }, () =>
+      ctx.map('inner', [0], { concurrency: 1 }, () =>
+        ctx.step('run', {
+          input: null,
+          schema: z.number(),
+          retry: { maxAttempts: 1 },
+          run: () => {
+            throw Object.assign(new Error('slow'), { code: 'ETIMEDOUT' });
+          },
+        }),
+      ),
+    ),
+  );
+  const result = await runWorkflow(definition, options());
+  // The item settles with the leaf's kind, not the inner map's FanOutError's unknown (#476).
+  const settled = {
+    ok: false,
+    error: { message: 'slow', kind: 'timeout', attempts: 1, stepId: 'outer/0/inner/0/run' },
+  };
+  expect(result.output).toEqual([settled]);
+  const saved = await readRun(options());
+  expect(saved.maps?.['outer']?.items[0]?.outcome).toEqual(settled);
+});
+
 it('records a null kind for a failure of the workflow body itself', async () => {
   const error: unknown = await runWorkflow(
     workflow(() => Promise.reject(new Error('body bug'))),
