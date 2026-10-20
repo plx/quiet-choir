@@ -6,13 +6,14 @@
   kind, such as `timeout`/`retryable: true` rather than `unknown`/`false` (#476,
   [ADR 0038](docs/decisions/0038-code-free-event-follower.md)), so `workflow events` following an
   earlier execution after a resume prints the line `--events` printed live. The root cause resolves
-  through every nested map's `FanOutError` to the leaf's own failure; its message is the leaf's,
-  which a `FanOutError` already repeated. A mapper that wrapped an attempt's error keeps its own
-  message in `rootCause.error`, but the kind is now the attempt's rather than the wrapper's. The
-  same resolution reaches the other uses of the root failure: a run interrupted while nested maps
-  run is now saved as `cancelled` (or suspended, for an interruption such as a tick deadline) as it
-  is for a single map, instead of `failed` with "Workflow cancelled."; the recovery hint can name
-  the leaf's kind; and a return-mode map item or `onError: 'return'` child whose body threw a nested
+  through every nested map's `FanOutError` to the leaf's own failure, passing over a nested map that
+  only saw cancellations for a sibling's real failure; its message is the leaf's, which a
+  `FanOutError` already repeated. A mapper that wrapped an attempt's error keeps its own message in
+  `rootCause.error`, but the kind is now the attempt's rather than the wrapper's. The same
+  resolution reaches the other uses of the root failure: a run interrupted while nested maps run is
+  now saved as `cancelled` (or suspended, for an interruption such as a tick deadline) as it is for
+  a single map, instead of `failed` with "Workflow cancelled."; the recovery hint can name the
+  leaf's kind; and a return-mode map item or `onError: 'return'` child whose body threw a nested
   map's `FanOutError` settles with the leaf's kind instead of `unknown`. Saved records replay as
   stored.
 - A stale start's runner record can no longer make a later start of the same run ID look settled

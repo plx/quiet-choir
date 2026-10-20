@@ -174,51 +174,52 @@ export class FailureOrigins {
   /**
    * The original error and effect behind a failure; `effect` is the remembered call-site label and
    * `beforeAttempt` whether that error was remembered outside an attempt. A fan-out failure
-   * resolves to its first non-cancellation failure, looking through nested fan-outs to the leaf's
-   * own origin. When a mapper wrapped the remembered error, `error` is the mapper's error and
-   * `remembered` the remembered error its cause chain reaches; `remembered` is absent when `error`
-   * is that error.
+   * resolves to its first failure whose own origin is not a cancellation, looking through nested
+   * fan-outs to the leaf's own origin, so a nested map that only saw cancellations never masks a
+   * sibling's real failure at any nesting level; only when every failure resolves to a
+   * cancellation is the first one the origin. When a mapper wrapped the remembered error, `error`
+   * is the mapper's error and `remembered` the remembered error its cause chain reaches;
+   * `remembered` is absent when `error` is that error.
    */
-  public find(
-    error: unknown,
-    visited = new Set<unknown>(),
-  ): {
-    error: unknown;
-    stepId: string | null;
-    effect?: string;
-    beforeAttempt?: boolean;
-    remembered?: unknown;
-  } {
+  public find(error: unknown, visited = new Set<unknown>()): FailureOrigin {
     if (visited.has(error)) return { error, stepId: null };
     visited.add(error);
     const known = this.failures.find((failure) => Object.is(failure.error, error));
     if (known) return known;
     if (error instanceof FanOutError && error.failures.length) {
-      const first =
-        error.failures.find((failure) => !(failure.error instanceof CancelledError)) ??
-        error.failures[0];
-      if (first) {
-        // The failure may be a nested map's fan-out, or the mapper may have wrapped the remembered
-        // error. A nested fan-out yields the leaf's own origin. A wrapper keeps the mapper's error,
-        // while the label, the flag and the remembered error come from its cause chain.
-        const nested = first.stepId === null ? undefined : this.find(first.error, visited);
-        const resolved = nested?.stepId === null ? undefined : nested;
-        if (first.error instanceof FanOutError && resolved !== undefined) return resolved;
-        const remembered = resolved === undefined ? first.error : rememberedError(resolved);
-        return {
-          error: first.error,
-          stepId: first.stepId,
-          ...(nested?.effect === undefined ? {} : { effect: nested.effect }),
-          ...(nested?.beforeAttempt === undefined ? {} : { beforeAttempt: nested.beforeAttempt }),
-          ...(Object.is(remembered, first.error) ? {} : { remembered }),
-        };
+      let fallback: FailureOrigin | undefined;
+      for (const failure of error.failures) {
+        // Each failure is probed with its own copy of the walk so far: siblings may share an error
+        // object, and one probe must not make it look revisited to the next.
+        const origin = this.fanOutFailureOrigin(failure, new Set(visited));
+        if (!isCancellation(origin)) return origin;
+        fallback ??= origin;
       }
+      if (fallback) return fallback;
     }
     if (error instanceof Error && error.cause !== undefined) {
       const cause = this.find(error.cause, visited);
       if (cause.stepId !== null) return cause;
     }
     return { error, stepId: null };
+  }
+
+  /** The origin of one fan-out failure, as {@link find} reports it when it chooses that failure. */
+  private fanOutFailureOrigin(failure: FanOutFailure, visited: Set<unknown>): FailureOrigin {
+    // The failure may be a nested map's fan-out, or the mapper may have wrapped the remembered
+    // error. A nested fan-out yields the leaf's own origin. A wrapper keeps the mapper's error,
+    // while the label, the flag and the remembered error come from its cause chain.
+    const nested = failure.stepId === null ? undefined : this.find(failure.error, visited);
+    const resolved = nested?.stepId === null ? undefined : nested;
+    if (failure.error instanceof FanOutError && resolved !== undefined) return resolved;
+    const remembered = resolved === undefined ? failure.error : rememberedError(resolved);
+    return {
+      error: failure.error,
+      stepId: failure.stepId,
+      ...(nested?.effect === undefined ? {} : { effect: nested.effect }),
+      ...(nested?.beforeAttempt === undefined ? {} : { beforeAttempt: nested.beforeAttempt }),
+      ...(Object.is(remembered, failure.error) ? {} : { remembered }),
+    };
   }
 
   /**
@@ -243,6 +244,22 @@ export class FailureOrigins {
       effect: origin.stepId === null ? null : (origin.effect ?? null),
     };
   }
+}
+
+/** The original error and effect behind a failure, as {@link FailureOrigins.find} reports it. */
+interface FailureOrigin {
+  error: unknown;
+  stepId: string | null;
+  effect?: string;
+  beforeAttempt?: boolean;
+  remembered?: unknown;
+}
+
+/** Whether an origin is a cancellation: its reported error or the remembered error behind it. */
+function isCancellation(origin: FailureOrigin): boolean {
+  return (
+    origin.error instanceof CancelledError || rememberedError(origin) instanceof CancelledError
+  );
 }
 
 /** The remembered error behind a {@link FailureOrigins.find} origin: `remembered` when present. */

@@ -1,4 +1,4 @@
-import { ReplaySkippedError, WorkflowRunError } from '../src/index.js';
+import { ReplaySkippedError, RunInterruptedError, WorkflowRunError } from '../src/index.js';
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -1007,6 +1007,58 @@ it('saves a run interrupted inside a nested map as cancelled, as it does for a s
   expect(saved.rootCause).toEqual({ stepId: null, error: 'stop', errorKind: null, effect: null });
 });
 
+it("fails, not suspends, a run whose sibling nested map only saw the interruption of another's real failure", async () => {
+  const controller = new AbortController();
+  const definition = workflow((ctx) =>
+    ctx.map('outer', [0, 1], { concurrency: 2 }, (outer) =>
+      ctx.map('inner', outer === 0 ? [0] : [0, 1], { concurrency: 2 }, (inner) =>
+        ctx.step('run', {
+          input: inner,
+          schema: z.number(),
+          retry: { maxAttempts: 1 },
+          run: ({ signal }) => {
+            if (outer === 1 && inner === 0) {
+              // Interrupt the run while outer/1's inner map drains after this timeout.
+              setTimeout(() => {
+                controller.abort(new RunInterruptedError('Worker shutting down.'));
+              }, 20);
+              throw Object.assign(new Error('slow'), { code: 'ETIMEDOUT' });
+            }
+            return new Promise<number>((_, reject) => {
+              signal.addEventListener('abort', () => {
+                // outer/0's map settles first with only a cancellation, so the outer map's first
+                // failure is the cancellation-only nested fan-out.
+                const settle = () => {
+                  reject(signal.reason as Error);
+                };
+                if (outer === 0) settle();
+                else setTimeout(settle, 20);
+              });
+            });
+          },
+        }),
+      ),
+    ),
+  );
+  const error: unknown = await runWorkflow(definition, {
+    ...options(),
+    signal: controller.signal,
+  }).catch((cause: unknown) => cause);
+  expect(error).toBeInstanceOf(WorkflowRunError);
+  if (!(error instanceof WorkflowRunError)) throw error;
+  expect(error.cause).toBeInstanceOf(FanOutError);
+  if (!(error.cause instanceof FanOutError)) throw error.cause;
+  expect(error.cause.failures.map((failure) => failure.index)).toEqual([0, 1]);
+  const saved = await readRun(options());
+  expect(saved.status).toBe('failed');
+  expect(saved.rootCause).toEqual({
+    stepId: 'outer/1/inner/0/run',
+    error: 'slow',
+    errorKind: 'timeout',
+    effect: 'step',
+  });
+});
+
 it('records a null kind for a failure of the workflow body itself', async () => {
   const error: unknown = await runWorkflow(
     workflow(() => Promise.reject(new Error('body bug'))),
@@ -1522,6 +1574,54 @@ describe('FailureOrigins root-cause kinds (#311)', () => {
     expect(origins.root(outer, rootCauseKind)).toMatchObject({
       stepId: 'outer/0/inner/0',
       errorKind: 'unknown',
+    });
+  });
+
+  // A nested map that only saw cancellations must not mask a sibling map's real failure: the
+  // runner would otherwise save the failed run as cancelled or suspended.
+  it("skips a nested fan-out of cancellations for a sibling nested fan-out's real failure", () => {
+    const origins = new FailureOrigins();
+    const cancelled = new CancelledError(null, new Error('stop'));
+    origins.remember(cancelled, 'outer/0/inner/0/run', 'step');
+    const error = timedOut();
+    const timeoutLeaf = 'outer/1/inner/0/run';
+    origins.remember(error, timeoutLeaf, 'step');
+    const outer = new FanOutError(
+      'drain',
+      [
+        {
+          index: 0,
+          stepId: 'outer/0/inner/0/run',
+          error: fanOut(cancelled, 'outer/0/inner/0/run'),
+        },
+        { index: 1, stepId: timeoutLeaf, error: fanOut(error, timeoutLeaf) },
+      ],
+      [],
+    );
+    expect(origins.find(outer)).toMatchObject({ error, stepId: timeoutLeaf, effect: 'step' });
+    expect(origins.root(outer, rootCauseKind)).toEqual({ ...leafRoot, stepId: timeoutLeaf });
+    // Deeper nesting is skipped the same way.
+    expect(origins.find(fanOut(outer, timeoutLeaf))).toMatchObject({ error, stepId: timeoutLeaf });
+  });
+
+  it('resolves a nested fan-out of only cancellations to the first cancellation', () => {
+    const origins = new FailureOrigins();
+    const first = new CancelledError(null, new Error('stop'));
+    const second = new CancelledError(null, new Error('stop'));
+    origins.remember(first, 'outer/0/inner/0/run', 'step');
+    origins.remember(second, 'outer/1/inner/0/run', 'step');
+    const outer = new FanOutError(
+      'drain',
+      [
+        { index: 0, stepId: 'outer/0/inner/0/run', error: fanOut(first, 'outer/0/inner/0/run') },
+        { index: 1, stepId: 'outer/1/inner/0/run', error: fanOut(second, 'outer/1/inner/0/run') },
+      ],
+      [],
+    );
+    expect(origins.find(outer)).toMatchObject({ error: first, stepId: 'outer/0/inner/0/run' });
+    expect(origins.root(outer, rootCauseKind)).toMatchObject({
+      stepId: 'outer/0/inner/0/run',
+      errorKind: 'cancelled',
     });
   });
 });
