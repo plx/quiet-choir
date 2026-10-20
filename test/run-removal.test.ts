@@ -38,6 +38,10 @@ import {
 import { formatArgv } from '../src/workflow/runtime/commands.js';
 import { resolveRemovalStateDir } from '../src/workflow/runtime/interrupted-removal.js';
 import { defaultStateDir, resolveStateDir } from '../src/workflow/runtime/paths.js';
+import {
+  launchLogIdentity,
+  writeRunnerIdentity,
+} from '../src/workflow/runtime/launch-leftovers.js';
 import { readRequiredRun } from '../src/workflow/runtime/read-required-run.js';
 import {
   removeRun,
@@ -1822,6 +1826,46 @@ describe('workflow rm of a leftover launch directory', () => {
     },
   );
 
+  it('refuses a stale runner record published into a reused launch directory', async () => {
+    // Generation 1: a start allocated launch 1 and its write of the runner record stalled.
+    const generation1 = join(stateDir, 'stale', 'launch');
+    await mkdir(generation1, { recursive: true });
+    await writeFile(join(generation1, '1.log'), '');
+    const staleLog = launchLogIdentity(await lstat(join(generation1, '1.log'), { bigint: true }));
+    // rm removed the run; moving it aside keeps its log's inode alive, so generation 2 cannot reuse
+    // it and the test does not depend on the filesystem's inode reuse.
+    await rename(join(stateDir, 'stale'), join(root, 'stale-generation-1'));
+    // Generation 2 reuses the run ID and launch number, before its own runner record.
+    const directory = await leftover('stale', { runner: null });
+    // The stalled write of generation 1 lands now, naming its dead runner.
+    expect(await writeRunnerIdentity(join(directory, 'launch'), 1, DEAD, staleLog)).toBe(true);
+    const before = await snapshot(stateDir);
+    for (const force of [false, true]) {
+      const refusal = refused(await remove('stale', { force }), 'run.active');
+      expect(refusal.message).toContain('launch 1: unreadable runner record');
+      expect(refusal.details).toMatchObject({
+        status: 'starting',
+        launches: [{ n: 1, pid: null, host: null, state: 'unparsable', inFlight: true }],
+      });
+      const preview = removed(await remove('stale', { dryRun: true, force }));
+      expect(preview).toMatchObject({ removed: false, verdict: { code: 'run.active' } });
+    }
+    expect(await snapshot(stateDir)).toEqual(before);
+    expect((await listRuns({ stateDir })).leftoverLaunches).toEqual([]);
+  });
+
+  it('removes a leftover whose dead runner’s record is bound to its current log', async () => {
+    const directory = await leftover('bound', { runner: null });
+    const launch = join(directory, 'launch');
+    const log = launchLogIdentity(await lstat(join(launch, '1.log'), { bigint: true }));
+    expect(await writeRunnerIdentity(launch, 1, DEAD, log)).toBe(true);
+    expect((await listRuns({ stateDir })).leftoverLaunches.map((entry) => entry.runId)).toEqual([
+      'bound',
+    ]);
+    expect(removed(await remove('bound')).launchOnly).toBe(true);
+    expect(await gone(directory)).toBe(true);
+  });
+
   it('previews a removable leftover, changing nothing', async () => {
     const directory = await leftover('broken');
     const before = await snapshot(root);
@@ -2301,6 +2345,11 @@ describe('workflow rm --unreadable of a run whose record is damaged', () => {
   const inFlight: readonly (readonly [string, () => string | null, string])[] = [
     ['an alive runner record', () => JSON.stringify(liveRunner()), 'alive'],
     ['an unparsable runner record', () => '{"pid":', 'unparsable'],
+    [
+      'a dead runner’s record bound to another log',
+      () => JSON.stringify({ ...deadRunner, log: { dev: '1', ino: '2', birthtimeNs: '3' } }),
+      'unparsable',
+    ],
     ['a young launch without a runner record', () => null, 'none'],
   ];
   it.for(inFlight)(

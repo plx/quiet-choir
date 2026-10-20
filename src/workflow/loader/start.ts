@@ -9,8 +9,12 @@ import { signalProcess } from '../../processes/identity.js';
 import { workflowArgv, type CommandLauncher } from '../runtime/commands.js';
 import type { JsonValue } from '../runtime/model.js';
 import { legacyRunPath, prepareStateDirectory, runDirectory } from '../runtime/paths.js';
-import { runnerFileName } from '../runtime/launch-leftover-decision.js';
-import { writeRunnerIdentity } from '../runtime/launch-leftovers.js';
+import { runnerFileName, type LaunchLogIdentity } from '../runtime/launch-leftover-decision.js';
+import {
+  discardForeignRunnerRecord,
+  launchLogIdentity,
+  writeRunnerIdentity,
+} from '../runtime/launch-leftovers.js';
 import { withRunGuard } from '../runtime/lock.js';
 import { isCliErrorCode, RunInterruptedError, RunRefusedError } from '../runtime/run-errors.js';
 import { createStorageDirectory } from '../runtime/storage-io.js';
@@ -113,9 +117,16 @@ export interface StartWorkflowExecutorOptions {
   readonly saveMarginMs?: number;
   /**
    * @internal Test seam replacing {@link writeRunnerIdentity}, which records the spawned runner in
-   * `launch/<n>.runner.json`. Its failure or rejection never changes the start's outcome.
+   * `launch/<n>.runner.json`, bound to `log`, the allocated `<n>.log`. Its failure or rejection never
+   * changes the start's outcome: start then discards any record in that slot not bound to its log,
+   * leaving the launch to the age rule.
    */
-  readonly recordRunner?: (launchDir: string, n: number, pid: number) => Promise<boolean>;
+  readonly recordRunner?: (
+    launchDir: string,
+    n: number,
+    pid: number,
+    log: LaunchLogIdentity,
+  ) => Promise<boolean>;
 }
 
 /** Extra time after the kill grace for the runner to save its interrupted record. */
@@ -161,6 +172,8 @@ export interface LaunchFiles {
   readonly log: string;
   readonly result: string;
   readonly input: string | null;
+  /** The identity of `<n>.log`, from its handle, which binds the runner record to this launch. */
+  readonly logIdentity: LaunchLogIdentity;
   readonly handles: readonly [FileHandle, FileHandle];
 }
 
@@ -191,12 +204,20 @@ async function allocateLaunchFiles(
     }
     let resultHandle: FileHandle | undefined;
     try {
+      const logIdentity = launchLogIdentity(await logHandle.stat({ bigint: true }));
       resultHandle = await open(result, 'wx', 0o600);
       if (inputPath !== null) {
         await using inputHandle = await open(inputPath, 'wx', 0o600);
         await inputHandle.writeFile(`${JSON.stringify(input)}\n`);
       }
-      return { n, log, result, input: inputPath, handles: [resultHandle, logHandle] };
+      return {
+        n,
+        log,
+        result,
+        input: inputPath,
+        logIdentity,
+        handles: [resultHandle, logHandle],
+      };
     } catch (error) {
       await resultHandle?.close();
       await logHandle.close();
@@ -514,11 +535,17 @@ export class StartWorkflowExecutor implements Executor<
       osStartTime: null,
     });
     // Best effort: without it, the leftover of a pre-record failure is judged by age (ADR 0055).
-    await (this.#options.recordRunner ?? writeRunnerIdentity)(
-      dirname(files.log),
+    // A failed write may mean a stale start's record took this slot; discard any record not bound
+    // to this launch's log, so the launch is left to the age rule rather than to that record.
+    const launchDir = dirname(files.log);
+    const recorded = await (this.#options.recordRunner ?? writeRunnerIdentity)(
+      launchDir,
       files.n,
       pid,
+      files.logIdentity,
     ).catch(() => false);
+    if (!recorded)
+      await discardForeignRunnerRecord(launchDir, files.n, files.logIdentity).catch(() => false);
     const running = (): boolean => state.exit === null;
     const stop = async (): Promise<void> => {
       if (running()) {

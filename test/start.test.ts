@@ -1,7 +1,17 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, open, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -19,7 +29,13 @@ import type { HarnessProcess } from '../src/workflow/runtime/model.js';
 import { groupState, pidState, processIdentity } from '../src/processes/identity.js';
 import type { WorkflowFailure } from '../src/workflow/loader/failure.js';
 import { listRuns } from '../src/workflow/loader/inspection.js';
-import { writeRunnerIdentity } from '../src/workflow/runtime/launch-leftovers.js';
+import type { LaunchLogIdentity } from '../src/workflow/runtime/launch-leftover-decision.js';
+import {
+  discardForeignRunnerRecord,
+  inspectRunLaunches,
+  launchLogIdentity,
+  writeRunnerIdentity,
+} from '../src/workflow/runtime/launch-leftovers.js';
 import { removeRun } from '../src/workflow/runtime/run-removal.js';
 import { readRun } from '../src/workflow/runtime/store.js';
 import {
@@ -57,6 +73,14 @@ afterEach(async () => {
 function marker(): string {
   return join(root, 'record.json');
 }
+
+/** The generation binding of the file at `path`, as start and the judgement read it. */
+async function logIdentity(path: string): Promise<LaunchLogIdentity> {
+  return launchLogIdentity(await lstat(path, { bigint: true }));
+}
+
+/** A binding of no real file, as a stale start's record from another generation carries. */
+const foreignLog: LaunchLogIdentity = { dev: '1', ino: '2', birthtimeNs: '3' };
 
 async function observeMarker(): Promise<StartRunObservation> {
   try {
@@ -431,7 +455,10 @@ describe('StartWorkflowExecutor', () => {
       pid: result.pid,
       host: hostname(),
       osStartTime: expect.any(String) as unknown,
+      log: await logIdentity(join(stateDir, 'r1', 'launch', '1.log')),
     });
+    const [launch] = (await inspectRunLaunches(stateDir, 'r1')) ?? [];
+    expect(launch).toMatchObject({ n: 1, runner: 'alive', pid: result.pid });
     expect((await stat(recorded)).mode & 0o777).toBe(0o600);
   });
 
@@ -448,6 +475,33 @@ describe('StartWorkflowExecutor', () => {
     expect(calls).toBe(1);
     expect(result.status).toBe('running');
     expect(existsSync(join(stateDir, 'r1', 'launch', '1.runner.json'))).toBe(false);
+  });
+
+  it('discards a stale record that took its slot, leaving the launch to the age rule', async () => {
+    const stale = JSON.stringify({
+      pid: 2_000_000_000,
+      host: hostname(),
+      osStartTime: null,
+      log: foreignLog,
+    });
+    let seen: { n: number; log: LaunchLogIdentity } | null = null;
+    const result = started(
+      await executor({
+        // A stale start's write lands in the slot first, so this start's exclusive write fails.
+        recordRunner: async (launchDir, n, _pid, log) => {
+          seen = { n, log };
+          await writeFile(join(launchDir, `${String(n)}.runner.json`), stale);
+          return false;
+        },
+      }).execute(plan(`${own} ${forever}`)),
+    );
+    expect(result.status).toBe('running');
+    const launch = join(stateDir, 'r1', 'launch');
+    expect(seen).toEqual({ n: 1, log: await logIdentity(join(launch, '1.log')) });
+    expect(existsSync(join(launch, '1.runner.json'))).toBe(false);
+    expect(await inspectRunLaunches(stateDir, 'r1')).toMatchObject([
+      { n: 1, runner: 'none', state: 'in-flight', pid: null },
+    ]);
   });
 
   it('tracks the runner before the runner record write settles', async () => {
@@ -487,7 +541,7 @@ describe('StartWorkflowExecutor', () => {
     const launch = join(stateDir, 'r1', 'launch');
     await mkdir(launch, { recursive: true });
     await writeFile(join(launch, '1.runner.json'), 'kept');
-    expect(await writeRunnerIdentity(launch, 1, process.pid)).toBe(false);
+    expect(await writeRunnerIdentity(launch, 1, process.pid, foreignLog)).toBe(false);
     expect(await readFile(join(launch, '1.runner.json'), 'utf8')).toBe('kept');
     const failure = failed(await executor().execute(plan('process.exit(2)')));
     expect(failure.launch?.log).toBe(join(launch, '2.log'));
@@ -503,8 +557,33 @@ describe('StartWorkflowExecutor', () => {
       handle.writeFile = () => Promise.reject(new Error('disk full'));
       return handle;
     }) as typeof open;
-    expect(await writeRunnerIdentity(launch, 1, process.pid, failingOpen)).toBe(false);
+    expect(await writeRunnerIdentity(launch, 1, process.pid, foreignLog, failingOpen)).toBe(false);
     expect(existsSync(join(launch, '1.runner.json'))).toBe(false);
+  });
+
+  it('discards only a runner record that is not bound to the given log', async () => {
+    const launch = join(stateDir, 'r1', 'launch');
+    await mkdir(launch, { recursive: true });
+    await writeFile(join(launch, '1.log'), '');
+    const mine = await logIdentity(join(launch, '1.log'));
+    const record = join(launch, '1.runner.json');
+    const identity = { pid: process.pid, host: hostname(), osStartTime: null };
+    expect(await discardForeignRunnerRecord(launch, 1, mine)).toBe(false);
+    const kept = JSON.stringify({ ...identity, log: mine });
+    await writeFile(record, kept);
+    expect(await discardForeignRunnerRecord(launch, 1, mine)).toBe(false);
+    expect(await readFile(record, 'utf8')).toBe(kept);
+    for (const text of [
+      JSON.stringify({ ...identity, log: foreignLog }),
+      JSON.stringify({ ...identity, log: { ...mine, birthtimeNs: '1' } }),
+      JSON.stringify(identity),
+      '{"pid":',
+      '',
+    ]) {
+      await writeFile(record, text);
+      expect(await discardForeignRunnerRecord(launch, 1, mine)).toBe(true);
+      expect(existsSync(record)).toBe(false);
+    }
   });
 
   it('skips a slot whose result file already exists', async () => {

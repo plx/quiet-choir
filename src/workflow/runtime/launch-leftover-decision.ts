@@ -11,6 +11,12 @@
  * floor. A leftover is removable only when every launch is settled; an unparsable runner record,
  * or a runner that is alive, unverifiable or on another host, keeps it in flight.
  *
+ * A runner record is bound to its launch generation: start stores the dev, inode and birth time of
+ * the `<n>.log` it allocated. A bound record whose binding does not match the `<n>.log` now in the
+ * directory, or whose launch has no `<n>.log`, belongs to another generation (a stale start's write
+ * into a reused directory) and is judged unparsable, so it never settles a later launch. Records
+ * from builds that wrote no binding are judged by their runner alone.
+ *
  * ESLint keeps this module free of I/O; the liveness of a recorded runner is passed in.
  */
 import { z } from 'zod';
@@ -26,11 +32,34 @@ export const launchSettleFloorMs = 3_600_000;
 /** A launch evidence file: `<n>.log`, `<n>.result.json`, `<n>.input.json` or `<n>.runner.json`. */
 const launchFile = /^([1-9][0-9]*)\.(log|result\.json|input\.json|runner\.json)$/u;
 
-/** The identity `workflow start` records in `launch/<n>.runner.json` after spawning its runner. @internal */
+/** A non-negative integer written in decimal, so a 64-bit device or inode number keeps its precision. */
+const decimal = z.string().regex(/^[0-9]+$/u);
+
+/**
+ * The identity of a launch's `<n>.log`: its device, inode and birth time in nanoseconds, from a
+ * bigint `stat`, each as a decimal string. Birth time tells two generations apart when a filesystem
+ * reuses a freed inode number; a filesystem that reports none gives `0`, and the binding then rests
+ * on dev and inode alone. @internal
+ */
+export const launchLogIdentitySchema = z.object({
+  dev: decimal,
+  ino: decimal,
+  birthtimeNs: decimal,
+});
+
+/** The identity of a launch's `<n>.log`, as {@link launchLogIdentitySchema} describes it. @internal */
+export type LaunchLogIdentity = z.infer<typeof launchLogIdentitySchema>;
+
+/**
+ * The identity `workflow start` records in `launch/<n>.runner.json` after spawning its runner. `log`
+ * binds the record to the `<n>.log` that start allocated; records from older builds lack it.
+ * @internal
+ */
 export const runnerIdentitySchema = z.object({
   pid: z.number().int().positive(),
   host: z.string(),
   osStartTime: z.string().nullable(),
+  log: launchLogIdentitySchema.optional(),
 });
 
 /** A parsed `launch/<n>.runner.json`. @internal */
@@ -104,6 +133,11 @@ export function parseRunnerIdentity(text: string): RunnerIdentity | null {
   return parsed.success ? parsed.data : null;
 }
 
+/** Whether two log identities name the same file generation: equal dev, inode and birth time. @internal */
+export function sameLaunchLog(a: LaunchLogIdentity, b: LaunchLogIdentity): boolean {
+  return a.dev === b.dev && a.ino === b.ino && a.birthtimeNs === b.birthtimeNs;
+}
+
 /** What the judgement of one launch number observed. @internal */
 export type LaunchRunnerState = RunnerLiveness | 'unparsable' | 'none';
 
@@ -126,11 +160,15 @@ export interface LaunchObservation {
   readonly runnerText: string | null;
   /** The newest modification time among the launch's files, in epoch milliseconds. */
   readonly newestMtimeMs: number;
+  /** The identity of the launch's current `<n>.log`; null when the launch has none. */
+  readonly log: LaunchLogIdentity | null;
 }
 
 /**
  * Judge one launch number. With a runner record, only a parsable record whose runner is `dead`
- * settles it; without one, a newest file older than `floorMs` does. @internal
+ * settles it; without one, a newest file older than `floorMs` does. A record bound to a log that is
+ * not the current `<n>.log` (another generation's, or none is left) is unparsable, so the launch
+ * stays in flight and the runner's liveness is never read. @internal
  */
 export function judgeLaunch(
   observation: LaunchObservation,
@@ -150,7 +188,11 @@ export function judgeLaunch(
       host: null,
     };
   const identity = parseRunnerIdentity(observation.runnerText);
-  if (identity === null)
+  if (
+    identity === null ||
+    (identity.log !== undefined &&
+      (observation.log === null || !sameLaunchLog(identity.log, observation.log)))
+  )
     return { n, state: 'in-flight', runner: 'unparsable', pid: null, host: null };
   const runner = context.liveness(identity);
   return {

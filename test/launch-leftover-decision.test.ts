@@ -9,7 +9,9 @@ import {
   launchSettleFloorMs,
   leftoverRemovable,
   parseRunnerIdentity,
+  sameLaunchLog,
   type LaunchEntry,
+  type LaunchLogIdentity,
   type RunnerLiveness,
 } from '../src/workflow/runtime/launch-leftover-decision.js';
 
@@ -17,6 +19,12 @@ const file = (name: string): LaunchEntry => ({ name, kind: 'file' });
 const directory = (name: string): LaunchEntry => ({ name, kind: 'directory' });
 const runner = (value: object): string => JSON.stringify(value);
 const identity = { pid: 42, host: 'here', osStartTime: null };
+const log: LaunchLogIdentity = {
+  dev: '16777234',
+  ino: '18446744073709551557',
+  birthtimeNs: '1760918400123456789',
+};
+const bound = { ...identity, log };
 
 describe('leftover launch directory shape', () => {
   it('accepts only a lone launch/ directory', () => {
@@ -96,6 +104,32 @@ describe('runner records', () => {
     ])
       expect(parseRunnerIdentity(text)).toBeNull();
   });
+
+  it('parses a record bound to its log, and an unbound one from an older build', () => {
+    // 64-bit device and inode numbers survive as decimal strings.
+    expect(parseRunnerIdentity(runner(bound))).toEqual(bound);
+    expect(parseRunnerIdentity('{"pid":42,"host":"here","osStartTime":null}\n')).toEqual(identity);
+    expect(
+      parseRunnerIdentity(runner({ ...identity, log: { dev: '1', ino: '2', birthtimeNs: '0' } })),
+    ).toEqual({ ...identity, log: { dev: '1', ino: '2', birthtimeNs: '0' } });
+  });
+
+  it.for([
+    ['a non-digit string', { ...log, ino: '12a' }],
+    ['a negative number string', { ...log, dev: '-1' }],
+    ['an empty string', { ...log, birthtimeNs: '' }],
+    ['a missing ino', { dev: log.dev, birthtimeNs: log.birthtimeNs }],
+    ['a number instead of a string', { ...log, ino: 12 }],
+    ['null', null],
+  ] as const)('rejects a log binding with %s', ([, binding]) => {
+    expect(parseRunnerIdentity(runner({ ...identity, log: binding }))).toBeNull();
+  });
+
+  it('compares log identities by dev, inode and birth time', () => {
+    expect(sameLaunchLog(log, { ...log })).toBe(true);
+    for (const key of ['dev', 'ino', 'birthtimeNs'] as const)
+      expect(sameLaunchLog(log, { ...log, [key]: '7' })).toBe(false);
+  });
 });
 
 describe('judging a launch', () => {
@@ -114,7 +148,7 @@ describe('judging a launch', () => {
   ] as const)('a recorded runner that is %s is %s, whatever its age', ([state, expected]) => {
     for (const newestMtimeMs of [0, now])
       expect(
-        judgeLaunch({ n: 3, runnerText: runner(identity), newestMtimeMs }, context(state)),
+        judgeLaunch({ n: 3, runnerText: runner(identity), newestMtimeMs, log }, context(state)),
       ).toEqual({ n: 3, state: expected, runner: state, pid: 42, host: 'here' });
   });
 
@@ -122,7 +156,7 @@ describe('judging a launch', () => {
     let read = false;
     expect(
       judgeLaunch(
-        { n: 1, runnerText: '{"pid":', newestMtimeMs: 0 },
+        { n: 1, runnerText: '{"pid":', newestMtimeMs: 0, log },
         {
           nowMs: now,
           floorMs: launchSettleFloorMs,
@@ -136,9 +170,62 @@ describe('judging a launch', () => {
     expect(read).toBe(false);
   });
 
+  it.for([
+    ['another device', { ...log, dev: '16777235' }],
+    ['another inode', { ...log, ino: '18446744073709551556' }],
+    ['another birth time, as for a reused inode', { ...log, birthtimeNs: '1760918400123456790' }],
+    ['no current log', null],
+  ] as const)(
+    'a record bound to %s is unparsable even with a dead runner and old files, reading no liveness',
+    ([, current]) => {
+      let read = false;
+      expect(
+        judgeLaunch(
+          { n: 2, runnerText: runner(bound), newestMtimeMs: 0, log: current },
+          {
+            nowMs: now,
+            floorMs: launchSettleFloorMs,
+            liveness: () => {
+              read = true;
+              return 'dead';
+            },
+          },
+        ),
+      ).toEqual({ n: 2, state: 'in-flight', runner: 'unparsable', pid: null, host: null });
+      expect(read).toBe(false);
+    },
+  );
+
+  it('a record bound to the current log follows its runner', () => {
+    const judge = (state: RunnerLiveness) =>
+      judgeLaunch(
+        { n: 1, runnerText: runner(bound), newestMtimeMs: now, log: { ...log } },
+        context(state),
+      );
+    expect(judge('dead')).toEqual({
+      n: 1,
+      state: 'settled',
+      runner: 'dead',
+      pid: 42,
+      host: 'here',
+    });
+    expect(judge('alive')).toMatchObject({ state: 'in-flight', runner: 'alive' });
+  });
+
+  it('an unbound record from an older build follows its runner whatever the log', () => {
+    for (const current of [log, null])
+      expect(
+        judgeLaunch(
+          { n: 1, runnerText: runner(identity), newestMtimeMs: 0, log: current },
+          context('dead'),
+        ),
+      ).toEqual({ n: 1, state: 'settled', runner: 'dead', pid: 42, host: 'here' });
+  });
+
   it('without a runner record, settles only once the newest file is older than the floor', () => {
     const judge = (age: number) =>
-      judgeLaunch({ n: 1, runnerText: null, newestMtimeMs: now - age }, context('alive')).state;
+      judgeLaunch({ n: 1, runnerText: null, newestMtimeMs: now - age, log }, context('alive'))
+        .state;
     expect(judge(0)).toBe('in-flight');
     expect(judge(launchSettleFloorMs)).toBe('in-flight');
     expect(judge(launchSettleFloorMs + 1)).toBe('settled');
@@ -146,10 +233,13 @@ describe('judging a launch', () => {
 
   it('one launch in flight keeps the whole leftover in flight', () => {
     const settled = judgeLaunch(
-      { n: 1, runnerText: runner(identity), newestMtimeMs: 0 },
+      { n: 1, runnerText: runner(identity), newestMtimeMs: 0, log },
       context('dead'),
     );
-    const flying = judgeLaunch({ n: 2, runnerText: null, newestMtimeMs: now }, context('dead'));
+    const flying = judgeLaunch(
+      { n: 2, runnerText: null, newestMtimeMs: now, log: null },
+      context('dead'),
+    );
     const empty = { directoryMtimeMs: now, nowMs: now, floorMs: launchSettleFloorMs };
     expect(leftoverRemovable([settled], empty)).toBe(true);
     expect(leftoverRemovable([settled, flying], empty)).toBe(false);
