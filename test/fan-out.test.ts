@@ -24,7 +24,7 @@ import {
 import { validateRunRecord } from '../src/workflow/runtime/record.js';
 import { FailureOrigins } from '../src/workflow/runtime/fan-out.js';
 import { ConfigurationError } from '../src/workflow/runtime/configuration-error.js';
-import { rootCauseKind } from '../src/workflow/runtime/step-error.js';
+import { errorKind, rootCauseKind } from '../src/workflow/runtime/step-error.js';
 import { EventLineMemory, formatEventLine } from '../src/workflow/loader/events.js';
 import type { EventLine } from '../src/workflow/loader/event-line.js';
 
@@ -1059,6 +1059,60 @@ it("fails, not suspends, a run whose sibling nested map only saw the interruptio
   });
 });
 
+// An error the runtime classifies as cancelled, though it is not a CancelledError.
+const abortErrors: [string, () => Error][] = [
+  ['named AbortError', () => Object.assign(new Error('aborted'), { name: 'AbortError' })],
+  ['coded ABORT_ERR', () => Object.assign(new Error('aborted'), { code: 'ABORT_ERR' })],
+];
+
+it.each(abortErrors)(
+  "fails, not suspends, an interrupted run whose first nested leaf threw a %s before another's real failure",
+  async (_, abortError) => {
+    const controller = new AbortController();
+    const definition = workflow((ctx) =>
+      ctx.map('outer', [0], { concurrency: 1 }, () =>
+        ctx.map('inner', [0, 1, 2], { concurrency: 3 }, (index) =>
+          ctx.step('run', {
+            input: index,
+            schema: z.number(),
+            retry: { maxAttempts: 1 },
+            run: ({ signal }) => {
+              if (index === 0) throw abortError();
+              if (index === 1) {
+                // Interrupt the run while the inner map drains after this timeout.
+                setTimeout(() => {
+                  controller.abort(new RunInterruptedError('Worker shutting down.'));
+                }, 20);
+                throw Object.assign(new Error('slow'), { code: 'ETIMEDOUT' });
+              }
+              return new Promise<number>((_, reject) => {
+                signal.addEventListener('abort', () => {
+                  reject(signal.reason as Error);
+                });
+              });
+            },
+          }),
+        ),
+      ),
+    );
+    const error: unknown = await runWorkflow(definition, {
+      ...options(),
+      signal: controller.signal,
+    }).catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(WorkflowRunError);
+    const saved = await readRun(options());
+    // The root-cause search passes over the leaf the runner classifies as cancelled, so the
+    // interruption check sees the real failure and does not leave a failed run resumable.
+    expect(saved.status).toBe('failed');
+    expect(saved.rootCause).toEqual({
+      stepId: 'outer/0/inner/1/run',
+      error: 'slow',
+      errorKind: 'timeout',
+      effect: 'step',
+    });
+  },
+);
+
 it("settles a return-mode item whose body threw a nested map's failure with the leaf's kind", async () => {
   const definition = workflow((ctx) =>
     ctx.map('outer', [0], { concurrency: 1, onError: 'return' }, () =>
@@ -1628,6 +1682,33 @@ describe('FailureOrigins root-cause kinds (#311)', () => {
     expect(origins.root(outer, rootCauseKind)).toEqual({ ...leafRoot, stepId: timeoutLeaf });
     // Deeper nesting is skipped the same way.
     expect(origins.find(fanOut(outer, timeoutLeaf))).toMatchObject({ error, stepId: timeoutLeaf });
+  });
+
+  it('skips a leaf the cancellation test classifies as cancelled for a later real failure', () => {
+    const origins = new FailureOrigins((error) => errorKind(error) === 'cancelled');
+    const aborted = Object.assign(new Error('aborted'), { name: 'AbortError' });
+    origins.remember(aborted, 'outer/0/inner/0/run', 'step');
+    const error = timedOut();
+    const timeoutLeaf = 'outer/0/inner/1/run';
+    origins.remember(error, timeoutLeaf, 'step');
+    const outer = fanOut(
+      new FanOutError(
+        'drain',
+        [
+          { index: 0, stepId: 'outer/0/inner/0/run', error: aborted },
+          { index: 1, stepId: timeoutLeaf, error },
+        ],
+        [],
+      ),
+      'outer/0/inner/0/run',
+    );
+    expect(origins.find(outer)).toMatchObject({ error, stepId: timeoutLeaf, effect: 'step' });
+    expect(origins.root(outer, rootCauseKind)).toEqual({ ...leafRoot, stepId: timeoutLeaf });
+    // Without the runtime's test, only a CancelledError counts as a cancellation.
+    const plain = new FailureOrigins();
+    plain.remember(aborted, 'outer/0/inner/0/run', 'step');
+    plain.remember(error, timeoutLeaf, 'step');
+    expect(plain.find(outer)).toMatchObject({ error: aborted, stepId: 'outer/0/inner/0/run' });
   });
 
   it('resolves a nested fan-out of only cancellations to the first cancellation', () => {

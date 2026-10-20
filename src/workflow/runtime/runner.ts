@@ -1458,7 +1458,7 @@ export async function runWorkflow<
     const operations = new OperationTracker();
     const scopes = new ExecutionScopes(signal);
     const names = new NameScopes();
-    const origins = new FailureOrigins();
+    const origins = new FailureOrigins((error) => errorKind(error) === 'cancelled');
     const visitedMaps = new Set<string>();
     // Per body execution, like visitedMaps: numbers repeated invocations of one map prefix.
     const mapInvocations = new Map<string, number>();

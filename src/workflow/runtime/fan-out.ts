@@ -105,6 +105,15 @@ export type MapStepError = StepError & {
 
 /** Runtime attribution; only RootCause's plain data crosses into checkpoints. @internal */
 export class FailureOrigins {
+  /**
+   * `isCancelled` is the runtime's cancellation test, which {@link find} uses to pass over
+   * cancellations; the runner passes `errorKind(error) === 'cancelled'`, injected because
+   * step-error.ts imports this module. The default recognizes only a {@link CancelledError}.
+   */
+  public constructor(
+    private readonly isCancelled: (error: unknown) => boolean = (error) =>
+      error instanceof CancelledError,
+  ) {}
   private readonly fatalErrors = new Set<unknown>();
   public markFatal(error: unknown): void {
     this.fatalErrors.add(error);
@@ -174,7 +183,9 @@ export class FailureOrigins {
   /**
    * The original error and effect behind a failure; `effect` is the remembered call-site label and
    * `beforeAttempt` whether that error was remembered outside an attempt. A fan-out failure
-   * resolves to its first failure whose own origin is not a cancellation, looking through nested
+   * resolves to its first failure whose own origin is not a cancellation (its reported or
+   * remembered error meets the constructor's cancellation test, for the runner errorKind
+   * `cancelled`, so an AbortError leaf counts too), looking through nested
    * fan-outs to the leaf's own origin, so a nested map that only saw cancellations never masks a
    * sibling's real failure at any nesting level; only when every failure resolves to a
    * cancellation is the first one the origin. When a mapper wrapped the remembered error, `error`
@@ -192,7 +203,7 @@ export class FailureOrigins {
         // Each failure is probed with its own copy of the walk so far: siblings may share an error
         // object, and one probe must not make it look revisited to the next.
         const origin = this.fanOutFailureOrigin(failure, new Set(visited));
-        if (!isCancellation(origin)) return origin;
+        if (!this.isCancellation(origin)) return origin;
         fallback ??= origin;
       }
       if (fallback) return fallback;
@@ -202,6 +213,11 @@ export class FailureOrigins {
       if (cause.stepId !== null) return cause;
     }
     return { error, stepId: null };
+  }
+
+  /** Whether an origin is a cancellation: its reported error or the remembered error behind it. */
+  private isCancellation(origin: FailureOrigin): boolean {
+    return this.isCancelled(origin.error) || this.isCancelled(rememberedError(origin));
   }
 
   /** The origin of one fan-out failure, as {@link find} reports it when it chooses that failure. */
@@ -253,13 +269,6 @@ interface FailureOrigin {
   effect?: string;
   beforeAttempt?: boolean;
   remembered?: unknown;
-}
-
-/** Whether an origin is a cancellation: its reported error or the remembered error behind it. */
-function isCancellation(origin: FailureOrigin): boolean {
-  return (
-    origin.error instanceof CancelledError || rememberedError(origin) instanceof CancelledError
-  );
 }
 
 /** The remembered error behind a {@link FailureOrigins.find} origin: `remembered` when present. @internal */
