@@ -318,6 +318,21 @@ function parseObject(text) {
   }
 }
 
+// Clerks repeat a few wrapping mistakes: keying an output by its nonce instead of its id,
+// copying it as an escaped JSON string, or dropping the wrapper when relaying one command. The
+// nonce and hash prove a copy however it was wrapped, so every value is a candidate for every step
+// (each step's nonce is unique) and a re-read is paid only for a corrupted copy.
+function relayed(copied) {
+  return [copied, ...Object.values(copied)].map((v) => {
+    if (typeof v !== 'string') return v;
+    try {
+      return JSON.parse(v);
+    } catch {
+      return null;
+    }
+  });
+}
+
 const sh = (value) =>
   /^[\w@%+=:,./-]+$/.test(String(value))
     ? String(value)
@@ -372,14 +387,13 @@ async function relay(label, phaseName, steps, render = RUN_STEPS, tier = TIER.cl
   // A clerk that died (API error, usage limit) is not a corrupted relay: say so, don't guess.
   if (text === null) return { verified: {}, missing: steps, dead: true };
   const copied = parseObject(text) ?? {};
+  const pool = relayed(copied);
   const verified = {};
   const missing = [];
   let failedEarlier = false;
   for (const s of steps) {
-    // A clerk relaying one command sometimes copies its line without the id wrapper; the nonce and
-    // hash still prove the copy, so accept it rather than paying for a re-read.
     const data =
-      verify(copied[s.id], s.nonce) ?? (steps.length === 1 ? verify(copied, s.nonce) : null);
+      verify(copied[s.id], s.nonce) ?? pool.map((v) => verify(v, s.nonce)).find(Boolean) ?? null;
     if (data) {
       verified[s.id] = data;
       failedEarlier ||= Boolean(data.error);
