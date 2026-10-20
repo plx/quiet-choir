@@ -128,3 +128,13 @@ part of the documentation.
 - [0061: Finish an interrupted flat-run removal on rm and in prune](0061-finish-interrupted-flat-run-removal.md)
 
 - [0062: Type call-site Claude addDirs by profile roots](0062-type-call-site-adddirs-by-profile-roots.md)
+
+- [0063: Bind agents as values and make the roster the one inventory](0063-bound-agents-and-typed-rosters.md)
+
+- [0064: Render prompts from template files and treat them as execution dependencies](0064-prompt-templates-as-execution-dependencies.md)
+
+- [0065: Package saved workflows as directories](0065-workflow-packages.md)
+
+- [0066: Model decision services as providers of one shared protocol](0066-decision-providers.md)
+
+- [0067: Declare team structures as typed slots filled from the roster](0067-teams-as-typed-slots.md)
