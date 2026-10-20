@@ -14,7 +14,7 @@ export interface CodexOptions extends AgentOptions {
   readonly images?: readonly string[];
   /** Structured-output encoding; compat translates common Zod shapes, strict requires a native Codex schema. CliHarness default: compat; the core supplies no default. */
   readonly structuredOutput?: 'strict' | 'compat';
-  /** Filesystem sandbox; declare in a workflow profile under default strictProfiles. Default: read-only. */
+  /** Filesystem sandbox; declare it in a workflow profile under strictProfiles. Default: read-only. */
   readonly sandbox?: 'read-only' | 'workspace-write';
   /**
    * Native instruction loading. `'native'` (the default) lets Codex read the user's

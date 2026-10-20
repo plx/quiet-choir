@@ -38,6 +38,7 @@ export default class WorkflowResume extends WorkflowCommand {
     readonly 'worktree-keep': 'all' | 'failed' | 'none' | undefined;
     readonly 'worktree-root': string | undefined;
     readonly 'strict-replay': boolean | undefined;
+    readonly 'require-grants': boolean | undefined;
   }> = {
     'max-child-depth': Flags.integer({
       min: 0,
@@ -87,6 +88,7 @@ export default class WorkflowResume extends WorkflowCommand {
       description: 'Recover identity-confirmed orphan children before resuming',
     }),
     'strict-replay': executeFlags['strict-replay'],
+    'require-grants': executeFlags['require-grants'],
     harness: Flags.string({
       description:
         'cli, fixture:<file>, or name=fixture:<file>; repeatable. Omitted uses the selection the run last executed with (default cli)',
@@ -153,6 +155,7 @@ export default class WorkflowResume extends WorkflowCommand {
       allowHarnessConfigChange: flags['allow-harness-config-change'] ?? false,
       killOrphans: flags['kill-orphans'] ?? false,
       ...(flags['strict-replay'] === undefined ? {} : { strictReplay: flags['strict-replay'] }),
+      ...(flags['require-grants'] === undefined ? {} : { requireGrants: flags['require-grants'] }),
     });
     if (!result.ok) {
       for (const diagnostic of result.diagnostics)

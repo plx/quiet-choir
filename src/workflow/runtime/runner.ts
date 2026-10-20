@@ -143,6 +143,7 @@ import { snapshotImages } from './images.js';
 import { idleTimeoutError, profileLimitError } from './profile-diagnostics.js';
 import {
   resolveCapabilities,
+  elevatedRoleNames,
   publicCapabilityManifest,
   grantsSchema,
   profileGrantDigest,
@@ -482,8 +483,19 @@ export interface RunOptions extends WorkflowCodeOptions {
   readonly agentLimit?: number | AgentLimits | AgentLimiter;
   /** Sticky named limit rules, appended on resume; policyReset clears them as well. */
   readonly profileOverrides?: readonly ProfileOverride[];
-  /** Authorize elevated profiles by name, access class (write/exec), or all; saved across resumes. */
+  /**
+   * Authorize elevated profiles by name, access class (write/exec), or all; saved across resumes.
+   * Names are validated and saved, and named grants pin their capabilities, whether or not the
+   * layer is on; they are checked only under `requireGrants`.
+   */
   readonly grants?: readonly string[];
+  /**
+   * Turn on the launch-grant and delegation layer for this run, as the root definition's
+   * `requireGrants` does (ADR 0063 §5). Sticky: once a run records it, every resume (and
+   * `workflow tick`) keeps it on without repeating it, and it cannot be turned off. A fork is a new
+   * run and does not inherit it from its source. `false` or omitted leaves the recorded setting.
+   */
+  readonly requireGrants?: boolean;
   /** Required stable identifier. Reuse it with resume to continue an execution. */
   readonly runId: string;
   /** Runs container; defaults to QUIET_CHOIR_STATE_DIR, legacy run discovery, or project-specific XDG state. */
@@ -847,7 +859,8 @@ export async function runWorkflow<
   checkedDefinition(definition);
   if (definition.children !== undefined) describeWorkflow(definition);
   const limiter = resolveAgentLimiter(options.agentLimit);
-  const capabilities = resolveCapabilities(definition);
+  // requiredGrants is recomputed once the record shows whether a resumed run opted in.
+  let capabilities = resolveCapabilities(definition);
   const incomingProfiles = validateProfileOverrides(options.profileOverrides ?? [], capabilities);
   const incomingGrants = grantsSchema.parse(jsonValue(options.grants ?? []));
   for (const grant of incomingGrants)
@@ -1030,6 +1043,14 @@ export async function runWorkflow<
       [...(options.policyReset ? [] : (existing?.profileOverrides ?? [])), ...incomingProfiles],
       capabilities,
     );
+    // The grant layer (ADR 0063 §5): the root definition's field, this invocation's option, or the
+    // sticky run-level flag a resumed record saved. A fork is a new run and reads only the first two.
+    const runRequiresGrants = options.requireGrants === true || existing?.requireGrants === true;
+    const requireGrants = definition.requireGrants === true || runRequiresGrants;
+    capabilities = {
+      ...capabilities,
+      requiredGrants: requireGrants ? elevatedRoleNames(capabilities, definition) : [],
+    };
     const grants = [...new Set([...(existing?.grants ?? []), ...incomingGrants])];
     const grantedProfiles = { ...(existing?.grantedProfiles ?? {}) };
     for (const grant of incomingGrants) {
@@ -1256,6 +1277,7 @@ export async function runWorkflow<
         incomingPolicy.length ||
         incomingProfiles.length ||
         incomingGrants.length ||
+        (runRequiresGrants && existing.requireGrants !== true) ||
         options.policyReset ||
         options.allowModelOverride !== undefined
       ) {
@@ -1264,6 +1286,7 @@ export async function runWorkflow<
         existing.profileOverrides = profileOverrides;
         existing.grants = grants;
         existing.grantedProfiles = grantedProfiles;
+        if (runRequiresGrants) existing.requireGrants = true;
         existing.policy = policy;
         existing.allowModelOverride = allowModelOverride;
         existing.policyWarnings = [];
@@ -1429,6 +1452,8 @@ export async function runWorkflow<
     record.profileOverrides = profileOverrides;
     record.grants = grants;
     record.grantedProfiles = grantedProfiles;
+    // Sticky: written only when on, never cleared; the definition's own field is source, not saved.
+    if (runRequiresGrants) record.requireGrants = true;
     // The record holds the root manifest, whose profiles name only root registrations.
     record.capabilities = publicCapabilityManifest(capabilities, definition.harnesses);
     record.policy = policy;
@@ -1558,6 +1583,7 @@ export async function runWorkflow<
       grants,
       pins: grantedProfiles,
       overrides: profileOverrides,
+      requireGrants,
       cwd,
       maxDepth: maxChildDepth,
       preflight: (owner, frame) => {
@@ -2761,6 +2787,7 @@ export async function runWorkflow<
               data.options,
               children.authority?.grants ?? grants,
               children.authority?.pins ?? grantedProfiles,
+              requireGrants,
               registration,
               { callCwd: resolve(cwd, data.options.cwd ?? '.'), rootCwd: cwd },
             );

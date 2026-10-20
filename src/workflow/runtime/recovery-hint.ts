@@ -30,9 +30,10 @@
  * cancelled invocation into one cause and saves it as `RunRecord.recoveryCause`; the saved
  * `recoveryHint` and the run's `next` commands both follow it.
  *
- * - `grant`: a missing access grant; `profile` is the profile that needs it and `access` the
- *   access level it requires. `classOnly` when the call has call-site capability overrides, which
- *   a grant of the profile does not cover, so only `--grant <access>` or `--grant all` admits it.
+ * - `grant`: a missing access grant, which arises only under `requireGrants`; `profile` is the
+ *   profile that needs it and `access` the access level it requires. `classOnly` when the call has
+ *   call-site capability overrides, which a grant of the profile does not cover, so only
+ *   `--grant <access>` or `--grant all` admits it.
  * - `divergence`: a replay that left the recorded path.
  * - `map-changed`: a settled map that changed after an item completed; `mapperOnly` when only its
  *   mapper did, so `--accept-code-change` can keep the completed items.

@@ -900,6 +900,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         ...(plan.policy === undefined ? {} : { policy: plan.policy }),
         ...(plan.profileOverrides === undefined ? {} : { profileOverrides: plan.profileOverrides }),
         ...(plan.grants === undefined ? {} : { grants: plan.grants }),
+        ...(plan.requireGrants === undefined ? {} : { requireGrants: plan.requireGrants }),
         ...(plan.policyReset === undefined ? {} : { policyReset: plan.policyReset }),
         ...(plan.allowModelOverride === undefined
           ? {}

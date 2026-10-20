@@ -486,6 +486,14 @@ export interface RunRecord {
   grants?: string[];
   /** Capability digests pinning profile-name grants against source edits. */
   grantedProfiles?: Record<string, string>;
+  /**
+   * Whether an invocation turned on the launch-grant and delegation layer with
+   * `RunOptions.requireGrants` or `--require-grants` (ADR 0063 §5). Written only as `true` and
+   * never cleared, so every resume keeps the layer on; a fork does not inherit it. The root
+   * definition's own `requireGrants` is source and is not saved here. Absent before schema
+   * revision 18, where such a run resumes with the layer off unless the definition opts in.
+   */
+  requireGrants?: boolean;
   /** Checkpoint format version. */
   formatVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7;
   /**
@@ -1102,6 +1110,7 @@ const recordFieldsSchema = z.object({
   profileOverrides: z.array(profileOverrideSchema).optional(),
   grants: grantsSchema.optional(),
   grantedProfiles: z.record(z.string(), z.string().regex(/^[a-f0-9]{64}$/u)).optional(),
+  requireGrants: z.boolean().optional(),
   policy: z.array(storedPolicyOverrideSchema).optional(),
   allowModelOverride: z.boolean().optional(),
   policyWarnings: z.array(z.string()).optional(),
@@ -1359,9 +1368,11 @@ export function withProjectInstructions(
  * Revision 16 (#337) changed only a nested shape: the optional `scrubEnv` list of an exec summary
  * in `steps` (step and attempt `exec`) and in a command poll's wait request (`poll.command.exec`).
  * Revision 17 (#371) added the top-level `generation`, a random per-run token.
+ * Revision 18 (#577) added the top-level `requireGrants`, the sticky run-level opt-in to the
+ * launch-grant and delegation layer.
  * @internal
  */
-export const SUPPORTED_SCHEMA_REVISION = 17;
+export const SUPPORTED_SCHEMA_REVISION = 18;
 
 /**
  * The identity a run's answer deliveries and `workflow rm` bind to: its random `generation`, or

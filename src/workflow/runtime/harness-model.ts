@@ -277,10 +277,10 @@ export type ClaudeAddDirSelection<TProfile extends string, TAddDirProfile> =
 /**
  * Call-site options of harness `K` with registration `D` in a workflow with declared roles `TProfile`.
  * `profile` accepts a built-in preset or a declared role. When `TStrict` is exactly `true` (a
- * workflow that omits `strictProfiles` or sets it to a literal `true`), the harness's capability keys
- * are forbidden as optional `never` properties, mirroring the runtime check: for Claude and Codex
- * every key except `isolation`, which is narrowed to exclude `'inherit'`; for a registered harness
- * every literal `capabilityKeys` entry. Forbidding the keys structurally, not only through
+ * workflow that sets `strictProfiles` to a literal `true`; omitted infers `false`), the harness's
+ * capability keys are forbidden as optional `never` properties, mirroring the runtime check: for
+ * Claude and Codex every key except `isolation`, which is narrowed to exclude `'inherit'`; for a
+ * registered harness every literal `capabilityKeys` entry. Forbidding the keys structurally, not only through
  * excess-property checks, also rejects a pre-built options variable and, with
  * `exactOptionalPropertyTypes`, an explicit `undefined`. A literal `false`, or a non-literal
  * `boolean`, keeps every option.

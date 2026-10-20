@@ -36,6 +36,8 @@ interface Dependencies {
   readonly grants: readonly string[];
   readonly pins: Readonly<Record<string, string>>;
   readonly overrides: readonly ProfileOverride[];
+  /** Whether the run's grant layer is on, so delegation checks children against parent roles. */
+  readonly requireGrants: boolean;
   /** The run's working directory, against which declared claude.addDirRoots resolve. */
   readonly cwd: string;
   readonly maxDepth: number;
@@ -297,6 +299,7 @@ export class RunChildren {
           parent?.authority.pins ?? d.pins,
           parent?.authority.overrides ?? d.overrides,
           options.profiles === undefined ? {} : { profiles: options.profiles },
+          d.requireGrants,
           d.cwd,
           parent?.authority.ancestry ?? {},
         );

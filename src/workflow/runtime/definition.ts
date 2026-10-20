@@ -38,6 +38,8 @@ export function checkedDefinition(value: unknown): WorkflowDeclaration {
     throw new Error(
       `Workflow ${String(definition['name'])} harnesses must be an array of definitions.`,
     );
+  if (definition['requireGrants'] !== undefined && typeof definition['requireGrants'] !== 'boolean')
+    throw new Error(`Workflow ${String(definition['name'])} requireGrants must be a boolean.`);
   if (definition['worktrees'] !== undefined)
     checkWorktreePolicy(
       definition['worktrees'],
@@ -47,7 +49,11 @@ export function checkedDefinition(value: unknown): WorkflowDeclaration {
   return value as WorkflowDeclaration;
 }
 
-/** Validate and publish a finite description of a possibly recursive declaration tree. @internal */
+/**
+ * Validate and publish a finite description of a possibly recursive declaration tree. Every node's
+ * `requiredGrants` follows the root definition's `requireGrants`, since children inherit it.
+ * @internal
+ */
 export function describeWorkflow(
   value: unknown,
   entrypoint: string | null = null,
@@ -55,12 +61,13 @@ export function describeWorkflow(
   type Description = { -readonly [K in keyof WorkflowDescription]: WorkflowDescription[K] } & {
     children: WorkflowDescription[];
   };
+  const requireGrants = checkedDefinition(value).requireGrants === true;
   const node = (
     value: unknown,
     source: string | null,
   ): { definition: WorkflowDeclaration; description: Description } => {
     const definition = checkedDefinition(value);
-    const capabilities = capabilityManifest(definition);
+    const capabilities = capabilityManifest(definition, { requireGrants });
     return {
       definition,
       description: {

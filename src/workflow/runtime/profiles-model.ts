@@ -194,9 +194,12 @@ export interface CapabilityManifest {
   readonly defaultProfile: string;
   /** Resolved implicit call defaults. */
   readonly defaults: ResolvedProfile;
-  /** All callable profiles, including built-ins. Elevated built-ins require a grant before use. */
+  /** All callable profiles, including built-ins. Under requireGrants, elevated ones need a grant. */
   readonly profiles: Readonly<Record<string, ResolvedProfile>>;
-  /** Declared/default elevated roles checked before the body starts. */
+  /**
+   * Declared/default elevated roles checked before the body starts under `requireGrants`; empty
+   * when the run and its root definition do not opt in.
+   */
   readonly requiredGrants: readonly string[];
 }
 
