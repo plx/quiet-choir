@@ -963,7 +963,14 @@ describe('recordEventLines parity with the live stream', () => {
       const recorded = parse(recordEventLines(final, null, 'all').lines).filter(
         (line) => line.ev === 'run.failed',
       );
-      expect(recorded).toEqual(live);
+      // The live ms reads the event times and the recorded one the execution's start and end, each
+      // sampled from the clock separately, so the two agree only to within a few milliseconds.
+      const withoutMs = (lines: EventLine[]) => lines.map((line) => ({ ...line, ms: null }));
+      expect(withoutMs(recorded)).toEqual(withoutMs(live));
+      const [recordedMs, liveMs] = [recorded[0]?.ms, live[0]?.ms];
+      expect(recordedMs).toEqual(expect.any(Number));
+      expect(liveMs).toEqual(expect.any(Number));
+      expect(Math.abs((recordedMs ?? 0) - (liveMs ?? 0))).toBeLessThanOrEqual(10);
     },
   );
 });
