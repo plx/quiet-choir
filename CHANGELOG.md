@@ -28,15 +28,16 @@
   TypeSafe's published reference) with `Authorization: Bearer` from `apiKeyEnv`, read at request
   time and never recorded, and `Idempotency-Key` only when declared; HTTP 429 is `rate-limit`, 5xx
   `overloaded`, 401 `authentication`, 403 `permission`, other 4xx `invalid-request`, and `timeoutMs`
-  `timeout`. A missing base URL, `apiKeyEnv` or token value is a fatal `ConfigurationError` that
-  leaves the step unfinished. `RunOptions.decisionConfigurations` and `--harness-config`
-  `decisions.<name>` (strict `{ baseUrl, apiKeyEnv, defaultModel }`) replace a provider's own
-  values; an undeclared name warns, and the harness config digest includes `decisions` only when
-  present, so recorded digests are unchanged. `UsageSummary` gains `byProvider` (per provider and
-  served model; also in `byIntegration.decision`, never in agent totals) and `inspect` prints a
-  provider/model usage line. Under `--dry-run`, `ctx.decide` runs live like a local step until
-  decision fixtures arrive (#587); `--stub-steps` can synthesize it. `model.ts` changed, so both
-  Workflow Lab `apiSnapshot` hashes are bumped; the run record revision is unchanged.
+  `timeout`. A missing base URL, `apiKeyEnv` or token value, or a token that is not a valid header
+  value, is a fatal `ConfigurationError` that leaves the step unfinished and never echoes the token.
+  `RunOptions.decisionConfigurations` and `--harness-config` `decisions.<name>` (strict
+  `{ baseUrl, apiKeyEnv, defaultModel }`) replace a provider's own values; an undeclared name warns,
+  and the harness config digest includes `decisions` only when present, so recorded digests are
+  unchanged. `UsageSummary` gains `byProvider` (per provider and served model; also in
+  `byIntegration.decision`, never in agent totals) and `inspect` prints a provider/model usage line.
+  Under `--dry-run`, `ctx.decide` runs live like a local step until decision fixtures arrive (#587);
+  `--stub-steps` can synthesize it. `model.ts` changed, so both Workflow Lab `apiSnapshot` hashes
+  are bumped; the run record revision is unchanged.
 - Packages in the registry, whole-directory fingerprints and the validate package section (#585,
   [ADR 0065](docs/decisions/0065-workflow-packages.md) §3–5; see
   [docs/packages.md](docs/packages.md)). `workflow list-defs` discovers `<stem>.quiet-choir`

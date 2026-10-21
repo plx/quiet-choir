@@ -694,6 +694,46 @@ describe('ctx.decide', () => {
     expect(errorKind(cause)).toBe('overloaded');
   });
 
+  it('fails a token that is not a valid header value as configuration without echoing it', async () => {
+    const secret = 'secret-token-part';
+    for (const [index, token] of [
+      `${secret}\nX-Injected: 1`,
+      `${secret}\u0007`,
+      ` ${secret}`,
+      `${secret}\u2028`,
+    ].entries()) {
+      vi.stubEnv(TOKEN_ENV, token);
+      const runId = `invalid${String(index)}`;
+      const error: unknown = await runWorkflow(
+        workflow([jev()], (ctx) => ctx.decide('ask', { state: null, questions: { refund } })),
+        options({ runId }),
+      ).catch((caught: unknown) => caught);
+      expect((error as Error).cause).toBeInstanceOf(ConfigurationError);
+      expect((error as Error).message).toMatch(
+        /reads its bearer token from QC_TEST_PROVIDER_TOKEN, whose value is not a valid HTTP header value/u,
+      );
+      expect((error as Error).message).not.toContain(secret);
+      expect(JSON.stringify(await readRun({ stateDir, runId }))).not.toContain(secret);
+    }
+    expect(server.count).toBe(0);
+  });
+
+  it('redacts the token from a client error message', async () => {
+    vi.stubGlobal('fetch', () => Promise.reject(new Error(`bad header Bearer ${TOKEN}`)));
+    try {
+      const error: unknown = await runWorkflow(
+        workflow([jev()], (ctx) => ctx.decide('ask', { state: null, questions: { refund } })),
+        options(),
+      ).catch((caught: unknown) => caught);
+      expect((error as Error).cause).toBeInstanceOf(DecisionError);
+      expect((error as Error).message).toContain('request failed: bad header Bearer [redacted]');
+      expect((error as Error).message).not.toContain(TOKEN);
+      expect(JSON.stringify(await readRun({ stateDir, runId: 'decide' }))).not.toContain(TOKEN);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('fails a missing base URL or token variable as configuration from the factory', async () => {
     for (const [provider, pattern] of [
       [jevCompatible({ name: 'jev', apiKeyEnv: TOKEN_ENV, defaultModel: 'm' }), /has no baseUrl/u],

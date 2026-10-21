@@ -89,6 +89,12 @@ function statusKind(status: number): DecisionError['kind'] {
   return 'protocol';
 }
 
+/** Whether a bearer token can be sent unchanged as an HTTP header value. */
+function headerValue(token: string): boolean {
+  // Printable ASCII and Latin-1: no C0 or C1 control characters, DEL or wider code points.
+  return token === token.trim() && !/[^\x20-\x7e\xa0-\xff]/u.test(token);
+}
+
 function httpUrl(value: string, label: string): string {
   if (!URL.canParse(value) || !['http:', 'https:'].includes(new URL(value).protocol))
     throw new ConfigurationError(`${label} must be an http or https URL.`);
@@ -101,8 +107,9 @@ function httpUrl(value: string, label: string): string {
  * `apiKeyEnv` at request time. The step's idempotency key is sent as an `Idempotency-Key` header
  * only when `capabilities.idempotencyKey` is true. HTTP 429 fails with kind `rate-limit`, 5xx with
  * `overloaded` (both transient), 401 with `authentication`, 403 with `permission` and other 4xx
- * with `invalid-request`. A missing base URL or token variable is a configuration failure: the
- * step stays unfinished, and resuming after fixing it runs the decision live.
+ * with `invalid-request`. A missing base URL or token variable, or a token that is not a valid
+ * header value, is a configuration failure: the step stays unfinished, and resuming after fixing it
+ * runs the decision live.
  */
 export function jevCompatible(options: JevCompatibleOptions): DecisionProviderDeclaration {
   const name = options.name;
@@ -138,6 +145,11 @@ export function jevCompatible(options: JevCompatibleOptions): DecisionProviderDe
           throw new ConfigurationError(
             `Decision provider ${name} reads its bearer token from ${apiKeyEnv}, which is unset.`,
           );
+        // fetch would reject such a header value with a message that echoes it.
+        if (!headerValue(token))
+          throw new ConfigurationError(
+            `Decision provider ${name} reads its bearer token from ${apiKeyEnv}, whose value is not a valid HTTP header value (it has control or non-Latin-1 characters, or leading or trailing whitespace).`,
+          );
         let response: Response;
         let text: string;
         try {
@@ -161,7 +173,8 @@ export function jevCompatible(options: JevCompatibleOptions): DecisionProviderDe
           throw new DecisionError({
             provider: name,
             kind: 'unknown',
-            message: `request failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+            // Defense in depth: never let a client error that echoes the token reach the record.
+            message: `request failed: ${(cause instanceof Error ? cause.message : String(cause)).replaceAll(token, '[redacted]')}`,
           });
         }
         if (!response.ok)
