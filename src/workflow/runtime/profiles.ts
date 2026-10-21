@@ -473,6 +473,8 @@ export function profileGrantDigest(profile: ResolvedProfile): string {
     tools: profile.claude.tools,
     allowedTools: profile.claude.allowedTools,
     sandbox: profile.codex.sandbox,
+    // A roster entry's pin is part of what was granted; a role without one keeps its old digest.
+    ...(profile.harness === undefined ? {} : { harness: profile.harness }),
     ...capabilityExtras(profile.claude, profile.codex),
     ...(profile.harnessCapabilities
       ? { harnessCapabilities: profile.harnessCapabilities, harnessAccess: profile.harnessAccess }

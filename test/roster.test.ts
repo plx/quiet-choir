@@ -17,7 +17,12 @@ import {
   type HarnessAdapter,
   type StepRecord,
 } from '../src/index.js';
-import { capabilityManifestSchema } from '../src/workflow/runtime/profiles.js';
+import {
+  capabilityManifestSchema,
+  profileGrantDigest,
+  requireGrant,
+  resolveCapabilities,
+} from '../src/workflow/runtime/profiles.js';
 import { compileRoster } from '../src/workflow/runtime/roster.js';
 import { it } from './setup/state-dir.js';
 
@@ -613,6 +618,45 @@ describe('launch overrides and grants', () => {
     const record = await readRun({ stateDir, runId: 'granted' });
     expect(record.capabilities?.requiredGrants).toEqual(['Mechanic']);
     expect(Object.keys(record.grantedProfiles ?? {})).toEqual(['Mechanic']);
+  });
+
+  it('pins a named grant to the harness an entry is pinned to', () => {
+    const role = (entry: object, harnesses: readonly (typeof third)[] = []) => {
+      const resolved = resolveCapabilities({
+        name: 'repinned',
+        harnesses,
+        roster: { Worker: entry },
+      }).profiles['Worker'];
+      if (!resolved) throw new Error('Worker did not resolve.');
+      return resolved;
+    };
+    // Bare Claude and Codex entries have the same tools, rules and sandbox; only the pin differs.
+    const claude = role({ harness: 'claude' });
+    const codex = role({ harness: 'codex' });
+    expect(profileGrantDigest(codex)).not.toBe(profileGrantDigest(claude));
+    expect(() => {
+      requireGrant(codex, ['Worker'], { Worker: profileGrantDigest(claude) }, 'write');
+    }).toThrow('--grant Worker');
+    // Two write-capable registered harnesses with identical controls: the grant follows the pin.
+    const writer = (name: string) => defineHarness({ ...third, name, access: () => 'write' });
+    const alpha = writer('alpha');
+    const beta = writer('beta');
+    const granted = role({ harness: 'alpha' }, [alpha, beta]);
+    const repinned = role({ harness: 'beta' }, [alpha, beta]);
+    expect(repinned.access).toBe('write');
+    const pins = { Worker: profileGrantDigest(granted) };
+    expect(() => {
+      requireGrant(granted, ['Worker'], pins);
+    }).not.toThrow();
+    expect(() => {
+      requireGrant(repinned, ['Worker'], pins);
+    }).toThrow('--grant Worker');
+    // A role without a pin keeps the digest it had before rosters, so saved grant pins hold.
+    const edit = resolveCapabilities({}).profiles['edit'];
+    if (!edit) throw new Error('edit did not resolve.');
+    expect(profileGrantDigest(edit)).toBe(
+      '4a87c86d2adce1b7712d584da2a0cf6a16c3daf76fc049310af0af38ef53f5f9',
+    );
   });
 
   it('delegates a shared roster entry to an inline child under requireGrants', async ({

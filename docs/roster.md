@@ -444,7 +444,8 @@ check happen before **any** workflow effects, and `--grant` hints and `next` com
 missing grant.
 
 Grants persist on resume. Named grants are pinned to exact tools, allowed rules, sandbox, the other
-declared capability controls and, when declared, `claude.addDirRoots`; after those change, supply
+declared capability controls, a roster entry's pinned harness and, when declared,
+`claude.addDirRoots`; after those change (including repinning an entry to another harness), supply
 the grant again, even with `--accept-code-change`. Class/all grants deliberately cover roles within
 that class. Forks require fresh grants. Embedded callers use `RunOptions.grants`. Without
 `requireGrants`, `--grant` is still validated (an unknown name is an error), saved and pinned, so a
