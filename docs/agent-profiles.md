@@ -131,12 +131,13 @@ are what the runtime sees: the step fingerprints, resolves profiles and policy, 
 attempts exactly as a raw call that spells them at the call site, so after moving a call to a bound
 agent, an accepted code change still reuses its completed step.
 
-Binding is pure. It snapshots the options and performs no effect, claims no step ID and reads no run
-state, so one agent can be created early and reused. A call takes its step ID prefix where it is
-invoked: an agent bound before `ctx.scope` or `ctx.map` and called inside gets the same qualified
-IDs as a raw call there, and an agent bound from `ctx.within('w').claude` keeps the `w/` prefix.
-`bind` needs a harness client, so it is called inside the body; declaring agents at module load is
-the roster's job.
+Binding is pure. It takes a deep, frozen copy of the options, so later changes to the object passed
+to `bind` do not reach the agent, and performs no effect, claims no step ID and reads no run state,
+so one agent can be created early and reused. A call takes its step ID prefix where it is invoked:
+an agent bound before `ctx.scope` or `ctx.map` and called inside gets the same qualified IDs as a
+raw call there, and an agent bound from `ctx.within('w').claude` keeps the `w/` prefix. `bind` needs
+a harness client, so it is called inside the body; declaring agents at module load is the roster's
+job.
 
 `Agent<C>` is generic over the harness's capabilities, like `RegisteredAgentClient`. The default is
 `NativeHarnessCapabilities`, the built-in harnesses' capabilities (the ADR's `BuiltInCapabilities`).

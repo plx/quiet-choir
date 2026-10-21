@@ -34,7 +34,24 @@ function directories(value: unknown, where: string): readonly unknown[] {
   return value;
 }
 
-/** Copy the defined bound options, rejecting per-call-only keys; addDirs is copied and frozen. */
+/**
+ * A frozen deep copy of a bound value. Bound options are JSON by contract (the runner passes them
+ * through `jsonValue`), so plain arrays and objects are copied and anything else is kept as is.
+ */
+function frozen(value: unknown, key: string, ancestors: readonly unknown[] = []): unknown {
+  if (typeof value !== 'object' || value === null) return value;
+  if (ancestors.includes(value)) throw new TypeError(`bind ${key} must not be circular.`);
+  const within = [...ancestors, value];
+  if (Array.isArray(value))
+    return Object.freeze(value.map((entry: unknown) => frozen(entry, key, within)));
+  const prototype: unknown = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return value;
+  const copy: Record<string, unknown> = {};
+  for (const [name, entry] of Object.entries(value)) copy[name] = frozen(entry, key, within);
+  return Object.freeze(copy);
+}
+
+/** Deep-copy and freeze the defined bound options, rejecting per-call-only keys. */
 function snapshot(bound: unknown): Options {
   if (!isOptions(bound)) throw new TypeError('bind options must be an object.');
   const copy: Record<string, unknown> = {};
@@ -42,7 +59,8 @@ function snapshot(bound: unknown): Options {
     if (value === undefined) continue;
     if (perCallOnly.has(key))
       throw new TypeError(`bind cannot set ${key}; it is a per-call option (ADR 0063).`);
-    copy[key] = key === 'addDirs' ? Object.freeze([...directories(value, 'bind')]) : value;
+    if (key === 'addDirs') directories(value, 'bind');
+    copy[key] = frozen(value, key);
   }
   return Object.freeze(copy);
 }

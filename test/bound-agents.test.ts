@@ -359,14 +359,34 @@ it('snapshots bound options so later mutation cannot change the agent', async ({
   const fake = capture();
   const definition = workflow('snapshot', async (ctx) => {
     // An undefined bound value is absent too, so it never reaches the request.
-    const options = { model: 'opus', addDirs: ['a'], effort: undefined };
+    const options = {
+      model: 'opus',
+      addDirs: ['a'],
+      tools: ['Read'],
+      env: { A: '1' } as Record<string, string>,
+      settings: { nested: { A: '1' } } as { nested: Record<string, string> },
+      effort: undefined,
+    };
     const agent = ctx.claude.bind(options);
     options.model = 'haiku';
     options.addDirs.push('b');
+    // Nested values are copied too, not shared with the caller.
+    options.tools.push('Bash');
+    options.env['A'] = '2';
+    options.settings.nested['A'] = '2';
+    options.settings.nested['B'] = '3';
     return agent.value('snap', { prompt });
   });
   await runs.run(definition, { stateDir, runId: 'snapshot', input: null, harness: fake.harness });
-  expect(fake.requests[0]?.options).toMatchObject({ model: 'opus', addDirs: ['a'] });
+  expect(fake.requests[0]?.options).toMatchObject({
+    model: 'opus',
+    addDirs: ['a'],
+    tools: ['Read'],
+    env: { A: '1' },
+    settings: { nested: { A: '1' } },
+  });
+  expect(fake.requests[0]?.options.env).toEqual({ A: '1' });
+  expect(fake.requests[0]?.options.settings).toEqual({ nested: { A: '1' } });
   expect(fake.requests[0]?.options).not.toHaveProperty('effort');
 });
 
