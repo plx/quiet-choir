@@ -60,20 +60,35 @@ export async function packageFiles(root: string): Promise<readonly PackageFile[]
   return files.sort((a, b) => (a.relative < b.relative ? -1 : a.relative > b.relative ? 1 : 0));
 }
 
-/** Read and hash each walked file; `bytes` becomes the length that was read. @internal */
+/** Files read at once while hashing a package; the rest wait their turn. @internal */
+export const PACKAGE_HASH_CONCURRENCY = 16;
+
+/**
+ * Read and hash each walked file; `bytes` becomes the length that was read. At most
+ * {@link PACKAGE_HASH_CONCURRENCY} files are open at once, so a large package neither holds all
+ * its buffers nor exhausts file descriptors; the result keeps the input order. @internal
+ */
 export async function hashPackageFiles(
   files: readonly PackageFile[],
 ): Promise<readonly HashedPackageFile[]> {
-  return Promise.all(
-    files.map(async (file) => {
+  const hashed = new Array<HashedPackageFile>(files.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    for (let index = next++; index < files.length; index = next++) {
+      const file = files[index];
+      if (file === undefined) continue;
       const bytes = await readFile(file.path);
-      return {
+      hashed[index] = {
         ...file,
         bytes: bytes.length,
         sha256: createHash('sha256').update(bytes).digest('hex'),
       };
-    }),
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(PACKAGE_HASH_CONCURRENCY, files.length) }, worker),
   );
+  return hashed;
 }
 
 /**
