@@ -37,7 +37,15 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { availableParallelism, loadavg } from 'node:os';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -219,12 +227,14 @@ function latestChecks(rollup) {
   let i = 0;
   for (const c of rollup ?? []) {
     i++;
-    const key =
+    // Structured keys: names may contain any delimiter.
+    const key = JSON.stringify(
       c.__typename === 'StatusContext'
-        ? `status:${c.context}`
+        ? ['status', c.context]
         : c.workflowName
-          ? `check:${c.workflowName}:${c.name}`
-          : `app-check:${i}`;
+          ? ['check', c.workflowName, c.name]
+          : ['app-check', i],
+    );
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(c);
   }
@@ -1801,4 +1811,15 @@ async function main() {
   return line;
 }
 
-process.stdout.write(await main());
+// Compare real paths: on macOS /tmp is a symlink to /private/tmp, and Node resolves the main
+// module's symlinks, so a plain URL comparison would silently skip main(). Importing the module
+// (to test an exported helper) runs nothing.
+function invokedDirectly() {
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (invokedDirectly()) process.stdout.write(await main());
