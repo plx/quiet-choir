@@ -195,6 +195,7 @@ import { createMap, settledMapChange } from './map.js';
 import { ExecutionScopes } from './scopes.js';
 import { NameScopes } from './names.js';
 import { bindContext } from './context.js';
+import { bindAgent } from './bound-agent.js';
 import { execFailureFields, stepError, errorKind, rootCauseKind } from './step-error.js';
 import { stepEventError } from './step-event-error.js';
 import { ConfigurationError, GrantRequiredError } from './configuration-error.js';
@@ -3378,7 +3379,7 @@ export async function runWorkflow<
           },
         );
       }
-      return {
+      const agentClient: AgentClient<TOptions> = {
         text: (id, agentOptions) =>
           invoke(
             id,
@@ -3389,7 +3390,9 @@ export async function runWorkflow<
           ),
         object,
         value,
+        bind: (bound) => bindAgent(agentClient, bound),
       };
+      return agentClient;
     }
 
     /**

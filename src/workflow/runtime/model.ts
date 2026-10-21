@@ -7,6 +7,8 @@ import type {
   RegisteredAgentClient,
   CallOptions,
   CapabilitiesOf,
+  HarnessCapabilities,
+  NativeHarnessCapabilities,
 } from './harness-model.js';
 import type { ClaudeOptions } from '../../harnesses/builtins/claude-options.js';
 import type { CodexOptions } from '../../harnesses/builtins/codex-options.js';
@@ -401,8 +403,80 @@ export interface AgentResult<T> {
   readonly usage: AgentUsage;
 }
 
+/**
+ * Option keys that only a call may set (ADR 0063 section 1): the prompt and schema are the work,
+ * and `cwd`, `worktree`, `onError`, `retry` and Codex `images` are chosen per invocation. `bind`
+ * rejects them, at typecheck through {@link BindOptions} and at runtime with a `TypeError`.
+ */
+export type PerCallOnlyKey =
+  'prompt' | 'schema' | 'cwd' | 'worktree' | 'onError' | 'retry' | 'images';
+
+/**
+ * What a call to an {@link Agent} may pass (ADR 0063 section 1): the prompt, placement (`cwd`,
+ * `addDirs`, `worktree`) and policy (`onError`, `retry`, `timeoutMs`, `idleTimeoutMs`), plus the
+ * schema of a structured call. Everything else is fixed when the agent is bound. `addDirs`,
+ * `timeoutMs` and `idleTimeoutMs` may also be bound as defaults; a call's deadline wins and its
+ * `addDirs` append to the bound list.
+ */
+export type BoundCallOptions = Pick<
+  AgentOptions,
+  'prompt' | 'cwd' | 'addDirs' | 'worktree' | 'onError' | 'retry' | 'timeoutMs' | 'idleTimeoutMs'
+>;
+
+/**
+ * What {@link AgentClient.bind} accepts for a client with options `O`: every option except the
+ * {@link PerCallOnlyKey} keys. It distributes over a union option type, so the profile and
+ * `addDirs` pairing of a strict Claude client is kept.
+ */
+export type BindOptions<O> = O extends unknown ? Omit<O, PerCallOnlyKey> : never;
+
+/**
+ * The call options of a client bound from one with options `O`: the {@link BoundCallOptions} keys
+ * that `O` declares, plus Codex's per-call `images` (ADR 0063 section 1). For Claude this is
+ * `BoundCallOptions`; a registered harness keeps only the bound keys its own schema declares. It
+ * distributes over a union and is idempotent, so a bound client binds again to the same type.
+ */
+export type BoundOptionsOf<O> = O extends unknown
+  ? Pick<O, Extract<keyof O, keyof BoundCallOptions | 'images'>> & {
+      /** Instructions sent over stdin, never interpolated into a shell command. */
+      readonly prompt: string;
+    }
+  : never;
+
+/**
+ * The encapsulated agent of ADR 0063 section 1: configured in every respect except the prompt, the
+ * output contract and where it works, so a call takes only {@link BoundCallOptions}. Create one
+ * with `bind` on `ctx.claude`, `ctx.codex` or `ctx.agent(name)`.
+ *
+ * `C` carries the harness's capabilities, as in {@link RegisteredAgentClient}: a registration whose
+ * `structuredOutput` is `'none'` binds to a text-only agent without `object` or a schema-bearing
+ * `value`, so it is not assignable to the default, structured `Agent`. The default is
+ * {@link NativeHarnessCapabilities}, the capabilities of the two built-in harnesses (the ADR's
+ * `BuiltInCapabilities`).
+ */
+export type Agent<C extends HarnessCapabilities = NativeHarnessCapabilities> =
+  RegisteredAgentClient<BoundCallOptions, C>;
+
 /** Dedicated typed API for a harness, with durable calls keyed by unique step IDs. */
 export interface AgentClient<TOptions extends AgentOptions> {
+  /**
+   * Fix every option except the per-call ones and return an {@link Agent} whose calls take only the
+   * prompt, schema, placement and policy (ADR 0063 section 2). Binding is pure: it snapshots
+   * `options`, performs no effect, claims no step ID and reads no run state, so the agent can be
+   * created once and reused across `ctx.scope`, `ctx.map` and `ctx.within`; each call takes its
+   * step ID prefix where it is invoked, exactly as a raw call does.
+   *
+   * Each call merges its options over the bound ones: a call value replaces the bound one, except
+   * that `addDirs` entries are appended to the bound list (never deduplicated), so a call cannot
+   * drop a bound directory. A call's `timeoutMs` and `idleTimeoutMs` therefore win over bound
+   * defaults, and a call value that is `undefined` counts as absent and keeps the default. The
+   * merged options fingerprint, resolve policy and profiles, and record exactly as if they had been
+   * spelled at the call site. A bound agent binds again the same way, layering its defaults.
+   *
+   * `bind` throws a `TypeError` for a {@link PerCallOnlyKey}, and a bound call rejects before any
+   * step is claimed when it passes a key outside {@link BoundCallOptions} (and Codex `images`).
+   */
+  bind(options: BindOptions<TOptions>): AgentClient<BoundOptionsOf<TOptions>>;
   /** Return only the structured output; checkpoint the same result and metadata as object(). */
   value<T>(
     id: string,

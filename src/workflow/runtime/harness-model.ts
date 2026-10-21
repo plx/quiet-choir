@@ -2,6 +2,8 @@ import type { z } from 'zod';
 import type {
   AgentClient,
   AgentOptions,
+  BindOptions,
+  BoundOptionsOf,
   AgentResult,
   ClaudeOptions,
   CodexOptions,
@@ -331,6 +333,11 @@ export type RegisteredAgentClient<
   C extends HarnessCapabilities,
 > = 'none' extends C['structuredOutput']
   ? {
+      /**
+       * Fix every option except the per-call ones and return a text-only agent; see
+       * {@link AgentClient.bind} for the merge rules.
+       */
+      bind(options: BindOptions<O>): RegisteredAgentClient<BoundOptionsOf<O>, C>;
       /** Invoke a text response and retain session/usage diagnostics. */
       text<TMode extends ErrorMode = 'throw'>(
         id: string,
