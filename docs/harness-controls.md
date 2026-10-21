@@ -27,20 +27,20 @@ requires restricted isolation and owns the `project_doc_max_bytes` config key. I
 and grants nothing, so it is not a capability control. See
 [harness isolation](harness-isolation.md).
 
-Declare capability controls in [agent profiles](agent-profiles.md), including tools, permissions,
-MCP/settings, native agents/profiles/config, additional directories, environment and escape args.
-`strictProfiles: true` (opt-in; the default is `false`) rejects those fields at call sites, with one
-bounded exception: a Claude call may pass `addDirs` when its profile declares `claude.addDirRoots`
-and every entry canonicalizes (no `..` segments, symlinks resolved) inside a root; accepted entries
-are appended to the profile's `addDirs` as canonical absolute paths. Under any other profile the
-call fails typecheck where `defineWorkflow` can see the profile's shape. See
-[bounded call-site directories](agent-profiles.md#bounded-call-site-directories). Role prompts,
-models, effort, fallbacks and image attachments can be supplied per call. Native
+Declare capability controls in [roster entries or profiles](roster.md), including tools,
+permissions, MCP/settings, native agents/profiles/config, additional directories, environment and
+escape args. `strictProfiles: true` (opt-in; the default is `false`) rejects those fields at call
+sites, with one bounded exception: a Claude call may pass `addDirs` when its profile declares
+`claude.addDirRoots` and every entry canonicalizes (no `..` segments, symlinks resolved) inside a
+root; accepted entries are appended to the profile's `addDirs` as canonical absolute paths. Under
+any other profile the call fails typecheck where `defineWorkflow` can see the profile's shape. See
+[bounded call-site directories](roster.md#bounded-call-site-directories). Role prompts, models,
+effort, fallbacks and image attachments can be supplied per call. Native
 configuration/agent/escape/env controls and enabled network access are conservatively classified as
 **exec** access, and Codex additional writable directories as write access; Claude directories alone
-grant no tools. Under [`requireGrants`](agent-profiles.md#requiregrants-launch-grants-and-pins)
-those classes need launch grants, and named grants pin these declared controls and require renewal
-when they change.
+grant no tools. Under [`requireGrants`](roster.md#requiregrants-launch-grants-and-pins) those
+classes need launch grants, and named grants pin these declared controls and require renewal when
+they change.
 
 ```ts
 // Fields on defineWorkflow:
@@ -157,8 +157,8 @@ and `web_search` items, counted from the header when the parser skips an oversiz
 `test/fixtures/harness-tools/`. A skipped oversized Claude assistant line leaves a zero count
 unknown (`null`). When the profile's `expectsToolUse` is true and a completed attempt reports
 `toolUses: 0`, the step records a `no-tool-use` warning, which the completed `agent.finished` event
-carries in `warnings` and the CLI logs at warn level ([agent profiles](agent-profiles.md)). The
-warning never fails the attempt.
+carries in `warnings` and the CLI logs at warn level ([roster](roster.md#recovery-and-diagnostics)).
+The warning never fails the attempt.
 
 Custom adapters own both features. A `HarnessRequest` carries the resolved `idleTimeoutMs` in its
 options when the adapter's option schema has that key (`defineHarness` adds it); pass it to
