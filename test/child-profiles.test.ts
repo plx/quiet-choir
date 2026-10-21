@@ -43,6 +43,7 @@ it('clamps a delegated profile to the root ceiling before a grandchild can inher
     pins,
     [],
     {},
+    true,
   );
   // The delegated manifest handed to descendants must already carry the clamped ceiling, not
   // the child's own laxer declaration.
@@ -60,6 +61,7 @@ it('clamps a delegated profile to the root ceiling before a grandchild can inher
     middle.pins,
     middle.overrides,
     {},
+    true,
   );
   expect(
     grandchild.limits('worker', { maxTurns: 99, maxBudgetUsd: 99, timeoutMs: 99_000 }),
@@ -79,6 +81,7 @@ it('clamps a delegated idle deadline to the parent ceiling', () => {
     { worker: profileGrantDigest(ceiling) },
     [],
     {},
+    true,
   );
   expect(child.manifest.profiles['worker']?.idleTimeoutMs).toBe(1_000);
   expect(child.limits('worker', { idleTimeoutMs: 99_000 }).idleTimeoutMs).toBe(1_000);
@@ -103,6 +106,7 @@ it('keeps a failing parent denial policy for omitted child policies and refuses 
     pins,
     [],
     {},
+    true,
   );
   expect(inherited.manifest.profiles['scout']?.onPermissionDenied).toBe('fail');
   // A Claude-only failing policy passes to omitted built-ins at the Claude level.
@@ -131,6 +135,7 @@ it('keeps a failing parent denial policy for omitted child policies and refuses 
       pins,
       [],
       {},
+      true,
     ),
   ).toThrow('exceeds parent profile scout: onPermissionDenied');
   expect(() =>
@@ -141,6 +146,7 @@ it('keeps a failing parent denial policy for omitted child policies and refuses 
       pins,
       [],
       {},
+      true,
     ),
   ).toThrow('exceeds parent profile text: onPermissionDenied');
 });
@@ -159,6 +165,7 @@ it('lets a delegated child role inherit the parent role Codex effort unless it s
     {},
     [],
     { profiles: { author: 'careful', tuned: 'careful' } },
+    true,
   );
   expect(delegated.manifest.profiles['author']?.codex).toMatchObject({ effort: 'minimal' });
   expect(delegated.manifest.profiles['tuned']?.codex).toMatchObject({ effort: 'high' });
@@ -183,6 +190,7 @@ it('delegates Claude directories by containment in the parent roots (#171)', () 
         pins,
         [],
         {},
+        true,
         withCwd ? tree : undefined,
       );
     // Equal and nested roots (absolute, or relative to the run cwd) stay inside the parent's.
@@ -238,6 +246,7 @@ it('rechecks every ancestor role root when delegating to grandchildren (#391)', 
       { reader: profileGrantDigest(topReader) },
       [],
       {},
+      true,
       base,
     );
     // A root-level child carries only its parent's ceiling; its own checks see no ancestors.
@@ -252,6 +261,7 @@ it('rechecks every ancestor role root when delegating to grandchildren (#391)', 
         middle.pins,
         middle.overrides,
         options,
+        true,
         base,
         middle.ancestry,
       );
@@ -316,6 +326,7 @@ it('keeps literal Claude directory delegation working through every ancestor (#3
         { reader: profileGrantDigest(topReader) },
         [],
         {},
+        true,
         base,
       );
       return delegateCapabilities(
@@ -327,6 +338,7 @@ it('keeps literal Claude directory delegation working through every ancestor (#3
         middle.pins,
         middle.overrides,
         {},
+        true,
         rootCwd,
         middle.ancestry,
       );
@@ -373,6 +385,7 @@ it('reads only own keys when a role is named like an Object.prototype member (#3
       { toString: profileGrantDigest(topRole) },
       [],
       {},
+      true,
       base,
     );
     expect(Object.getPrototypeOf(middle.ancestry)).toBeNull();
@@ -392,6 +405,7 @@ it('reads only own keys when a role is named like an Object.prototype member (#3
         middle.pins,
         middle.overrides,
         { profiles: { reader: 'toString' } },
+        true,
         base,
         middle.ancestry,
       );
@@ -406,6 +420,131 @@ it('reads only own keys when a role is named like an Object.prototype member (#3
     expect(() => delegateLeaf()).toThrow(
       'Child profile leaf.reader exceeds ancestor profile toString: claude.addDirRoots.',
     );
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+it('keeps a child its own roles without requireGrants and checks ceilings only with it (#577)', () => {
+  // A text-only parent: every elevated child role exceeds it.
+  const root = resolveCapabilities({ profiles: { scout: { extends: 'text' } } });
+  const child = declaration('child', {
+    builder: { extends: 'edit', maxTurns: 99, claude: { tools: ['Read', 'Edit', 'Bash'] } },
+    scout: { extends: 'readonly' },
+  });
+  const overrides = [{ profile: 'scout', maxTurns: 2 }];
+  const own = delegateCapabilities(child, root, [], {}, overrides, {}, false);
+  // The child's own resolved manifest, uncompared and unclamped, with no grants, pins or ancestry.
+  expect(own.manifest).toEqual(resolveCapabilities(child, { requireGrants: false }));
+  expect(own.manifest.profiles['builder']).toMatchObject({ access: 'exec', maxTurns: 99 });
+  expect(own.manifest.requiredGrants).toEqual([]);
+  expect(own.grants).toEqual([]);
+  expect(own.pins).toEqual({});
+  expect(own.ancestry).toEqual({});
+  // The parent's override rules pass through unchanged; operator limits still match by name.
+  expect(own.overrides).toBe(overrides);
+  expect(() => {
+    own.check('builder', 'claude', {
+      prompt: 'x',
+      tools: ['Bash'],
+      env: { A: 'b' },
+    } as ClaudeOptions);
+  }).not.toThrow();
+  const policy = { maxTurns: 99, timeoutMs: 99_000 };
+  expect(own.limits('builder', policy)).toBe(policy);
+  // An options.profiles remap is accepted and ignored, even for an unknown child role.
+  const remapped = delegateCapabilities(
+    child,
+    root,
+    [],
+    {},
+    [],
+    { profiles: { missing: 'scout', builder: 'scout' } },
+    false,
+  );
+  expect(remapped.manifest).toEqual(own.manifest);
+
+  // Under requireGrants, the same delegation is refused as before.
+  expect(() =>
+    delegateCapabilities(child, root, ['all'], {}, [], { profiles: { builder: 'edit' } }, true),
+  ).toThrow('Child profile child.builder exceeds parent profile edit: tools.');
+  expect(() =>
+    delegateCapabilities(child, root, ['all'], {}, [], { profiles: { builder: 'scout' } }, true),
+  ).toThrow('Child profile child.builder exceeds parent profile scout: tools.');
+  expect(() =>
+    delegateCapabilities(child, root, [], {}, [], { profiles: { missing: 'scout' } }, true),
+  ).toThrow('Unknown child profile mapping: missing.');
+  expect(() =>
+    delegateCapabilities(
+      declaration('child', { orphan: { extends: 'readonly' } }),
+      root,
+      [],
+      {},
+      [],
+      {},
+      true,
+    ),
+  ).toThrow('Child child profile orphan has no parent grant orphan');
+  expect(() =>
+    delegateCapabilities(
+      declaration('child', { orphan: { extends: 'readonly' } }),
+      root,
+      [],
+      {},
+      [],
+      {},
+      false,
+    ),
+  ).not.toThrow();
+});
+
+it('rechecks ancestor roots only under requireGrants (#577)', () => {
+  const base = mkdtempSync(join(tmpdir(), 'choir-ancestor-optin-'));
+  try {
+    const allowed = join(base, 'allowed');
+    const outside = join(base, 'outside');
+    mkdirSync(allowed);
+    mkdirSync(outside);
+    const top = resolveCapabilities({
+      profiles: { reader: { extends: 'readonly', claude: { addDirRoots: [allowed] } } },
+    });
+    const topReader = top.profiles['reader'];
+    if (!topReader) throw new Error('top role missing');
+    const chain = (requireGrants: boolean) => {
+      const middle = delegateCapabilities(
+        declaration('middle', {
+          reader: { extends: 'readonly', claude: { addDirRoots: [allowed] } },
+        }),
+        top,
+        ['reader'],
+        { reader: profileGrantDigest(topReader) },
+        [],
+        {},
+        requireGrants,
+        base,
+      );
+      return delegateCapabilities(
+        declaration('leaf', {
+          reader: { extends: 'readonly', claude: { addDirRoots: [outside] } },
+        }),
+        middle.manifest,
+        middle.grants,
+        middle.pins,
+        middle.overrides,
+        {},
+        requireGrants,
+        base,
+        middle.ancestry,
+      );
+    };
+    expect(() => chain(true)).toThrow(
+      'Child profile leaf.reader exceeds parent profile reader: claude.addDirRoots.',
+    );
+    const leaf = chain(false);
+    expect(leaf.manifest.profiles['reader']?.claude.addDirRoots).toEqual([outside]);
+    expect(() => {
+      leaf.check('reader', 'claude', { prompt: 'x', addDirs: [join(outside, 'x')] });
+    }).not.toThrow();
   } finally {
     rmSync(base, { recursive: true, force: true });
   }

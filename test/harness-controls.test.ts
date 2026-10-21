@@ -674,6 +674,7 @@ it('includes native controls in profile manifests, grants, and strict call-site 
   const definition = defineWorkflow({
     ...base,
     strictProfiles: true,
+    requireGrants: true,
     profiles: {
       builder: { extends: 'edit', codex: { isolation: 'inherit', harnessProfile: 'native' } },
     },

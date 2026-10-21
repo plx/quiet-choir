@@ -728,14 +728,24 @@ return (await ctx.claude.text('edit', { prompt: 'x', profile: 'edit' })).output;
 }});`,
     );
     const fixtures = { version: 1 as const, calls: [], unmatched: 'synthesize' as const };
-    const failed = await execute('grant', {
-      harness: { kind: 'fixture' as const, config: {}, fixtures },
-    });
+    const harness = { kind: 'fixture' as const, config: {}, fixtures };
+    // Without requireGrants the edit role needs no grant (#577).
+    await expect(execute('open', { harness })).resolves.toMatchObject({ ok: true });
+    // The plan's requireGrants reaches the run, which keeps it for the grant resume.
+    const failed = await execute('grant', { harness, requireGrants: true });
     if (failed.ok) throw new Error(JSON.stringify(failed));
     expect(failed.code).toBe('workflow.failed');
     expect(failed.message).toMatch(/^Step edit \(claude\) failed:/u);
     expect(failed.message).toContain('--resume --grant edit');
     expect(failed.message).not.toContain('accept-code-change');
+    expect((await readRun({ stateDir, runId: 'grant' })).requireGrants).toBe(true);
+    await expect(execute('grant', { harness, resume: true })).resolves.toMatchObject({
+      ok: false,
+      code: 'workflow.failed',
+    });
+    await expect(
+      execute('grant', { harness, resume: true, grants: ['edit'] }),
+    ).resolves.toMatchObject({ ok: true });
   });
 
   it('reports source changes on a completed run instead of silently returning stale final output', async () => {
