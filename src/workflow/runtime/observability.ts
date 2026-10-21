@@ -29,10 +29,15 @@ export function errorStack(error: unknown): string | null {
   return stacks.length ? stacks.join('\nCaused by: ').slice(0, 65_536) : null;
 }
 
-/** Summarize the request after profile, policy, and harness defaults are resolved. @internal */
+/**
+ * Summarize the request after profile, policy, and harness defaults are resolved. `promptTemplate`
+ * is the name of the Prompt the call passed as `prompt`, when it passed one (ADR 0064 section 5).
+ * @internal
+ */
 export function requestSummary(
   request: HarnessRequestInput,
   execution: AttemptPolicy,
+  promptTemplate?: string,
 ): RequestSummary {
   const options = request.options;
   return {
@@ -63,6 +68,7 @@ export function requestSummary(
     structured: request.outputSchema !== null,
     promptSha256: createHash('sha256').update(options.prompt).digest('hex'),
     promptPreview: options.prompt.slice(0, 200),
+    ...(promptTemplate === undefined ? {} : { promptTemplate }),
   };
 }
 

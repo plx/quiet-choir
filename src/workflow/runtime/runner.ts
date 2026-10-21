@@ -189,7 +189,7 @@ import {
 } from './policy.js';
 import { OperationTracker } from './tracking.js';
 import { optionData, validateAgentOptions } from './options.js';
-import { promptOptionsAsText } from '../prompts/prompt.js';
+import { promptOptionsAsText, promptTemplateOf } from '../prompts/prompt.js';
 import { HarnessError, boundedResponse, harnessEvidence } from './harness-error.js';
 import { CancelledError, FailureOrigins } from './fan-out.js';
 import { createMap, settledMapChange } from './map.js';
@@ -280,6 +280,11 @@ export type WorkflowEvent = {
   readonly diagnostics?: AgentDiagnostics;
   /** The step's warnings (such as `no-tool-use`) on a completed agent.finished, when any. */
   readonly warnings?: readonly string[];
+  /**
+   * The prompt name on agent.finished when the call's `prompt` was a rendered `Prompt`, as in the
+   * attempt's request summary (ADR 0064 section 5); absent for a string prompt.
+   */
+  readonly promptTemplate?: string;
   /** Reported usage on step.completed and live agent.finished; do not sum across event types. */
   readonly usage?: AgentUsage;
   /** Observed native session, or predicted Claude ID on early live notifications; absent on replay. */
@@ -779,6 +784,13 @@ function mergeDiagnostics(
   for (const key of ['cliVersion', 'model'])
     if (merged[key] === null && prior?.[key] != null) merged[key] = prior[key];
   return merged;
+}
+
+/** The agent.finished `promptTemplate` field from an attempt's request summary, when it has one. */
+function promptTemplateField(request: RequestSummary | null | undefined): {
+  readonly promptTemplate?: string;
+} {
+  return request?.promptTemplate === undefined ? {} : { promptTemplate: request.promptTemplate };
 }
 
 /** Whether an agent call could use a tool: Claude with an explicitly empty tool list cannot. */
@@ -2487,6 +2499,7 @@ export async function runWorkflow<
                   sessionId: attemptRecord.sessionId ?? attemptRecord.requestedSessionId ?? null,
                   ...(attemptRecord.usage ? { usage: attemptRecord.usage } : {}),
                   diagnostics: attemptRecord.diagnostics ?? {},
+                  ...promptTemplateField(attemptRecord.request),
                 });
               }
               if (classification.markFatal) origins.markFatal(error);
@@ -2596,6 +2609,7 @@ export async function runWorkflow<
                 usage: metadata.usage,
                 diagnostics: metadata.diagnostics ?? {},
                 ...(step.warnings?.length ? { warnings: [...step.warnings] } : {}),
+                ...promptTemplateField(attemptRecord.request),
               });
             emit(
               'step.completed',
@@ -2842,6 +2856,9 @@ export async function runWorkflow<
           const saved = record.steps[id];
           const replayOnly = saved !== undefined && isTerminalStep(saved);
           let adapter: Harness | undefined;
+          // The template name is observational (ADR 0064 section 5): it goes to the request
+          // summary only, never into identity.
+          const promptTemplate = promptTemplateOf(agentOptions);
           try {
             // A Prompt becomes its text here, before identity, so it fingerprints, records and
             // replays exactly like the same string (ADR 0064 section 2).
@@ -3326,7 +3343,7 @@ export async function runWorkflow<
             },
             identity,
             ...(agentOptions.onError === undefined ? {} : { onError: agentOptions.onError }),
-            request: requestSummary(request, execution),
+            request: requestSummary(request, execution, promptTemplate),
             phase,
             legacyDependencies: legacyRequest,
             legacySchema: legacyAgentResultSchema(schema),

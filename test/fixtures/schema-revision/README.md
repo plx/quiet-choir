@@ -532,6 +532,34 @@ journal was empty, so only `run.json` is checked in. Stack paths are scrubbed to
 the file was formatted with Prettier; its read-view digest in `test/record-schema-revision.test.ts`
 was computed on the same unmodified main from this file. No harness was invoked.
 
+`revision-nineteen-checkpoint.json` was generated the same way at origin/main `85eb381`, before
+prompt template fingerprinting (#582) added the optional nested `promptTemplate` to the request
+summary in `steps[].request` and attempt history entries in revision 20. Its run ID is
+`revision-nineteen`, and it ran this definition once, with a custom harness whose `invoke` resolves
+`{ text: 'ok', sessionId: null }` (so no harness process was spawned):
+
+```ts
+defineWorkflow({
+  name: 'schema-revision',
+  version: '1',
+  input: z.null(),
+  output: z.null(),
+  async run(ctx) {
+    await ctx.now('prepare');
+    await ctx.claude.text('review', { prompt: 'Review the change.' });
+    throw new Error('fixture tail');
+  },
+});
+```
+
+It carries `schemaRevision: 19`, the completed `ctx.now` effect `prepare`, the completed agent step
+`review` whose step and attempt request summaries have no `promptTemplate`, and a workflow-body
+failure after it, so a resume with a body that no longer throws replays `review` without invoking a
+harness. The journal was empty and the empty attempt transcript is not checked in, so only
+`run.json` is. Stack and transcript paths are scrubbed to `/fixture/...` and the file was formatted
+with Prettier; its read-view digest in `test/record-schema-revision.test.ts` was computed on the
+same unmodified main from this file. No inference was used.
+
 `record-keys.json` lists the top-level run-record keys of each schema revision. Adding or changing a
 persisted run-level field adds a revision there and bumps `SUPPORTED_SCHEMA_REVISION`; a revision
 that only changes a nested shape repeats the previous key list. See `docs/storage.md`.

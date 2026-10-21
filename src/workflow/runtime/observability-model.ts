@@ -63,6 +63,12 @@ export interface RequestSummary {
   readonly promptSha256: string;
   /** First 200 UTF-16 code units of the prompt. Treat checkpoint files as sensitive. */
   readonly promptPreview: string;
+  /**
+   * The prompt name (such as `Review`) when the call's `prompt` was a rendered `Prompt` (ADR 0064
+   * section 5); absent for a string prompt, a Prompt only in a system prompt, and in records before
+   * schema revision 20. Observational: it is not part of the step's identity.
+   */
+  readonly promptTemplate?: string;
 }
 
 /** One workflow-body execution; a completed-run fast-path read creates no new execution. */

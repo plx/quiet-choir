@@ -86,6 +86,8 @@ const revisionDigests: Readonly<Record<string, string>> = {
   '18': '76e465c736a943b3ea1b9383259e31640509d566ce15046a1a9387fdd579846c',
   // Revision 19 (#579) changed only the nested capabilities shape (a roster entry's harness pin).
   '19': '76e465c736a943b3ea1b9383259e31640509d566ce15046a1a9387fdd579846c',
+  // Revision 20 (#582) changed only the nested request summary shape (promptTemplate), so it repeats 19.
+  '20': '76e465c736a943b3ea1b9383259e31640509d566ce15046a1a9387fdd579846c',
 };
 // digest(readRun(...)) of the installed pre-revision fixture, computed on unmodified main 91a6d2f.
 const preRevisionReadDigest = '714b6cb068de5c933b7ba04a26d1f931f589f7c9910f76f0e5c8cc493eb13016';
@@ -131,6 +133,9 @@ const revisionSeventeenReadDigest =
 // digest(readRun(...)) of the installed revision-eighteen fixture, computed on unmodified main 643f510.
 const revisionEighteenReadDigest =
   'd0024a97445fa55447e034e498d2b78c07d893507a83e5c114fb41e2353709a8';
+// digest(readRun(...)) of the installed revision-nineteen fixture, computed on unmodified main 85eb381.
+const revisionNineteenReadDigest =
+  '3ab6aab1a745e9812f9959ab091ddc77ad06df748ff5b9245da03990de25fa30';
 
 // Digests of the run-level (without steps) and step JSON Schemas (recordShapeSchemas) per revision,
 // with the zod version that produced them. They start at revision 17: older revisions cannot be
@@ -151,6 +156,11 @@ const shapeDigests: Readonly<Record<string, { zod: string; run: string; steps: s
     zod: '4.5.4',
     run: 'd28a13d7dfecf511cfbaf0bb483caef8e3f6fc65890a6873468eb0736b9e475c',
     steps: 'b8c0698a4791f24bc30576a4258b7631cb2dea80a3a6ddd17d830fc9a120bc79',
+  },
+  '20': {
+    zod: '4.5.4',
+    run: 'd28a13d7dfecf511cfbaf0bb483caef8e3f6fc65890a6873468eb0736b9e475c',
+    steps: '37b78a978b4ed153dc6e76715de70e397b4db12812e6e7f794ff8b5ce5ff17cb',
   },
 };
 const FIRST_SHAPE_PIN = 17;
@@ -1781,7 +1791,7 @@ describe('revision-nine records (a grant failure before recoveryCause, #284)', (
     expect(saved.recoveryCause).toBeUndefined();
     expect(recordSchemaDrift(saved)).toBeUndefined();
     expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
-    expect(SUPPORTED_SCHEMA_REVISION).toBe(19);
+    expect(SUPPORTED_SCHEMA_REVISION).toBe(20);
   });
 
   it('round-trip every recovery cause through the record parser', async () => {
@@ -2537,6 +2547,68 @@ describe('revision-eighteen records (a manifest before roster pins, #579)', () =
     expect(saved.steps['prepare']).toEqual(original.steps['prepare']);
     expect(saved.capabilities?.profiles['scout']).toEqual(original.capabilities?.profiles['scout']);
     expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
+  });
+});
+
+describe('revision-nineteen records (an agent request summary before promptTemplate, #582)', () => {
+  const runId = 'revision-nineteen';
+  async function install(): Promise<void> {
+    const fixture = await readFile(
+      new URL('./fixtures/schema-revision/revision-nineteen-checkpoint.json', import.meta.url),
+      'utf8',
+    );
+    await mkdir(join(stateDir, runId));
+    await writeFile(paths(runId).snapshot, fixture);
+    await writeFile(paths(runId).journal, '');
+  }
+  const review = (tail: boolean) =>
+    defineWorkflow({
+      name: 'schema-revision',
+      version: '1',
+      input: z.null(),
+      output: z.null(),
+      async run(ctx) {
+        await ctx.now('prepare');
+        await ctx.claude.text('review', { prompt: 'Review the change.' });
+        if (tail) throw new Error('fixture tail');
+        return null;
+      },
+    });
+
+  it('read exactly as on main, with an agent request summary and no promptTemplate', async () => {
+    await install();
+    const record = await readRun({ stateDir, runId });
+    expect(record.schemaRevision).toBe(19);
+    expect(recordSchemaDrift(record)).toBeUndefined();
+    expect(digest(record)).toBe(revisionNineteenReadDigest);
+    const step = record.steps['review'];
+    expect(step?.request?.promptPreview).toBe('Review the change.');
+    expect(step?.request).not.toHaveProperty('promptTemplate');
+    expect(step?.attemptHistory?.[0]?.request).not.toHaveProperty('promptTemplate');
+    expect(record.status).toBe('failed');
+  });
+
+  it('resume, replay the agent step without a harness and save the current revision', async () => {
+    await install();
+    const original = await readRun({ stateDir, runId });
+    const result = await runWorkflow(review(false), { ...options, stateDir, runId, resume: true });
+    expect(result.status).toBe('completed');
+    const saved = await readRun({ stateDir, runId });
+    expect(saved.steps['review']).toEqual(original.steps['review']);
+    expect(recordSchemaDrift(saved)).toBeUndefined();
+    expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
+  });
+
+  it('refuse a promptTemplate that is not a prompt name', async () => {
+    await install();
+    await editSnapshot(runId, (raw) => {
+      raw['schemaRevision'] = 20;
+      const steps = raw['steps'] as Record<string, Record<string, Record<string, unknown>>>;
+      const request = steps['review']?.['request'];
+      if (request === undefined) throw new Error('fixture has no review request');
+      request['promptTemplate'] = 'not a name';
+    });
+    await expect(readRun({ stateDir, runId })).rejects.toThrow();
   });
 });
 

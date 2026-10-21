@@ -1453,6 +1453,46 @@ it('shows the tool-use count, step warnings and idle deadline of agent calls', (
   expect(text).toMatch(/^failed stalled .*idle timeout 2m00s/m);
 });
 
+it('shows the prompt template name of templated agent calls only (#582)', () => {
+  const plain = agentStep(1, { harness: 'claude', model: 'sonnet', effort: 'high' });
+  const [attempt] = plain.attemptHistory ?? [];
+  if (!attempt || !plain.request) throw new Error('fixture request missing');
+  // The latest attempt's request wins over the step's.
+  const templated: StepRecord = {
+    ...plain,
+    seq: 2,
+    request: { ...plain.request, promptTemplate: 'Stale' },
+    attemptHistory: [{ ...attempt, request: { ...plain.request, promptTemplate: 'Review' } }],
+  };
+  // A step whose attempts carry no request falls back to the step's request.
+  const legacyAttempt: StepRecord = {
+    ...plain,
+    seq: 3,
+    request: { ...plain.request, promptTemplate: 'Review' },
+  };
+  const failed = agentStep(4, { harness: 'codex', model: null, effort: 'high', status: 'failed' });
+  if (!failed.request) throw new Error('fixture request missing');
+  const failedTemplated: StepRecord = {
+    ...failed,
+    request: { ...failed.request, promptTemplate: 'Fix' },
+  };
+  const summary = summarizeRun(
+    withSteps({ plain, templated, legacyAttempt, failedTemplated }),
+    unlocked,
+  );
+  const rows = Object.fromEntries(summary.agents.recent.map((row) => [row.id, row]));
+  expect(rows['plain']).not.toHaveProperty('promptTemplate');
+  expect(rows['templated']).toMatchObject({ promptTemplate: 'Review' });
+  expect(rows['legacyAttempt']).toMatchObject({ promptTemplate: 'Review' });
+  const text = formatRunSummary(summary);
+  expect(text).toMatch(
+    /^templated {2}claude sonnet effort high {2}template Review {2}12s {2}\$0\.0123$/m,
+  );
+  expect(text).toMatch(/^plain {2}claude sonnet effort high {2}12s {2}\$0\.0123$/m);
+  // A listed (failed) agent step prints the template in its step-list line.
+  expect(text).toMatch(/^failed failedTemplated {2}codex \(native model\) template Fix\b/m);
+});
+
 const rateReport = (utilization: number, extra: Record<string, unknown> = {}) => ({
   rateLimit: {
     status: 'allowed',

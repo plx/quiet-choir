@@ -14,6 +14,12 @@ export const PROMPT_BRAND: unique symbol = Symbol.for('quiet-choir.prompt');
 export const PROMPT_SET: unique symbol = Symbol.for('quiet-choir.prompt-set');
 
 /**
+ * The pattern every prompt name matches: `definePrompts` refuses any other entry key, and the run
+ * record accepts only such a name as a request summary's `promptTemplate`. @internal
+ */
+export const PROMPT_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_]*$/u;
+
+/**
  * A rendered prompt. A class instance rather than a plain object: bound agents keep class
  * instances as they are, while a plain object's symbol keys would be refused as non-JSON.
  */
@@ -73,6 +79,21 @@ export function promptOptionsAsText<T extends object>(options: T): T {
   }
   if (copy === undefined) return options;
   return Object.create(Object.getPrototypeOf(options) as object | null, copy) as T;
+}
+
+/**
+ * The template name of the Prompt in an agent call's `prompt` (ADR 0064 section 5), recorded as the
+ * request summary's observational `promptTemplate`. Like {@link promptOptionsAsText}, only an own
+ * data property is read. A string prompt, a Prompt only in `systemPrompt` or `appendSystemPrompt`,
+ * and a Prompt whose template is not a prompt name (a forged value from another copy) give
+ * undefined, so a malformed value can never fail the record's save. @internal
+ */
+export function promptTemplateOf(options: object): string | undefined {
+  const descriptor = Object.getOwnPropertyDescriptor(options, 'prompt');
+  if (descriptor === undefined || !('value' in descriptor) || !isPrompt(descriptor.value))
+    return undefined;
+  const template: unknown = Reflect.get(descriptor.value, 'template');
+  return typeof template === 'string' && PROMPT_NAME_PATTERN.test(template) ? template : undefined;
 }
 
 /** One entry of a prompt set's descriptor. @internal */
