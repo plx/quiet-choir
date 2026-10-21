@@ -2,6 +2,17 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Teams are typed slots (#583, [ADR 0067](docs/decisions/0067-teams-as-typed-slots.md); see
+  [docs/roster.md](docs/roster.md#teams)). The root entry point exports `defineTeam`, `TeamOf` and
+  `Team<K>`, a pure module with no runtime registration, capability check, grant or manifest entry.
+  `defineTeam({ actor: '...', critic: '...' })` returns frozen `slots` (plain description data) and
+  `from(record)`, which picks the slot keys from any record that has them, so
+  `ReviewTeam.from(ctx.roster)` and `ReviewTeam.from({ ...ctx.roster, critic: ctx.roster.Skeptic })`
+  work; a record missing a slot fails typecheck and an untyped one throws
+  `Team slot critic is not filled.` A text-only agent does not fill a slot. The review/revise recipe
+  now takes a `ReviewTeam` (`examples/patterns/review-team.ts`), declares a `reviewRoster` and is at
+  version `2` with the same step IDs; a run of version 1 needs `--accept-code-change` to resume.
+  `model.ts` and the Workflow Lab `apiSnapshot` are unchanged.
 - Prompt templates are execution dependencies, and agent records name the template a call rendered
   (#582, [ADR 0064](docs/decisions/0064-prompt-templates-as-execution-dependencies.md) §4–5; see
   [docs/prompts.md](docs/prompts.md#templates-as-execution-dependencies)). After import, the CLI

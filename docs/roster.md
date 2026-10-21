@@ -139,7 +139,7 @@ else is fixed by the entry. See [bound agents](#bound-agents) for the merge rule
   `undefined`, never an `Object.prototype` member. A workflow without `roster` has no entries.
 - **Helpers.** A helper typed with a bare `WorkflowContext` sees every name as a possibly text-only
   `Agent<HarnessCapabilities>`. Pass the agent instead (`reviewWith(ctx.roster.Reviewer)` with a
-  parameter typed `Agent`), which is also how a team slot (ADR 0067) is filled.
+  parameter typed `Agent`), which is also how a [team](#teams) slot (ADR 0067) is filled.
 
 ## Manifest and validate output
 
@@ -229,6 +229,56 @@ key, which the first bind fixed.
 controls such as `tools`. It also keeps a call's pairing of `profile` and `addDirs`: an agent bound
 to a profile that declares `claude.addDirRoots` takes `addDirs` per call, while one bound to a
 profile without roots (or to the unrooted default) does not, at typecheck as at runtime.
+
+## Teams
+
+A team is a typed record of named `Agent` slots
+([ADR 0067](decisions/0067-teams-as-typed-slots.md)). A higher-order pattern such as review/revise
+names the roles it needs independently of which configured agent fills them. `defineTeam` takes slot
+names with one-line descriptions; `TeamOf` derives the record type, and `Team<K>` is that type over
+slot names `K`.
+
+```ts
+export const ReviewTeam = defineTeam({
+  actor: 'Produces the artifact under review.',
+  critic: 'Judges the artifact against the brief and returns findings.',
+});
+export type ReviewTeam = TeamOf<typeof ReviewTeam>; // { readonly actor: Agent; readonly critic: Agent }
+```
+
+`ReviewTeam.slots` is plain, frozen data (a null-prototype copy, so later edits to the object you
+passed change nothing) that documentation can read without running a workflow body. A slot holds a
+structured, native-capability `Agent`: a text-only registered agent does not typecheck as a slot,
+and nothing compares a slot's description to the agent that fills it, so expectations about
+capability belong in the description.
+
+Filling is explicit at the call site. A team value is a plain object of agents, and a pattern is an
+ordinary function over a context or, when it needs none, over the team alone: a bound agent carries
+its own context and takes its step ID prefix where it is called, so calls through a slot claim the
+same IDs, fingerprints and records as calls through the agent that fills it.
+
+```ts
+await reviewRevise({
+  team: { actor: ctx.roster.Writer, critic: ctx.roster.Reviewer },
+  draft,
+  rounds,
+});
+```
+
+`ReviewTeam.from(record)` is the one convenience. It picks the slot keys from any record that has
+them, so `ReviewTeam.from(ctx.roster)` fills a team whose roster entries use the slot names, and
+`ReviewTeam.from({ ...ctx.roster, critic: ctx.roster.Skeptic })` overrides one slot. A record that
+lacks a slot, or fills one with a non-agent, fails typecheck; entries other than the slots are
+dropped from the returned frozen team. An untyped or JavaScript caller that leaves a slot empty gets
+`TypeError: Team slot critic is not filled.`, a presence check and not a capability check. The
+helper neither inspects nor wraps the agents.
+
+A team is not registered with the runtime, is not part of `defineWorkflow`, and does not appear in
+`workflow validate` or the manifest, and it adds no grant or delegation behavior: the roster entries
+that fill it are what the manifest and `--require-grants` see. Teams serve in-process patterns only.
+Child workflows that take a team are deferred (ADR 0067 §3). The
+[review/revise recipe](../plugins/agents/quiet-choir/skills/quiet-choir/references/patterns.md#bounded-reviewrevise)
+is the reference usage (`examples/patterns/review-team.ts`).
 
 ## Recovery and diagnostics
 

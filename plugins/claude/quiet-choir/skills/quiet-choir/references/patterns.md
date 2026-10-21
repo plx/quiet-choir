@@ -13,30 +13,30 @@ I/O unless stubbed. Use the
 [launch-directory and external-state rules](../SKILL.md#run-a-first-workflow-against-a-project). The
 tests' fake responses prove replay behavior, not the quality of a model's review or edits.
 
-| Need                                                      | Recipe                                                              |
-| --------------------------------------------------------- | ------------------------------------------------------------------- |
-| Declare agents once and bind options for a helper         | [Roster and bound agents](#roster-and-bound-agents)                 |
-| Combine Claude and Codex reviews; retry failed reviewers  | [Cross-harness fan-out/fan-in](#cross-harness-fan-outfan-in)        |
-| Preserve a quorum decision despite failed reviewers       | [Failure-tolerant panel](#failure-tolerant-panel)                   |
-| Discover until no new findings appear                     | [Loop until dry](#loop-until-dry)                                   |
-| Run sequential stages for each item                       | [Per-item pipeline](#per-item-pipeline)                             |
-| Stop revising after approval or a round limit             | [Bounded review/revise](#bounded-reviewrevise)                      |
-| Reuse a helper without ID collisions                      | [Scoped helper](#reusable-helper)                                   |
-| Isolate parallel file edits                               | [Worktree per item](#worktree-per-item)                             |
-| Wait with a stable deadline                               | [Polling and deadlines](#polling-and-deadlines)                     |
-| Reuse old completed work after a fix                      | [Salvage with a fork](#salvage-an-old-run)                          |
-| Freeze a failure before selecting a fallback              | [Latch an outcome](#latch-an-outcome)                               |
-| Retry a small extraction without repeating expensive work | [Work, then extract](#work-then-extract)                            |
-| Test before native calls                                  | [Rehearse for free](#rehearse-for-free)                             |
-| Keep a human decision attached to its saved plan          | [Human review](#human-review)                                       |
-| Branch on a trusted command's exit code                   | [Commands and test verdicts](#commands-and-test-verdicts)           |
-| Edit existing text with an optimistic baseline guard      | [File snapshots and publication](#file-snapshots-and-publication)   |
-| Restore a Git file after a journaled mutation             | [Hash guard for mutation](#hash-guard-for-mutation)                 |
-| Read GitHub state through `gh` with typed results         | [GitHub snapshots through gh](#github-snapshots-through-gh)         |
-| Fix CI until it passes, keyed by head SHA                 | [CI-gated fix loop](#ci-gated-fix-loop)                             |
-| Burn down an epic one ticket per run                      | [Ticket loop](#ticket-loop)                                         |
-| Recognize tempting but unsafe code                        | [Traps](#traps)                                                     |
-| See the recipes expanded into strict ports                | [Workflow Lab acceptance recipes](#workflow-lab-acceptance-recipes) |
+| Need                                                             | Recipe                                                              |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Declare agents once and bind options for a helper                | [Roster and bound agents](#roster-and-bound-agents)                 |
+| Combine Claude and Codex reviews; retry failed reviewers         | [Cross-harness fan-out/fan-in](#cross-harness-fan-outfan-in)        |
+| Preserve a quorum decision despite failed reviewers              | [Failure-tolerant panel](#failure-tolerant-panel)                   |
+| Discover until no new findings appear                            | [Loop until dry](#loop-until-dry)                                   |
+| Run sequential stages for each item                              | [Per-item pipeline](#per-item-pipeline)                             |
+| Stop revising after approval or a round limit; fill a typed team | [Bounded review/revise](#bounded-reviewrevise)                      |
+| Reuse a helper without ID collisions                             | [Scoped helper](#reusable-helper)                                   |
+| Isolate parallel file edits                                      | [Worktree per item](#worktree-per-item)                             |
+| Wait with a stable deadline                                      | [Polling and deadlines](#polling-and-deadlines)                     |
+| Reuse old completed work after a fix                             | [Salvage with a fork](#salvage-an-old-run)                          |
+| Freeze a failure before selecting a fallback                     | [Latch an outcome](#latch-an-outcome)                               |
+| Retry a small extraction without repeating expensive work        | [Work, then extract](#work-then-extract)                            |
+| Test before native calls                                         | [Rehearse for free](#rehearse-for-free)                             |
+| Keep a human decision attached to its saved plan                 | [Human review](#human-review)                                       |
+| Branch on a trusted command's exit code                          | [Commands and test verdicts](#commands-and-test-verdicts)           |
+| Edit existing text with an optimistic baseline guard             | [File snapshots and publication](#file-snapshots-and-publication)   |
+| Restore a Git file after a journaled mutation                    | [Hash guard for mutation](#hash-guard-for-mutation)                 |
+| Read GitHub state through `gh` with typed results                | [GitHub snapshots through gh](#github-snapshots-through-gh)         |
+| Fix CI until it passes, keyed by head SHA                        | [CI-gated fix loop](#ci-gated-fix-loop)                             |
+| Burn down an epic one ticket per run                             | [Ticket loop](#ticket-loop)                                         |
+| Recognize tempting but unsafe code                               | [Traps](#traps)                                                     |
+| See the recipes expanded into strict ports                       | [Workflow Lab acceptance recipes](#workflow-lab-acceptance-recipes) |
 
 ## Roster and bound agents
 
@@ -44,8 +44,8 @@ tests' fake responses prove replay behavior, not the quality of a model's review
 as `ctx.roster.Name`. An entry is one concrete configuration pinned to one harness
 (`harness: 'claude'` or `'codex'`), so a role that serves both harnesses becomes two entries, and a
 misspelled name fails typecheck. The recipes below import this module, which mirrors the old
-`readonly` and `edit` presets with explicit values, one single-entry roster per recipe; copy it next
-to your workflow and change the values. Give each workflow only the entries it calls: under
+`readonly` and `edit` presets with explicit values, one small roster per recipe; copy it next to
+your workflow and change the values. Give each workflow only the entries it calls: under
 `--require-grants`, every write-capable entry in a workflow's roster needs a grant by its name
 (`--grant Editor`), used or not, and a child delegates only entries its parent also declares. When
 one call site needs a configuration no entry names, `ctx.claude.bind(options)` returns an `Agent`
@@ -58,7 +58,7 @@ fingerprint like a raw call that spells the same options. See [agent calls](agen
 ```ts
 import { defineRoster } from '../../src/index.js';
 
-// Data only: the agents these recipes call. Each recipe takes the one-entry roster it needs, so
+// Data only: the agents these recipes call. Each recipe takes the roster it needs, so
 // `--require-grants` asks for no grant on an entry the recipe never calls.
 export const readerRoster = defineRoster({
   Reader: {
@@ -97,6 +97,23 @@ export const codexEditorRoster = defineRoster({
     description: 'Edits files in a workspace-write sandbox.',
     sandbox: 'workspace-write',
     timeoutMs: 1_800_000,
+  },
+});
+
+export const reviewRoster = defineRoster({
+  Writer: {
+    harness: 'claude',
+    description: 'Rewrites the text it is given; uses no tools.',
+    tools: [],
+    maxTurns: 10,
+    maxBudgetUsd: 1,
+    timeoutMs: 600_000,
+  },
+  Reviewer: {
+    harness: 'codex',
+    description: 'Reviews a draft through a read-only sandbox.',
+    sandbox: 'read-only',
+    timeoutMs: 900_000,
   },
 });
 ```
@@ -283,34 +300,74 @@ pipeline-stage API; explicit async stages are the current form.
 
 **Rule:** each round has fixed IDs; exhaustion is a valid output, not an exception that forces a new
 attempt at the same already-rejected draft. The final round reviews without producing an unreviewed
-revision afterward.
+revision afterward. The loop names the roles it needs as a typed team (ADR 0067): `defineTeam`
+declares the slots (`actor`, `critic`) with one-line descriptions, plain data readable without
+running a body, and `TeamOf` derives the record type. The pattern is an ordinary function over a
+`ReviewTeam`; it takes no context because a bound agent carries its own and takes its step ID prefix
+where it is called. The workflow fills the team explicitly at the call site, from its roster. Where
+roster names equal slot names, `ReviewTeam.from(ctx.roster)` fills it, and
+`ReviewTeam.from({ ...ctx.roster, critic: ctx.roster.Skeptic })` overrides one slot: `from` keeps
+only the slot keys and throws if one is missing. A team registers nothing, checks no capability (put
+expectations in the slot description) and is not listed by `workflow validate`; a text-only agent
+does not fill a slot. Teams serve in-process patterns only.
+
+<!-- skills-check: example pattern-review-team -->
+
+```ts
+import { defineTeam, z, type TeamOf } from '../../src/index.js';
+
+// The roles a review/revise loop needs; any structured agents fill them.
+export const ReviewTeam = defineTeam({
+  actor: 'Produces and revises the draft.',
+  critic: 'Judges the draft and returns feedback.',
+});
+export type ReviewTeam = TeamOf<typeof ReviewTeam>;
+
+const Review = z.object({ approved: z.boolean(), feedback: z.string() });
+
+/** Review up to `rounds` times; the final round is not followed by an unreviewed revision. */
+export async function reviewRevise(args: {
+  team: ReviewTeam;
+  draft: string;
+  rounds: number;
+}): Promise<{ approved: boolean; draft: string }> {
+  const { team, rounds } = args;
+  let draft = args.draft;
+  for (let round = 0; round < rounds; round++) {
+    const review = await team.critic.value(`review/${String(round)}`, {
+      prompt: `Review this draft: ${draft}`,
+      schema: Review,
+    });
+    if (review.approved) return { approved: true, draft };
+    if (round + 1 < rounds) {
+      draft = await team.actor.value(`revise/${String(round)}`, {
+        prompt: `Revise ${draft} using this feedback: ${review.feedback}`,
+      });
+    }
+  }
+  return { approved: false, draft };
+}
+```
 
 <!-- skills-check: example pattern-review-revise -->
 
 ```ts
 import { defineWorkflow, z } from '../../src/index.js';
+import { reviewRevise } from './review-team.js';
+import { reviewRoster } from './roster.js';
 
 export default defineWorkflow({
   name: 'review-revise',
-  version: '1',
+  version: '2',
+  roster: reviewRoster,
   input: z.object({ draft: z.string(), rounds: z.int().min(1).max(10) }),
   output: z.object({ approved: z.boolean(), draft: z.string() }),
-  async run(ctx, input) {
-    let draft = input.draft;
-    for (let round = 0; round < input.rounds; round++) {
-      const review = await ctx.codex.value(`review/${String(round)}`, {
-        prompt: `Review this draft: ${draft}`,
-        schema: z.object({ approved: z.boolean(), feedback: z.string() }),
-      });
-      if (review.approved) return { approved: true, draft };
-      if (round + 1 < input.rounds) {
-        draft = await ctx.claude.value(`revise/${String(round)}`, {
-          prompt: `Revise ${draft} using this feedback: ${review.feedback}`,
-        });
-      }
-    }
-    return { approved: false, draft };
-  },
+  run: (ctx, { draft, rounds }) =>
+    reviewRevise({
+      team: { actor: ctx.roster.Writer, critic: ctx.roster.Reviewer },
+      draft,
+      rounds,
+    }),
 });
 ```
 
