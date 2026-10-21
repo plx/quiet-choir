@@ -1,6 +1,6 @@
 import { defineRoster } from '../../src/index.js';
 
-// Data only: the agents these recipes call. Each recipe takes the one-entry roster it needs, so
+// Data only: the agents these recipes call. Each recipe takes the roster it needs, so
 // `--require-grants` asks for no grant on an entry the recipe never calls.
 export const readerRoster = defineRoster({
   Reader: {
@@ -39,5 +39,22 @@ export const codexEditorRoster = defineRoster({
     description: 'Edits files in a workspace-write sandbox.',
     sandbox: 'workspace-write',
     timeoutMs: 1_800_000,
+  },
+});
+
+export const reviewRoster = defineRoster({
+  Writer: {
+    harness: 'claude',
+    description: 'Rewrites the text it is given; uses no tools.',
+    tools: [],
+    maxTurns: 10,
+    maxBudgetUsd: 1,
+    timeoutMs: 600_000,
+  },
+  Reviewer: {
+    harness: 'codex',
+    description: 'Reviews a draft through a read-only sandbox.',
+    sandbox: 'read-only',
+    timeoutMs: 900_000,
   },
 });

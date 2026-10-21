@@ -30,6 +30,11 @@
     "kind": "workflow"
   },
   {
+    "id": "pattern-review-team",
+    "file": "review-team.ts",
+    "kind": "support"
+  },
+  {
     "id": "pattern-review-revise",
     "file": "review-revise.workflow.ts",
     "kind": "workflow"
