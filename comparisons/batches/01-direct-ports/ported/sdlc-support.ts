@@ -1,4 +1,10 @@
-import { z, type WorkflowContext, type JsonValue } from 'quiet-choir';
+import {
+  z,
+  type AgentClient,
+  type AgentOptions,
+  type WorkflowContext,
+  type JsonValue,
+} from 'quiet-choir';
 import requirements from './requirements-to-prd.workflow.js';
 import roadmap from './roadmap-plan.workflow.js';
 import backlog from './prd-decompose.workflow.js';
@@ -50,17 +56,14 @@ export function withStageAnswer(
       } as never);
     }) as T;
   }
-  return {
-    ...ctx,
-    claude: {
-      value: wrap(ctx.claude.value),
-      text: wrap(ctx.claude.text),
-      object: wrap(ctx.claude.object),
-    },
-    codex: {
-      value: wrap(ctx.codex.value),
-      text: wrap(ctx.codex.text),
-      object: wrap(ctx.codex.object),
-    },
-  };
+  // A bound agent's prompts carry the answer too.
+  function client<O extends AgentOptions>(inner: AgentClient<O>): AgentClient<O> {
+    return {
+      value: wrap(inner.value),
+      text: wrap(inner.text),
+      object: wrap(inner.object),
+      bind: (options) => client(inner.bind(options)),
+    };
+  }
+  return { ...ctx, claude: client(ctx.claude), codex: client(ctx.codex) };
 }
