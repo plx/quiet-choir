@@ -64,8 +64,9 @@ export interface JevCompatibleOptions {
   /** Request path; defaults to `/v1/systemone`. */
   readonly path?: string;
   /**
-   * Environment variable holding the bearer token, read at request time and never recorded;
-   * `decisions.<name>.apiKeyEnv` replaces it.
+   * Environment variable holding the bearer token, read at request time and never recorded: a
+   * response that echoes it is redacted before its text reaches an error message, evidence or
+   * validation. `decisions.<name>.apiKeyEnv` replaces it.
    */
   readonly apiKeyEnv?: string;
   /** Model requested when a call names none; `decisions.<name>.defaultModel` replaces it. */
@@ -223,6 +224,8 @@ export function jevCompatible(options: JevCompatibleOptions): DecisionProviderDe
             message: `request failed: ${(cause instanceof Error ? cause.message : String(cause)).replaceAll(token, '[redacted]')}`,
           });
         }
+        // A host may echo the Authorization header; every record below derives from this text.
+        text = text.replaceAll(token, '[redacted]');
         if (exceeded)
           throw new DecisionError({
             provider: name,

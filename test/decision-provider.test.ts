@@ -772,6 +772,30 @@ describe('ctx.decide', () => {
     expect(errorKind(cause)).toBe('overloaded');
   });
 
+  it('redacts a token the host echoes from errors, evidence and validation', async () => {
+    for (const [index, reply] of [
+      { status: 401, text: `bad credentials: Bearer ${TOKEN}` },
+      { status: 200, text: `not json, Bearer ${TOKEN}` },
+      { status: 200, body: { model: 'm', answers: { refund: { type: 'noul', noul: TOKEN } } } },
+    ].entries()) {
+      server.script(reply);
+      const runId = `echo${String(index)}`;
+      const error: unknown = await runWorkflow(
+        workflow([jev()], (ctx) => ctx.decide('ask', { state: null, questions: { refund } })),
+        options({ runId }),
+      ).catch((caught: unknown) => caught);
+      const cause = (error as Error).cause;
+      expect(cause).toBeInstanceOf(DecisionError);
+      expect((cause as DecisionError).rawText).toContain('[redacted]');
+      expect((cause as DecisionError).rawText).not.toContain(TOKEN);
+      expect((cause as Error).message).not.toContain(TOKEN);
+      expect((error as Error).message).not.toContain(TOKEN);
+      const run = await readRun({ stateDir, runId });
+      expect(run.steps['ask']?.attemptHistory?.[0]?.response).toContain('[redacted]');
+      expect(JSON.stringify(run)).not.toContain(TOKEN);
+    }
+  });
+
   it('cancels an unending response body at the cap and keeps truncated evidence', async () => {
     for (const [status, kind, message] of [
       [200, 'schema', /jev: response exceeds 1048576 bytes/u],
