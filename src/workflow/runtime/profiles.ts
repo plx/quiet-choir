@@ -20,6 +20,7 @@ import { builtinCapabilityKeys } from '../../harnesses/builtins/capability-keys.
 import { codexBlock, legacyEffort, rejectRenamedEffort } from './effort-compat.js';
 import { boundCallAddDirs } from './add-dir-roots.js';
 import { profileForbiddenHarnessOptions } from './registered-option-keys.js';
+import { compileRoster } from './roster.js';
 
 const nameSchema = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/u);
 const limits = {
@@ -28,6 +29,7 @@ const limits = {
   maxTurns: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
   maxBudgetUsd: z.number().positive().optional(),
 };
+const rosterLimitKeys = Object.keys(limits) as (keyof typeof limits)[];
 // Profiles select configuration mode only; checkout placement (worktree) is a per-call decision.
 const profileControlFields = {
   ...commonControlFields,
@@ -168,11 +170,23 @@ function merge(base: AgentProfile, layer: AgentProfile): AgentProfile {
 
 /** The declaration fields a capability manifest is resolved from. */
 interface CapabilityDeclaration {
+  /** Workflow name, for roster diagnostics. */
+  readonly name?: string;
   readonly defaults?: AgentDefaults;
   readonly profiles?: Readonly<Record<string, AgentProfile>>;
+  /** Harness-pinned entries from `defineRoster`, compiled to declared roles (ADR 0063 §4). */
+  readonly roster?: object;
   readonly strictProfiles?: boolean;
   readonly requireGrants?: boolean;
   readonly harnesses?: readonly HarnessDeclaration[];
+}
+
+/** The declared role names of a definition: its `profiles`, then its roster entries. @internal */
+export function declaredRoleNames(definition: {
+  readonly profiles?: object;
+  readonly roster?: object;
+}): string[] {
+  return [...Object.keys(definition.profiles ?? {}), ...Object.keys(definition.roster ?? {})];
 }
 
 /**
@@ -189,9 +203,9 @@ interface GrantLayer {
  */
 export function elevatedRoleNames(
   manifest: Pick<CapabilityManifest, 'defaultProfile' | 'profiles'>,
-  definition: Pick<CapabilityDeclaration, 'profiles'>,
+  definition: Pick<CapabilityDeclaration, 'profiles' | 'roster'>,
 ): string[] {
-  return [...new Set([manifest.defaultProfile, ...Object.keys(definition.profiles ?? {})])].filter(
+  return [...new Set([manifest.defaultProfile, ...declaredRoleNames(definition)])].filter(
     (name) => {
       const role = Object.hasOwn(manifest.profiles, name) ? manifest.profiles[name] : undefined;
       return role !== undefined && rank[role.access] >= rank.write;
@@ -214,16 +228,22 @@ export function resolveCapabilities(
     rejectRenamedEffort(`Profile ${name} codex`, codexBlock(profile));
     rejectCodexRoots(`Profile ${name} codex`, codexBlock(profile));
   }
+  // Roster entries become declared roles without extends, each pinned to one harness (#579).
+  const compiled = compileRoster(definition);
+  for (const [name, profile] of Object.entries(compiled.profiles))
+    rejectRenamedEffort(`Roster entry ${name}`, codexBlock(profile));
   const config = z
     .strictObject({
       defaults: z.strictObject({ ...fields, profile: nameSchema.optional() }).optional(),
       profiles: z.record(nameSchema, profileSchema).optional(),
+      roster: z.record(nameSchema, profileSchema).optional(),
       strictProfiles: z.boolean().optional(),
     })
     .parse(
       jsonValue({
         ...(definition.defaults === undefined ? {} : { defaults: definition.defaults }),
         ...(definition.profiles === undefined ? {} : { profiles: definition.profiles }),
+        ...(definition.roster === undefined ? {} : { roster: compiled.profiles }),
         ...(definition.strictProfiles === undefined
           ? {}
           : { strictProfiles: definition.strictProfiles }),
@@ -231,9 +251,24 @@ export function resolveCapabilities(
     ) as {
     defaults?: AgentDefaults;
     profiles?: Record<string, AgentProfile>;
+    roster?: Record<string, AgentProfile>;
     strictProfiles?: boolean;
   };
-  const declared = config.profiles ?? {};
+  const rosterProfiles = config.roster ?? {};
+  for (const name of Object.keys(rosterProfiles))
+    if (Object.hasOwn(config.profiles ?? {}, name))
+      throw new Error(`Roster entry ${name} has the same name as a declared profile.`);
+  for (const [name, profile] of Object.entries(config.profiles ?? {}))
+    if (profile.extends !== undefined && Object.hasOwn(rosterProfiles, profile.extends))
+      throw new Error(
+        `Profile ${name} cannot extend roster entry ${profile.extends}; roster entries are pinned to one harness.`,
+      );
+  const defaultName = config.defaults?.profile;
+  if (defaultName !== undefined && Object.hasOwn(rosterProfiles, defaultName))
+    throw new Error(
+      `defaults.profile cannot name roster entry ${defaultName}; roster entries are pinned to one harness.`,
+    );
+  const declared: Record<string, AgentProfile> = { ...config.profiles, ...rosterProfiles };
   const registrations = new Map((definition.harnesses ?? []).map((item) => [item.name, item]));
   for (const name of Object.keys(declared)) {
     if (
@@ -270,6 +305,17 @@ export function resolveCapabilities(
     const data = { ...combined };
     delete data.extends;
     delete data.access;
+    const pin = Object.hasOwn(compiled.pins, name) ? compiled.pins[name] : undefined;
+    // A roster entry runs only on its pinned harness, so its other blocks stay at the text
+    // baseline: `defaults` cannot lend it authority on a harness it cannot run on, which a grant
+    // pin or a child delegation ceiling would otherwise carry.
+    if (pin !== undefined) {
+      if (pin !== 'claude') data.claude = { tools: [] };
+      if (pin !== 'codex') data.codex = { sandbox: 'read-only' };
+      const own = pin === 'claude' || pin === 'codex' ? undefined : data.harnesses?.[pin];
+      if (own === undefined) delete data.harnesses;
+      else data.harnesses = { [pin]: own };
+    }
     data.claude = resolveIsolation(data.claude ?? {});
     data.codex = resolveIsolation(data.codex ?? {});
     const tools = data.claude.tools ?? [];
@@ -316,6 +362,14 @@ export function resolveCapabilities(
       harnessCapabilities[registered] = contract.controls;
       if (rank[contract.access] > rank[access]) access = contract.access;
     }
+    // A roster entry's access is its pinned harness's alone, not the cross-harness maximum.
+    if (pin !== undefined)
+      access =
+        pin === 'claude'
+          ? claudeAccess
+          : pin === 'codex'
+            ? codexAccess
+            : (harnessAccess[pin] ?? 'exec');
     // A parent's assertion describes the parent, not every descendant that replaces tools.
     const ownAssertion = declared[name]?.access ?? (layers.length ? undefined : assertion);
     if (ownAssertion !== undefined && ownAssertion !== access)
@@ -324,14 +378,24 @@ export function resolveCapabilities(
       );
     profiles[name] = {
       ...data,
+      ...(pin === undefined ? {} : { harness: pin }),
       name,
       access,
       claudeAccess,
       codexAccess,
       ...(registrations.size ? { harnesses, harnessAccess, harnessCapabilities } : {}),
       // The text baseline (no Claude tools, Codex read-only) answers from the prompt; Codex
-      // read-only still has a shell, so plain access would make every text call expect tools.
-      expectsToolUse: data.expectsToolUse ?? (claudeAccess !== 'none' || codexAccess !== 'read'),
+      // read-only still has a shell, so plain access would make every text call expect tools. A
+      // roster entry looks at its pinned harness only.
+      expectsToolUse:
+        data.expectsToolUse ??
+        (pin === undefined
+          ? claudeAccess !== 'none' || codexAccess !== 'read'
+          : pin === 'claude'
+            ? claudeAccess !== 'none'
+            : pin === 'codex'
+              ? codexAccess !== 'read'
+              : access !== 'none'),
       onPermissionDenied: data.onPermissionDenied ?? 'warn',
       environment: {
         claude: environmentSummary(data.claude.env),
@@ -363,8 +427,10 @@ export function resolveCapabilities(
  */
 export function capabilityManifest(
   definition: {
+    readonly name?: string;
     readonly defaults?: AgentDefaults;
     readonly profiles?: Readonly<Record<string, AgentProfile>>;
+    readonly roster?: object;
     readonly strictProfiles?: boolean;
     readonly requireGrants?: boolean;
     readonly harnesses?: readonly HarnessDeclaration[];
@@ -408,6 +474,8 @@ export function profileGrantDigest(profile: ResolvedProfile): string {
     tools: profile.claude.tools,
     allowedTools: profile.claude.allowedTools,
     sandbox: profile.codex.sandbox,
+    // A roster entry's pin is part of what was granted; a role without one keeps its old digest.
+    ...(profile.harness === undefined ? {} : { harness: profile.harness }),
     ...capabilityExtras(profile.claude, profile.codex),
     ...(profile.harnessCapabilities
       ? { harnessCapabilities: profile.harnessCapabilities, harnessAccess: profile.harnessAccess }
@@ -443,7 +511,9 @@ export function requireGrant(
  * raw capability calls need class grants; otherwise no grant is checked. Under strict profiles a
  * Claude call may pass `addDirs` when its profile declares `claude.addDirRoots`: each entry must
  * canonicalize inside a root (`paths.callCwd` resolves entries, `paths.rootCwd` roots), and the
- * canonical paths are appended to the profile's own `addDirs` (#171). @internal
+ * canonical paths are appended to the profile's own `addDirs` (#171). A roster entry (a role with
+ * a `harness` pin) runs only on that harness, and a call's `addDirs` are appended to the entry's
+ * own (ADR 0063 §1). @internal
  */
 export function resolveProfileCall(
   manifest: CapabilityManifest,
@@ -459,6 +529,15 @@ export function resolveProfileCall(
   const profile = manifest.profiles[name];
   if (!Object.hasOwn(manifest.profiles, name) || !profile)
     throw new Error(`Unknown profile: ${name}.`);
+  if (profile.harness !== undefined && profile.harness !== harness)
+    throw new Error(
+      `Roster entry ${name} is pinned to harness ${profile.harness}; it cannot run on ${harness}.`,
+    );
+  // A call cannot drop a directory a roster entry declares: its addDirs append (ADR 0063 §1).
+  const appended = (declared: unknown): { addDirs?: readonly string[] } =>
+    profile.harness !== undefined && call.addDirs !== undefined && Array.isArray(declared)
+      ? { addDirs: [...(declared as readonly string[]), ...call.addDirs] }
+      : {};
   if (harness !== 'claude' && harness !== 'codex') {
     if (!definition) throw new Error(`Missing harness definition ${harness}.`);
     const raw = (definition.capabilityKeys ?? []).filter((key) => Object.hasOwn(call, key));
@@ -466,10 +545,34 @@ export function resolveProfileCall(
       throw new Error(
         `strictProfiles forbids call-site ${raw.join(', ')} for harness ${harness}; declare a named profile.`,
       );
-    const merged = { ...profile.harnesses?.[harness], ...call };
+    const merged = {
+      ...profile.harnesses?.[harness],
+      ...call,
+      ...appended(profile.harnesses?.[harness]?.['addDirs']),
+    };
     // Profile selection is runtime-only unless the adapter schema explicitly accepts it.
     Reflect.deleteProperty(merged, 'profile');
-    const options = definition.options.parse(merged);
+    // A roster entry's limits are profile limits, not block options, so a schema that requires
+    // one sees the entry's value here; policy supplies it to the request, and a filled key is
+    // dropped after parsing so step identity is unchanged (ADR 0005).
+    const shape =
+      definition.options instanceof z.ZodObject
+        ? (definition.options.shape as Record<string, unknown>)
+        : {};
+    const filled =
+      profile.harness === undefined
+        ? []
+        : rosterLimitKeys.filter(
+            (key) =>
+              Object.hasOwn(shape, key) &&
+              !Object.hasOwn(merged, key) &&
+              profile[key] !== undefined,
+          );
+    const options = definition.options.parse({
+      ...merged,
+      ...Object.fromEntries(filled.map((key) => [key, profile[key]])),
+    });
+    for (const key of filled) Reflect.deleteProperty(options, key);
     const { access } = registeredCapabilities(definition, options);
     if (requireGrants)
       requireGrant(
@@ -498,7 +601,11 @@ export function resolveProfileCall(
     throw new Error(`strictProfiles forbids call-site ${raw.join(', ')}; declare a named profile.`);
   const overrides = isolationParts(call);
   Reflect.deleteProperty(overrides, 'profile');
-  const resolved = { ...profile[harness], ...overrides };
+  const resolved = {
+    ...profile[harness],
+    ...overrides,
+    ...(bounded ? {} : appended(profile[harness].addDirs)),
+  };
   // Roots are profile-only: the harness, its validator and step identity never see them.
   Reflect.deleteProperty(resolved, 'addDirRoots');
   if (bounded) {
@@ -555,6 +662,11 @@ const redactedControlSchema = z.strictObject({
 });
 const resolvedProfileSchema = z.strictObject({
   ...fields,
+  // Set only for roster entries (#579), so records written before them still parse.
+  harness: z
+    .string()
+    .regex(/^[a-z][a-z0-9-]{0,31}$/u)
+    .optional(),
   harnessAccess: z.record(z.string(), z.enum(['none', 'read', 'write', 'exec'])).optional(),
   harnessCapabilities: z.record(z.string(), z.record(z.string(), z.json())).optional(),
   name: nameSchema,

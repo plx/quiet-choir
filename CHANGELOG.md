@@ -2,6 +2,36 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `defineRoster(entries, options?)` declares a workflow's inventory of agents: named, concrete
+  configurations, each pinned to one harness, and `defineWorkflow` takes it as `roster` (#579,
+  [ADR 0063](docs/decisions/0063-bound-agents-and-typed-rosters.md) §3–4). An entry is
+  `{ harness, description?, expectsToolUse? }` plus that harness's own options minus the per-call
+  keys and `profile`, typed by `harness` against `ClaudeOptions`, `CodexOptions` or a registered
+  harness passed in `options.harnesses`; a cross-harness block, `extends` or another harness's key
+  fails typecheck. `ctx.roster.Name` is the pinned client bound to the entry, typed as `bind` types
+  the entry (text-only for a text-only registration, and keeping a registered schema's required
+  `addDirs` or deadline unless the entry sets it), so a misspelled name fails typecheck. Entries
+  compile to declared roles under their names: `--profile Reviewer.maxTurns=60` and
+  `profileOverrides` raise their limits, attempts record `profile: 'Reviewer'`, `requireGrants`
+  treats a write-capable entry as a role that needs `--grant`, and `workflow validate --json` lists
+  each entry in `capabilities.profiles` with its new `harness` field and an access label for that
+  harness alone. A call that selects an entry on another harness is refused, and a roster call's
+  `addDirs` are appended to the entry's. `defaults` reach only an entry's pinned harness block; its
+  other blocks stay at the text baseline, and under `requireGrants` a parent entry delegates only to
+  a child entry pinned to the same harness at no higher access. A named grant of an entry is pinned
+  to its harness too. A call that names an entry or a profile is checked against a registered
+  harness's schema after the role's options are merged in, so an entry can supply a required option,
+  and an entry's limits fill the limit keys that schema declares, outside step identity. An entry
+  name equal to a `profiles` name, a built-in preset or a reserved word, and a `defaults.profile`
+  naming an entry, fail validation. New public API: `defineRoster`, `RosterEntry`, `Roster`,
+  `RosterAgents`, `RosterAgentOf`, `RosterEntryBindOptions` and their helper types.
+  `WorkflowContext` and `WorkflowDefinition` gain a last type parameter `TRoster`, so an exact
+  `toEqualTypeOf<WorkflowDefinition<…>>` of a `defineWorkflow` result needs `EmptyRoster` there, and
+  a hand-written `WorkflowContext` object needs a `roster` member. Record schema revision 19 adds
+  the optional nested `harness` to resolved profiles; revision-18 records read and resume unchanged.
+  `docs/agent-profiles.md` is now [docs/roster.md](docs/roster.md), with profiles in its
+  "requireGrants and legacy profiles" appendix.
+
 - `ctx.claude`, `ctx.codex` and `ctx.agent(name)` gain `bind(options)`, which returns an `Agent`: a
   client whose calls take only the prompt, the schema, placement (`cwd`, `addDirs`, `worktree`) and
   policy (`onError`, `retry`, `timeoutMs`, `idleTimeoutMs`), plus `images` for Codex (#578,
@@ -2258,7 +2288,8 @@
   and checks effort alongside prompts and outputs.
 
 - Workflow agent defaults, named profiles, capability manifests, launch grants and sticky
-  `--profile` limit overrides are available. See [agent profiles](docs/agent-profiles.md).
+  `--profile` limit overrides are available. See
+  [agent profiles](docs/roster.md#appendix-requiregrants-and-legacy-profiles).
 - **Privilege change:** Claude `tools` now implies `allowedTools` when omitted. Existing calls that
   expose Edit/Write/Bash may now execute those tools without interactive approval. Workflow runs
   require write/exec grants and default to strict declared profiles. Direct `CliHarness` callers own

@@ -287,10 +287,10 @@ without changing their source fingerprint. Globs use `*` within segments and `**
 The implicit `text` profile supplies a five-minute deadline, 10 Claude turns and a $0.50 per-call
 budget. `readonly` and `edit` supply larger limits. Custom harnesses receive those resolved options,
 must enforce them, and can report adapter-specific defaults through `policyDefaults(harness)`. See
-[agent profiles and launch grants](docs/agent-profiles.md) for declarations, `--profile` recovery,
-opt-in strict capability checks and opt-in launch grants. `inspect --json` exposes saved rules and
-each step's `attemptHistory`, including resolved policy and its sources. New runs use storage format
-7 with replay contract 6. Flat format-6 runs migrate on resume and can seed forks. Format 1 resumes
+[the roster guide](docs/roster.md) for roster entries, bound agents, `--profile` recovery, opt-in
+strict capability checks and opt-in launch grants. `inspect --json` exposes saved rules and each
+step's `attemptHistory`, including resolved policy and its sources. New runs use storage format 7
+with replay contract 6. Flat format-6 runs migrate on resume and can seed forks. Format 1 resumes
 (migrating) but must be resumed before it can seed a fork. Formats 2-5 remain inspectable but cannot
 resume or supply fork reuse with this runtime; retain the original runtime or choose a new run ID.
 See [the policy decision](docs/decisions/0005-step-identity-and-policy.md) and
@@ -540,7 +540,7 @@ only in this repository; exclude chosen storage in other projects too.
 
 ## Harness defaults and limits
 
-The core resolves named [agent profiles](docs/agent-profiles.md) before invoking a harness. The
+The core resolves [roster entries and named profiles](docs/roster.md) before invoking a harness. The
 implicit `text` profile is tool-less for Claude, read-only for Codex, and limited to five minutes,
 10 Claude turns and $0.50 per Claude call. `readonly` grants file-reading tools; `edit` adds
 writing. Declare roles on `defineWorkflow` and select with `profile`; call sites may also pass raw

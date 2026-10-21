@@ -1370,9 +1370,11 @@ export function withProjectInstructions(
  * Revision 17 (#371) added the top-level `generation`, a random per-run token.
  * Revision 18 (#577) added the top-level `requireGrants`, the sticky run-level opt-in to the
  * launch-grant and delegation layer.
+ * Revision 19 (#579) changed only a nested shape: the optional `harness` pin of a roster entry's
+ * resolved profile in `capabilities`.
  * @internal
  */
-export const SUPPORTED_SCHEMA_REVISION = 18;
+export const SUPPORTED_SCHEMA_REVISION = 19;
 
 /**
  * The identity a run's answer deliveries and `workflow rm` bind to: its random `generation`, or

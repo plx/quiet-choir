@@ -84,6 +84,8 @@ const revisionDigests: Readonly<Record<string, string>> = {
   '17': '63118cf801b40577a65f3e26aa1197f0aa7566b1e98ecfd2781e2a8b984ae449',
   // Revision 18 (#577) added the top-level requireGrants.
   '18': '76e465c736a943b3ea1b9383259e31640509d566ce15046a1a9387fdd579846c',
+  // Revision 19 (#579) changed only the nested capabilities shape (a roster entry's harness pin).
+  '19': '76e465c736a943b3ea1b9383259e31640509d566ce15046a1a9387fdd579846c',
 };
 // digest(readRun(...)) of the installed pre-revision fixture, computed on unmodified main 91a6d2f.
 const preRevisionReadDigest = '714b6cb068de5c933b7ba04a26d1f931f589f7c9910f76f0e5c8cc493eb13016';
@@ -126,6 +128,9 @@ const revisionSixteenReadDigest =
 // digest(readRun(...)) of the installed revision-seventeen fixture, computed on unmodified main ecebb3e.
 const revisionSeventeenReadDigest =
   '167409e560da92cba6f55648d2f3bebbe9837346974ab3f8b08eda026e7a0db0';
+// digest(readRun(...)) of the installed revision-eighteen fixture, computed on unmodified main 643f510.
+const revisionEighteenReadDigest =
+  'd0024a97445fa55447e034e498d2b78c07d893507a83e5c114fb41e2353709a8';
 
 // Digests of the run-level (without steps) and step JSON Schemas (recordShapeSchemas) per revision,
 // with the zod version that produced them. They start at revision 17: older revisions cannot be
@@ -140,6 +145,11 @@ const shapeDigests: Readonly<Record<string, { zod: string; run: string; steps: s
   '18': {
     zod: '4.5.4',
     run: '867c70c593f1a2a038b9d3e0576fc9ffd8e3df316616abd6a0f714f7ff41f1db',
+    steps: 'b8c0698a4791f24bc30576a4258b7631cb2dea80a3a6ddd17d830fc9a120bc79',
+  },
+  '19': {
+    zod: '4.5.4',
+    run: 'd28a13d7dfecf511cfbaf0bb483caef8e3f6fc65890a6873468eb0736b9e475c',
     steps: 'b8c0698a4791f24bc30576a4258b7631cb2dea80a3a6ddd17d830fc9a120bc79',
   },
 };
@@ -1771,7 +1781,7 @@ describe('revision-nine records (a grant failure before recoveryCause, #284)', (
     expect(saved.recoveryCause).toBeUndefined();
     expect(recordSchemaDrift(saved)).toBeUndefined();
     expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
-    expect(SUPPORTED_SCHEMA_REVISION).toBe(18);
+    expect(SUPPORTED_SCHEMA_REVISION).toBe(19);
   });
 
   it('round-trip every recovery cause through the record parser', async () => {
@@ -2480,6 +2490,53 @@ describe('revision-seventeen records (a saved grant before requireGrants, #577)'
       raw['requireGrants'] = 'yes';
     });
     await expect(readRun({ stateDir, runId })).rejects.toThrow();
+  });
+});
+
+describe('revision-eighteen records (a manifest before roster pins, #579)', () => {
+  const runId = 'revision-eighteen';
+  async function install(): Promise<void> {
+    const fixture = await readFile(
+      new URL('./fixtures/schema-revision/revision-eighteen-checkpoint.json', import.meta.url),
+      'utf8',
+    );
+    await mkdir(join(stateDir, runId));
+    await writeFile(paths(runId).snapshot, fixture);
+    await writeFile(paths(runId).journal, '');
+  }
+  const scout = (tail: boolean) =>
+    defineWorkflow({
+      name: 'schema-revision',
+      version: '1',
+      input: z.null(),
+      output: z.null(),
+      profiles: { scout: { extends: 'readonly' } },
+      async run(ctx) {
+        await ctx.now('prepare');
+        if (tail) throw new Error('fixture tail');
+        return null;
+      },
+    });
+
+  it('read exactly as on main, with profiles that carry no harness pin', async () => {
+    await install();
+    const record = await readRun({ stateDir, runId });
+    expect(record.schemaRevision).toBe(18);
+    expect(recordSchemaDrift(record)).toBeUndefined();
+    expect(digest(record)).toBe(revisionEighteenReadDigest);
+    expect(record.capabilities?.profiles['scout']).not.toHaveProperty('harness');
+    expect(record.status).toBe('failed');
+  });
+
+  it('resume, keep the completed effect and save the current revision', async () => {
+    await install();
+    const original = await readRun({ stateDir, runId });
+    const result = await runWorkflow(scout(false), { ...options, stateDir, runId, resume: true });
+    expect(result.status).toBe('completed');
+    const saved = await readRun({ stateDir, runId });
+    expect(saved.steps['prepare']).toEqual(original.steps['prepare']);
+    expect(saved.capabilities?.profiles['scout']).toEqual(original.capabilities?.profiles['scout']);
+    expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
   });
 });
 

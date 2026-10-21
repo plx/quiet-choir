@@ -38,6 +38,17 @@ export function checkedDefinition(value: unknown): WorkflowDeclaration {
     throw new Error(
       `Workflow ${String(definition['name'])} harnesses must be an array of definitions.`,
     );
+  const roster = definition['roster'];
+  if (
+    roster !== undefined &&
+    (typeof roster !== 'object' ||
+      roster === null ||
+      Array.isArray(roster) ||
+      ![Object.prototype, null].includes(Object.getPrototypeOf(roster) as object | null))
+  )
+    throw new Error(
+      `Workflow ${String(definition['name'])} roster must be a defineRoster({ ... }) object of named entries.`,
+    );
   if (definition['requireGrants'] !== undefined && typeof definition['requireGrants'] !== 'boolean')
     throw new Error(`Workflow ${String(definition['name'])} requireGrants must be a boolean.`);
   if (definition['worktrees'] !== undefined)

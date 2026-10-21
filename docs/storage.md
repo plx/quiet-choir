@@ -499,11 +499,16 @@ rewrite it, so it can never drop the token. Revision 18 (#577) adds the top-leve
 written only as `true` when an invocation passed `RunOptions.requireGrants` or `--require-grants`
 and never cleared, so every resume keeps launch grants and delegation ceilings on; a fork does not
 inherit it, and the root definition's own `requireGrants` is source, not saved
-([agent profiles](agent-profiles.md#requiregrants-launch-grants-and-pins)). Revision-17 records read
+([launch grants](roster.md#requiregrants-launch-grants-and-pins)). Revision-17 records read
 unchanged and resume with the layer off unless the definition opts in; their saved `grants` and
 `grantedProfiles` are kept, so a later `--require-grants` resume honours them. A revision-17 build
 reads a revision-18 record without the field, reports it hidden, and refuses to rewrite it, so it
-can never drop the flag.
+can never drop the flag. Revision 19 (#579) is nested-only: a resolved profile in `capabilities`
+gains the optional `harness`, the one harness a roster entry is pinned to
+([roster](roster.md#manifest-and-validate-output)). Revision-18 records read and resume unchanged,
+since profiles and built-ins carry no pin. A revision-18 build cannot read a record whose manifest
+lists a roster entry (its strict manifest parse rejects the field), and refuses to rewrite any other
+revision-19 record.
 
 **Refusals.** A build must not rewrite a record it cannot fully read: its parse strips unknown
 top-level fields, and the next compaction would write the record back without them. When a record

@@ -161,6 +161,23 @@ export type { RecoveryCause } from './workflow/runtime/recovery-hint.js';
 
 export { stepId } from './workflow/runtime/identity.js';
 
+export { defineRoster } from './workflow/runtime/roster.js';
+export type {
+  AnyRoster,
+  CheckedRosterEntries,
+  EmptyRoster,
+  NamedHarness,
+  Roster,
+  RosterAgentOf,
+  RosterAgents,
+  RosterEntries,
+  RosterEntry,
+  RosterEntryBindOptions,
+  RosterEntryCommon,
+  RosterEntryOptions,
+  RosterOptions,
+  DeepReadonlyOption,
+} from './workflow/runtime/roster-model.js';
 export { capabilityManifest } from './workflow/runtime/profiles.js';
 export type {
   BuiltinProfile,

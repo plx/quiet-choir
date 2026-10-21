@@ -224,8 +224,59 @@ async run(ctx){return (await ctx.agent('keeper').text('only',{prompt:'secret',pr
     'check-resume --json (incompatible)',
     keeperIncompatible.stdout + keeperIncompatible.stderr,
   );
+
+  // Roster entries are declared roles pinned to one harness (#579): validate lists them with their
+  // harness and access, and `--profile Name.limit=` recovers a roster call as it does a profile's.
+  const rosterFile = join(fixture, 'roster.ts');
+  const rosterSource = (profiles) => `import {defineRoster,defineWorkflow,z} from 'quiet-choir';
+const roster=defineRoster({Reviewer:{harness:'claude',model:'opus',tools:['Read','Grep'],maxTurns:40,appendSystemPrompt:'marker-roster-prompt',description:'Reviews'},
+Mechanic:{harness:'codex',sandbox:'workspace-write'},Clerk:{harness:'claude'}});
+export default defineWorkflow({name:'roster-cli',version:'1',input:z.object({}),output:z.string(),roster,profiles:${profiles},
+async run(ctx){return (await ctx.roster.Reviewer.text('pending',{prompt:'pending'})).output;}});`;
+  writeFileSync(rosterFile, rosterSource("{scout:{extends:'readonly'}}"));
+  const rosterValidation = cli('validate', rosterFile, '--json');
+  assert.equal(rosterValidation.status, 0, rosterValidation.stderr);
+  assert.ok(!rosterValidation.stdout.includes('marker-roster-prompt'), 'validate leaked a prompt');
+  const rosterWorkflow = JSON.parse(rosterValidation.stdout).workflow;
+  const entries = rosterWorkflow.capabilities.profiles;
+  assert.equal(entries.Reviewer.harness, 'claude');
+  assert.equal(entries.Reviewer.access, 'read');
+  assert.equal(entries.Reviewer.description, 'Reviews');
+  assert.equal(entries.Reviewer.claude.model, 'opus');
+  assert.deepEqual(entries.Reviewer.claude.tools, ['Read', 'Grep']);
+  assert.equal(entries.Reviewer.maxTurns, 40);
+  assert.ok(!('appendSystemPrompt' in entries.Reviewer.claude));
+  assert.match(entries.Reviewer.redacted.claude.appendSystemPrompt.sha256, /^[a-f0-9]{64}$/);
+  assert.equal(entries.Mechanic.harness, 'codex');
+  assert.equal(entries.Mechanic.access, 'write');
+  assert.equal(entries.Mechanic.codex.sandbox, 'workspace-write');
+  assert.equal(entries.Clerk.harness, 'claude');
+  assert.equal(entries.Clerk.access, 'none');
+  assert.equal(entries.scout.harness, undefined);
+  // The top-level profiles list stays limited to declared profiles.
+  assert.deepEqual(rosterWorkflow.profiles, ['scout']);
+  const rosterArgs = ['execute', rosterFile, '--run-id', 'roster', '--state-dir', state];
+  const rosterFirst = cli(...rosterArgs);
+  assert.equal(rosterFirst.status, 1, rosterFirst.stderr);
+  assert.match(rosterFirst.stderr, /--resume[\s›]*--profile Reviewer.maxTurns=80/);
+  const rosterResumed = cli(...rosterArgs, '--resume', '--profile', 'Reviewer.maxTurns=60');
+  assert.equal(rosterResumed.status, 0, rosterResumed.stderr);
+  const rosterRecord = JSON.parse(readFileSync(join(state, 'roster', 'run.json'), 'utf8'));
+  assert.equal(rosterRecord.status, 'completed');
+  const rosterAttempt = rosterRecord.steps.pending.attemptHistory[1];
+  assert.equal(rosterAttempt.profile, 'Reviewer');
+  assert.equal(rosterAttempt.policy.maxTurns, 60);
+  assert.equal(rosterAttempt.sources.maxTurns, 'profile-override:0');
+  assert.ok(!readFileSync(join(state, 'roster', 'run.json'), 'utf8').includes('marker-roster'));
+  writeFileSync(rosterFile, rosterSource("{Reviewer:{extends:'readonly'}}"));
+  const collision = cli('validate', rosterFile, '--json');
+  assert.notEqual(collision.status, 0, collision.stdout);
+  assert.match(
+    collision.stdout + collision.stderr,
+    /Roster entry Reviewer has the same name as a declared profile/,
+  );
   console.log(
-    'PASS CLI capability manifest, grant preflight, limit diagnostics, sticky profile recovery, typed names, redacted free-form controls and redacted registered harness options',
+    'PASS CLI capability manifest, grant preflight, limit diagnostics, sticky profile recovery, typed names, redacted free-form controls, redacted registered harness options and roster entries',
   );
 } finally {
   rmSync(fixture, { recursive: true, force: true });

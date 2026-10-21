@@ -16,6 +16,7 @@ import {
   type BuiltInHarnesses,
   type CallOptions,
   type CapabilityKeysOf,
+  type EmptyRoster,
   type HarnessIsolation,
   type JsonValue,
   type MapStepError,
@@ -1085,7 +1086,8 @@ it('falls back to permissive addDirs only where defineWorkflow cannot see the sh
       true,
       readonly [],
       'rooted-calls',
-      'reader' | 'nested'
+      'reader' | 'nested',
+      EmptyRoster
     >
   >();
   // The fallback leaves the addDir parameter at its permissive default.
@@ -1097,11 +1099,23 @@ it('falls back to permissive addDirs only where defineWorkflow cannot see the sh
       readonly [],
       true,
       readonly [],
-      'generic-profile'
+      'generic-profile',
+      string | undefined,
+      EmptyRoster
     >
   >();
   expectTypeOf(genericDefaultsFactory({})).toEqualTypeOf<
-    WorkflowDefinition<null, null, 'plain', readonly [], true, readonly [], 'generic-defaults'>
+    WorkflowDefinition<
+      null,
+      null,
+      'plain',
+      readonly [],
+      true,
+      readonly [],
+      'generic-defaults',
+      string | undefined,
+      EmptyRoster
+    >
   >();
   expectTypeOf(badInterfaceTypedProfiles).toEqualTypeOf<
     WorkflowDefinition<
@@ -1111,7 +1125,9 @@ it('falls back to permissive addDirs only where defineWorkflow cannot see the sh
       readonly [],
       true,
       readonly [],
-      'bad-interface-typed-profiles'
+      'bad-interface-typed-profiles',
+      string | undefined,
+      EmptyRoster
     >
   >();
   expect(genericFactoryTypos({}, {})).toHaveLength(3);

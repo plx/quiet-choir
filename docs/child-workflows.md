@@ -117,7 +117,12 @@ checked (`exceeds ancestor profile …`), so a retargeted symlink root cannot wi
 beyond the top-level root. Missing or insufficient roles fail explicitly. Optional built-ins that
 the parent cannot delegate disappear from the child's available roles, so a grandchild cannot
 recover them. Raw call-site capabilities are checked too, even with `strictProfiles: false`. A
-parent role that is elevated still needs the run's grant before the child uses it.
+parent role that is elevated still needs the run's grant before the child uses it. A parent
+[roster entry](roster.md) delegates on its pinned harness only: the child role must be an entry
+pinned to the same harness at no higher access, or delegation fails with
+`Child profile … exceeds parent profile …: harness (…)` (or `: access`). Restrictions on a harness a
+child entry cannot run on, such as a parent's Claude `disallowedTools` for a Codex entry, do not
+bind it.
 
 Under `requireGrants`, child models/effort inherit the mapped parent's values when omitted. Parent
 profile limit overrides pass through role mappings, and child call limits are bounded by the
