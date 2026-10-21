@@ -43,17 +43,19 @@ checked at runtime. Use `WorkflowContext<'scout'>` to retain a narrow helper con
 contain letters, digits, underscores and hyphens, start with a letter, and have at most 64
 characters. Built-in names and grant class names cannot be redeclared.
 
-Call-site option types follow `strictProfiles`. `defineWorkflow` infers its literal: omitted or
-`true` removes the capability keys that strict profiles own from `ctx.claude`, `ctx.codex` and
-`ctx.agent(name)` options, so `ctx.claude.text('t', { prompt, tools: ['Read'] })` fails typecheck
-and `workflow validate` with `load.typecheck` instead of failing when the call runs. Claude's keys
-are tools, allowedTools, disallowedTools, permissionMode, agent, agents, plugins, mcpServers,
-strictMcpConfig, settings, addDirs, extraArgs, env and isolation; Codex's are sandbox,
-networkAccess, config, harnessProfile, addDirs, extraArgs, env and isolation. The same exported
-lists (`claudeCapabilityKeys`, `codexCapabilityKeys`) drive the runtime check. `isolation` stays
-available as `'restricted'` only, since strict profiles own `'inherit'`; `worktree` is not a
-capability key, so every checkout selection still compiles. Claude's `addDirs` stays typed only
-together with a profile that accepts
+Strict call sites are opt-in: `strictProfiles` defaults to `false`, so by default a call may pass
+any capability control, such as `ctx.claude.text('t', { prompt, tools: ['Read'] })`
+([ADR 0063](decisions/0063-bound-agents-and-typed-rosters.md) §5). With `strictProfiles: true`,
+call-site option types follow it. `defineWorkflow` infers its literal: only `true` removes the
+capability keys that strict profiles own from `ctx.claude`, `ctx.codex` and `ctx.agent(name)`
+options, so that call fails typecheck and `workflow validate` with `load.typecheck` instead of
+failing when the call runs. Claude's keys are tools, allowedTools, disallowedTools, permissionMode,
+agent, agents, plugins, mcpServers, strictMcpConfig, settings, addDirs, extraArgs, env and
+isolation; Codex's are sandbox, networkAccess, config, harnessProfile, addDirs, extraArgs, env and
+isolation. The same exported lists (`claudeCapabilityKeys`, `codexCapabilityKeys`) drive the runtime
+check. `isolation` stays available as `'restricted'` only, since strict profiles own `'inherit'`;
+`worktree` is not a capability key, so every checkout selection still compiles. Claude's `addDirs`
+stays typed only together with a profile that accepts
 [root-bounded call-site directories](#bounded-call-site-directories): one that declares
 `claude.addDirRoots`, inherits it through `extends`, or gets it from `defaults.claude`, and, for a
 call that omits `profile`, a rooted `defaults.profile`. Under any other profile, including the
@@ -66,17 +68,17 @@ and the runtime check decides
 ([ADR 0062](decisions/0062-type-call-site-adddirs-by-profile-roots.md)). Codex `addDirs` stay
 removed. A registered harness's literal `capabilityKeys` are removed the same way. The removed keys
 are typed as optional `never` properties, so a pre-built options variable or an explicit `undefined`
-is rejected too, not only a fresh object literal. Only a literal `strictProfiles: false` types the
-raw keys; a non-literal `boolean` also stays permissive and leaves the decision to the runtime. A
-helper typed with a bare `WorkflowContext` stays permissive (the runtime check still applies), while
-`WorkflowContext<'scout', BuiltInHarnesses, true>` is a strict helper contract that accepts the
-workflow's strict context. Explicit `defineWorkflow` type arguments are all-or-nothing: with a
-shorter prefix such as `defineWorkflow<Input, Output>`, the rest take the strict, childless
-defaults, so `strictProfiles: false` or a nonempty `children` list fails typecheck; drop the type
-arguments (preferred) or spell all seven. Explicit type arguments also leave the `profiles` and
-`defaults` shapes uninferred: declared roles then accept call-site Claude `addDirs` at type level,
-while built-ins and an omitted `profile` reject them even when `defaults` roots them, so such a
-workflow must drop the type arguments.
+is rejected too, not only a fresh object literal. An omitted `strictProfiles` or a literal `false`
+types the raw keys; a non-literal `boolean` also stays permissive and leaves the decision to the
+runtime. A helper typed with a bare `WorkflowContext` stays permissive (the runtime check still
+applies), while `WorkflowContext<'scout', BuiltInHarnesses, true>` is a strict helper contract that
+accepts the workflow's strict context. Explicit `defineWorkflow` type arguments are all-or-nothing:
+with a shorter prefix such as `defineWorkflow<Input, Output>`, the rest take the permissive,
+childless defaults, so `strictProfiles: true` or a nonempty `children` list fails typecheck; drop
+the type arguments (preferred) or spell all seven. Explicit type arguments also leave the `profiles`
+and `defaults` shapes uninferred: declared roles then accept call-site Claude `addDirs` at type
+level, while built-ins and an omitted `profile` reject them even when `defaults` roots them, so such
+a workflow must drop the type arguments.
 
 | Preset            | Claude tools                  | Codex sandbox   | Claude turns | Claude USD | Deadline     |
 | ----------------- | ----------------------------- | --------------- | ------------ | ---------- | ------------ |
@@ -102,48 +104,73 @@ unknown/MCP tools imply `exec`. Codex read-only implies `read`, workspace-write 
 manifest shows both provider classes and their maximum; thus even `text` has aggregate access `read`
 (Claude alone is `none`). An explicit `access` must equal the role's inferred aggregate class.
 
-## Validation and authorization
+## Validation and the capability manifest
 
 ```sh
 quiet-choir workflow validate review.workflow.ts --json
-quiet-choir workflow execute review.workflow.ts --run-id review-1 --grant fixer
+quiet-choir workflow execute review.workflow.ts --run-id review-1
 ```
 
 Validation emits `workflow.capabilities`: the `defaultProfile` name, all named and built-in
-profiles, provider access, models, tool gates, limits, descriptions, and `requiredGrants`. Explicit
+profiles, provider access, models, tool gates, limits, descriptions, and `requiredGrants`, which
+lists the elevated roles only [under `requireGrants`](#requiregrants-launch-grants-and-pins) and is
+empty otherwise. Access classes are always computed, as labels for the audit trail. Explicit
 environment values are omitted; per-provider environment names and digests remain available, as a
 shared `capabilities.environment` plus each profile's differences (`--harness-schemas` prints the
 complete, uncompacted manifest). It imports trusted source but does not evaluate the workflow body.
-By default, `strictProfiles: true` rejects raw capability controls at call sites: tools,
+With `strictProfiles: true`, raw capability controls are rejected at call sites: tools,
 allowed/disallowed rules, permission modes, sandbox, MCP/settings, native agents/profiles/config,
 dirs, environment, escape args and network access. Native configuration/agent/escape/env controls,
-explicit inherited mode, plugins, and enabled network access conservatively require exec grants.
-Codex additional directories require write access. Role prompts, model, effort, fallbacks and image
-attachments remain available per call. See [harness controls](harness-controls.md). The manifest
-bounds declared agent controls; it does not confine workflow JavaScript or arbitrary working
-directories. Printed and checkpointed manifests show settings, MCP servers, subagents, system
-prompts, Codex config, environment values and the registered harness options a declaration lists in
-`sensitiveOptions` (under `redacted.harnesses`) only as names and digests under
-`redacted`/`environment`; grant pins and step identity use the raw declaration. Configuration
-isolation is a separate [provider-specific boundary](harness-isolation.md).
+explicit inherited mode, plugins, and enabled network access are classified as exec access, and
+Codex additional directories as write access; under `requireGrants` those classes need grants. Role
+prompts, model, effort, fallbacks and image attachments remain available per call. See
+[harness controls](harness-controls.md). The manifest bounds declared agent controls; it does not
+confine workflow JavaScript or arbitrary working directories. Printed and checkpointed manifests
+show settings, MCP servers, subagents, system prompts, Codex config, environment values and the
+registered harness options a declaration lists in `sensitiveOptions` (under `redacted.harnesses`)
+only as names and digests under `redacted`/`environment`; grant pins and step identity use the raw
+declaration. Configuration isolation is a separate
+[provider-specific boundary](harness-isolation.md).
 
-Every declared or default role with write/exec access requires authorization before the body starts,
-even if a branch never uses it. `--grant fixer` authorizes that role; `--grant write` authorizes
-write roles; `--grant exec` authorizes both write and exec; `--grant all` authorizes every role.
-Multiple `--grant` flags accumulate. Undeclared built-ins are listed in the manifest but an elevated
-built-in is disabled until granted; invoking `edit` without a grant fails before that agent call.
-Declaring an elevated named role makes this check happen before **any** workflow effects.
+## requireGrants: launch grants and pins
+
+Launch grants are opt-in ([ADR 0063](decisions/0063-bound-agents-and-typed-rosters.md) §5, amending
+[ADR 0010](decisions/0010-agent-profiles-and-grants.md)). By default no role needs a grant: a write
+or exec role runs as declared, and the workflow's TypeScript is trusted code either way. Turn the
+layer on with `requireGrants: true` on the root definition, or for one run with `--require-grants`
+on `workflow execute`, `execute --resume`, `execute --fork-from`, `workflow start` and
+`workflow resume` (`RunOptions.requireGrants` for embedders). A child's own `requireGrants` is
+ignored; children inherit the root's setting. The run-level flag is sticky: it is saved with the run
+(`requireGrants: true` in the record), so every later resume, `workflow tick` and the emitted grant
+command keep it without repeating it, and it cannot be turned off. A fork is a new run and does not
+inherit it. Removing the definition field under `--accept-code-change` turns the layer off unless
+the run-level flag was given.
+
+```sh
+quiet-choir workflow execute review.workflow.ts --run-id review-1 --require-grants --grant fixer
+```
+
+Under `requireGrants`, every declared or default role with write/exec access requires authorization
+before the body starts, even if a branch never uses it. `--grant fixer` authorizes that role;
+`--grant write` authorizes write roles; `--grant exec` authorizes both write and exec; `--grant all`
+authorizes every role. Multiple `--grant` flags accumulate. Undeclared built-ins are listed in the
+manifest but an elevated built-in is disabled until granted; invoking `edit` without a grant fails
+before that agent call. Declaring an elevated named role makes this check happen before **any**
+workflow effects, and `--grant` hints and `next` commands name the missing grant.
 
 Grants persist on resume. Named grants are pinned to exact tools, allowed rules, sandbox, the other
 declared capability controls and, when declared, `claude.addDirRoots`; after those change, supply
 the grant again, even with `--accept-code-change`. Class/all grants deliberately cover roles within
-that class. Forks require fresh grants. Embedded callers use `RunOptions.grants`.
+that class. Forks require fresh grants. Embedded callers use `RunOptions.grants`. Without
+`requireGrants`, `--grant` is still validated (an unknown name is an error), saved and pinned, so a
+later `--require-grants` resume honours it. A run created before schema revision 18 resumes with the
+layer off unless its definition opts in.
 
 ### Bounded call-site directories
 
-A directory known only at runtime, such as a per-PR state directory an earlier step created, can be
-made readable to one Claude agent without widening its `cwd`. Declare roots on the profile and pass
-`addDirs` at the call:
+Under `strictProfiles: true`, a directory known only at runtime, such as a per-PR state directory an
+earlier step created, can be made readable to one Claude agent without widening its `cwd`. Declare
+roots on the profile and pass `addDirs` at the call:
 
 ```ts
 profiles: { reader: { extends: 'readonly', claude: { addDirRoots: ['.state/runs'] } } },
@@ -170,14 +197,15 @@ await ctx.claude.text('review', { profile: 'reader', prompt, addDirs: [`.state/r
   profile without roots, a Codex call, or any other raw key keeps the existing
   `strictProfiles forbids call-site …` error.
 - **Grants.** Access classification is unchanged: a Claude directory is `read`, so a call-site
-  directory never raises a role above what its tools give, and a write-capable role still needs its
-  grant. A tool-less rooted role is `read`. Roots are part of the named grant pin.
-- **Children.** A child's `addDirRoots` must lie inside the parent role's roots, and a child call's
-  canonical directories inside the parent's roots; otherwise delegation fails with
-  `Child profile … exceeds parent profile …: claude.addDirRoots` (or `claude.addDirs`). A grandchild
-  or deeper descendant is also checked, at delegation and at every call, against every ancestor
-  role's roots, each canonicalized when checked, so a symlink root an intermediate child narrowed to
-  and later retargeted cannot reach outside the top-level root; that fails with
+  directory never raises a role above what its tools give, and under `requireGrants` a write-capable
+  role still needs its grant. A tool-less rooted role is `read`. Roots are part of the named grant
+  pin.
+- **Children.** Under `requireGrants`, a child's `addDirRoots` must lie inside the parent role's
+  roots, and a child call's canonical directories inside the parent's roots; otherwise delegation
+  fails with `Child profile … exceeds parent profile …: claude.addDirRoots` (or `claude.addDirs`). A
+  grandchild or deeper descendant is also checked, at delegation and at every call, against every
+  ancestor role's roots, each canonicalized when checked, so a symlink root an intermediate child
+  narrowed to and later retargeted cannot reach outside the top-level root; that fails with
   `Child profile … exceeds ancestor profile …: claude.addDirs` (or `claude.addDirRoots`).
 - **Limits.** The check runs when the call is resolved, not when the CLI opens the directory, so a
   concurrent writer that swaps a path component for a symlink in between is not caught. Resolution
@@ -187,13 +215,14 @@ await ctx.claude.text('review', { profile: 'reader', prompt, addDirs: [`.state/r
   [harness isolation](harness-isolation.md#native-boundary)). See
   [ADR 0054](decisions/0054-bounded-call-site-adddirs.md).
 
-`strictProfiles: false` keeps its earlier behavior: a call's `addDirs` replace the profile's list
-without canonicalization, and roots are not enforced.
+Without strict profiles (the default, or `strictProfiles: false`), a call's `addDirs` replace the
+profile's list without canonicalization, and roots are not enforced.
 
-`strictProfiles: false` is an explicit migration escape hatch. Raw capabilities still require
-class/all grants; a named grant cannot authorize arbitrary call-site replacements. The manifest then
-reports that it cannot bound those replacements. The historical direct-port experiments retain this
-escape hatch to preserve their input-based API; new workflows should use named roles.
+Without strict profiles (the default), raw capabilities at call sites are accepted. Under
+`requireGrants` they still require class/all grants; a named grant cannot authorize arbitrary
+call-site replacements. The manifest then reports that it cannot bound those replacements. The
+historical direct-port experiments set `strictProfiles: false` explicitly to preserve their
+input-based API.
 
 ## Recovery and diagnostics
 

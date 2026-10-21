@@ -338,8 +338,8 @@ async function portingRecipes(skillRoot) {
   });
   const driverFence = await example(skillRoot, 'references/patterns.md', 'ticket-driver');
   const driver = driverFence.replace(
-    '--grant write',
-    `--grant write --harness fixture:"${ticketFixtures}"`,
+    '--run-id "ticket-$n"',
+    `--run-id "ticket-$n" --harness fixture:"${ticketFixtures}"`,
   );
   assert.notEqual(driver, driverFence);
   const ticketEnv = {
@@ -529,7 +529,8 @@ process.exit(status ?? 1);
     'resume',
   ]);
 
-  // The porting reference's exec role: its --grant fence verbatim, then refused without the grant.
+  // The porting reference's exec role: its --require-grants --grant fence verbatim, then refused
+  // without the grant, and run by default without either flag (#577).
   const roleEnv = {
     ...env,
     QC_WORKFLOW: await workflowFile(
@@ -549,6 +550,11 @@ process.exit(status ?? 1);
   const refused = shell(grantFence.replace(' --grant fixer', ''), { cwd: target, env: roleEnv });
   assert.equal(refused.status, 2, refused.output);
   assert.match(refused.lines.at(-1).error.message, /Profile fixer requires exec access/u);
+  const ungated = grantFence.replace(' --require-grants --grant fixer', '');
+  assert.notEqual(ungated, grantFence);
+  const open = shell(ungated, { cwd: target, env: roleEnv });
+  assert.equal(open.status, 0, open.output);
+  assert.equal(open.lines.at(-1).ok, true);
 
   // The bounded loop: its run-cap fence with a fixture harness and an attempt cap of 2, then a resume.
   const huntEnv = {

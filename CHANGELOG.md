@@ -2,6 +2,22 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Launch grants and child delegation ceilings are now opt-in, and `strictProfiles` defaults to
+  `false` (#577, [ADR 0063](docs/decisions/0063-bound-agents-and-typed-rosters.md) §5). A write- or
+  exec-capable role runs without `--grant`, a child's roles are its own (`ctx.workflow`'s `profiles`
+  option is accepted and ignored), and call sites may pass raw capability controls such as
+  `tools: ['Read']`. Set `requireGrants: true` on the root definition, or pass `--require-grants` to
+  `workflow execute` (also with `--resume` and `--fork-from`), `workflow start` or `workflow resume`
+  (`RunOptions.requireGrants` when embedding), for today's grant preflight, pins, ceilings,
+  `--grant` hints and `next` commands. The run-level flag is saved with the run (schema revision 18
+  adds the top-level record field `requireGrants`) and stays on for every later resume, including
+  the emitted grant command; a fork does not inherit it, and a child definition's own
+  `requireGrants` is ignored. `--grant` is still validated, saved and pinned with the layer off.
+  `workflow validate --json` still publishes access classes; `requiredGrants` is empty unless
+  `requireGrants` is on. Set `strictProfiles: true` for the strict call-site types and runtime
+  checks. Records written before revision 18 resume with the layer off unless their definition opts
+  in, keeping their saved grants.
+
 - An accepted resume (`--resume --accept-code-change`, or embedded
   `resume: true, acceptCodeChange: true`) is now refused before the run changes even when the
   workflow body catches the refusal and falls back (#502,

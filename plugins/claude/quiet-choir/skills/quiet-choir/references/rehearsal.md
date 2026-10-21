@@ -36,8 +36,8 @@ observer runs through `context.exec`, and for each check of a
 [command poll](waits.md#command-polls), whose output is synthesized from its `output` schema, except
 that an observer or a command poll may pass `live: true` to keep a read-only check real, such as the
 CI status read in each check of a wait. `live` is refused in a step callback. Durable sleeps
-complete immediately. Rehearsal preserves capability/profile validation and still requires declared
-grants.
+complete immediately. Rehearsal preserves capability/profile validation and, under `requireGrants`,
+still requires declared grants.
 
 ## Fixtures
 

@@ -3,8 +3,9 @@
 Agent calls default to `isolation: 'restricted'`. The runtime resolves this mode before computing
 the effect fingerprint. Set it on a call, a workflow's `defaults`, a named profile, or the
 provider-specific `claude`/`codex` options. Explicit `inherit` loads native configuration and is
-classified as exec capability: declare it in a profile and grant that role, or use raw controls with
-`strictProfiles: false` and an exec grant. Narrowing a call to `restricted` is allowed.
+classified as exec capability. Under `strictProfiles: true` declare it in a profile; under
+`requireGrants` that role, or a raw `inherit` call, needs an exec grant. Narrowing a call to
+`restricted` is allowed.
 
 Configuration mode and Git checkout selection are separate: `isolation` is only the configuration
 mode (`'restricted' | 'inherit'`), and `worktree` is the only checkout selector. `worktree: true`
@@ -91,8 +92,8 @@ decision about its contents, so the run records nothing for it. Claude's native 
 restricted Claude loads the added directory's `CLAUDE.md`, `.claude/CLAUDE.md` and `.claude/rules`
 files (not `CLAUDE.local.md`, skills or commands). A host-exported value is removed by the
 `CLAUDE_CODE_*` scrub below, and restoring it takes `env.set`, which is a profile-only control under
-`strictProfiles`, needs an exec grant and enters the step fingerprint. Files loaded that way are not
-detected or recorded.
+`strictProfiles: true`, is classified as exec access (a grant under `requireGrants`) and enters the
+step fingerprint. Files loaded that way are not detected or recorded.
 
 Instruction-free Codex calls. Set `instructions: 'none'` on a Codex call, in a profile's `codex`
 options or in `defaults.codex` to run without these files. The adapter adds

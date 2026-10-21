@@ -25,16 +25,18 @@ profile/grant rules.
 
 Effort omission uses native defaults under the selected configuration mode. Set it explicitly for
 repeatable cost expectations. Model-specific support remains native CLI behavior. Capability
-controls belong in profiles under strict mode. Native profiles/config/escape/env and enabled network
-access conservatively require exec grants; additional writable directories require write access.
-Explicit config values enter identity; external native config files do not. `images` snapshots use
-0600 files cleaned on every outcome; renaming unchanged bytes can replay, changing bytes cannot.
-Escape args fingerprint strings only, not files at paths embedded in them. Record model/effort
-selections under each attempt's `requested`, with `"inherited"` for omissions.
+controls belong in profiles under `strictProfiles: true` (opt-in). Native profiles/config/escape/env
+and enabled network access are conservatively classified as exec access, and additional writable
+directories as write access; under `requireGrants` those classes need grants. Explicit config values
+enter identity; external native config files do not. `images` snapshots use 0600 files cleaned on
+every outcome; renaming unchanged bytes can replay, changing bytes cannot. Escape args fingerprint
+strings only, not files at paths embedded in them. Record model/effort selections under each
+attempt's `requested`, with `"inherited"` for omissions.
 
 Declare shared roles on `defineWorkflow`, for example `defaults: { codex: { effort: 'medium' } }`
 and `profiles: { skeptic: { extends: 'readonly', codex: { effort: 'high' } } }`. See
-[profiles and grants](agent-calls.md#select-a-role-and-grant-its-capabilities).
+[profiles](agent-calls.md#select-a-role-and-its-capabilities) and
+[grants](agent-calls.md#requiregrants-launch-grants).
 
 Inside a workflow whose input includes `topic`:
 
@@ -52,13 +54,13 @@ const result = await ctx.codex.object('review', {
 The adapter runs
 `codex exec --json --sandbox read-only --config approval_policy="never" --ephemeral --color never --ignore-user-config --ignore-rules -- -`
 by default. It does not expose interactive approvals or an unrestricted sandbox. Declare an
-`edit`-based role with `codex: { sandbox: 'workspace-write' }` for authorized editing tasks and
-launch with `--grant role`. Add `worktree: true` for a fresh checkout on every attempt, or pass a
-`ctx.worktree` handle as `worktree` for serialized write/test/fix effects. Shard structurally
-disjoint files; isolate overlapping targets, concurrent runners, and retries unsafe on partial
-edits. See [worktrees](worktrees.md) for snapshots and explicit integration. Restricted mode skips
-`config.toml` and execpolicy rules, but Codex still loads the user's `CODEX_HOME/AGENTS.md` (or
-`AGENTS.override.md`), skill descriptions under `CODEX_HOME/skills` and `$HOME/.agents/skills`,
+`edit`-based role with `codex: { sandbox: 'workspace-write' }` for authorized editing tasks (under
+`requireGrants`, launch with `--grant role`). Add `worktree: true` for a fresh checkout on every
+attempt, or pass a `ctx.worktree` handle as `worktree` for serialized write/test/fix effects. Shard
+structurally disjoint files; isolate overlapping targets, concurrent runners, and retries unsafe on
+partial edits. See [worktrees](worktrees.md) for snapshots and explicit integration. Restricted mode
+skips `config.toml` and execpolicy rules, but Codex still loads the user's `CODEX_HOME/AGENTS.md`
+(or `AGENTS.override.md`), skill descriptions under `CODEX_HOME/skills` and `$HOME/.agents/skills`,
 project `AGENTS.md` or `AGENTS.override.md` and `.agents/skills` from the Git root down to `cwd`,
 and `<cwd>/.codex/skills`, plus managed layers. Memories load only with `features.memories`. The run
 records these files as paths and digests, warns about user-level ones, and `workflow doctor` names

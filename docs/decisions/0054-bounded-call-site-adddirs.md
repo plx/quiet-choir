@@ -9,6 +9,9 @@
 - Amended by [0062](0062-type-call-site-adddirs-by-profile-roots.md) (#385): §7's types are precise
   per profile.
 - Amended by #391: §6 rechecks every ancestor role's roots.
+- Amended by #577 ([0063](0063-bound-agents-and-typed-rosters.md) §5): strict profiles are opt-in
+  (`strictProfiles` defaults to `false`), so bounded call-site directories apply under an explicit
+  `strictProfiles: true`; §6's child checks and the grant notes apply only under `requireGrants`.
 
 ## Context
 

@@ -801,7 +801,7 @@ placeholders. Text inspect and human failure messages print each entry as
 | Source                                                | Entries                                                                                                                   |
 | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | `workflow.failed`, saved failed run, nothing recorded | none, as there is no recovery hint: the run recorded no step or map                                                       |
-| `workflow.failed`, saved failed run, grant cause      | `execute --resume --run-id RUN --state-dir DIR --grant PROFILE`, or `ACCESS` for call-site overrides                      |
+| `workflow.failed`, saved failed run, grant cause      | under `requireGrants` only: `execute --resume --run-id RUN --state-dir DIR --grant PROFILE`, or `ACCESS` for overrides    |
 | `workflow.failed`, saved failed run, divergence       | a fork from the stored entrypoint; none for a legacy checkpoint                                                           |
 | `workflow.failed`, saved failed run, map changed      | `resume … --accept-code-change`, then a fork, when only the mapper changed; otherwise only a fork                         |
 | `workflow.failed`, saved failed run, budget stop      | `resume RUN --state-dir DIR <FLAG> <LIMIT>`, FLAG being the stopping cap's flag                                           |
@@ -840,11 +840,12 @@ A failed run's entries follow its saved `recoveryCause`, the same typed cause th
 plain resume would repeat a grant, divergence, settled-map or run-budget failure, so those causes
 get the grant, fork or cap the hint names. The grant and cap entries repeat the recorded launch
 policy, as resume entries do; `--grant` is saved with the run, so later resumes need not repeat it.
-The grant entry uses `execute --resume` because `workflow resume` takes no `--grant`. A call with
-call-site capability overrides (under `strictProfiles: false`) ignores named-profile grants, so its
-grant cause carries `classOnly` and its entry grants the access class (`write` or `exec`) instead of
-the profile. A `workflow.interrupted` or `start.timeout` document whose saved run failed gets the
-same entries.
+A grant cause arises only under `requireGrants`, whose run-level flag the record also keeps, so the
+grant entry does not repeat `--require-grants`. The grant entry uses `execute --resume` because
+`workflow resume` takes no `--grant`. A call with call-site capability overrides (under
+`strictProfiles: false`) ignores named-profile grants, so its grant cause carries `classOnly` and
+its entry grants the access class (`write` or `exec`) instead of the profile. A
+`workflow.interrupted` or `start.timeout` document whose saved run failed gets the same entries.
 
 `run.locked` refusals from `resume`, `execute`, `start`, `tick`, `clean`, `rm`, `cancel` and
 `unlock` build the unlock entry once, in the runtime, and render both the prose and
@@ -903,6 +904,13 @@ passes null for a selection built from data, which a later resume could not repr
   no worktree flags. A run keeps the cache root it first used; a different `--worktree-root` later
   adds a worktree warning instead of relocating it. See
   [worktrees](worktrees.md#cache-policy-and-cleanup).
+- `execute` (with or without `--resume`, and with `--fork-from`), `start` and `resume` accept
+  `--require-grants`, which turns on launch grants and child delegation ceilings for the run
+  ([agent profiles](agent-profiles.md#requiregrants-launch-grants-and-pins)). It is saved as the
+  record's top-level `requireGrants: true`, not in `launch.policy`, and is sticky: `resume`,
+  `execute --resume`, `answer --resume`, `tick` and emitted commands keep it without repeating it,
+  and it cannot be turned off. A fork does not inherit it; `--fork-from … --require-grants` sets it
+  on the fork. `--grant` is accepted and saved either way.
 - A recorded fixture file that is missing or unreadable fails the resume with `usage.flag`, naming
   the path; pass `--harness` explicitly. A fixture whose content changed is used with a warning that
   names the file and both digests, and its new digest is recorded.

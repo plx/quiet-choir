@@ -495,7 +495,15 @@ it, so a run that reuses an ID is told apart even with the same `createdAt`
 ([questions](questions.md#inbox-protocol-and-trust)). Revision-16 records read and resume unchanged
 and keep `createdAt` as their generation for life, so an answer already written for one stays valid.
 A revision-16 build reads a revision-17 record without the field, reports it hidden, and refuses to
-rewrite it, so it can never drop the token.
+rewrite it, so it can never drop the token. Revision 18 (#577) adds the top-level `requireGrants`,
+written only as `true` when an invocation passed `RunOptions.requireGrants` or `--require-grants`
+and never cleared, so every resume keeps launch grants and delegation ceilings on; a fork does not
+inherit it, and the root definition's own `requireGrants` is source, not saved
+([agent profiles](agent-profiles.md#requiregrants-launch-grants-and-pins)). Revision-17 records read
+unchanged and resume with the layer off unless the definition opts in; their saved `grants` and
+`grantedProfiles` are kept, so a later `--require-grants` resume honours them. A revision-17 build
+reads a revision-18 record without the field, reports it hidden, and refuses to rewrite it, so it
+can never drop the flag.
 
 **Refusals.** A build must not rewrite a record it cannot fully read: its parse strips unknown
 top-level fields, and the next compaction would write the record back without them. When a record

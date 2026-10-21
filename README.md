@@ -288,12 +288,12 @@ The implicit `text` profile supplies a five-minute deadline, 10 Claude turns and
 budget. `readonly` and `edit` supply larger limits. Custom harnesses receive those resolved options,
 must enforce them, and can report adapter-specific defaults through `policyDefaults(harness)`. See
 [agent profiles and launch grants](docs/agent-profiles.md) for declarations, `--profile` recovery,
-and strict capability checks. `inspect --json` exposes saved rules and each step's `attemptHistory`,
-including resolved policy and its sources. New runs use storage format 7 with replay contract 6.
-Flat format-6 runs migrate on resume and can seed forks. Format 1 resumes (migrating) but must be
-resumed before it can seed a fork. Formats 2-5 remain inspectable but cannot resume or supply fork
-reuse with this runtime; retain the original runtime or choose a new run ID. See
-[the policy decision](docs/decisions/0005-step-identity-and-policy.md) and
+opt-in strict capability checks and opt-in launch grants. `inspect --json` exposes saved rules and
+each step's `attemptHistory`, including resolved policy and its sources. New runs use storage format
+7 with replay contract 6. Flat format-6 runs migrate on resume and can seed forks. Format 1 resumes
+(migrating) but must be resumed before it can seed a fork. Formats 2-5 remain inspectable but cannot
+resume or supply fork reuse with this runtime; retain the original runtime or choose a new run ID.
+See [the policy decision](docs/decisions/0005-step-identity-and-policy.md) and
 [legacy records](docs/storage.md#legacy-records).
 
 To recover after editing workflow code, choose an explicit reuse path:
@@ -542,16 +542,17 @@ only in this repository; exclude chosen storage in other projects too.
 
 The core resolves named [agent profiles](docs/agent-profiles.md) before invoking a harness. The
 implicit `text` profile is tool-less for Claude, read-only for Codex, and limited to five minutes,
-10 Claude turns and $0.50 per Claude call. `readonly` grants file-reading tools; `edit` adds writing
-and requires an operator grant. Declare roles on `defineWorkflow`, select with `profile`, and use
-`--grant role` at launch. Raw call-site tools/sandbox are rejected under default `strictProfiles`.
-`tools` implies `allowedTools` unless explicitly narrowed. Claude defaults to `dontAsk`; allowed
-rules add to applicable native permissions. Codex uses approval policy `never`. Restricted Claude
-calls suppress inherited hooks/MCP; explicit opt-ins and managed policy still apply. Retained
-protocol data is capped at 8 MiB; Codex has no per-call USD cap here. Model selection is explicit or
-uses the selected configuration mode’s native defaults. Both providers accept
-`effort: 'low' | 'medium' | 'high' | 'xhigh' | 'max'`; Codex `effort` additionally accepts `none`
-and `minimal`. Omission uses the selected mode’s native defaults.
+10 Claude turns and $0.50 per Claude call. `readonly` grants file-reading tools; `edit` adds
+writing. Declare roles on `defineWorkflow` and select with `profile`; call sites may also pass raw
+tools or sandbox unless the workflow sets `strictProfiles: true`. Operator grants are opt-in: with
+`requireGrants: true` or `--require-grants`, write and exec roles need `--grant role` at launch and
+child roles are bounded by their parent's. `tools` implies `allowedTools` unless explicitly
+narrowed. Claude defaults to `dontAsk`; allowed rules add to applicable native permissions. Codex
+uses approval policy `never`. Restricted Claude calls suppress inherited hooks/MCP; explicit opt-ins
+and managed policy still apply. Retained protocol data is capped at 8 MiB; Codex has no per-call USD
+cap here. Model selection is explicit or uses the selected configuration mode’s native defaults.
+Both providers accept `effort: 'low' | 'medium' | 'high' | 'xhigh' | 'max'`; Codex `effort`
+additionally accepts `none` and `minimal`. Omission uses the selected mode’s native defaults.
 [Harness controls](docs/harness-controls.md) describes role prompts, agents, MCP, native
 profiles/config, directories, image attachments and the fingerprinted `extraArgs`/`env` escape
 hatch. `configuration doctor --json` verifies installed CLI contracts with zero-inference rejection

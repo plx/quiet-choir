@@ -36,7 +36,7 @@ See [Claude controls/protocol](claude.md) and [Codex controls/protocol](codex.md
 native-specific fields. Keep rotating secrets in the inherited environment; explicit `env` values
 affect replay. Escape-argument paths fingerprint their strings, not file contents.
 
-## Select a role and grant its capabilities
+## Select a role and its capabilities
 
 `text` is tool-less for Claude and read-only for Codex (300s, 10 Claude turns, $0.50). `readonly`
 exposes Claude Read/Grep/Glob and Codex read-only (900s, 25 turns, $2). `edit` adds Claude
@@ -44,40 +44,50 @@ Edit/Write and Codex workspace-write (1800s, 40 turns, $5). Codex text still has
 turn/USD limits do not apply to Codex.
 
 Merge order is built-in preset, workflow defaults, custom ancestors, selected role, then call
-options. Replacing Claude tools re-infers allowedTools unless supplied explicitly. Under default
-`strictProfiles: true`, declare capability controls in profiles, including permissions, MCP, native
-config/agents, dirs, escape args, and environment. Call-site types enforce this: the inferred strict
-literal removes those keys (and `isolation: 'inherit'`) from `ctx.claude`, `ctx.codex` and
-`ctx.agent(name)` options (as optional `never` properties, so a pre-built options variable fails
-too), so a raw key fails typecheck and `workflow validate`; only a literal `strictProfiles: false`
-types them. One bounded exception: Claude `addDirs` stay typed, and a profile declaring
-`claude: { addDirRoots: ['.state/runs'] }` accepts call-site `addDirs` whose canonical paths (no
-`..` segments, symlinks resolved, roots against the run cwd) lie inside a root, appending them to
-its own `addDirs` as absolute paths. `addDirs` typechecks only with a rooted profile (declared,
-inherited through `extends`, or from `defaults.claude`) or, with `profile` omitted, a rooted
-`defaults.profile`; elsewhere, including the implicit `text`, it fails typecheck, and shapes the
-types cannot see (a widened profiles object, or a generic profile or defaults value a factory
-forwards) are checked when the call runs. Codex cannot declare roots, because its directories are
-writable. Roots are pinned by named grants and bound child roles by containment in every ancestor's
-roots, rechecked at each call. `ctx.agent(name)` profiles accept only built-in or declared roles. A
-bare `WorkflowContext` helper stays permissive (the runtime still checks);
-`WorkflowContext<'role', BuiltInHarnesses, true>` is a strict helper contract. Explicit
-`defineWorkflow` type arguments are all-or-nothing: with a shorter prefix such as
-`defineWorkflow<Input, Output>`, the rest take the strict, childless defaults, so
-`strictProfiles: false` or a nonempty `children` list fails typecheck; drop the type arguments
+options. Replacing Claude tools re-infers allowedTools unless supplied explicitly. `strictProfiles`
+is opt-in (default `false`): by default a call site may pass raw capability controls such as
+`tools: ['Read']`. Under `strictProfiles: true`, declare capability controls in profiles, including
+permissions, MCP, native config/agents, dirs, escape args, and environment. Call-site types enforce
+this: the inferred literal `true` removes those keys (and `isolation: 'inherit'`) from `ctx.claude`,
+`ctx.codex` and `ctx.agent(name)` options (as optional `never` properties, so a pre-built options
+variable fails too), so a raw key fails typecheck and `workflow validate`; an omitted or literal
+`false` `strictProfiles` types them. One bounded exception: Claude `addDirs` stay typed, and a
+profile declaring `claude: { addDirRoots: ['.state/runs'] }` accepts call-site `addDirs` whose
+canonical paths (no `..` segments, symlinks resolved, roots against the run cwd) lie inside a root,
+appending them to its own `addDirs` as absolute paths. `addDirs` typechecks only with a rooted
+profile (declared, inherited through `extends`, or from `defaults.claude`) or, with `profile`
+omitted, a rooted `defaults.profile`; elsewhere, including the implicit `text`, it fails typecheck,
+and shapes the types cannot see (a widened profiles object, or a generic profile or defaults value a
+factory forwards) are checked when the call runs. Codex cannot declare roots, because its
+directories are writable. Roots are pinned by named grants and, under `requireGrants`, bound child
+roles by containment in every ancestor's roots, rechecked at each call. `ctx.agent(name)` profiles
+accept only built-in or declared roles. A bare `WorkflowContext` helper stays permissive (the
+runtime still checks); `WorkflowContext<'role', BuiltInHarnesses, true>` is a strict helper
+contract. Explicit `defineWorkflow` type arguments are all-or-nothing: with a shorter prefix such as
+`defineWorkflow<Input, Output>`, the rest take the permissive, childless defaults, so
+`strictProfiles: true` or a nonempty `children` list fails typecheck; drop the type arguments
 (preferred) or spell all seven. They also leave `profiles`/`defaults` uninferred, so rooted defaults
 no longer admit built-in or omitted-profile `addDirs`. `workflow validate FILE --json` lists
 resolved `workflow.capabilities` without running the body, compactly: each fact once (no `defaults`;
 read `profiles[defaultProfile]`), harness option schemas omitted; `--harness-schemas` prints the
-complete document. Unknown tools/native config controls conservatively require exec capability.
-Configuration loading defaults to restricted mode; [harness isolation](harness-isolation.md)
-explains inherited roles, environment edits, and provider boundaries.
+complete document; `requiredGrants` there is empty unless `requireGrants` is on. Unknown
+tools/native config controls are conservatively classified as exec access. Configuration loading
+defaults to restricted mode; [harness isolation](harness-isolation.md) explains inherited roles,
+environment edits, and provider boundaries.
 
-Every declared/default write or exec role needs a launch grant: `--grant fixer`, `--grant write`,
+### requireGrants: launch grants
+
+Launch grants are opt-in: by default a write or exec role runs without one. Set
+`requireGrants: true` on the root definition, or pass `--require-grants` to `workflow execute`,
+`execute --resume`, `execute --fork-from`, `workflow start` or `workflow resume`
+(`RunOptions.requireGrants` when embedding). The run-level flag is saved with the run: later
+resumes, `tick` and emitted commands keep it, and a fork does not inherit it. Under it, every
+declared/default write or exec role needs a launch grant: `--grant fixer`, `--grant write`,
 `--grant exec` (includes write), or `--grant all`. Declared roles preflight before effects;
 selecting built-in `edit` directly needs a grant before that call. Grants persist on resume. Named
-grants pin capability declarations and must be renewed if those change. Use `strictProfiles: false`
-only for a legacy migration; elevated raw calls still need class/all grants.
+grants pin capability declarations and must be renewed if those change. Elevated raw call-site
+controls need class/all grants. Without the layer, `--grant` is still validated and saved, so a
+later `--require-grants` resume honours it.
 
 Raise execution limits without source edits using `--resume --run-id ID --profile scout.maxTurns=60`
 or `--profile '*.timeoutMs=1800000'`. Profile override fields are maxTurns, maxBudgetUsd, timeoutMs
@@ -148,8 +158,11 @@ per-call retries or settled error handling cannot bypass a latched run gate.
 
 ## Child profile delegation
 
-Inline child roles map to parent roles of the same name, or `ctx.workflow` options map them
-explicitly. Missing/insufficient grants fail before child effects. Child tool exposure cannot grow;
-mapped parent model/effort defaults and limit overrides pass down, and limits are bounded by the
-parent. A parent `onPermissionDenied: 'fail'` passes down too; a child cannot weaken it to `warn`.
-Root concurrency and budgets span every frame. See [child workflows](child-workflows.md).
+By default a child's roles are its own: nothing is compared to the parent's roles and
+`ctx.workflow`'s `profiles` option is accepted and ignored; the parent's `--profile` limit rules
+still match by name. Under `requireGrants`, inline child roles map to parent roles of the same name,
+or the `profiles` option maps them explicitly, and missing/insufficient grants fail before child
+effects. Child tool exposure cannot grow; mapped parent model/effort defaults and limit overrides
+pass down, and limits are bounded by the parent. A parent `onPermissionDenied: 'fail'` passes down
+too; a child cannot weaken it to `warn`. Root concurrency and budgets span every frame. See
+[child workflows](child-workflows.md).

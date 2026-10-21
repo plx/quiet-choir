@@ -15,6 +15,15 @@ Amended by #155: call-site option types mirror `strictProfiles`. `defineWorkflow
 types and the runtime check, which remains the backstop for untyped code and bare-context helpers.
 `ctx.agent(name)` profiles are typed like `ctx.claude` profiles.
 
+Amended by #577 ([ADR 0063](0063-bound-agents-and-typed-rosters.md) §5): launch grants, named grant
+pins and child delegation ceilings apply only when the root definition sets `requireGrants: true` or
+a run passes `--require-grants` (`RunOptions.requireGrants`). The run-level flag is saved with the
+run as the top-level record field `requireGrants` (schema revision 18) and is sticky across resumes;
+a fork does not inherit it. Without it no grant is required, `--grant` is still validated, saved and
+pinned, and `requiredGrants` in the manifest is empty; access classes are still computed as labels.
+`strictProfiles` now defaults to `false` at type level and at runtime, so strict call sites are
+opt-in; an explicit `true` keeps the checks above. The machinery itself is unchanged.
+
 ## Context
 
 Shared per-call settings hide role capabilities and place operator controls in workflow input.

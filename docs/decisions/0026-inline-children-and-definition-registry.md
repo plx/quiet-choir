@@ -8,6 +8,13 @@ Amended by #170 (settled child frames; see the amendment below and
 amendment below and [ADR 0005](0005-step-identity-and-policy.md)) and #345 (engine digest in the
 registry cache key; see the last amendment below).
 
+Amended by #577 ([ADR 0063](0063-bound-agents-and-typed-rosters.md) §5): the delegation below
+(same-name role mapping, the `options.profiles` remap, parent and ancestor ceilings, clamped limits
+and inherited denial policies) applies only under `requireGrants`, set on the root definition or by
+`--require-grants`. By default a child's roles are its own resolved roles, `options.profiles` is
+accepted and ignored, the parent's override rules pass through by profile name, and a child
+definition's own `requireGrants` is ignored: children inherit the root's setting.
+
 ## Context
 
 Handwritten scoped contexts cannot record child identity, describe required input or reliably
