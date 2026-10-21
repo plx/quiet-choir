@@ -11,8 +11,9 @@
   work; a record missing a slot fails typecheck and an untyped one throws
   `Team slot critic is not filled.` A text-only agent does not fill a slot. The review/revise recipe
   now takes a `ReviewTeam` (`examples/patterns/review-team.ts`), declares a `reviewRoster` and is at
-  version `2` with the same step IDs; a run of version 1 needs `--accept-code-change` to resume.
-  `model.ts` and the Workflow Lab `apiSnapshot` are unchanged.
+  version `2` with the same step IDs; a saved version-1 run cannot resume against version 2, so
+  start a new run, optionally with `--fork-from <run>` (the step IDs are unchanged), or restore the
+  version-1 workflow to resume it. `model.ts` and the Workflow Lab `apiSnapshot` are unchanged.
 - Prompt templates are execution dependencies, and agent records name the template a call rendered
   (#582, [ADR 0064](docs/decisions/0064-prompt-templates-as-execution-dependencies.md) §4–5; see
   [docs/prompts.md](docs/prompts.md#templates-as-execution-dependencies)). After import, the CLI
