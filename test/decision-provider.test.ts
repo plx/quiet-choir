@@ -99,7 +99,7 @@ function recording(name: string, defaultModel?: string) {
       body: {
         model: 'served',
         answers: Object.fromEntries(
-          Object.keys(request.questions).map((key) => [key, { noul: 0.5 }]),
+          Object.keys(request.questions).map((key) => [key, { type: 'noul', noul: 0.5 }]),
         ),
       },
     });
@@ -704,7 +704,10 @@ describe('ctx.decide', () => {
   it('groups usage without a served model under (unknown), never the requested alias', async () => {
     server.script({
       status: 200,
-      body: { answers: { refund: { noul: 0.4 } }, usage: { inputTokens: 5, outputTokens: 1 } },
+      body: {
+        answers: { refund: { type: 'noul', noul: 0.4 } },
+        usage: { inputTokens: 5, outputTokens: 1 },
+      },
     });
     const result = await runWorkflow(
       workflow([jev()], (ctx) => ctx.decide('ask', { state: null, questions: { refund } })),

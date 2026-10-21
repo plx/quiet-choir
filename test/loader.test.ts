@@ -292,7 +292,7 @@ const local = defineDecisionProvider({
   capabilities: { kinds: ['noul'], maxOptions: 1, levels: [2, 2], idempotencyKey: false },
   defaultModel: 'declared-model',
   transport: (configuration) => async (request) => ({
-    body: { model: String(request.model) + '@' + String(configuration.baseUrl), answers: { ok: { noul: 1 } } },
+    body: { model: String(request.model) + '@' + String(configuration.baseUrl), answers: { ok: { type: 'noul', noul: 1 } } },
   }),
 });
 export default defineWorkflow({

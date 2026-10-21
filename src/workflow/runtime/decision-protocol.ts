@@ -568,17 +568,17 @@ export function parseDecisionResponse(
   const rawText = response.rawText ?? safeStringify(body);
   const answers = plainObject(body) ? body[decisionWire.response.answers] : undefined;
   const translated: Record<string, unknown> = {};
-  // An answer whose `type` names another kind is rejected even when its fields would parse.
+  // An answer whose `type` is missing or names another kind is rejected even when its fields parse.
   const typeIssues: JsonValue[] = [];
   if (plainObject(answers))
     for (const [name, raw] of Object.entries(answers)) {
       const question = Object.hasOwn(questions, name) ? questions[name] : undefined;
       const type = plainObject(raw) ? raw[decisionWire.answer.type] : undefined;
-      if (question !== undefined && type !== undefined && type !== question.type)
+      if (question !== undefined && type !== question.type)
         typeIssues.push({
           code: 'custom',
           path: ['answers', name, 'type'],
-          message: `Answer type must be ${question.type}.`,
+          message: `Answer type is required and must be ${question.type}.`,
         });
       Object.defineProperty(translated, name, {
         value: question === undefined ? raw : wireAnswer(question, raw),

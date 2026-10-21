@@ -193,6 +193,7 @@ describe('jevCompatible', () => {
     ['a missing answer', ({ team, urgency }) => ({ team, urgency })],
     ['an extra answer', (body) => ({ ...body, extra: { type: 'noul', noul: 0.5 } })],
     ['an answer of another kind', (body) => ({ ...body, refund: { type: 'choice', noul: 0.5 } })],
+    ['an answer without its type', (body) => ({ ...body, refund: { noul: 0.5 } })],
   ];
   it.each(invalid)('fails %s as schema and keeps the raw body', async (_name, change) => {
     const body = { model: 'jev-1.13.0', answers: change(answers) };
@@ -203,6 +204,9 @@ describe('jevCompatible', () => {
     expect(JSON.parse(attempt?.response ?? 'null')).toEqual(body);
     expect(attempt?.responseTruncated).toBe(false);
     expect(attempt?.validationIssues?.length).toBeGreaterThan(0);
+    const run = await readRun({ stateDir, runId: 'conformance' });
+    expect(run.steps['triage']?.status).toBe('failed');
+    expect(run.steps['triage']?.output).toBeNull();
   });
 
   it('fails a non-JSON success body as schema', async () => {

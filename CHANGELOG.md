@@ -22,8 +22,8 @@
   never builds a transport. A missing provider, an unknown one, or a question outside the provider's
   `kinds`, `maxOptions` or `levels` is a `ConfigurationError` before any request or record; a
   response is validated with Zod (choice among the options, probability maps complete and summing to
-  one within 1e-6, legend equal to the levels, every question answered) and a failure is kind
-  `schema` with the raw body and issues on the attempt. `jevCompatible` posts
+  one within 1e-6, legend equal to the levels, every question answered with its `type`) and a
+  failure is kind `schema` with the raw body and issues on the attempt. `jevCompatible` posts
   `{ model, state, questions }` (choice options and score levels travel as `criteria`, per
   TypeSafe's published reference) with `Authorization: Bearer` from `apiKeyEnv`, read at request
   time and never recorded, and `Idempotency-Key` only when declared; HTTP 429 is `rate-limit`, 5xx

@@ -188,9 +188,10 @@ describe('ctx.decide identity (decision/2)', () => {
               Object.entries(request.questions).map(([key, question]) => [
                 key,
                 question.type === 'noul'
-                  ? { noul: 0.5 }
+                  ? { type: 'noul', noul: 0.5 }
                   : question.type === 'choice'
                     ? {
+                        type: 'choice',
                         choice: 'a',
                         confidence: 1,
                         probabilities: Object.fromEntries(
@@ -201,6 +202,7 @@ describe('ctx.decide identity (decision/2)', () => {
                         ),
                       }
                     : {
+                        type: 'score',
                         score: 0,
                         confidence: 1,
                         legend: question.levels,

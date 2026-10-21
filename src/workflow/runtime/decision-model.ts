@@ -153,7 +153,7 @@ export interface ProviderTransportContext {
 
 /** The raw response of one request; `ctx.decide` validates it. */
 export interface ProviderTransportResponse {
-  /** The parsed JSON response body. */
+  /** The parsed JSON response body, in wire shape: every answer carries its question's `type`. */
   readonly body: unknown;
   /** The response text, kept as evidence when validation fails; defaults to `body` as JSON. */
   readonly rawText?: string;
