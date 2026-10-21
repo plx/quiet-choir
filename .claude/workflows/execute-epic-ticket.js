@@ -408,8 +408,8 @@ async function relay(label, phaseName, steps, render = RUN_STEPS, tier = TIER.cl
 
 // Run helper steps through a clerk; returns {id: verified output}. Unverifiable outputs are
 // re-read from the helper's saved copy up to twice (never re-executed), then reported as errors.
-async function clerk(label, phaseName, steps, render = RUN_STEPS) {
-  const first = await relay(label, phaseName, steps, render);
+async function clerk(label, phaseName, steps, render = RUN_STEPS, tier = TIER.clerk) {
+  const first = await relay(label, phaseName, steps, render, tier);
   const out = first.verified;
   let missing = first.missing;
   let dead = first.dead;
@@ -439,7 +439,8 @@ async function clerk(label, phaseName, steps, render = RUN_STEPS) {
 }
 
 // A single helper call; returns its verified output (which may be {error}).
-const one = async (label, phaseName, step) => (await clerk(label, phaseName, [step]))[step.id];
+const one = async (label, phaseName, step, tier = TIER.clerk) =>
+  (await clerk(label, phaseName, [step], RUN_STEPS, tier))[step.id];
 
 const standing = () =>
   A.standingNotes.length
@@ -449,12 +450,15 @@ const standing = () =>
 // ── Survey ───────────────────────────────────────────────────────────────────────────────────
 
 phase('Survey');
+// The survey is the one long relay (every open item, ~2.5 KB): haiku corrupted its copy in a
+// third of the #576 runs (an invented candidate, a mangled path), so the copyist relays it.
 const survey = await one(
   `survey #${A.epic}`,
   'Survey',
   cmd('survey', 'survey', {
     flags: `--candidates ${A.maxCandidates}${A.ticket ? ` --prefer ${A.ticket}` : ''}`,
   }),
+  TIER.copyist,
 );
 if (survey.error) return blocked('survey', survey.error);
 const REPO = survey.repo;
@@ -1243,11 +1247,17 @@ const ledgerLine = JSON.stringify({
     .map((f) => f.number)
     .filter(Boolean),
 });
-const after = await clerk(`report #${T.number}`, 'Report', [
-  cmd('tick', 'tick', { issue: T.number }),
-  cmd('ledger', 'ledger', { stdin: ledgerLine }),
-  cmd('resurvey', 'survey', { flags: '--candidates 1' }),
-]);
+const after = await clerk(
+  `report #${T.number}`,
+  'Report',
+  [
+    cmd('tick', 'tick', { issue: T.number }),
+    cmd('ledger', 'ledger', { stdin: ledgerLine }),
+    cmd('resurvey', 'survey', { flags: '--candidates 1' }),
+  ],
+  RUN_STEPS,
+  TIER.copyist,
+);
 if (after.tick.error)
   record.notes.push(`could not tick #${T.number} in the epic: ${after.tick.error}`);
 if (!after.resurvey.error) {
