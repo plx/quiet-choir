@@ -389,6 +389,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
             ...plan,
             kind: 'workflow.execute',
             registryName: selected.workflow.name,
+            registryPackage: selected.package.name,
             typecheck: analyzed.typecheck,
             package: { ...analyzed.package, workflow: selected.workflow.name },
           });
@@ -968,14 +969,21 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
       }
       stopIfAborted();
       stage = 'load.definition';
-      if (
-        plan.kind === 'workflow.execute' &&
-        plan.registryName !== undefined &&
-        definition.name !== plan.registryName
-      )
-        throw new Error(
-          `Registry name ${plan.registryName} now resolves to workflow ${definition.name}; refresh workflow list-defs before executing by name.`,
-        );
+      if (plan.kind === 'workflow.execute' && plan.registryName !== undefined) {
+        // A package workflow is listed as `package/workflow`, so the manifest must also keep its name.
+        const expected =
+          plan.registryPackage === undefined
+            ? plan.registryName
+            : `${plan.registryPackage}/${plan.registryName}`;
+        const actual =
+          plan.registryPackage === undefined || loadedPackage === undefined
+            ? definition.name
+            : `${loadedPackage.name}/${definition.name}`;
+        if (actual !== expected)
+          throw new Error(
+            `Registry name ${expected} now resolves to workflow ${actual}; refresh workflow list-defs before executing by name.`,
+          );
+      }
       const description = describeWorkflow(definition, modulePath);
       // A package's own prompt sets get the load-time checks of a workflow's (ADR 0064 section 3).
       const packagePrompts = checkedPackagePrompts(loadedPackage);

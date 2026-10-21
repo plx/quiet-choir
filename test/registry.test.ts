@@ -14,6 +14,7 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ThresholdLogger } from '../src/application/execution.js';
+import { analyzePackagePath } from '../src/workflow/package/plan.js';
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import type { TypecheckPlan } from '../src/workflow/typecheck/model.js';
 import { TypecheckProgramCache } from '../src/workflow/typecheck/program-cache.js';
@@ -608,5 +609,37 @@ describe('package discovery in the registry (#585)', { timeout: 60_000 }, () => 
         'Workflow name other is ambiguous: demo/other, more/other',
       ) as unknown,
     });
+  });
+
+  it('refuses a registry name whose package manifest now has another name', async () => {
+    const root = await project();
+    const dir = await writePackage(root, { name: 'renamed' });
+    const analyzed = analyzePackagePath(dir, root);
+    if (!analyzed.ok) throw new Error(analyzed.error.message);
+    const stateDir = await mkdtemp(join(tmpdir(), 'choir-registry-state-'));
+    roots.push(stateDir);
+    const run = (registryPackage: string, runId: string) =>
+      executor().execute({
+        kind: 'workflow.execute',
+        registryName: 'other',
+        registryPackage,
+        typecheck: analyzed.typecheck,
+        package: { ...analyzed.package, workflow: 'other' },
+        runId,
+        stateDir,
+        cwd: root,
+        resume: false,
+        input: null,
+      });
+    // list-defs saw demo/other; the manifest has since been renamed.
+    const stale = await run('demo', 'stale');
+    expect(stale).toMatchObject({
+      ok: false,
+      message: expect.stringContaining(
+        'Registry name demo/other now resolves to workflow renamed/other; refresh workflow list-defs',
+      ) as unknown,
+    });
+    await expect(readRun({ stateDir, runId: 'stale' })).rejects.toThrow();
+    expect(await run('renamed', 'current')).toMatchObject({ ok: true });
   });
 });

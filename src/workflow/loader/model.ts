@@ -88,6 +88,8 @@ export interface ExecuteNamedWorkflowPlan extends Omit<
 export interface ExecuteWorkflowPlan extends ExecutionPlan {
   readonly maxChildDepth?: number;
   readonly registryName?: string;
+  /** The package a registry name was listed under; the load refuses a manifest that now has another name. */
+  readonly registryPackage?: string;
   readonly maxRunCostUsd?: number | null;
   readonly maxRunAgentAttempts?: number | null;
   /** Sticky subscription-window utilization gate, 0 to 1; null clears it (ADR 0053). */
