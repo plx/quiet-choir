@@ -64,6 +64,32 @@ export async function packageFiles(root: string): Promise<readonly PackageFile[]
 export const PACKAGE_HASH_CONCURRENCY = 16;
 
 /**
+ * Map `items` through `task` with at most `limit` calls in flight, keeping the input order. The
+ * first rejection is returned and no further item starts. @internal
+ */
+export async function mapWithLimit<T, R>(
+  items: readonly T[],
+  limit: number,
+  task: (item: T) => Promise<R>,
+): Promise<readonly R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  let failed = false;
+  const worker = async (): Promise<void> => {
+    for (let index = next++; index < items.length && !failed; index = next++) {
+      try {
+        results[index] = await task(items[index] as T);
+      } catch (error) {
+        failed = true;
+        throw error;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+/**
  * Read and hash each walked file; `bytes` becomes the length that was read. At most
  * {@link PACKAGE_HASH_CONCURRENCY} files are open at once, so a large package neither holds all
  * its buffers nor exhausts file descriptors; the result keeps the input order. @internal
@@ -71,24 +97,14 @@ export const PACKAGE_HASH_CONCURRENCY = 16;
 export async function hashPackageFiles(
   files: readonly PackageFile[],
 ): Promise<readonly HashedPackageFile[]> {
-  const hashed = new Array<HashedPackageFile>(files.length);
-  let next = 0;
-  const worker = async (): Promise<void> => {
-    for (let index = next++; index < files.length; index = next++) {
-      const file = files[index];
-      if (file === undefined) continue;
-      const bytes = await readFile(file.path);
-      hashed[index] = {
-        ...file,
-        bytes: bytes.length,
-        sha256: createHash('sha256').update(bytes).digest('hex'),
-      };
-    }
-  };
-  await Promise.all(
-    Array.from({ length: Math.min(PACKAGE_HASH_CONCURRENCY, files.length) }, worker),
-  );
-  return hashed;
+  return mapWithLimit(files, PACKAGE_HASH_CONCURRENCY, async (file) => {
+    const bytes = await readFile(file.path);
+    return {
+      ...file,
+      bytes: bytes.length,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+    };
+  });
 }
 
 /**

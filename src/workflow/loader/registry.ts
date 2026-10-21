@@ -13,7 +13,7 @@ import { digest } from '../runtime/json.js';
 import { analyzeTypecheckEntrypoint } from '../typecheck/plan.js';
 import type { TypecheckPlan } from '../typecheck/model.js';
 import type { PackageSelection, ValidatedWorkflow, WorkflowCommandResult } from './model.js';
-import { packageFiles } from '../package/files.js';
+import { PACKAGE_HASH_CONCURRENCY, mapWithLimit, packageFiles } from '../package/files.js';
 import { analyzePackagePath } from '../package/plan.js';
 import { workflowLaunch } from './source.js';
 import { promptRootFiles, promptRoots } from '../prompts/check.js';
@@ -138,18 +138,25 @@ async function promptSourceHash(file: string): Promise<string> {
     .digest('hex');
 }
 
-/** Whether every recorded fingerprint still matches; a missing or unreadable file never does. */
-async function sourcesMatch(
+/**
+ * Whether every recorded fingerprint still matches; a missing or unreadable file never does (the
+ * fingerprint rejects). At most {@link PACKAGE_HASH_CONCURRENCY} files are read at once, as in
+ * hashing a package, and no further file starts after the first mismatch. @internal
+ */
+export async function sourcesMatch(
   recorded: Readonly<Record<string, string>>,
   fingerprint: (path: string) => Promise<string>,
 ): Promise<boolean> {
-  return (
-    await Promise.all(
-      Object.entries(recorded).map(
-        async ([path, expected]) => (await fingerprint(path)) === expected,
-      ),
-    )
-  ).every(Boolean);
+  let mismatch = false;
+  await mapWithLimit(
+    Object.entries(recorded),
+    PACKAGE_HASH_CONCURRENCY,
+    async ([path, expected]) => {
+      if (mismatch) return;
+      if ((await fingerprint(path)) !== expected) mismatch = true;
+    },
+  );
+  return !mismatch;
 }
 
 /** What {@link discoverDefinitions} finds: loose definition files and package directories. @internal */

@@ -13,6 +13,7 @@ import {
   PACKAGE_HASH_CONCURRENCY,
   packageFiles,
 } from '../src/workflow/package/files.js';
+import { sourcesMatch } from '../src/workflow/loader/registry.js';
 import { packageManifestSection } from '../src/workflow/package/manifest.js';
 import type { PromptSetCheck } from '../src/workflow/prompts/check.js';
 import type { AnyPromptSet } from '../src/workflow/runtime/model.js';
@@ -49,6 +50,41 @@ describe('hashPackageFiles', () => {
 
   it('returns an empty list for no files', async () => {
     expect(await hashPackageFiles([])).toEqual([]);
+  });
+});
+
+describe('sourcesMatch', () => {
+  const recorded = (count: number): Record<string, string> =>
+    Object.fromEntries(Array.from({ length: count }, (_, index) => [`/f${String(index)}`, 'h']));
+
+  it('never has more fingerprint calls in flight than the concurrency bound', async () => {
+    let active = 0;
+    let peak = 0;
+    const match = await sourcesMatch(recorded(PACKAGE_HASH_CONCURRENCY * 4), async () => {
+      active++;
+      peak = Math.max(peak, active);
+      await new Promise((resolve) => setImmediate(resolve));
+      active--;
+      return 'h';
+    });
+    expect(match).toBe(true);
+    expect(peak).toBe(PACKAGE_HASH_CONCURRENCY);
+  });
+
+  it('stops starting files after a mismatch and rejects for an unreadable file', async () => {
+    const seen: string[] = [];
+    expect(
+      await sourcesMatch(recorded(PACKAGE_HASH_CONCURRENCY * 4), async (path) => {
+        seen.push(path);
+        await new Promise((resolve) => setImmediate(resolve));
+        return 'changed';
+      }),
+    ).toBe(false);
+    expect(seen.length).toBeLessThan(PACKAGE_HASH_CONCURRENCY * 4);
+    await expect(
+      sourcesMatch(recorded(3), () => Promise.reject(new Error('ENOENT'))),
+    ).rejects.toThrow('ENOENT');
+    expect(await sourcesMatch({}, () => Promise.reject(new Error('unused')))).toBe(true);
   });
 });
 
