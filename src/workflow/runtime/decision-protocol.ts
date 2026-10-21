@@ -212,7 +212,9 @@ export function checkDecisionQuestions(value: unknown): DecisionQuestions {
   const names = Object.keys(value);
   if (names.length === 0) throw new Error('A decision needs at least one question.');
   for (const name of names) {
-    if (!nonempty(name)) throw new Error('Decision question names must be nonempty.');
+    // A __proto__ answer key would be lost to the prototype setter when the answers are built.
+    if (!nonempty(name) || name === '__proto__')
+      throw new Error('Decision question names must be nonempty and not __proto__.');
     const problem = questionProblem(value[name]);
     if (problem !== null) throw new Error(`Decision question ${name} ${problem}.`);
   }

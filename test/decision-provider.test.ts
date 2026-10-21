@@ -407,6 +407,8 @@ describe('ctx.decide', () => {
   it.each([
     [{ state: undefined, questions: { refund } }, /Decision state is not JSON/u],
     [{ state: null, questions: {} }, /at least one question/u],
+    // A computed key is an own property, unlike the literal __proto__: key.
+    [{ state: null, questions: { ['__proto__']: refund } }, /nonempty and not __proto__/u],
     [{ state: null, questions: { q: { type: 'box', instructions: 'x' } } }, /question q must be/u],
     [{ state: null, questions: { refund }, model: '' }, /model must be a nonempty string/u],
     [{ state: null, questions: { refund }, onError: 'skip' }, /onError must be/u],
