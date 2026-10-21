@@ -21,10 +21,24 @@ definitions to a particular agent harness.
   the internal poll-identity key ([ADR 0045](decisions/0045-head-pinned-github-waits.md)) and the
   helper-refinements key that keeps their schemas out of the rehearsal's refinement warning
   ([ADR 0016](decisions/0016-workflow-rehearsal.md)). See
-  [GitHub reads, waits and writes](github.md).
+  [GitHub reads, waits and writes](github.md). `decision.ts` may also import two runtime modules
+  ([ADR 0066](decisions/0066-decision-providers.md)): `ctx.decide` is core API while the authoring
+  surface lives under `quiet-choir/decision`, so the pure protocol `runtime/decision-protocol.ts`
+  (question constructors, `defineDecisionProvider`, structural and capability checks, the wire
+  request, response validation and the one constant naming every wire field) and the branded
+  `runtime/decision-error.ts` are shared contracts, like the registries above. Both stay free of
+  I/O, the clock, the process and runner state; `jevCompatible` (the `fetch` transport) lives in the
+  subpath.
 - `src/application/` contains framework-independent execution contracts and small executors.
 - `src/workflow/` contains workflow-specific plans, results, analysis, and executors.
 - `src/workflow/runtime/` defines the typed workflow API and local checkpoint/replay engine.
+  Decision providers ([ADR 0066](decisions/0066-decision-providers.md)) are split three ways: the
+  type-only `decision-model.ts` (questions, answers, declarations, transports) that `model.ts`
+  imports, the pure `decision-protocol.ts` shared with `quiet-choir/decision`, and the runner glue
+  `decisions.ts` (provider resolution for the running workflow, operator configuration, lazy
+  transports and the one `decision/2` step each `ctx.decide` makes). Questions and declarations are
+  plain frozen data checked structurally, because a CLI workflow may build them with another module
+  instance; the core never imports `src/integrations/`.
 - `src/workflow/team.ts` is the pure team helper (`defineTeam`, `TeamOf`, `Team`;
   [ADR 0067](decisions/0067-teams-as-typed-slots.md)). It takes a type-only dependency on
   `runtime/model.ts` and no core module imports it, so teams register nothing with the runtime.

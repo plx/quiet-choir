@@ -2,6 +2,41 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Decision providers and `ctx.decide` (#586, [ADR 0066](docs/decisions/0066-decision-providers.md)
+  §1–4). `quiet-choir/decision` exports the `noul`, `choice` (at most 255 options) and `score` (2 to
+  10 unique levels) question constructors,
+  `defineDecisionProvider({ name, revision, capabilities, defaultModel?, transport })`,
+  `jevCompatible({ name, baseUrl?, path?, apiKeyEnv?, defaultModel, revision?, capabilities? })`,
+  the branded `DecisionError` and the question, answer, declaration and transport types
+  (`ProtocolQuestion`, `AnswerOf`, `ProviderTransport` and its request, response, context and
+  factory types are so named because the older `decision()` helper keeps `DecisionQuestion`,
+  `DecisionAnswer` and `DecisionTransport`, unchanged). `WorkflowDefinition` gains `decisions`
+  (checked on the root and every child: unique names, positive integer revision, well-formed
+  capabilities) and `WorkflowContext` gains
+  `decide(id, { provider?, model?, state, questions, onError?, retry?, timeoutMs? })`, whose answers
+  are typed by the questions (`noul` answers have no `confidence`). Each call is one ordinary step
+  with the new built-in identity `decision/2` plus `{ provider, revision, model, state, questions }`
+  (timeouts and retry are policy),
+  `meta: { integration: 'decision', op: 'decide', provider, model }`, and a recorded
+  `{ model, answers }` output whose `model` is the served one; replay returns the saved answers and
+  never builds a transport. A missing provider, an unknown one, or a question outside the provider's
+  `kinds`, `maxOptions` or `levels` is a `ConfigurationError` before any request or record; a
+  response is validated with Zod (choice among the options, probability maps complete and summing to
+  one within 1e-6, legend equal to the levels, every question answered) and a failure is kind
+  `schema` with the raw body and issues on the attempt. `jevCompatible` posts
+  `{ model, state, questions }` (choice options and score levels travel as `criteria`, per
+  TypeSafe's published reference) with `Authorization: Bearer` from `apiKeyEnv`, read at request
+  time and never recorded, and `Idempotency-Key` only when declared; HTTP 429 is `rate-limit`, 5xx
+  `overloaded`, 401 `authentication`, 403 `permission`, other 4xx `invalid-request`, and `timeoutMs`
+  `timeout`. A missing base URL, `apiKeyEnv` or token value is a fatal `ConfigurationError` that
+  leaves the step unfinished. `RunOptions.decisionConfigurations` and `--harness-config`
+  `decisions.<name>` (strict `{ baseUrl, apiKeyEnv, defaultModel }`) replace a provider's own
+  values; an undeclared name warns, and the harness config digest includes `decisions` only when
+  present, so recorded digests are unchanged. `UsageSummary` gains `byProvider` (per provider and
+  served model; also in `byIntegration.decision`, never in agent totals) and `inspect` prints a
+  provider/model usage line. Under `--dry-run`, `ctx.decide` runs live like a local step until
+  decision fixtures arrive (#587); `--stub-steps` can synthesize it. `model.ts` changed, so both
+  Workflow Lab `apiSnapshot` hashes are bumped; the run record revision is unchanged.
 - Packages in the registry, whole-directory fingerprints and the validate package section (#585,
   [ADR 0065](docs/decisions/0065-workflow-packages.md) §3–5; see
   [docs/packages.md](docs/packages.md)). `workflow list-defs` discovers `<stem>.quiet-choir`

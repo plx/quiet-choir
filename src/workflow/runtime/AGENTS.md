@@ -6,14 +6,16 @@ recorded completed steps jointly guard replay compatibility. Execution limits an
 not semantic identity; unfinished identities may be redefined with history. See
 [ADR 0005](../../../docs/decisions/0005-step-identity-and-policy.md). The CLI supplies the source
 fingerprint; an embedded caller must supply its own. Local effects also hash callback source and
-version, without claiming to capture closed-over values; built-in helpers (`ctx.now`,
+version, without claiming to capture closed-over values; built-in helpers (`ctx.now`, `ctx.decide`,
 `decision.choose`) use the internal `identity: 'version'` instead, so their identity is a versioned
-constant (`now/1`, `decision/1`) with no callback text. Explicit code acceptance retains completed
-step checks. Fork sources are read-only. Prefix reuse is causal: it reads the reused copies and live
-settlements already in the target, so a reused copy must be inserted synchronously after the
-decision, before awaits allow concurrent launches; named-map items are independent of their
-siblings. `replay-decision.ts` is the single place the replay and redefinition rules are encoded.
-See [ADR 0006](../../../docs/decisions/0006-code-change-recovery.md).
+constant (`now/1`, `decision/2`, `decision/1`) with no callback text; `decision/2` adds the provider
+name and revision, the requested model, the state and the questions as input. Explicit code
+acceptance retains completed step checks. Fork sources are read-only. Prefix reuse is causal: it
+reads the reused copies and live settlements already in the target, so a reused copy must be
+inserted synchronously after the decision, before awaits allow concurrent launches; named-map items
+are independent of their siblings. `replay-decision.ts` is the single place the replay and
+redefinition rules are encoded. See
+[ADR 0006](../../../docs/decisions/0006-code-change-recovery.md).
 
 An effect can succeed externally before its checkpoint commits. Preserve the at-least-once contract
 and stable run/step idempotency keys; atomic checkpoint writes cannot make external actions atomic.
