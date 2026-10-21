@@ -44,6 +44,16 @@ function isOptions(value: unknown): value is Options {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/** Set `key` as a plain data property, so an own `__proto__` key stays one (as `jsonValue` does). */
+function define(target: Record<string, unknown>, key: string, value: unknown): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+}
+
 function directories(value: unknown, where: string): readonly unknown[] {
   if (!Array.isArray(value)) throw new TypeError(`${where} addDirs must be an array.`);
   return value;
@@ -62,7 +72,7 @@ function frozen(value: unknown, key: string, ancestors: readonly unknown[] = [])
   const prototype: unknown = Object.getPrototypeOf(value);
   if (prototype !== Object.prototype && prototype !== null) return value;
   const copy: Record<string, unknown> = {};
-  for (const [name, entry] of Object.entries(value)) copy[name] = frozen(entry, key, within);
+  for (const [name, entry] of Object.entries(value)) define(copy, name, frozen(entry, key, within));
   return Object.freeze(copy);
 }
 
@@ -82,7 +92,7 @@ function snapshot(bound: unknown, again: boolean): Options {
         `A bound agent cannot bind ${key} again; the first bind fixed it (ADR 0063).`,
       );
     if (key === 'addDirs') directories(value, 'bind');
-    copy[key] = frozen(value, key);
+    define(copy, key, frozen(value, key));
   }
   return Object.freeze(copy);
 }
@@ -97,14 +107,14 @@ function merge(bound: Options, call: unknown): Options {
       throw new TypeError(
         `A bound agent call cannot set ${key}; bind it instead, or call the harness client directly (ADR 0063).`,
       );
-    merged[key] = value;
+    define(merged, key, value);
   }
   const callDirs = call['addDirs'];
   if (callDirs !== undefined)
-    merged['addDirs'] = [
+    define(merged, 'addDirs', [
       ...((bound['addDirs'] as readonly unknown[] | undefined) ?? []),
       ...directories(callDirs, 'A bound agent call'),
-    ];
+    ]);
   return merged;
 }
 

@@ -517,6 +517,24 @@ it('snapshots bound options so later mutation cannot change the agent', async ({
   expect(fake.requests[0]?.options).not.toHaveProperty('effort');
 });
 
+it('keeps own __proto__ keys in bound options, as the raw spelling does', async ({ runs }) => {
+  // Computed keys define own properties; assignment would set the prototype instead.
+  const settings = () => ({
+    ['__proto__']: 'x',
+    nested: { ['__proto__']: { A: '1' }, B: '2' },
+  });
+  const { left } = await compare(
+    runs,
+    async (ctx) => ctx.claude.value('proto', { prompt, settings: settings() }),
+    async (ctx) => ctx.claude.bind({ settings: settings() }).value('proto', { prompt }),
+  );
+  const sent = left.requests[0]?.options.settings as Record<string, unknown> | undefined;
+  expect(Object.keys(sent ?? {})).toEqual(['__proto__', 'nested']);
+  expect(Object.getOwnPropertyDescriptor(sent, '__proto__')?.value).toBe('x');
+  const nested = sent?.['nested'] as Record<string, unknown> | undefined;
+  expect(Object.getOwnPropertyDescriptor(nested, '__proto__')?.value).toEqual({ A: '1' });
+});
+
 it('reuses a completed bound step on resume without invoking the adapter', async ({
   runs,
   stateDir,
