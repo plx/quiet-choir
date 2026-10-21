@@ -6,8 +6,8 @@
 Versioned comparisons of the same pinned Claude Code JavaScript workflows and Quiet Choir TypeScript
 ports. Batch 01 contains all 26 workflows from
 [ultracode-workflows at 9b5404d](https://github.com/hesreallyhim/ultracode-workflows/tree/9b5404d11b885b28380d3eb17471ef7b17601b5e/plugins/ultracode-workflows/workflows).
-Batch 02 rewrites six of them around code-owned effects, named profiles, isolated writers, settled
-panels and inline children. Both batches preserve the original source bytes and license.
+Batch 02 rewrites six of them around code-owned effects, named roster entries, isolated writers,
+settled panels and inline children. Both batches preserve the original source bytes and license.
 
 **Batch 02 is the active primitive regression suite and the reader default.** Batch 01 is retained
 as its historical comparison baseline. This transition also makes all 26 Batch 01 ports compile

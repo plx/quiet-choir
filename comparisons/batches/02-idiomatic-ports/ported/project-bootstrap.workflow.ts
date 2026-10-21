@@ -1,17 +1,7 @@
 // Idiomatic rewrite of the pinned MIT upstream; see ../LICENSE and ../notes.json.
 import { defineWorkflow, z } from 'quiet-choir';
-import {
-  Argv,
-  Digest,
-  Path,
-  Sha,
-  assertClean,
-  canonical,
-  digest,
-  git,
-  json,
-  profiles,
-} from './support.js';
+import { roster } from './roster.js';
+import { Argv, Digest, Path, Sha, assertClean, canonical, digest, git, json } from './support.js';
 
 export const Concern = z.enum(['foundation', 'tooling', 'tests', 'ci', 'docs']);
 const Plan = z.object({
@@ -28,7 +18,7 @@ export default defineWorkflow({
   version: 'idiomatic-02',
   description:
     'Approve one saved plan, isolate each setter, and verify its integration, settling command failures.',
-  profiles,
+  roster,
   input: z.object({
     spec: z
       .string()
@@ -59,13 +49,11 @@ export default defineWorkflow({
     await assertClean(ctx, 'clean');
     const base = Sha.parse((await git(ctx, 'base', ['rev-parse', 'HEAD'])).trim());
     const inventory = await git(ctx, 'inventory', ['ls-tree', '-r', '--name-only', base]);
-    const detected = await ctx.claude.value('detect', {
-      profile: 'reader',
+    const detected = await ctx.roster.Reader.value('detect', {
       schema: z.object({ existing: z.array(z.string()), missing: z.array(Concern) }),
       prompt: `Inspect existing project setup against the specification.\n${json({ spec: input.spec, inventory })}`,
     });
-    const plan = await ctx.claude.value('plan', {
-      profile: 'reader',
+    const plan = await ctx.roster.Reader.value('plan', {
       schema: Plan.extend({
         concerns: z
           .array(Plan.shape.concerns.element.extend({ name: z.enum(input.concerns) }))
@@ -99,8 +87,7 @@ export default defineWorkflow({
       plan.concerns,
       { concurrency: 3, key: (concern) => concern.name },
       async (concern) => {
-        const result = await ctx.claude.object('apply', {
-          profile: 'writer',
+        const result = await ctx.roster.Writer.object('apply', {
           worktree: { base: { commit: base } },
           schema: z.object({ summary: z.string() }),
           prompt: `Apply only concern ${concern.name}. You own exactly ${json(concern.files)}. Do not run commands or edit other files.\nApproved plan digest: ${approvedDigest}\nApproved plan:\n${json(plan)}`,

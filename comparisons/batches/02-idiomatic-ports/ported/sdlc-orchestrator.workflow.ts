@@ -2,7 +2,8 @@
 import { defineWorkflow, z } from 'quiet-choir';
 import bootstrap from './project-bootstrap.workflow.js';
 import releaseNotes from './release-notes.workflow.js';
-import { Argv, Path, json, profiles } from './support.js';
+import { roster } from './roster.js';
+import { Argv, Path, json } from './support.js';
 import {
   DocumentStage,
   Stage,
@@ -15,7 +16,7 @@ import {
 export default defineWorkflow({
   name: 'sdlc-orchestrator',
   version: 'idiomatic-02',
-  profiles,
+  roster,
   description:
     'Tailor a lifecycle, run typed children inline and checkpoint stage-specific human decisions.',
   children: [documentStage, implementationStage, verificationStage, bootstrap, releaseNotes],
@@ -57,8 +58,7 @@ export default defineWorkflow({
     skipped: z.array(Stage),
   }),
   async run(ctx, input) {
-    const intake = await ctx.claude.value('intake', {
-      profile: 'reader',
+    const intake = await ctx.roster.Reader.value('intake', {
       schema: z.object({
         plan: z.array(z.enum(input.allowedStages)).min(1).max(input.allowedStages.length),
         rationale: z.string(),

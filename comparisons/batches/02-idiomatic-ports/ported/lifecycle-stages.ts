@@ -1,5 +1,6 @@
 import { defineWorkflow, z, type ExecResult, type ExecStepError, type Settled } from 'quiet-choir';
-import { Argv, Path, json, profiles, writeCommittedArtifact } from './support.js';
+import { readers, roster } from './roster.js';
+import { Argv, Path, json, writeCommittedArtifact } from './support.js';
 
 export const DocumentStage = z.enum(['requirements', 'spec', 'roadmap', 'backlog', 'feedback']);
 export const Stage = z.enum([
@@ -30,7 +31,7 @@ const context = {
 export const documentStage = defineWorkflow({
   name: 'lifecycle-document',
   version: '1',
-  profiles: { reader: profiles.reader },
+  roster: readers,
   input: z.object({
     ...context,
     stage: DocumentStage.describe('Document to produce'),
@@ -38,12 +39,10 @@ export const documentStage = defineWorkflow({
   }),
   output: StageResult,
   async run(ctx, input) {
-    const content = await ctx.claude.value('draft', {
-      profile: 'reader',
+    const content = await ctx.roster.Reader.value('draft', {
       prompt: `Produce the ${input.stage} artifact for this lifecycle goal. Read prior artifacts as evidence. Return the complete document; do not edit files. Apply this stage's human answer.\n${json(input)}`,
     });
-    const review = await ctx.claude.value('review', {
-      profile: 'reader',
+    const review = await ctx.roster.Reader.value('review', {
       schema: StageResult.omit({ artifact: true }),
       prompt: `Review this ${input.stage} document for completeness, unresolved decisions and consistency with the goal.\n${json({ ...input, content })}`,
     });
@@ -57,7 +56,7 @@ export const documentStage = defineWorkflow({
 export const implementationStage = defineWorkflow({
   name: 'lifecycle-implementation',
   version: '1',
-  profiles,
+  roster,
   input: z.object({
     ...context,
     testCommand: Argv.describe('Verification argv command approved by the operator'),
@@ -65,8 +64,7 @@ export const implementationStage = defineWorkflow({
   output: StageResult,
   async run(ctx, input) {
     const tree = await ctx.worktree('implementation');
-    await ctx.claude.value('apply', {
-      profile: 'writer',
+    await ctx.roster.Writer.value('apply', {
       worktree: tree,
       prompt: `Implement this goal from the supplied artifacts, applying this stage's human answer. Edit files only; code runs verification.\n${json(input)}`,
     });

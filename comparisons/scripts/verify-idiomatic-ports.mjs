@@ -358,7 +358,7 @@ try {
   };
   const measurements = {
     method:
-      'Matched six intents with deterministic schema-valid replies; Batch 01 receives global Read/Grep/Glob/Write/Edit/Bash, Batch 02 uses named least-privilege profiles. Counts are fixture path observations, not quality or billing savings. Formatted entrypoint lines exclude shared helpers and typed children. Strict errors are verified separately by tsc.',
+      'Matched six intents with deterministic schema-valid replies; Batch 01 receives global Read/Grep/Glob/Write/Edit/Bash, Batch 02 uses named least-privilege roster entries. Counts are fixture path observations, not quality or billing savings. Formatted entrypoint lines exclude shared helpers and typed children. Strict errors are verified separately by tsc.',
     sharedFormattedLines,
     rows: metrics,
   };
