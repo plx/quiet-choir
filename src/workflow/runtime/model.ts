@@ -425,12 +425,18 @@ export type BoundCallOptions = Pick<
 
 /**
  * What {@link AgentClient.bind} accepts for a client with options `O`: every option except the
- * {@link PerCallOnlyKey} keys. It distributes over a union option type, so `bind` accepts any
- * member: a strict Claude client binds `addDirs` only together with a profile that declares
- * `claude.addDirRoots`, as a call does. `bind` then keeps the members its options satisfy
- * ({@link SelectBranch}).
+ * {@link PerCallOnlyKey} keys. The both-sides keys (`addDirs`, `timeoutMs`, `idleTimeoutMs`) are
+ * optional even where `O` requires them, since a call may supply them instead. It distributes over
+ * a union option type, so `bind` accepts any member: a strict Claude client binds `addDirs` only
+ * together with a profile that declares `claude.addDirRoots`, as a call does. `bind` then keeps the
+ * members its options satisfy ({@link SelectBranch}).
  */
-export type BindOptions<O> = O extends unknown ? Omit<O, PerCallOnlyKey> : never;
+export type BindOptions<O> = O extends unknown
+  ? Omit<O, PerCallOnlyKey | 'addDirs' | 'timeoutMs' | 'idleTimeoutMs'> &
+      Partial<Pick<O, Extract<keyof O, 'addDirs' | 'timeoutMs' | 'idleTimeoutMs'>>> extends infer F
+    ? { [K in keyof F]: F[K] }
+    : never
+  : never;
 
 /**
  * The keys of `B` that no member of {@link BindOptions} `<O>` declares, as `never` properties. A
@@ -458,19 +464,30 @@ export type SelectBranch<O, B> = [
     : never;
 
 /**
- * The call options of a client bound from one with options `O`: the {@link BoundCallOptions} keys
- * that `O` declares, plus Codex's per-call `images` (ADR 0063 section 1). For Claude this is
- * `BoundCallOptions`; a registered harness keeps only the bound keys its own schema declares. It
- * distributes over a union, and `bind` passes it only the {@link SelectBranch} members: a strict
- * Claude agent bound to a profile without `claude.addDirRoots` takes no `addDirs`. It is
- * idempotent, so a re-bind that sets no `addDirs` keeps the agent's type; one that sets them keeps
+ * The call options of a client bound from one with options `O` by bound options `B`: the
+ * {@link BoundCallOptions} keys that `O` declares, plus Codex's per-call `images` (ADR 0063 section
+ * 1). For Claude this is `BoundCallOptions`; a registered harness keeps only the bound keys its own
+ * schema declares. A both-sides key (`addDirs`, `timeoutMs`, `idleTimeoutMs`) that `B` sets is
+ * optional on calls and re-binds even where `O` requires it, since the bound default supplies it;
+ * one `B` leaves unset stays as `O` declares it. It distributes over a union, and `bind` passes it
+ * only the {@link SelectBranch} members: a strict Claude agent bound to a profile without
+ * `claude.addDirRoots` takes no `addDirs`. It is idempotent, and `B` defaults to `unknown` (no bound
+ * defaults), so a re-bind that sets no `addDirs` keeps the agent's type; one that sets them keeps
  * the members that admit them, which accept the same calls.
  */
-export type BoundOptionsOf<O> = O extends unknown
-  ? Pick<O, Extract<keyof O, keyof BoundCallOptions | 'images'>> & {
-      /** Instructions sent over stdin, never interpolated into a shell command. */
-      readonly prompt: string;
-    }
+export type BoundOptionsOf<O, B = unknown> = O extends unknown
+  ? Omit<
+      Pick<O, Extract<keyof O, keyof BoundCallOptions | 'images'>>,
+      Extract<keyof B, 'addDirs' | 'timeoutMs' | 'idleTimeoutMs'>
+    > &
+      Partial<
+        Pick<O, Extract<keyof O, Extract<keyof B, 'addDirs' | 'timeoutMs' | 'idleTimeoutMs'>>>
+      > & {
+        /** Instructions sent over stdin, never interpolated into a shell command. */
+        readonly prompt: string;
+      } extends infer F extends AgentOptions
+    ? { [K in keyof F]: F[K] }
+    : never
   : never;
 
 /**
@@ -509,7 +526,7 @@ export interface AgentClient<TOptions extends AgentOptions> {
    */
   bind<const B extends BindOptions<TOptions>>(
     options: B & BindExcess<B, TOptions>,
-  ): AgentClient<BoundOptionsOf<SelectBranch<TOptions, B>>>;
+  ): AgentClient<BoundOptionsOf<SelectBranch<TOptions, B>, B>>;
   /** Return only the structured output; checkpoint the same result and metadata as object(). */
   value<T>(
     id: string,

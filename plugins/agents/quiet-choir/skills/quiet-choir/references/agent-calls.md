@@ -66,7 +66,8 @@ export default defineWorkflow({
   rejects before a step ID is claimed.
 - `addDirs`, `timeoutMs` and `idleTimeoutMs` may be bound as defaults and set per call. Call
   `addDirs` append to the bound list; the call's deadline wins; an `undefined` call value keeps the
-  default.
+  default. When a registered harness's schema requires one of them, `bind` may leave it to each
+  call; once bound, calls and re-binds may omit it.
 - Identity is the raw call's: the merged options fingerprint, resolve profiles and policy, and
   record exactly as if spelled at the call site, so after moving a call to a bound agent,
   `--accept-code-change` still reuses its completed step.

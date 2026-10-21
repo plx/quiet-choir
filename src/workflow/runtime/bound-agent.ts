@@ -1,4 +1,11 @@
-import type { AgentClient, AgentOptions, BindOptions, BoundOptionsOf } from './model.js';
+import type {
+  AgentClient,
+  AgentOptions,
+  BindExcess,
+  BindOptions,
+  BoundOptionsOf,
+  SelectBranch,
+} from './model.js';
 
 // ADR 0063 sections 1-2. A bound agent is partial application over the client it was bound from:
 // each call merges its options over the bound ones and calls that client, so naming, profiles,
@@ -185,12 +192,12 @@ function layer(client: Methods, options: unknown, hooks: BindHooks, again: boole
  * prefix is the one in effect where the bound agent is invoked. The returned agent binds again
  * over the both-sides keys only, and its calls and re-binds report errors through `hooks`. @internal
  */
-export function bindAgent<TOptions extends AgentOptions>(
+export function bindAgent<TOptions extends AgentOptions, const B extends BindOptions<TOptions>>(
   client: AgentClient<TOptions>,
-  options: BindOptions<TOptions>,
+  options: B & BindExcess<B, TOptions>,
   hooks: BindHooks = {},
-): AgentClient<BoundOptionsOf<TOptions>> {
+): AgentClient<BoundOptionsOf<SelectBranch<TOptions, B>, B>> {
   return layer(client as unknown as Methods, options, hooks, false) as unknown as AgentClient<
-    BoundOptionsOf<TOptions>
+    BoundOptionsOf<SelectBranch<TOptions, B>, B>
   >;
 }

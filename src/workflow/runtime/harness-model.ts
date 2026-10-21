@@ -341,7 +341,7 @@ export type RegisteredAgentClient<
        */
       bind<const B extends BindOptions<O>>(
         options: B & BindExcess<B, O>,
-      ): RegisteredAgentClient<BoundOptionsOf<SelectBranch<O, B>>, C>;
+      ): RegisteredAgentClient<BoundOptionsOf<SelectBranch<O, B>, B>, C>;
       /** Invoke a text response and retain session/usage diagnostics. */
       text<TMode extends ErrorMode = 'throw'>(
         id: string,

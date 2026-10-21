@@ -34,6 +34,23 @@ const plain = defineHarness({
   name: 'plain',
   capabilities: { structuredOutput: 'none' },
 });
+/** A registration whose schema requires two of the both-sides keys. */
+const strictDeadline = defineHarness({
+  name: 'deadline',
+  revision: 1,
+  options: z.object({
+    prompt: z.string(),
+    timeoutMs: z.number(),
+    addDirs: z.array(z.string()),
+  }),
+  capabilities: { structuredOutput: 'native' },
+  access: () => 'none',
+});
+const plainDeadline = defineHarness({
+  ...strictDeadline,
+  name: 'plain-deadline',
+  capabilities: { structuredOutput: 'none' },
+});
 
 /** A helper that takes any structured agent, as a team slot or roster entry will. */
 async function reviewWith(agent: Agent): Promise<{ verdict: string }> {
@@ -47,7 +64,7 @@ async function summarize(agent: Agent<{ structuredOutput: 'none' }>): Promise<st
 export const bound = defineWorkflow({
   ...base,
   name: 'bound-types',
-  harnesses: [third, plain],
+  harnesses: [third, plain, strictDeadline, plainDeadline],
   profiles: { scout: { claude: { tools: ['Read'] } } },
   async run(ctx) {
     const reviewer = ctx.claude.bind({ model: 'opus', effort: 'high', tools: ['Read', 'Grep'] });
@@ -127,6 +144,31 @@ export const bound = defineWorkflow({
     await deep.text('t', { prompt, thinking: 'shallow' });
     // @ts-expect-error -- the registration declares no addDirs, so its bound agent has none.
     await deep.text('t', { prompt, addDirs: ['a'] });
+
+    // A both-sides key the schema requires is optional on calls once bind supplies it, and on
+    // re-binds; one bind leaves unset stays required per call.
+    // @ts-expect-error -- a raw call must spell the required timeoutMs and addDirs.
+    await ctx.agent('deadline').text('raw', { prompt });
+    const timed = ctx.agent('deadline').bind({ timeoutMs: 1000, addDirs: ['docs'] });
+    expectTypeOf(await timed.value('x', { prompt, schema: Review })).toEqualTypeOf<{
+      verdict: string;
+    }>();
+    await timed.text('t', { prompt });
+    await timed.text('t', { prompt, timeoutMs: 1, addDirs: ['more'] });
+    await reviewWith(timed);
+    const retimed = timed.bind({ idleTimeoutMs: 1 });
+    await retimed.text('t', { prompt });
+    expectTypeOf(timed.bind({})).toEqualTypeOf<typeof timed>();
+    const rooted = ctx.agent('deadline').bind({ addDirs: ['docs'] });
+    await rooted.text('t', { prompt, timeoutMs: 1 });
+    // @ts-expect-error -- bind left timeoutMs unset, so each call still supplies it.
+    await rooted.text('t', { prompt });
+    await rooted.bind({ timeoutMs: 1 }).text('t', { prompt });
+    const plainTimed = ctx.agent('plain-deadline').bind({ timeoutMs: 1, addDirs: ['docs'] });
+    expectTypeOf(await plainTimed.value('t', { prompt })).toEqualTypeOf<string>();
+    await summarize(plainTimed.bind({}));
+    // @ts-expect-error -- the text-only agent bound without addDirs still needs them per call.
+    await ctx.agent('plain-deadline').bind({ timeoutMs: 1 }).text('t', { prompt });
 
     // A text-only registration binds to a text-only agent.
     const quiet = ctx.agent('plain').bind({ thinking: 'deep' });
