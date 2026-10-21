@@ -5,7 +5,7 @@ import {
   PackageSelectionError,
   WorkflowDefinitionError,
 } from './import.js';
-import { PACKAGE_MANIFEST } from '../package/plan.js';
+import { analyzePackagePath, PACKAGE_MANIFEST } from '../package/plan.js';
 import type { WorkflowPackage } from '../package/model.js';
 import { promptSetDescriptor } from '../prompts/prompt.js';
 import { cleanWorktrees } from '../runtime/worktree-clean.js';
@@ -82,7 +82,7 @@ import { defaultAgentLimits, validateAgentLimits } from '../runtime/agent-limite
 import type { ProcessSupervisor } from '../../processes/supervisor.js';
 import { describeWorkflow } from '../runtime/definition.js';
 import type { WorkflowDescription } from '../runtime/child-model.js';
-import { listDefinitions } from './registry.js';
+import { listDefinitions, selectDefinition } from './registry.js';
 import { analyzeTypecheckEntrypoint } from '../typecheck/plan.js';
 
 import type { ExecutionLogger, Executor, LogLevel } from '../../application/execution.js';
@@ -95,9 +95,17 @@ import type { RunStore } from '../runtime/run-store.js';
 import type { WorkflowClock } from '../runtime/wait-model.js';
 import { TypeScriptExecutor } from '../typecheck/typescript-executor.js';
 import type { TypecheckProgramCache } from '../typecheck/program-cache.js';
-import { formatDurabilityDiagnostic } from '../typecheck/model.js';
-import { fingerprintSources, withPromptSources, workflowLaunch } from './source.js';
-import { checkPromptSets, promptRoots } from '../prompts/check.js';
+import { formatDurabilityDiagnostic, type TypecheckPlan } from '../typecheck/model.js';
+import {
+  fingerprintSources,
+  withPackageSources,
+  withPromptSources,
+  workflowLaunch,
+} from './source.js';
+import type { SourceFingerprint } from '../runtime/replay-model.js';
+import { hashPackageFiles, packageFiles, packageSizeWarning } from '../package/files.js';
+import { packageListing, packageManifestSection } from '../package/manifest.js';
+import { checkPromptSets, promptRoots, type PromptChecks } from '../prompts/check.js';
 import { formatRateLimitWindows, readRateLimit } from '../runtime/rate-limit.js';
 import type { WorkflowEvent } from '../runtime/runner.js';
 import {
@@ -119,6 +127,7 @@ import type {
   ListWorkflowsPlan,
   ValidateWorkflowPlan,
   WorkflowCommandResult,
+  ValidatedWorkflow,
   ResumeWorkflowPlan,
   AnswerWorkflowPlan,
   PendingWorkflowsPlan,
@@ -249,6 +258,45 @@ function promptWarnings(description: WorkflowDescription): string[] {
   return [...warnings];
 }
 
+/**
+ * The load-time checks of a package's own prompt sets (ADR 0064 section 3); an error fails
+ * `load.definition`. A single module has none.
+ */
+function checkedPackagePrompts(pkg: WorkflowPackage | undefined): PromptChecks {
+  const checks = checkPromptSets(
+    (pkg?.prompts ?? []).flatMap((set) => promptSetDescriptor(set) ?? []),
+  );
+  if (pkg !== undefined && checks.errors.length > 0)
+    throw new Error(
+      `Package ${pkg.name} prompt templates failed their load-time checks:\n${checks.errors.map((error) => `- ${error}`).join('\n')}`,
+    );
+  return checks;
+}
+
+/**
+ * The description of a declared package workflow at its resolved module. A workflow whose own
+ * checks fail fails as `load.definition`, naming the package and the workflow.
+ */
+function describePackageWorkflow(
+  pkg: WorkflowPackage,
+  workflow: WorkflowDeclaration,
+  modules: ReadonlyMap<string, string>,
+): WorkflowDescription {
+  const modulePath = modules.get(workflow.name);
+  if (modulePath === undefined)
+    throw new Error(`Unreachable: package ${pkg.name} resolved no module for ${workflow.name}.`);
+  try {
+    return describeWorkflow(workflow, modulePath);
+  } catch (cause) {
+    throw new WorkflowDefinitionError(
+      new Error(
+        `Package ${pkg.name} workflow ${workflow.name} (${modulePath}) failed validation: ${cause instanceof Error ? cause.message : String(cause)}`,
+        { cause },
+      ),
+    );
+  }
+}
+
 /** Type-check, import, and optionally run trusted workflow code behind a plain-data boundary. */
 export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, WorkflowCommandResult> {
   readonly #options: WorkflowExecutorOptions;
@@ -319,18 +367,32 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         stage = 'load.definition';
         const registry = await listDefinitions(
           plan.directories,
-          (typecheck) =>
-            this.execute({ kind: 'workflow.validate', typecheck, durabilityLint: 'warn' }),
+          (typecheck, pkg) =>
+            this.execute({
+              kind: 'workflow.validate',
+              typecheck,
+              ...(pkg === undefined ? {} : { package: pkg, everyWorkflow: true }),
+              durabilityLint: 'warn',
+            }),
           { refresh: plan.kind === 'workflow.list-defs' && plan.refresh === true },
         );
         if (plan.kind === 'workflow.list-defs' || !registry.ok) return registry;
         if (registry.kind !== 'workflow.list-defs.result')
           throw new Error('Unexpected definition registry result.');
-        const selected = registry.definitions.find((entry) => entry.workflow.name === plan.name);
-        if (!selected)
-          throw new Error(
-            `Unknown workflow name ${plan.name}; search directories with workflow list-defs or supply --registry-dir DIR.`,
-          );
+        const selected = selectDefinition(registry.definitions, plan.name);
+        if (selected.package !== undefined) {
+          // A package workflow runs through its manifest, selected by its own name, and the
+          // registry name check below still guards it (ADR 0065 section 3).
+          const analyzed = analyzePackagePath(selected.package.root, plan.cwd);
+          if (!analyzed.ok) throw new Error(analyzed.error.message);
+          return await this.execute({
+            ...plan,
+            kind: 'workflow.execute',
+            registryName: selected.workflow.name,
+            typecheck: analyzed.typecheck,
+            package: { ...analyzed.package, workflow: selected.workflow.name },
+          });
+        }
         const analyzed = analyzeTypecheckEntrypoint(selected.entrypoint, plan.cwd);
         if (!analyzed.ok) throw new Error(analyzed.error.message);
         return await this.execute({
@@ -858,18 +920,34 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         `Importing trusted workflow module ${plan.typecheck.entrypoint}`,
       );
       let loadedPackage: WorkflowPackage | undefined;
+      let packageModules: ReadonlyMap<string, string> = new Map();
       let modulePath = plan.typecheck.entrypoint;
       let definition: WorkflowDefinition<unknown, unknown>;
       if (packageSelection) {
-        const imported = await importPackage(
-          plan.typecheck,
-          checked.sourceFiles,
-          packageSelection.workflow,
-        );
+        const everyWorkflow = plan.kind === 'workflow.validate' && plan.everyWorkflow === true;
+        const imported = await importPackage(plan.typecheck, checked.sourceFiles, {
+          workflow: packageSelection.workflow,
+          select: !everyWorkflow,
+          // Validate describes every declared workflow; execute resolves only its own module.
+          every: plan.kind === 'workflow.validate',
+        });
         unregister = imported.dispose;
         loadedPackage = imported.package;
-        modulePath = imported.modulePath;
-        definition = imported.definition;
+        packageModules = imported.modules;
+        if (everyWorkflow) {
+          stopIfAborted();
+          stage = 'load.definition';
+          return await this.#packageListing(
+            plan.typecheck,
+            packageSelection.root,
+            imported.package,
+            imported.modules,
+            typescriptSource,
+          );
+        }
+        if (imported.selected === null) throw new Error('Unreachable: a package selection.');
+        modulePath = imported.selected.modulePath;
+        definition = imported.selected.definition;
         const storedEntrypoint = saved?.launch?.entrypoint;
         if (saved && storedEntrypoint !== undefined && storedEntrypoint !== modulePath)
           throw new RunRefusedError(
@@ -900,24 +978,34 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         );
       const description = describeWorkflow(definition, modulePath);
       // A package's own prompt sets get the load-time checks of a workflow's (ADR 0064 section 3).
-      const packagePrompts = checkPromptSets(
-        (loadedPackage?.prompts ?? []).flatMap((set) => promptSetDescriptor(set) ?? []),
-      );
-      if (loadedPackage && packagePrompts.errors.length > 0)
-        throw new Error(
-          `Package ${loadedPackage.name} prompt templates failed their load-time checks:\n${packagePrompts.errors.map((error) => `- ${error}`).join('\n')}`,
-        );
+      const packagePrompts = checkedPackagePrompts(loadedPackage);
+      // A package run fingerprints every regular file under its root (ADR 0065 section 4).
+      const walked =
+        packageSelection === undefined
+          ? undefined
+          : await hashPackageFiles(await packageFiles(packageSelection.root));
       // Prompt roots are known only after import. Every file under them joins the launch sources
-      // (ADR 0064 section 4), and validate, check-resume and execute all use this one fingerprint.
-      const source = await withPromptSources(plan.typecheck, typescriptSource, [
+      // (ADR 0064 section 4), then a package's walked files do, and validate, check-resume and
+      // execute all use this one fingerprint.
+      const promptSource = await withPromptSources(plan.typecheck, typescriptSource, [
         ...new Set([...promptRoots(description), ...packagePrompts.sets.map((set) => set.root)]),
       ]);
-      if (plan.kind === 'workflow.validate' || plan.kind === 'workflow.execute')
+      const source =
+        walked === undefined
+          ? promptSource
+          : await withPackageSources(plan.typecheck, promptSource, walked);
+      if (plan.kind === 'workflow.validate' || plan.kind === 'workflow.execute') {
         for (const warning of new Set([
           ...promptWarnings(description),
           ...packagePrompts.sets.flatMap((set) => set.entries.flatMap((entry) => entry.warnings)),
         ]))
           this.#options.logger.log('warn', warning);
+        const large =
+          loadedPackage === undefined || walked === undefined
+            ? null
+            : packageSizeWarning(loadedPackage.name, walked);
+        if (large !== null) this.#options.logger.log('warn', large);
+      }
       const packageLaunch =
         loadedPackage === undefined
           ? undefined
@@ -927,11 +1015,29 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
               version: loadedPackage.version,
             };
       if (plan.kind === 'workflow.validate') {
+        // Every declared workflow is described, so one whose own checks fail (a broken template)
+        // fails validate even when another one is selected (ADR 0065 section 5).
+        const pkg = loadedPackage;
+        const section =
+          pkg === undefined || walked === undefined
+            ? undefined
+            : packageManifestSection(
+                pkg,
+                pkg.workflows.map((workflow) => ({
+                  definition: workflow,
+                  description:
+                    (workflow as unknown) === definition
+                      ? description
+                      : describePackageWorkflow(pkg, workflow, packageModules),
+                })),
+                packagePrompts.sets,
+                walked,
+              );
         return {
           kind: 'workflow.validate.result',
           ok: true,
           entrypoint: modulePath,
-          ...(packageLaunch === undefined ? {} : { package: packageLaunch }),
+          ...(section === undefined ? {} : { package: section }),
           diagnostics: [],
           workflow: {
             ...description,
@@ -1244,6 +1350,54 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
       unregister?.();
       await previewState?.dispose();
     }
+  }
+
+  /**
+   * The registry's validation of a whole package (`everyWorkflow`): one {@link ValidatedWorkflow}
+   * per declared workflow, in declaration order, each with the package's listing summary and its
+   * own fingerprint (the TypeScript closure, its prompt roots and the package's, and every walked
+   * file). Prompt and size warnings are logged once for the package.
+   */
+  async #packageListing(
+    typecheck: TypecheckPlan,
+    root: string,
+    pkg: WorkflowPackage,
+    modules: ReadonlyMap<string, string>,
+    typescriptSource: SourceFingerprint,
+  ): Promise<WorkflowCommandResult> {
+    const packagePrompts = checkedPackagePrompts(pkg);
+    const walked = await hashPackageFiles(await packageFiles(root));
+    const warnings = new Set(
+      packagePrompts.sets.flatMap((set) => set.entries.flatMap((entry) => entry.warnings)),
+    );
+    const definitions: ValidatedWorkflow[] = [];
+    for (const workflow of pkg.workflows) {
+      const description = describePackageWorkflow(pkg, workflow, modules);
+      for (const warning of promptWarnings(description)) warnings.add(warning);
+      const source = await withPackageSources(
+        typecheck,
+        await withPromptSources(typecheck, typescriptSource, [
+          ...new Set([...promptRoots(description), ...packagePrompts.sets.map((set) => set.root)]),
+        ]),
+        walked,
+      );
+      definitions.push({
+        kind: 'workflow.validate.result',
+        ok: true,
+        entrypoint: description.entrypoint ?? root,
+        package: packageListing(pkg),
+        workflow: {
+          ...description,
+          ...workflowSnapshot(workflow, {
+            source,
+          }),
+        },
+      });
+    }
+    for (const warning of warnings) this.#options.logger.log('warn', warning);
+    const large = packageSizeWarning(pkg.name, walked);
+    if (large !== null) this.#options.logger.log('warn', large);
+    return { kind: 'workflow.list-defs.result', ok: true, definitions };
   }
 
   /**

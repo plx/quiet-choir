@@ -175,10 +175,31 @@ export async function importWorkflow(
 /** A package imported by {@link importPackage}. @internal */
 export interface ImportedPackage {
   readonly package: WorkflowPackage;
-  readonly definition: WorkflowDefinition<unknown, unknown>;
-  /** Real path of the TypeScript module that default-exports `definition`. */
-  readonly modulePath: string;
+  /** The selected workflow, or null when the import selected none (`select: false`). */
+  readonly selected: {
+    readonly definition: WorkflowDefinition<unknown, unknown>;
+    /** Real path of the TypeScript module that default-exports `definition`. */
+    readonly modulePath: string;
+  } | null;
+  /**
+   * Real module paths by workflow name: the selected workflow's alone, or every declared
+   * workflow's under `every`, in declaration order.
+   */
+  readonly modules: ReadonlyMap<string, string>;
   readonly dispose?: () => void;
+}
+
+/** What {@link importPackage} selects and resolves. @internal */
+export interface PackageImportOptions {
+  /** The workflow to select; null selects the package's `entry`. */
+  readonly workflow: string | null;
+  /**
+   * Whether to select a workflow (default true). The registry passes false: it lists every
+   * workflow, so a package without `entry` needs no selection.
+   */
+  readonly select?: boolean;
+  /** Resolve the module of every declared workflow, not only the selected one (validate). */
+  readonly every?: boolean;
 }
 
 function isInside(root: string, path: string): boolean {
@@ -200,12 +221,15 @@ function isTypeScriptModule(path: string): boolean {
  * select the requested workflow (else `entry`), and find the module under the root that
  * default-exports that same definition object. Candidates are the compiler's TypeScript sources
  * under the root (`sourceFiles`), `workflows/` first, imported through the manifest's loader, so a
- * module the manifest already evaluated is not run again. @internal
+ * module the manifest already evaluated is not run again. With `every`, the module of every
+ * declared workflow is resolved the same way (the first candidate that default-exports each one),
+ * loading candidates only until every definition is matched; a workflow without one fails as
+ * `load.definition` even when another one is selected. @internal
  */
 export async function importPackage(
   plan: TypecheckPlan,
   sourceFiles: readonly string[],
-  requested: string | null,
+  options: PackageImportOptions,
 ): Promise<ImportedPackage> {
   const loader = namespacedLoader(plan);
   try {
@@ -229,22 +253,25 @@ export async function importPackage(
       throw new WorkflowDefinitionError(cause);
     }
     const names = pkg.workflows.map((workflow) => workflow.name);
-    const name = requested ?? pkg.entry?.name ?? null;
-    if (name === null)
-      throw new PackageSelectionError(
-        `Package ${pkg.name} declares no entry; choose a workflow with --workflow: ${names.join(', ')}.`,
-        'package_workflow_required',
-        names,
-      );
-    const selected: WorkflowDeclaration | undefined = pkg.workflows.find(
-      (workflow) => workflow.name === name,
-    );
-    if (selected === undefined)
-      throw new PackageSelectionError(
-        `Package ${pkg.name} declares no workflow ${name}; its workflows are ${names.join(', ')}.`,
-        'package_workflow_unknown',
-        names,
-      );
+    let selected: WorkflowDeclaration | undefined;
+    if (options.select !== false) {
+      const name = options.workflow ?? pkg.entry?.name ?? null;
+      if (name === null)
+        throw new PackageSelectionError(
+          `Package ${pkg.name} declares no entry; choose a workflow with --workflow: ${names.join(', ')}.`,
+          'package_workflow_required',
+          names,
+        );
+      selected = pkg.workflows.find((workflow) => workflow.name === name);
+      if (selected === undefined)
+        throw new PackageSelectionError(
+          `Package ${pkg.name} declares no workflow ${name}; its workflows are ${names.join(', ')}.`,
+          'package_workflow_unknown',
+          names,
+        );
+    }
+    const wanted: readonly WorkflowDeclaration[] =
+      options.every === true ? pkg.workflows : selected === undefined ? [] : [selected];
     const candidates = (
       await Promise.all(
         sourceFiles.map(async (file) => (isTypeScriptModule(file) ? await realpath(file) : null)),
@@ -260,28 +287,45 @@ export async function importPackage(
       }))
       .sort((a, b) => a.rank - b.rank || (a.file < b.file ? -1 : a.file > b.file ? 1 : 0))
       .map((candidate) => candidate.file);
-    let modulePath: string | undefined;
+    const found = new Map<WorkflowDeclaration, string>();
     if (loader.exporters) {
-      const exporting = new Set(
-        await Promise.all(
-          loader.exporters(selected).map((file) => realpath(file).catch(() => file)),
-        ),
-      );
-      modulePath = candidates.find((candidate) => exporting.has(candidate));
+      for (const workflow of wanted) {
+        const exporting = new Set(
+          await Promise.all(
+            loader.exporters(workflow).map((file) => realpath(file).catch(() => file)),
+          ),
+        );
+        const modulePath = candidates.find((candidate) => exporting.has(candidate));
+        if (modulePath !== undefined) found.set(workflow, modulePath);
+      }
     } else
-      for (const candidate of [...new Set(candidates)])
-        if (exportsWorkflow(await loader.load(candidate), selected)) {
-          modulePath = candidate;
-          break;
-        }
-    if (modulePath === undefined)
-      throw new WorkflowDefinitionError(
-        `Package ${pkg.name}: no TypeScript module under ${manifestDirectory} default-exports workflow ${name}. Each workflow must be the default export of its own .ts, .mts or .cts module in the package, because the run records that module as its entrypoint.`,
-      );
+      for (const candidate of [...new Set(candidates)]) {
+        if (found.size === wanted.length) break;
+        const module = await loader.load(candidate);
+        for (const workflow of wanted)
+          if (!found.has(workflow) && exportsWorkflow(module, workflow))
+            found.set(workflow, candidate);
+      }
+    const modules = new Map<string, string>();
+    for (const workflow of wanted) {
+      const modulePath = found.get(workflow);
+      if (modulePath === undefined)
+        throw new WorkflowDefinitionError(
+          `Package ${pkg.name}: no TypeScript module under ${manifestDirectory} default-exports workflow ${workflow.name}. Each workflow must be the default export of its own .ts, .mts or .cts module in the package, because the run records that module as its entrypoint.`,
+        );
+      modules.set(workflow.name, modulePath);
+    }
+    const selectedPath = selected === undefined ? undefined : modules.get(selected.name);
     return {
       package: pkg,
-      definition: selected as unknown as WorkflowDefinition<unknown, unknown>,
-      modulePath,
+      selected:
+        selected === undefined || selectedPath === undefined
+          ? null
+          : {
+              definition: selected as unknown as WorkflowDefinition<unknown, unknown>,
+              modulePath: selectedPath,
+            },
+      modules,
       ...(loader.dispose === undefined ? {} : { dispose: loader.dispose }),
     };
   } catch (cause) {

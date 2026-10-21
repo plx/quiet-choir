@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { compactWorkflowMetadata } from '../../cli/workflow-metadata-view.js';
 import { WorkflowCommand } from '../../cli/workflow-command.js';
 import { WorkflowExecutor } from '../../workflow/loader/executor.js';
+import { listingName } from '../../workflow/loader/registry.js';
 
 export default class WorkflowListDefinitions extends WorkflowCommand {
   public static override readonly strict = false;
@@ -30,9 +31,9 @@ export default class WorkflowListDefinitions extends WorkflowCommand {
     }),
   };
   public static override readonly summary =
-    'Discover trusted *.workflow.ts, .mts and .cts definitions in directories';
+    'Discover trusted *.workflow.ts, .mts and .cts definitions and *.quiet-choir packages in directories';
   public static override readonly description =
-    'Recursively type-checks and imports trusted modules without calling workflow bodies. Matching source fingerprints reuse private metadata caches. Duplicate names are errors.';
+    'Recursively type-checks and imports trusted modules without calling workflow bodies. Each workflow of a *.quiet-choir package is listed as <package>/<workflow> with the package metadata. Matching source fingerprints reuse private metadata caches. Duplicate listing names are errors.';
 
   public async run(): Promise<void> {
     const { argv, flags } = await this.parse(WorkflowListDefinitions);
@@ -62,7 +63,7 @@ export default class WorkflowListDefinitions extends WorkflowCommand {
         result.definitions
           .map(
             (entry) =>
-              `${entry.workflow.name}@${entry.workflow.version}\t${entry.entrypoint}${entry.workflow.description ? `\t${entry.workflow.description}` : ''}`,
+              `${listingName(entry)}@${entry.workflow.version}\t${entry.entrypoint}${entry.workflow.description ? `\t${entry.workflow.description}` : ''}${entry.package?.description ? `\tpackage ${entry.package.name}@${entry.package.version}: ${entry.package.description}` : ''}`,
           )
           .join('\n') || 'No workflow definitions found.',
       );

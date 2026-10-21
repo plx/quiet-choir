@@ -108,12 +108,14 @@ export default class WorkflowExecute extends WorkflowCommand {
     if (args.file === undefined && !flags.resume)
       this.fail('usage.flag', 'A workflow file is required unless --resume --run-id is used.');
     // A path, a TypeScript file name or a .quiet-choir package name is a file argument, so a
-    // missing one is a file error rather than a registry lookup.
+    // missing one is a file error rather than a registry lookup. A missing `<package>/<workflow>`
+    // spelling is the registry name of a package workflow (ADR 0065 section 3).
     const useRegistry =
       args.file !== undefined &&
       ((flags['registry-dir']?.length ?? 0) > 0 ||
         (!existsSync(args.file) &&
-          !/[\\/]|\.(?:ts|tsx|mts|cts)$|\.quiet-choir$/iu.test(args.file)));
+          !/\.(?:ts|tsx|mts|cts)$|\.quiet-choir$/iu.test(args.file) &&
+          (!/[\\/]/u.test(args.file) || /^[a-z][a-z0-9-]{0,63}\/[^/\\]+$/u.test(args.file))));
     if (flags.workflow !== undefined && (args.file === undefined || useRegistry))
       this.fail(
         'usage.flag',
