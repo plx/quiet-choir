@@ -14,6 +14,7 @@ import { analyzeTypecheckEntrypoint } from '../typecheck/plan.js';
 import type { TypecheckPlan } from '../typecheck/model.js';
 import type { ValidatedWorkflow, WorkflowCommandResult } from './model.js';
 import { workflowLaunch } from './source.js';
+import { promptRootFiles } from '../prompts/check.js';
 
 const metadata: z.ZodType<WorkflowDescription> = z.lazy(() =>
   z.object({
@@ -41,6 +42,20 @@ const metadata: z.ZodType<WorkflowDescription> = z.lazy(() =>
     outputSchema: z.json(),
     capabilities: capabilityManifestSchema,
     profiles: z.record(z.string(), capabilityManifestSchema.shape.defaults),
+    prompts: z.array(
+      z.object({
+        root: z.string(),
+        entries: z.array(
+          z.object({
+            name: z.string(),
+            file: z.string(),
+            description: z.string().nullable(),
+            variables: z.array(z.string()),
+            warnings: z.array(z.string()),
+          }),
+        ),
+      }),
+    ),
     children: z.array(metadata),
     recursive: z.boolean(),
     entrypoint: z.string().nullable(),
@@ -67,9 +82,11 @@ const validation = z.object({
 // (#103); they are never served and are rewritten with the redacted manifest. Version 4: version 3
 // results may hold plaintext registered harness options now listed in sensitiveOptions (#247).
 // Version 5 (#345): entries are keyed on the engine code and toolchain digest; version 4 entries
-// keyed on the version string alone are revalidated and rewritten.
+// keyed on the version string alone are revalidated and rewritten. Version 6 (#581): results gain
+// the checked `prompts` section and entries list every file under each prompt root as a source, so
+// a template edit invalidates them; version 5 entries have neither and are revalidated.
 const cache = z.object({
-  version: z.literal(5),
+  version: z.literal(6),
   engine: z.string(),
   plan: z.json(),
   sources: z.record(z.string(), z.string()),
@@ -123,6 +140,14 @@ async function cacheSources(
     for (const extended of sourceFile.extendedSourceFiles ?? [])
       sources[resolve(extended)] = hash(await readFile(extended));
   }
+  // Templates are read at validation, not compiled, so every file under a declared prompt root
+  // is a source too (ADR 0064 section 4 makes the same set an execution dependency).
+  const roots = (workflow: WorkflowDescription): string[] => [
+    ...workflow.prompts.map((set) => set.root),
+    ...workflow.children.flatMap(roots),
+  ];
+  for (const root of new Set(roots(result.workflow)))
+    for (const file of promptRootFiles(root)) sources[file] = hash(await readFile(file));
   const lockfiles = ['package-lock.json', 'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'yarn.lock'];
   let directory = dirname(plan.entrypoint);
   for (;;) {
@@ -263,7 +288,7 @@ export async function listDefinitions(
           const temporary = `${path}.${randomUUID()}.tmp`;
           await writeFile(
             temporary,
-            JSON.stringify({ version: 5, engine, plan, sources, result }),
+            JSON.stringify({ version: 6, engine, plan, sources, result }),
             {
               mode: 0o600,
               flag: 'wx',

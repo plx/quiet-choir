@@ -37,6 +37,7 @@ export type {
   WorkflowDeclaration,
   WorkflowDescription,
   WorkflowPhase,
+  WorkflowPromptSet,
 } from './workflow/runtime/child-model.js';
 export type {
   AgentDiagnostics,

@@ -5,6 +5,8 @@ import { jsonValue } from './json.js';
 import { capabilityManifest } from './profiles.js';
 import { schemaJson } from './schema.js';
 import { checkWorktreePolicy } from './worktree-policy.js';
+import { checkPromptSets, type PromptSetCheck } from '../prompts/check.js';
+import { promptSetDescriptor, type PromptSetDescriptor } from '../prompts/prompt.js';
 
 const metadataSchema = z.object({
   description: z.string().min(1).optional(),
@@ -49,6 +51,14 @@ export function checkedDefinition(value: unknown): WorkflowDeclaration {
     throw new Error(
       `Workflow ${String(definition['name'])} roster must be a defineRoster({ ... }) object of named entries.`,
     );
+  const prompts = definition['prompts'];
+  if (
+    prompts !== undefined &&
+    (!Array.isArray(prompts) || prompts.some((set) => promptSetDescriptor(set) === undefined))
+  )
+    throw new Error(
+      `Workflow ${String(definition['name'])} prompts must be an array of definePrompts(...) sets.`,
+    );
   if (definition['requireGrants'] !== undefined && typeof definition['requireGrants'] !== 'boolean')
     throw new Error(`Workflow ${String(definition['name'])} requireGrants must be a boolean.`);
   if (definition['worktrees'] !== undefined)
@@ -73,6 +83,22 @@ export function describeWorkflow(
     children: WorkflowDescription[];
   };
   const requireGrants = checkedDefinition(value).requireGrants === true;
+  // ADR 0064 section 3: every node's prompt sets are checked; a set shared by several nodes once.
+  const checkedSets = new Map<PromptSetDescriptor, PromptSetCheck>();
+  const promptErrors: string[] = [];
+  const promptSets = (definition: WorkflowDeclaration): PromptSetCheck[] =>
+    (definition.prompts ?? []).map((set) => {
+      const descriptor = promptSetDescriptor(set);
+      if (descriptor === undefined) throw new Error('Unreachable: checked prompt set.');
+      let checked = checkedSets.get(descriptor);
+      if (checked === undefined) {
+        const result = checkPromptSets([descriptor]);
+        promptErrors.push(...result.errors);
+        checked = result.sets[0] ?? { root: descriptor.root, entries: [] };
+        checkedSets.set(descriptor, checked);
+      }
+      return checked;
+    });
   const node = (
     value: unknown,
     source: string | null,
@@ -104,6 +130,7 @@ export function describeWorkflow(
             return profile ? [[name, profile]] : [];
           }),
         ),
+        prompts: promptSets(definition),
         children: [],
         recursive: false,
         entrypoint: source,
@@ -130,5 +157,9 @@ export function describeWorkflow(
       pending.push({ ...next, ancestors: [...ancestors, definition] });
     }
   }
+  if (promptErrors.length > 0)
+    throw new Error(
+      `Workflow ${root.definition.name} prompt templates failed their load-time checks:\n${promptErrors.map((error) => `- ${error}`).join('\n')}`,
+    );
   return root.description;
 }
