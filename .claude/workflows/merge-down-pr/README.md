@@ -124,6 +124,14 @@ is dismissed with the triage's justification ("used in tests" for test files). A
 refuses to merge while the PR has open alerts. Early in the #32 merge-down, two PRs landed with
 CodeQL threads nobody had answered, which is why this rule exists (see #105).
 
+### Duplicate check runs
+
+A commit's check rollup keeps every run of a check: re-run attempts, and workflow runs that a
+concurrency group cancelled when a duplicate run started for the same commit. CI is judged on one
+entry per check (per workflow and name): cancelled runs count only when no sibling ran, and of the
+rest the newest wins. In the #643 landing a cancelled duplicate CI run was read as nine failures
+beside the passing run.
+
 ### Stale head views
 
 GitHub can keep reporting the old head for a while after a push. For `--stale-grace` seconds (90

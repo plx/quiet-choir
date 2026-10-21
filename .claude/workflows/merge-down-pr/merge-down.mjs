@@ -207,11 +207,34 @@ function prDir(P, pr) {
 // ---------------------------------------------------------------------------------------------
 // GitHub state
 
-function ciSummary(rollup) {
+// One entry per check. A commit's rollup keeps every run of a check: a re-run attempt, or a workflow
+// run that a concurrency group cancelled when a duplicate run started for the same commit. In the
+// #643 landing a cancelled duplicate CI run read as nine failures beside the passing run, and the
+// gate spent its repair rounds on nothing. A cancelled run counts only when no sibling ran; of the
+// rest, the newest is the check's state.
+function latestChecks(rollup) {
+  const groups = new Map();
+  for (const c of rollup ?? []) {
+    const key =
+      c.__typename === 'StatusContext'
+        ? `status:${c.context}`
+        : `check:${c.workflowName ?? ''}:${c.name}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(c);
+  }
+  return [...groups.values()].map((runs) => {
+    const live = runs.filter((c) => c.conclusion !== 'CANCELLED');
+    return (live.length ? live : runs).reduce((a, b) =>
+      String(b.startedAt ?? '') > String(a.startedAt ?? '') ? b : a,
+    );
+  });
+}
+
+export function ciSummary(rollup) {
   const failed = [];
   const pending = [];
   let passed = 0;
-  for (const c of rollup ?? []) {
+  for (const c of latestChecks(rollup)) {
     const name = c.name ?? c.context ?? 'unknown';
     if (c.__typename === 'StatusContext') {
       if (c.state === 'SUCCESS') passed++;
