@@ -298,6 +298,31 @@ it('rejects a workflow whose prompt set fails its checks before the body runs', 
       { stateDir, runId: 'parent', input: null, harness: capture().harness },
     ),
   ).rejects.toThrow(/Prompt Bad \(Bad\.md\)/u);
+  // An undeclared child invoked by definition is checked when it starts, before its body runs.
+  let childRan = false;
+  const dynamic = defineWorkflow({
+    ...base,
+    name: 'dynamic',
+    prompts: [set],
+    run: async (ctx) => {
+      childRan = true;
+      await ctx.step('first', { input: null, schema: z.null(), run: () => null });
+      return null;
+    },
+  });
+  await expect(
+    runs.run(
+      defineWorkflow({
+        ...base,
+        name: 'dynamic-parent',
+        run: (ctx) => ctx.workflow('dynamic', dynamic, null),
+      }),
+      { stateDir, runId: 'dynamic-parent', input: null, harness: capture().harness },
+    ),
+  ).rejects.toThrow(/Prompt Bad \(Bad\.md\)/u);
+  expect(childRan).toBe(false);
+  const dynamicRecord = await readRun({ stateDir, runId: 'dynamic-parent' });
+  expect(Object.keys(dynamicRecord.steps).filter((id) => id.includes('first'))).toEqual([]);
   await expect(
     runs.run(
       defineWorkflow({ ...base, name: 'valid', prompts: [prompts], run: () => Promise.resolve(1) }),
