@@ -118,7 +118,9 @@ over template directories, because reformatting changes the rendered text.
   `"it\'s.md"` names `it's.md`, and a malformed escape is an error.
 - The loader refuses absolute paths, backslashes, NUL bytes and any path that normalizes outside the
   root. It also refuses a file whose real path is outside the root's real path, so a symlink cannot
-  escape the root. A symlink that stays inside the root is followed.
+  escape the root, and a path through a directory symlink that leaves the root or loops back to an
+  ancestor directory (such as `sub/up/A.md` with `sub/up -> ..`), which the fingerprint walk below
+  skips. Any other symlink that stays inside the root is followed.
 - By convention, shared fragments live under `root/_fragments/`. A fragment sees its includer's
   context, including loop variables. It loses its own final newline, so leave a blank line after the
   `include` tag where the output needs one.
@@ -184,8 +186,9 @@ field is `[]` when a node declares no prompt sets:
 `validate` and `execute` also log each warning at `warn` level on stderr. The `list-defs` cache
 treats every file under a declared prompt root as a source, including a file symlink (hashed by its
 target's real path and contents) and the files under a directory symlink that stays inside the root
-(listed at the path a render reads), so editing a template or retargeting a link, even to identical
-contents, revalidates the entry without `--refresh`.
+and does not loop back to an ancestor directory (listed at the path a render reads), so editing a
+template or retargeting a link, even to identical contents, revalidates the entry without
+`--refresh`.
 
 ## Templates as execution dependencies
 
@@ -203,7 +206,9 @@ workflow, so `workflow validate --json` (`workflow.identity.files`), `workflow c
   to the project root (the directory of the nearest `package.json` or the selected tsconfig), such
   as `prompts/Review.md` or `prompts/_fragments/header.md`. The value is the SHA-256 of the bytes a
   render reads, through any in-root link, so retargeting a link changes the hash under the link's
-  own path.
+  own path. The walk skips a directory symlink that leaves the root or loops back to an ancestor
+  directory, and the loader refuses any template path through one, so every file a render reads is
+  hashed.
 - **Resume.** A changed, added or removed file under a root is a code change: resume and
   `check-resume` refuse it with `Workflow code (prompts/Review.md) changed; ...` and list the path
   in the report's `files`. `--accept-code-change` waives the run-level check and records the files

@@ -74,8 +74,9 @@ description: Review a diff against the issue it claims to close.
   custom filters or globals, no date-time functions and no `dict.items()`.
 - `random`, `randrange` and `lipsum` are removed, and any tag that names them fails the check.
 - `include`, `extends`, `import` and `from` take exactly one string literal, resolved relative to
-  the including file and confined to the root (no `..`, absolute path or escaping symlink). A
-  computed target, a list and `ignore missing` are refused. From `_fragments/a.md`, `"b.md"` means
+  the including file and confined to the root (no `..`, absolute path, escaping symlink, or path
+  through a directory symlink back to an ancestor directory such as `sub/up -> ..`). A computed
+  target, a list and `ignore missing` are refused. From `_fragments/a.md`, `"b.md"` means
   `_fragments/b.md`.
 - Front matter, if the file starts with `---`, may hold only `description:` with a string value; any
   other key is an error. It never reaches the rendered text, and the entry's `description` wins.
@@ -111,7 +112,9 @@ retried, and is never journaled as a settled item.
 Every file under each declared prompt root of the static workflow tree (the workflow's `prompts` and
 its declared children's), referenced or not, joins `workflow.identity.files` and `launch.sources`
 beside the TypeScript sources, keyed by its path from the project root such as `prompts/Review.md`.
-Validate, `check-resume` and execute report the same fingerprint.
+Validate, `check-resume` and execute report the same fingerprint. A directory symlink that leaves
+the root or loops back to an ancestor is not walked, and a template path through one is refused, so
+every file a render reads is hashed.
 
 - Editing, adding or removing any file under a root between runs is a code change: resume and
   `check-resume` refuse with `Workflow code (prompts/Review.md) changed; ...`, the path also in

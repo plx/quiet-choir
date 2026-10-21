@@ -8,7 +8,9 @@
   adds every file under each prompt root of the static workflow tree, referenced or not, to the
   source fingerprint beside the TypeScript sources: keyed by the root's real path plus the file's
   in-root path relative to the project root (such as `prompts/Review.md`), hashed by the bytes a
-  render reads, with no exclusions. `workflow validate --json` (`workflow.identity.files`),
+  render reads, with no exclusions. The walk skips a directory symlink that leaves the root or loops
+  back to an ancestor directory, and the loader now refuses a template path through one, so every
+  file a render reads is hashed. `workflow validate --json` (`workflow.identity.files`),
   `check-resume`, `execute` and the run's `launch.sources` report the same identity. A template or
   fragment edit is refused on resume with `Workflow code (prompts/Review.md) changed; ...`;
   `--accept-code-change` waives it and records the files in `codeChanges`, while a completed step
