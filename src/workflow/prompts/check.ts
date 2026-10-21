@@ -5,7 +5,7 @@ import { createPromptEnvironment, engineFailure, type PromptEnvironment } from '
 import { promptLabel } from './error.js';
 import { joinTemplateName, templateNameProblem } from './paths.js';
 import type { PromptSetDescriptor } from './prompt.js';
-import { scanTemplate, type TemplateDependency } from './scan.js';
+import { scanTemplate } from './scan.js';
 
 // ADR 0064 section 3: the static checks that `workflow validate`, the execute preflight,
 // `list-defs` and `runWorkflow` run on every declared prompt set before any effect. Results are
@@ -94,12 +94,6 @@ function missingPath(shape: Readonly<Record<string, unknown>>, path: string): st
   return null;
 }
 
-/** One template reached from an entry, and whether it reads the entry's context. */
-interface Reached {
-  readonly name: string;
-  readonly context: boolean;
-}
-
 function checkEntry(
   environment: PromptEnvironment,
   root: string,
@@ -137,43 +131,34 @@ function checkEntry(
     };
   }
 
-  // The include/extends/import closure, scanned once per template; a template reads the entry's
-  // context when reached from it through include and extends only (imported macros do not).
-  const scanned = new Map<string, readonly TemplateDependency[]>();
-  const readers = new Set<string>();
-  const queue: Reached[] = [{ name: entry.file, context: true }];
+  // The include/extends/import closure, scanned once per template. Every template reached from the
+  // entry reads its context: MiniJinja gives an imported macro the render's root context whatever
+  // the import's context clause says, so `import` and `from` count like `include` and `extends`.
+  const scanned = new Set<string>();
+  const queue: string[] = [entry.file];
   while (queue.length > 0) {
     const current = queue.shift();
     if (current === undefined) break;
-    let dependencies = scanned.get(current.name);
-    const firstVisit = dependencies === undefined;
-    if (dependencies === undefined) {
-      const source = current.name === entry.file ? entrySource : read(current.name);
-      if (source === undefined || source === null) {
-        scanned.set(current.name, []);
-        continue;
-      }
-      const scan = scanTemplate(source.text);
-      for (const problem of scan.problems)
-        error(`${at(current.name, problem.line)}: ${problem.message}`);
-      dependencies = scan.dependencies;
-      scanned.set(current.name, dependencies);
+    if (scanned.has(current)) continue;
+    const source = current === entry.file ? entrySource : read(current);
+    if (source === undefined || source === null) {
+      scanned.add(current);
+      continue;
     }
-    const upgraded = current.context && !readers.has(current.name);
-    if (upgraded) readers.add(current.name);
-    if (!firstVisit && !upgraded) continue;
-    for (const dependency of dependencies) {
-      const target = joinTemplateName(dependency.target, current.name);
+    const scan = scanTemplate(source.text);
+    for (const problem of scan.problems) error(`${at(current, problem.line)}: ${problem.message}`);
+    scanned.add(current);
+    for (const dependency of scan.dependencies) {
+      const target = joinTemplateName(dependency.target, current);
       const problem = templateNameProblem(target);
-      const where = at(current.name, dependency.line);
+      const where = at(current, dependency.line);
       if (problem !== null) {
-        if (firstVisit)
-          error(
-            `${where}: ${dependency.keyword} target ${JSON.stringify(dependency.target)} ${problem}`,
-          );
+        error(
+          `${where}: ${dependency.keyword} target ${JSON.stringify(dependency.target)} ${problem}`,
+        );
         continue;
       }
-      if (firstVisit && !scanned.has(target)) {
+      if (!scanned.has(target)) {
         let exists: boolean;
         try {
           exists = environment.read(target) !== null;
@@ -185,20 +170,16 @@ function checkEntry(
           error(
             `${where}: ${dependency.keyword} target ${JSON.stringify(dependency.target)} (${target}) does not exist under the prompt root`,
           );
-          scanned.set(target, []);
+          scanned.add(target);
           failed.add(target);
           continue;
         }
       }
-      queue.push({
-        name: target,
-        context:
-          current.context && (dependency.keyword === 'include' || dependency.keyword === 'extends'),
-      });
+      queue.push(target);
     }
   }
 
-  // Parse every template in the closure, and collect the variables the context readers use.
+  // Parse every template in the closure, and collect the variables they read.
   const undeclared = (file: string, nested: boolean): string[] | undefined => {
     if (failed.has(file)) return undefined;
     try {
@@ -221,11 +202,9 @@ function checkEntry(
   const keys = Object.keys(shape);
   const variables = (undeclared(entry.file, false) ?? []).sort();
   const used = new Set(variables);
-  for (const file of scanned.keys()) {
+  for (const file of scanned) {
     if (file === entry.file) continue;
-    const fragment = undeclared(file, false);
-    if (fragment !== undefined && readers.has(file))
-      for (const variable of fragment) used.add(variable);
+    for (const variable of undeclared(file, false) ?? []) used.add(variable);
   }
   for (const variable of variables)
     if (!Object.hasOwn(shape, variable))
@@ -256,7 +235,7 @@ function checkEntry(
  * literal without `ignore missing` that resolves inside the root and exists; no template names
  * `random`, `randrange` or `lipsum`; the entry's undeclared variables are schema keys, and dotted
  * paths match plain object schemas (best effort). A schema key that neither the entry nor its
- * include/extends closure reads is a warning. Fragments are parsed but not held to the schema,
+ * include/extends/import closure reads is a warning. Fragments are parsed but not held to the schema,
  * since they may read the loop variables of the template that includes them. @internal
  */
 export function checkPromptSets(descriptors: readonly PromptSetDescriptor[]): PromptChecks {

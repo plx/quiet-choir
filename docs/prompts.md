@@ -153,11 +153,12 @@ known, the file and line of the problem. Checks fail when:
   walk unwraps `optional`, `nullable`, `default` and `readonly`. It stops at arrays, records,
   unions, other schemas, and objects with a catchall or passthrough.
 
-A `params` key that neither the entry nor anything it includes or extends reads is a warning, not an
-error. Variables read only by imported macros do not count, since macros do not see the caller's
-context. Fragments are not held to the schema, because a fragment may read its includer's loop
-variables. A misspelled variable in a fragment is therefore caught only at render, where strict
-undefined still makes it a fatal `PromptError`.
+A `params` key that neither the entry nor anything it includes, extends or imports reads is a
+warning, not an error. Variables read inside imported macros count: MiniJinja gives a macro the
+render's context whatever the `import` or `from` tag's context clause says. Fragments are not held
+to the schema, because a fragment may read its includer's loop variables. A misspelled variable in a
+fragment is therefore caught only at render, where strict undefined still makes it a fatal
+`PromptError`.
 
 `workflow validate --json` and `list-defs --json` publish the results as `prompts` on each node. The
 field is `[]` when a node declares no prompt sets:

@@ -84,15 +84,15 @@ description: Review a diff against the issue it claims to close.
 
 ## Checks and errors
 
-| Check                                                     | Result  |
-| --------------------------------------------------------- | ------- |
-| Entry file missing or unparsable; a fragment unparsable   | Error   |
-| Dependency target computed, a list, `ignore missing`      | Error   |
-| Dependency target outside the root or missing             | Error   |
-| `\| random`, `randrange`, `lipsum` in a tag               | Error   |
-| Entry reads a variable `params` does not declare          | Error   |
-| Dotted path missing from a plain `z.object` (best effort) | Error   |
-| `params` key nothing in the entry or its includes reads   | Warning |
+| Check                                                            | Result  |
+| ---------------------------------------------------------------- | ------- |
+| Entry file missing or unparsable; a fragment unparsable          | Error   |
+| Dependency target computed, a list, `ignore missing`             | Error   |
+| Dependency target outside the root or missing                    | Error   |
+| `\| random`, `randrange`, `lipsum` in a tag                      | Error   |
+| Entry reads a variable `params` does not declare                 | Error   |
+| Dotted path missing from a plain `z.object` (best effort)        | Error   |
+| `params` key nothing in the entry, its includes or imports reads | Warning |
 
 `workflow validate --json` lists each node's checked sets under `workflow.prompts` (`[]` without
 any): `{ root, entries: [{ name, file, description, variables, warnings }] }`. Errors fail

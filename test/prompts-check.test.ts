@@ -210,7 +210,7 @@ describe('checkPromptSets results', () => {
     });
   });
 
-  it('prefers the entry description, and counts an extends parent but not an imported macro', async () => {
+  it('prefers the entry description, and counts an extends parent and its imported macro', async () => {
     const { errors, entry } = await check(
       {
         'Main.md':
@@ -225,9 +225,31 @@ describe('checkPromptSets results', () => {
     );
     expect(errors).toEqual([]);
     expect(entry?.description).toBe('From the entry');
+    expect(entry?.warnings).toEqual([]);
+  });
+
+  // An imported macro reads the render's root context whatever the import's context clause says.
+  it.for([
+    ['import as', '{% import "_fragments/m.md" as m %}{{ m.show() }}'],
+    ['import as with context', '{% import "_fragments/m.md" as m with context %}{{ m.show() }}'],
+    [
+      'import as without context',
+      '{% import "_fragments/m.md" as m without context %}{{ m.show() }}',
+    ],
+    ['from import', '{% from "_fragments/m.md" import show %}{{ show() }}'],
+  ] as const)('counts a key read only inside a macro reached by %s', async ([, main]) => {
+    const { directory, errors, entry } = await check(
+      { 'Main.md': main, '_fragments/m.md': '{% macro show() %}{{ secret }}{% endmacro %}' },
+      z.object({ secret: z.string(), unused: z.string().optional() }),
+    );
+    expect(errors).toEqual([]);
     expect(entry?.warnings).toEqual([
-      'Prompt Main (Main.md): parameter macroOnly is never read by the template or its includes',
+      'Prompt Main (Main.md): parameter unused is never read by the template or its includes',
     ]);
+    const set = definePrompts(directory, {
+      Main: { file: 'Main.md', params: z.object({ secret: z.string() }) },
+    });
+    expect(set.Main({ secret: 'S' }).text).toBe('S');
   });
 
   it('accepts engine globals, loop variables, prose about random, and tags inside comments and raw blocks', async () => {
