@@ -14,7 +14,7 @@ const perCallOnly: ReadonlySet<string> = new Set([
   'retry',
   'images',
 ]);
-/** Keys both `bind` and a call may set. */
+/** Keys both `bind` and a call may set; the only keys a bound agent binds again. */
 const bothSides: ReadonlySet<string> = new Set(['addDirs', 'timeoutMs', 'idleTimeoutMs']);
 
 type Options = Readonly<Record<string, unknown>>;
@@ -51,14 +51,21 @@ function frozen(value: unknown, key: string, ancestors: readonly unknown[] = [])
   return Object.freeze(copy);
 }
 
-/** Deep-copy and freeze the defined bound options, rejecting per-call-only keys. */
-function snapshot(bound: unknown): Options {
+/**
+ * Deep-copy and freeze the defined bound options, rejecting per-call-only keys. A re-bind (`again`)
+ * may set only the both-sides keys: the first bind fixed every other one.
+ */
+function snapshot(bound: unknown, again: boolean): Options {
   if (!isOptions(bound)) throw new TypeError('bind options must be an object.');
   const copy: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(bound)) {
     if (value === undefined) continue;
     if (perCallOnly.has(key))
       throw new TypeError(`bind cannot set ${key}; it is a per-call option (ADR 0063).`);
+    if (again && !bothSides.has(key))
+      throw new TypeError(
+        `A bound agent cannot bind ${key} again; the first bind fixed it (ADR 0063).`,
+      );
     if (key === 'addDirs') directories(value, 'bind');
     copy[key] = frozen(value, key);
   }
@@ -86,17 +93,8 @@ function merge(bound: Options, call: unknown): Options {
   return merged;
 }
 
-/**
- * Bind `options` over `client` (ADR 0063 section 2). Validation and the snapshot are synchronous;
- * binding claims no step ID and reads no run state. A call delegates synchronously, so the step ID
- * prefix is the one in effect where the bound agent is invoked. @internal
- */
-export function bindAgent<TOptions extends AgentOptions>(
-  client: AgentClient<TOptions>,
-  options: BindOptions<TOptions>,
-): AgentClient<BoundOptionsOf<TOptions>> {
-  const target = client as unknown as Methods;
-  const bound = snapshot(options);
+function layer(client: Methods, options: unknown, again: boolean): Methods {
+  const bound = snapshot(options, again);
   const forward =
     (method: keyof Methods): Call =>
     (id, call) => {
@@ -106,13 +104,28 @@ export function bindAgent<TOptions extends AgentOptions>(
       } catch (error) {
         return Promise.reject(error instanceof Error ? error : new TypeError(String(error)));
       }
-      return target[method](id, merged);
+      return client[method](id, merged);
     };
-  const agent = {
+  const agent: Methods & { readonly bind: (more: unknown) => Methods } = {
     value: forward('value'),
     text: forward('text'),
     object: forward('object'),
-    bind: (more: Options) => bindAgent(agent as unknown as AgentClient<AgentOptions>, more),
+    bind: (more) => layer(agent, more, true),
   };
-  return agent as unknown as AgentClient<BoundOptionsOf<TOptions>>;
+  return agent;
+}
+
+/**
+ * Bind `options` over `client` (ADR 0063 section 2). Validation and the snapshot are synchronous;
+ * binding claims no step ID and reads no run state. A call delegates synchronously, so the step ID
+ * prefix is the one in effect where the bound agent is invoked. The returned agent binds again
+ * over the both-sides keys only. @internal
+ */
+export function bindAgent<TOptions extends AgentOptions>(
+  client: AgentClient<TOptions>,
+  options: BindOptions<TOptions>,
+): AgentClient<BoundOptionsOf<TOptions>> {
+  return layer(client as unknown as Methods, options, false) as unknown as AgentClient<
+    BoundOptionsOf<TOptions>
+  >;
 }

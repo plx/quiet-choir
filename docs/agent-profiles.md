@@ -145,7 +145,9 @@ A registered harness whose `structuredOutput` is `'none'` binds to a text-only a
 `object` or a schema-bearing `value`, which a helper taking a structured `Agent` rejects at
 typecheck; `Agent<{ structuredOutput: 'none' }>` accepts both kinds. A registered harness's agent
 keeps only the both-sides keys its own option schema declares. An agent binds again over the
-both-sides keys: `reviewer.bind({ addDirs: ['docs'] })` appends to its directories.
+both-sides keys only: `reviewer.bind({ addDirs: ['docs'] })` appends to its directories, while
+`reviewer.bind({ model: 'haiku' })` fails typecheck and, untyped, throws a `TypeError` naming the
+key, which the first bind fixed.
 
 `bind({ profile: 'scout' })` lifts a declared role into a value and resolves exactly as a raw
 `{ profile: 'scout' }` call, until rosters replace profiles. Under `strictProfiles: true`, `bind`

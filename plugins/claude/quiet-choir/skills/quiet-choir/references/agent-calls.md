@@ -77,6 +77,8 @@ export default defineWorkflow({
   schema on `value`), which a parameter typed `Agent` rejects; use
   `Agent<{ structuredOutput: 'none' }>` for helpers that only need text. `Agent` defaults to
   `NativeHarnessCapabilities`.
+- A bound agent binds again over `addDirs`, `timeoutMs` and `idleTimeoutMs` only; any other key
+  fails typecheck and throws a `TypeError` at runtime, since the first bind fixed it.
 - `bind({ profile: 'scout' })` resolves like a raw `profile: 'scout'` call. Under
   `strictProfiles: true`, `bind` rejects strict-owned keys such as `tools` just as a call does.
 

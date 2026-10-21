@@ -302,7 +302,7 @@ it('names a call where it is invoked, keeping a ctx.within prefix', async ({ run
   ]);
 });
 
-it('refuses per-call-only keys at bind and unbound keys before a bound call launches', async ({
+it('refuses per-call-only keys at bind, fixed keys at a re-bind and unbound keys before a bound call launches', async ({
   runs,
   stateDir,
 }) => {
@@ -337,6 +337,17 @@ it('refuses per-call-only keys at bind and unbound keys before a bound call laun
     await expect(agent.value('dirs', untyped({ prompt, addDirs: 'b' }))).rejects.toThrow(
       'A bound agent call addDirs must be an array.',
     );
+    // A re-bind may set only the both-sides keys; the first bind fixed the rest.
+    expect(() => (agent.bind as (options: unknown) => unknown)({ model: 'haiku' })).toThrow(
+      new TypeError('A bound agent cannot bind model again; the first bind fixed it (ADR 0063).'),
+    );
+    expect(() => agent.bind(untyped({ tools: ['Bash'], timeoutMs: 1 }))).toThrow(
+      'A bound agent cannot bind tools again',
+    );
+    expect(() => agent.bind(untyped({ prompt }))).toThrow(
+      'bind cannot set prompt; it is a per-call option (ADR 0063).',
+    );
+    agent.bind({ addDirs: ['a'], timeoutMs: 1, idleTimeoutMs: 1 });
     // An undefined non-bound key is absent, as optionData treats it.
     return agent.value('fine', untyped({ prompt, model: undefined }));
   });
