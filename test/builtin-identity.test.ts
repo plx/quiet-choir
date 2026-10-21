@@ -16,7 +16,15 @@ import {
   type StepContext,
   type WorkflowContext,
 } from '../src/index.js';
-import { decision } from '../src/integrations/decision.js';
+import {
+  choice,
+  decision,
+  defineDecisionProvider,
+  noul,
+  score,
+  type DecideOptions,
+  type DecisionProviderDeclaration,
+} from '../src/integrations/decision.js';
 import {
   codeqlReviewer,
   codexReviewer,
@@ -51,7 +59,7 @@ function message(name: string): string {
     `Pinned built-in step identity changed: ${name}.`,
     `Changing it makes completed steps of existing suspended runs refuse on resume with "changed on a completed step".`,
     `Do not just update the golden: see docs/decisions/0005-step-identity-and-policy.md and the durability reference, plugins/*/quiet-choir/skills/quiet-choir/references/durability.md.`,
-    `Bump a built-in's version constant (now/1, decision/1) only for a deliberate behavior change, and record the one-time break in CHANGELOG.md.`,
+    `Bump a built-in's version constant (now/1, decision/1, decision/2) only for a deliberate behavior change, and record the one-time break in CHANGELOG.md.`,
   ].join('\n');
 }
 
@@ -157,6 +165,122 @@ describe('built-in step identity', () => {
       },
       fingerprint: '4cf8b45f2059dd887e31d9b30a0acf2749c551650d47f96c5025a42196afcc7a',
     });
+  });
+});
+
+describe('ctx.decide identity (decision/2)', () => {
+  const provider = (name = 'golden', revision = 1): DecisionProviderDeclaration =>
+    defineDecisionProvider({
+      name,
+      revision,
+      capabilities: {
+        kinds: ['noul', 'choice', 'score'],
+        maxOptions: 255,
+        levels: [2, 10],
+        idempotencyKey: false,
+      },
+      defaultModel: 'golden-latest',
+      transport: () => (request) =>
+        Promise.resolve({
+          body: {
+            model: 'golden-1',
+            answers: Object.fromEntries(
+              Object.entries(request.questions).map(([key, question]) => [
+                key,
+                question.type === 'noul'
+                  ? { noul: 0.5 }
+                  : question.type === 'choice'
+                    ? {
+                        choice: 'a',
+                        confidence: 1,
+                        probabilities: Object.fromEntries(
+                          Object.keys(question.options).map((option) => [
+                            option,
+                            option === 'a' ? 1 : 0,
+                          ]),
+                        ),
+                      }
+                    : {
+                        score: 0,
+                        confidence: 1,
+                        legend: question.levels,
+                        probabilities: question.levels.map((_, index) => (index === 0 ? 1 : 0)),
+                      },
+              ]),
+            ),
+          },
+        }),
+    });
+  const call: DecideOptions = {
+    state: { ticket: 'golden' },
+    questions: {
+      team: choice({ instructions: 'Which team?', options: { a: null, b: 'B' } }),
+      urgency: score({ instructions: 'How urgent?', levels: ['low', 'high'] }),
+      refund: noul({ instructions: 'Refund?' }),
+    },
+  };
+  const decided = async (
+    runId: string,
+    declaration: DecisionProviderDeclaration,
+    change: Partial<DecideOptions> = {},
+  ): Promise<StepRecordIdentity | undefined> => {
+    const definition = defineWorkflow({
+      name: 'builtin-identity',
+      version: '1',
+      input: z.null(),
+      output: z.null(),
+      decisions: [declaration],
+      run: async (ctx) => {
+        await ctx.decide('triage', { ...call, ...change });
+        return null;
+      },
+    });
+    await runWorkflow(definition, options({ runId }));
+    return (await recorded(runId))['triage'];
+  };
+
+  it('pins a fixed call without a callback component', async () => {
+    const step = await decided('golden', provider());
+    expect(step?.identity).not.toHaveProperty('callback');
+    pinned('ctx.decide version', step?.identity['version'], digest('decision/2'));
+    pinned(
+      'ctx.decide version digest',
+      digest('decision/2'),
+      '8c5619a3cbd5cdde9c8a035e6955e8f9a7ccb5ea8685ae1d7156cb7286a44fb9',
+    );
+    pinned('ctx.decide', step, {
+      identity: {
+        ...sharedComponents,
+        input: '282c33ca0b75b7f0babddeec1e2a66b54906cd2f7d2deddfec0ec412f3d7f99b',
+        schema: 'd5dec0aea6b8db27f707eb164b58fd82f4e9c7603d50f56550b6039d9556ea4f',
+        version: '8c5619a3cbd5cdde9c8a035e6955e8f9a7ccb5ea8685ae1d7156cb7286a44fb9',
+      },
+      fingerprint: '49f8a0d1339980f5486ea5ccc837e055b72d093f7eb7a4c983d37d46ec8ab05e',
+    });
+  });
+
+  it('changes with provider, revision, model, state and questions, not timeoutMs or retry', async () => {
+    const base = (await decided('base', provider()))?.fingerprint;
+    const variants: [string, DecisionProviderDeclaration, Partial<DecideOptions>][] = [
+      ['provider', provider('other'), {}],
+      ['revision', provider('golden', 2), {}],
+      ['model', provider(), { model: 'golden-2' }],
+      ['state', provider(), { state: { ticket: 'other' } }],
+      [
+        'questions',
+        provider(),
+        { questions: { ...call.questions, refund: noul({ instructions: 'Refund now?' }) } },
+      ],
+    ];
+    for (const [name, declaration, change] of variants)
+      expect((await decided(`changed-${name}`, declaration, change))?.fingerprint, name).not.toBe(
+        base,
+      );
+    for (const [name, change] of [
+      ['timeout', { timeoutMs: 1_000 }],
+      ['retry', { retry: { maxAttempts: 3, on: ['transient'] } }],
+    ] as const)
+      expect((await decided(`policy-${name}`, provider(), change))?.fingerprint, name).toBe(base);
   });
 });
 
