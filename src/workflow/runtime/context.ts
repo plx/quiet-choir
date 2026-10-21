@@ -1,16 +1,20 @@
 import type { AgentClient, AgentOptions, WorkflowContext } from './model.js';
 import { bindAgent, type BindHooks } from './bound-agent.js';
 import type { NameFrame, NameScopes } from './names.js';
+import { rosterReader } from './roster.js';
 
 /**
  * Bind an existing context without dropping overloads or eagerly reading its signal. `hooks` gives
- * the runtime's hooks for a harness, passed to the agents bound from its client. @internal
+ * the runtime's hooks for a harness, passed to the agents bound from its client. `roster` reads the
+ * roster of the definition running when `ctx.roster` is read, whose agents are rebuilt over this
+ * context's prefixed clients. @internal
  */
 export function bindContext(
   context: WorkflowContext,
   names: NameScopes,
   frame: NameFrame,
   hooks: (harness: string) => BindHooks = () => ({}),
+  roster: () => unknown = () => undefined,
 ): WorkflowContext {
   function bind<T extends (...args: never[]) => unknown>(method: T): T {
     // This transparent wrapper forwards the same arguments/result, including generic overloads.
@@ -35,6 +39,15 @@ export function bindContext(
     };
     return wrapped;
   }
+  const claude = client(context.claude, 'claude');
+  const codex = client(context.codex, 'codex');
+  const readRoster = rosterReader((harness) =>
+    harness === 'claude'
+      ? claude
+      : harness === 'codex'
+        ? codex
+        : client(context.agent(harness as Parameters<WorkflowContext['agent']>[0]), harness),
+  );
   return {
     runId: context.runId,
     cwd: context.cwd,
@@ -62,7 +75,10 @@ export function bindContext(
     step: bind(context.step.bind(context)),
     sleep: bind(context.sleep.bind(context)),
     map: bind(context.map.bind(context)),
-    claude: client(context.claude, 'claude'),
-    codex: client(context.codex, 'codex'),
+    claude,
+    codex,
+    get roster() {
+      return readRoster(roster()) as WorkflowContext['roster'];
+    },
   };
 }

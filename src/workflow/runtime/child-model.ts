@@ -29,6 +29,16 @@ export interface WorkflowDeclaration {
   readonly children?: readonly WorkflowDeclaration[];
   /** Named capability requirements. */
   readonly profiles?: Readonly<Record<string, AgentProfile>>;
+  /** Harness-pinned roster entries by name, from `defineRoster`; erased to their harness. */
+  readonly roster?: Readonly<
+    Record<
+      string,
+      {
+        /** The harness the entry is pinned to. */
+        readonly harness: string;
+      }
+    >
+  >;
   /** Implicit role and common agent settings. */
   readonly defaults?: AgentDefaults;
   /** Call-site capability policy. */

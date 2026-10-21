@@ -166,7 +166,15 @@ export interface ResolvedProfile extends Omit<
   };
   /** Name used for selection and diagnostics, outside step identity. */
   readonly name: string;
-  /** Maximum harness access, checked against an optional declaration. */
+  /**
+   * The one harness a roster entry is pinned to (ADR 0063 §4); absent for profiles and built-ins.
+   * A call that selects this role on another harness is refused, and `access` is this harness's.
+   */
+  readonly harness?: string;
+  /**
+   * Maximum harness access, checked against an optional declaration; for a roster entry, the
+   * pinned harness's access only.
+   */
   readonly access: AccessClass;
   /** Claude tools classification. */
   readonly claudeAccess: AccessClass;

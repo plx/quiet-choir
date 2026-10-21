@@ -11,7 +11,9 @@ import type {
 import { digest } from './json.js';
 import { canonicalPath, canonicalRoots, insideRoots, within } from './add-dir-roots.js';
 import { isAbsolute, resolve } from 'node:path';
+import { compileRoster } from './roster.js';
 import {
+  declaredRoleNames,
   profileGrantDigest,
   requireGrant,
   resolveCapabilities,
@@ -91,7 +93,8 @@ function declaredDenialPolicy(
   definition: WorkflowDeclaration,
   name: string,
 ): 'warn' | 'fail' | undefined {
-  const profiles = definition.profiles ?? {};
+  // Roster entries are declared roles too (#579); their own policy sits in the pinned block.
+  const profiles = { ...definition.profiles, ...compileRoster(definition).profiles };
   const seen = new Set<string>();
   for (let current: string | undefined = name; current !== undefined && !seen.has(current);) {
     seen.add(current);
@@ -328,10 +331,7 @@ export function delegateCapabilities(
     requireGrant(ceiling, parentGrants, parentPins);
     return inherited;
   };
-  for (const name of new Set([
-    manifest.defaultProfile,
-    ...Object.keys(definition.profiles ?? {}),
-  ])) {
+  for (const name of new Set([manifest.defaultProfile, ...declaredRoleNames(definition)])) {
     const role = manifest.profiles[name];
     if (role) checkProfile(name, role);
   }

@@ -196,6 +196,7 @@ import { ExecutionScopes } from './scopes.js';
 import { NameScopes } from './names.js';
 import { bindContext } from './context.js';
 import { bindAgent, type BindHooks } from './bound-agent.js';
+import { rosterReader } from './roster.js';
 import { execFailureFields, stepError, errorKind, rootCauseKind } from './step-error.js';
 import { stepEventError } from './step-event-error.js';
 import { ConfigurationError, GrantRequiredError } from './configuration-error.js';
@@ -3671,6 +3672,14 @@ export async function runWorkflow<
         true,
       );
     }
+    // Roster agents are bound over the context's own clients, so they share its bind hooks.
+    const readRoster = rosterReader((harness) =>
+      harness === 'claude'
+        ? context.claude
+        : harness === 'codex'
+          ? context.codex
+          : (context.agent as (name: string) => AgentClient<AgentOptions>)(harness),
+    );
     const context: WorkflowContext = {
       agent: (name: string) => client(name),
       workflow: children.invoke,
@@ -3948,9 +3957,14 @@ export async function runWorkflow<
           names,
           scopeEntry(() => names.bind(prefix)),
           bindHooks,
+          () => children.definition.roster,
         ),
       claude: client<ClaudeOptions>('claude'),
       codex: client<CodexOptions>('codex'),
+      // The running definition's roster, so an inline child sees its own entries (#579).
+      get roster() {
+        return readRoster(children.definition.roster) as WorkflowContext['roster'];
+      },
       step: <T, TMode extends ErrorMode = 'throw'>(
         leaf: string,
         step: StepDefinition<T> & { readonly onError?: TMode | undefined },

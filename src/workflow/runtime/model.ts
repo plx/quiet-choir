@@ -49,6 +49,7 @@ import type {
 import type { MapStepError } from './fan-out.js';
 import type { ModelUsage, TokenCounts } from './usage-model.js';
 import type { ChildOptions, WorkflowDeclaration, WorkflowPhase } from './child-model.js';
+import type { AnyRoster, EmptyRoster, RosterAgents } from './roster-model.js';
 
 /** A value that survives checkpoint serialization without changing its meaning. */
 export type JsonValue =
@@ -693,7 +694,9 @@ export type ChildOutputOf<TChildren, N extends string> =
  * `TAddDirProfile` is the set of `profile` values under which a strict Claude call may pass
  * `addDirs` (`undefined` for an omitted profile under a rooted default; see
  * {@link AddDirProfilesOf}); the default `string | undefined` admits them for every profile, so a
- * helper context that omits it stays permissive.
+ * helper context that omits it stays permissive. `TRoster` is the workflow's `roster` (a
+ * `defineRoster` result), which types `ctx.roster`; the default `any` gives every name a possibly
+ * text-only agent and keeps typed contexts assignable to bare `WorkflowContext` helpers.
  */
 export interface WorkflowContext<
   TProfile extends string = string,
@@ -704,6 +707,9 @@ export interface WorkflowContext<
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   TChildren extends readonly WorkflowDeclaration[] = any,
   TAddDirProfile extends string | undefined = string | undefined,
+  // `any` for the same reason as TChildren: typed and bare contexts stay mutually assignable.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  TRoster = any,
 > {
   /**
    * Select one explicitly registered harness; capabilities determine structured-output availability.
@@ -902,7 +908,16 @@ export interface WorkflowContext<
   /** Prefix every effect launched in the callback; nested scopes compose without counters. */
   scope<T>(prefix: string, run: () => Promise<T>): Promise<T>;
   /** Bind a lexical prefix to a reusable context; descendants retain their nested scope prefixes. */
-  within(prefix: string): WorkflowContext<TProfile, R, TStrict, TChildren, TAddDirProfile>;
+  within(prefix: string): WorkflowContext<TProfile, R, TStrict, TChildren, TAddDirProfile, TRoster>;
+  /**
+   * The workflow's roster agents by entry name (ADR 0063 section 3): `ctx.roster.Name` is the
+   * entry's pinned harness client bound to the entry, so its calls take only the prompt, schema,
+   * placement and policy, and resolve, fingerprint and record as a `profile: 'Name'` call does.
+   * Each read gives agents bound over this context, so `ctx.within(p).roster.Name` keeps the
+   * prefix. Inside an inline child it is the child's own roster. A workflow without `roster` has
+   * no entries; an untyped misspelled name is `undefined`.
+   */
+  readonly roster: RosterAgents<TRoster>;
   /**
    * Claude-specific headless API; a strict workflow omits profile-owned keys and admits `addDirs`
    * only with a profile that declares `claude.addDirRoots` (see {@link CallOptions}).
@@ -954,8 +969,9 @@ export interface WorkflowContext<
  * `TStrict`, `TChildren` and `TName` carry the literal `strictProfiles`, `children` and `name` that
  * `defineWorkflow` infers into the context type, and `TAddDirProfile` the profiles under which a
  * strict Claude call may pass `addDirs`, which `defineWorkflow` computes from `profiles` and
- * `defaults` with {@link AddDirProfilesOf}. Their defaults keep an unparameterized
- * `WorkflowDefinition<I, O>` parameter assignable from any typed definition.
+ * `defaults` with {@link AddDirProfilesOf}. `TRoster` is the `roster` (a `defineRoster` result)
+ * that types `ctx.roster`. Their defaults keep an unparameterized `WorkflowDefinition<I, O>`
+ * parameter assignable from any typed definition.
  */
 export interface WorkflowDefinition<
   TInput,
@@ -969,6 +985,9 @@ export interface WorkflowDefinition<
   TChildren extends readonly WorkflowDeclaration[] = any,
   TName extends string = string,
   TAddDirProfile extends string | undefined = string | undefined,
+  // `any` for the same reason as TChildren.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  TRoster extends AnyRoster = any,
 > {
   /** Explicit agent registrations; Claude and Codex remain implicitly available. */
   readonly harnesses?: H;
@@ -988,6 +1007,15 @@ export interface WorkflowDefinition<
   readonly defaults?: AgentDefaults<NoInfer<TProfile>>;
   /** Named capability roles, resolved before executing the workflow body. */
   readonly profiles?: Readonly<Record<TProfile, AgentProfile>>;
+  /**
+   * The workflow's inventory of harness-pinned agents, from `defineRoster` (ADR 0063 section 3).
+   * `defineWorkflow` infers its entry names, so `ctx.roster.Name` is typed and a misspelling fails
+   * typecheck. Each entry compiles to a declared role under its name: `--profile Name.maxTurns=60`,
+   * attempt records, grants under `requireGrants` and the capability manifest treat it like a
+   * profile. An entry name cannot equal a `profiles` name or a built-in preset, and
+   * `defaults.profile` cannot name an entry.
+   */
+  readonly roster?: TRoster;
   /**
    * Prohibit raw capability controls (tools, sandbox, env, `isolation: 'inherit'` and the rest) at
    * call sites; opt-in, defaults to false. `defineWorkflow` infers the literal: only a literal `true`
@@ -1029,7 +1057,8 @@ export interface WorkflowDefinition<
         WorkflowHarnesses<NoInfer<H>>,
         NoInfer<TStrict>,
         NoInfer<TChildren>,
-        NoInfer<TAddDirProfile>
+        NoInfer<TAddDirProfile>,
+        NoInfer<TRoster>
       >,
       input: TInput,
     ) => Promise<TOutput>
@@ -1046,7 +1075,9 @@ export interface WorkflowDefinition<
  * so an interface-typed profile map (no index signature) is accepted, while the `profiles` property
  * type validates its values. Explicit type arguments are
  * all-or-nothing: a prefix such as `defineWorkflow<I, O>` leaves `TProfiles` and `TDefaults` empty,
- * so built-ins and an omitted profile then read as unrooted even when `defaults` roots them.
+ * so built-ins and an omitted profile then read as unrooted even when `defaults` roots them. The
+ * `roster` (`TRoster`) is inferred as the `defineRoster` result's type, which types `ctx.roster`;
+ * without one the context has no roster entries.
  *
  * A definition this signature rejects, such as a generic factory that forwards a `P extends
  * AgentProfile` or `D extends AgentDefaults<never>` value into `profiles` or `defaults` (whose
@@ -1068,6 +1099,7 @@ export function defineWorkflow<
   const TProfiles extends object = {},
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type
   const TDefaults extends AgentDefaults = {},
+  TRoster extends AnyRoster = EmptyRoster,
 >(
   definition: WorkflowDefinition<
     TInput,
@@ -1077,7 +1109,8 @@ export function defineWorkflow<
     TStrict,
     TChildren,
     TName,
-    AddDirProfilesOf<TProfile, TProfiles, TDefaults>
+    AddDirProfilesOf<TProfile, TProfiles, TDefaults>,
+    TRoster
   > & {
     /**
      * Named capability roles; their literal type decides which roles admit call-site `addDirs`, and
@@ -1097,7 +1130,8 @@ export function defineWorkflow<
   TStrict,
   TChildren,
   TName,
-  AddDirProfilesOf<TProfile, TProfiles, TDefaults>
+  AddDirProfilesOf<TProfile, TProfiles, TDefaults>,
+  TRoster
 >;
 /**
  * Fallback for definitions whose `profiles` or `defaults` shape the first signature cannot check,
@@ -1112,9 +1146,30 @@ export function defineWorkflow<
   const TStrict extends boolean = false,
   const TChildren extends readonly WorkflowDeclaration[] = readonly [],
   const TName extends string = string,
+  TRoster extends AnyRoster = EmptyRoster,
 >(
-  definition: WorkflowDefinition<TInput, TOutput, TProfile, H, TStrict, TChildren, TName>,
-): WorkflowDefinition<TInput, TOutput, TProfile, H, TStrict, TChildren, TName>;
+  definition: WorkflowDefinition<
+    TInput,
+    TOutput,
+    TProfile,
+    H,
+    TStrict,
+    TChildren,
+    TName,
+    string | undefined,
+    TRoster
+  >,
+): WorkflowDefinition<
+  TInput,
+  TOutput,
+  TProfile,
+  H,
+  TStrict,
+  TChildren,
+  TName,
+  string | undefined,
+  TRoster
+>;
 export function defineWorkflow<
   TInput,
   TOutput,
@@ -1123,9 +1178,31 @@ export function defineWorkflow<
   TStrict extends boolean,
   TChildren extends readonly WorkflowDeclaration[],
   TName extends string,
+  TAddDirProfile extends string | undefined,
+  TRoster extends AnyRoster,
 >(
-  definition: WorkflowDefinition<TInput, TOutput, TProfile, H, TStrict, TChildren, TName>,
-): WorkflowDefinition<TInput, TOutput, TProfile, H, TStrict, TChildren, TName> {
+  definition: WorkflowDefinition<
+    TInput,
+    TOutput,
+    TProfile,
+    H,
+    TStrict,
+    TChildren,
+    TName,
+    TAddDirProfile,
+    TRoster
+  >,
+): WorkflowDefinition<
+  TInput,
+  TOutput,
+  TProfile,
+  H,
+  TStrict,
+  TChildren,
+  TName,
+  TAddDirProfile,
+  TRoster
+> {
   if (!definition.name.trim() || !definition.version.trim()) {
     throw new Error('Workflow name and version must be nonempty.');
   }

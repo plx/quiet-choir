@@ -508,6 +508,30 @@ in. Stack paths are scrubbed to `/fixture/...` and the file was formatted with P
 read-view digest in `test/record-schema-revision.test.ts` was computed on the same unmodified main
 from this file. No harness was invoked.
 
+`revision-eighteen-checkpoint.json` was generated the same way at origin/main `643f510`, before
+roster entries (#579) added the optional nested `harness` pin to resolved profiles in `capabilities`
+in revision 19. Its run ID is `revision-eighteen`, and it ran this definition once:
+
+```ts
+defineWorkflow({
+  name: 'schema-revision',
+  version: '1',
+  input: z.null(),
+  output: z.null(),
+  profiles: { scout: { extends: 'readonly' } },
+  async run(ctx) {
+    await ctx.now('prepare');
+    throw new Error('fixture tail');
+  },
+});
+```
+
+It carries `schemaRevision: 18`, a manifest whose profiles (built-ins and `scout`) have no
+`harness`, the completed `ctx.now` effect `prepare` and a workflow-body failure after it. The
+journal was empty, so only `run.json` is checked in. Stack paths are scrubbed to `/fixture/...` and
+the file was formatted with Prettier; its read-view digest in `test/record-schema-revision.test.ts`
+was computed on the same unmodified main from this file. No harness was invoked.
+
 `record-keys.json` lists the top-level run-record keys of each schema revision. Adding or changing a
 persisted run-level field adds a revision there and bumps `SUPPORTED_SCHEMA_REVISION`; a revision
 that only changes a nested shape repeats the previous key list. See `docs/storage.md`.
