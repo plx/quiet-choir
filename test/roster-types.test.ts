@@ -10,6 +10,7 @@ import {
   type Agent,
   type AgentResult,
   type DeepReadonlyOption,
+  type RegisteredAgentClient,
   type RosterAgentOf,
   type RosterAgents,
   type WorkflowContext,
@@ -159,16 +160,71 @@ it('types ctx.roster from the entry names and harnesses', () => {
   type Agents = RosterAgents<typeof roster>;
   expectTypeOf<keyof Agents>().toEqualTypeOf<'Reviewer' | 'Mechanic' | 'Scout' | 'Summarizer'>();
   expectTypeOf<Agents['Reviewer']>().toEqualTypeOf<Agent>();
-  expectTypeOf<Agents['Summarizer']>().toEqualTypeOf<
-    Agent<{ readonly structuredOutput: 'none' }>
-  >();
-  expectTypeOf<RosterAgentOf<(typeof roster)['Scout'], readonly [typeof fake]>>().toEqualTypeOf<
-    Agent<{ readonly structuredOutput: 'native' }>
-  >();
+  // A registered entry gives what bind gives: the harness's own bound call options.
+  type Summarizer = RegisteredAgentClient<
+    { readonly prompt: string; addDirs?: string[] | undefined },
+    { readonly structuredOutput: 'none' }
+  >;
+  expectTypeOf<Agents['Summarizer']>().toExtend<Summarizer>();
+  expectTypeOf<Summarizer>().toExtend<Agents['Summarizer']>();
+  expectTypeOf<Agents['Summarizer']>().not.toHaveProperty('object');
+  type Scout = RegisteredAgentClient<
+    { readonly prompt: string; addDirs?: string[] | undefined },
+    { readonly structuredOutput: 'native' }
+  >;
+  type ScoutAgent = RosterAgentOf<(typeof roster)['Scout'], readonly [typeof fake]>;
+  expectTypeOf<ScoutAgent>().toExtend<Scout>();
+  expectTypeOf<Scout>().toExtend<ScoutAgent>();
+  expectTypeOf<ScoutAgent>().toHaveProperty('object');
   // A bare context reads any name, as a possibly text-only agent.
   expectTypeOf<WorkflowContext['roster']>().toEqualTypeOf<
     RosterAgents<any> // eslint-disable-line @typescript-eslint/no-explicit-any
   >();
+});
+
+it('keeps a call option the registered schema requires unless the entry binds it', () => {
+  const rooted = defineHarness({
+    name: 'rooted',
+    revision: 1,
+    options: z.object({ prompt: z.string(), addDirs: z.array(z.string()) }),
+    capabilities: { structuredOutput: 'native' },
+    access: () => 'read',
+  });
+  const quiet = defineHarness({
+    ...rooted,
+    name: 'quiet',
+    capabilities: { structuredOutput: 'none' },
+  });
+  const definition = defineWorkflow({
+    ...base,
+    name: 'roster-required',
+    harnesses: [rooted, quiet],
+    roster: defineRoster(
+      {
+        Open: { harness: 'rooted' },
+        Bound: { harness: 'rooted', addDirs: ['docs'] },
+        Quiet: { harness: 'quiet', addDirs: ['docs'] },
+      },
+      { harnesses: [rooted, quiet] },
+    ),
+    async run(ctx) {
+      // @ts-expect-error -- the schema requires addDirs and the entry leaves it to each call.
+      await ctx.roster.Open.text('t', { prompt });
+      await ctx.roster.Open.text('t', { prompt, addDirs: ['src'] });
+      // The entry binds addDirs, so a call may omit it, or append to it.
+      await ctx.roster.Bound.text('t', { prompt });
+      await ctx.roster.Bound.text('t', { prompt, addDirs: ['src'] });
+      // As with bind.
+      const bound = ctx.agent('rooted').bind({ addDirs: ['docs'] });
+      expectTypeOf(ctx.roster.Bound).toExtend<typeof bound>();
+      expectTypeOf(bound).toExtend<typeof ctx.roster.Bound>();
+      // A text-only registration still gives a text-only agent.
+      expectTypeOf(await ctx.roster.Quiet.value('t', { prompt })).toEqualTypeOf<string>();
+      expectTypeOf(ctx.roster.Quiet).not.toHaveProperty('object');
+      return null;
+    },
+  });
+  expect(definition.name).toBe('roster-required');
 });
 
 it('leaves a workflow without a roster with no entries', () => {

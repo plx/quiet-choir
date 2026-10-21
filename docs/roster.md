@@ -113,13 +113,15 @@ filled `maxTurns` or `maxBudgetUsd` stays out of the fingerprint.
 
 `ctx.roster.Name` is the entry's pinned harness client bound to the entry: `ctx.claude.bind(…)`,
 `ctx.codex.bind(…)` or `ctx.agent(name).bind(…)`. Its type is `RosterAgents<typeof roster>`, one
-readonly `Agent` per entry name, so `ctx.roster.Reviwer` fails typecheck. Claude entries give an
-`Agent`; Codex entries give an `Agent` that also takes per-call `images`; a registered harness gives
-`Agent<CapabilitiesOf<D>>`, so a text-only registration (`structuredOutput: 'none'`) gives a
-text-only agent without `object` or a schema-bearing `value`. A call takes only the prompt, the
-schema, placement (`cwd`, `addDirs`, `worktree`) and policy (`onError`, `retry`, `timeoutMs`,
-`idleTimeoutMs`); everything else is fixed by the entry. See [bound agents](#bound-agents) for the
-merge rules and errors.
+readonly agent per entry name (`RosterAgentOf`), so `ctx.roster.Reviwer` fails typecheck. Each is
+typed as `bind` types the entry's options. Claude entries give an `Agent`; Codex entries give an
+`Agent` that also takes per-call `images`; a registered harness gives the agent its own `bind`
+gives, with `D`'s capabilities and the bound call keys its option schema declares, so a text-only
+registration (`structuredOutput: 'none'`) gives a text-only agent without `object` or a
+schema-bearing `value`, and a both-sides key that schema requires (such as `addDirs`) stays required
+on each call unless the entry sets it. A call takes only the prompt, the schema, placement (`cwd`,
+`addDirs`, `worktree`) and policy (`onError`, `retry`, `timeoutMs`, `idleTimeoutMs`); everything
+else is fixed by the entry. See [bound agents](#bound-agents) for the merge rules and errors.
 
 - **Placement.** A call's `addDirs` are appended to the entry's, so a call cannot drop a declared
   directory; its `timeoutMs` and `idleTimeoutMs` replace the entry's.

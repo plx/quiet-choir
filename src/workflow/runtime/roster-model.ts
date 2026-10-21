@@ -3,6 +3,7 @@ import type {
   HarnessCapabilities,
   HarnessDeclaration,
   OptionsOf,
+  RegisteredAgentClient,
 } from './harness-model.js';
 import type {
   Agent,
@@ -11,6 +12,7 @@ import type {
   BoundOptionsOf,
   ClaudeOptions,
   CodexOptions,
+  SelectBranch,
 } from './model.js';
 import type { NoExtraKeys } from './profiles-model.js';
 
@@ -132,10 +134,13 @@ export interface AnyRoster {
 export type EmptyRoster = Roster<{}, readonly []>;
 
 /**
- * The agent `ctx.roster.Name` gives for entry `E`, typed against the registered harnesses `H`: an
- * {@link Agent} for Claude, the Codex bound client (an `Agent` that also takes per-call `images`)
- * for Codex, and `Agent<CapabilitiesOf<D>>` for a registered harness `D`, so a text-only
- * registration yields a text-only agent without `object` or a schema-bearing `value`.
+ * The agent `ctx.roster.Name` gives for entry `E`, typed against the registered harnesses `H`: the
+ * type `bind` gives for the entry's options ({@link RosterEntryBindOptions}). That is an {@link Agent}
+ * for Claude, the Codex bound client (an `Agent` that also takes per-call `images`) for Codex, and
+ * for a registered harness `D` a `RegisteredAgentClient` over `D`'s own bound call options and
+ * capabilities. A both-sides key the schema requires stays required on calls unless the entry
+ * sets it, and a text-only registration yields a text-only agent without `object` or a
+ * schema-bearing `value`. An entry whose harness is not in `H` gives `Agent<HarnessCapabilities>`.
  */
 export type RosterAgentOf<E, H extends readonly HarnessDeclaration[]> = E extends {
   /** The pinned harness. */
@@ -144,14 +149,27 @@ export type RosterAgentOf<E, H extends readonly HarnessDeclaration[]> = E extend
   ? N extends 'claude'
     ? Agent
     : N extends 'codex'
-      ? AgentClient<BoundOptionsOf<CodexOptions>>
+      ? AgentClient<
+          BoundOptionsOf<
+            SelectBranch<CodexOptions, RosterEntryBindOptions<E>>,
+            RosterEntryBindOptions<E>
+          >
+        >
       : [Extract<H[number], NamedHarness<N>>] extends [never]
         ? Agent<HarnessCapabilities>
-        : CapabilitiesOf<Extract<H[number], NamedHarness<N>>> extends infer C extends
-              HarnessCapabilities
-          ? Agent<C>
+        : Extract<H[number], NamedHarness<N>> extends infer D
+          ? RegisteredAgentClient<
+              BoundOptionsOf<
+                SelectBranch<OptionsOf<D>, RosterEntryBindOptions<E>>,
+                RosterEntryBindOptions<E>
+              >,
+              CapabilitiesOf<D>
+            >
           : Agent<HarnessCapabilities>
   : never;
+
+/** The options of roster entry `E` that `bind` receives: the entry minus its roster-only fields. */
+export type RosterEntryBindOptions<E> = Omit<E, 'harness' | 'description' | 'expectsToolUse'>;
 
 /** A harness declaration named `N`: what {@link RosterAgentOf} selects an entry's harness by. */
 export interface NamedHarness<N> {

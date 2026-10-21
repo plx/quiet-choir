@@ -172,6 +172,7 @@ export type {
   RosterAgents,
   RosterEntries,
   RosterEntry,
+  RosterEntryBindOptions,
   RosterEntryCommon,
   RosterEntryOptions,
   RosterOptions,
