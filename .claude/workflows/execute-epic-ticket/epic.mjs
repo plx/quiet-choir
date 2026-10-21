@@ -16,6 +16,9 @@
 //                                     prepare the worktree and the issue's branch; write briefings
 //   save     --epic E --issue I --name FILE < content      store a file in the issue's directory
 //   check    --epic E --issue I [--label L] [--cmd "npm run check"]
+//   check-start --epic E --issue I [--label L] [--cmd C]   start that check detached; return at once
+//   check-wait  --epic E --issue I [--label L] [--max-seconds 540]   wait for it; {done: false} on
+//                                     timeout
 //   snapshot --epic E --issue I       record the branch's diff, stat, and commits
 //   verify   --epic E --issue I [--commits a,b]   named commits are in HEAD; last check passed there
 //   open-pr  --epic E --issue I --title T < body.md        push with lease; open or update the PR
@@ -23,6 +26,7 @@
 //   close-issue --epic E --issue I --reason completed|not_planned < comment.md
 //   file-issue  --epic E --title T [--label L] [--after I] < body.md   new sub-issue, listed in E
 //   ensure-epic --title T < body.md   find (or create) an open issue with exactly this title
+//   issue-state --epic E --number N   an issue's state and title (confirms a claimed duplicate)
 //   tick     --epic E --issue I       check the epic's checklist line for #I
 //   ledger   --epic E < entry.json    append one JSON object to the epic's ledger
 //   paths    --epic E                 root, worktree, state, and tools paths
@@ -42,7 +46,7 @@
 // Pure text helpers are exported so they can be tested by importing this module; main() runs only
 // when the file is executed directly.
 
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { availableParallelism, loadavg } from 'node:os';
 import { createHash } from 'node:crypto';
 import {
@@ -51,6 +55,8 @@ import {
   mkdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -1039,6 +1045,13 @@ function save(a, P) {
   };
 }
 
+function checkLabelOf(a) {
+  const label = typeof a.label === 'string' ? a.label : 'check';
+  if (!/^[\w.-]+$/.test(label) || /^\.+$/.test(label)) fail('--label must be a plain name');
+  if (label === 'gate') fail('--label gate is reserved for the gate record');
+  return label;
+}
+
 // As merge-down.mjs's check, plus `head` (HEAD when the check started), `clean` (no uncommitted
 // changes then), `cmd`, and `gate`: whether this was the issue's gate command. Only a gate run is
 // recorded in checks/gate.json, which the publishing gate reads; a failing gate run replaces an
@@ -1048,15 +1061,16 @@ function check(a, P) {
   const issue = requireIssue(a);
   const W = requireWorktree(P);
   const dir = issueDir(P, epic, issue);
-  const label = typeof a.label === 'string' ? a.label : 'check';
-  if (!/^[\w.-]+$/.test(label) || /^\.+$/.test(label)) fail('--label must be a plain name');
-  if (label === 'gate') fail('--label gate is reserved for the gate record');
+  const label = checkLabelOf(a);
   const cmd = typeof a.cmd === 'string' && a.cmd.trim() ? a.cmd.trim() : DEFAULT_GATE_CMD;
   const gate = cmd === gateCmdOf(dir);
   mkdirSync(join(dir, 'checks'), { recursive: true });
   const record = (fields) => {
     const result = { cmd, gate, ...fields };
-    writeJson(join(dir, 'checks', `${label}.json`), result);
+    // Written whole (by rename): check-wait reads this file to see a detached check finish.
+    const file = join(dir, 'checks', `${label}.json`);
+    writeJson(`${file}.tmp`, result);
+    renameSync(`${file}.tmp`, file);
     if (gate) writeJson(join(dir, 'checks', 'gate.json'), { ...result, label, at: nowIso() });
     return result;
   };
@@ -1110,6 +1124,68 @@ function check(a, P) {
     log,
     excerptFile: passed ? null : writeExcerpt(log, tail(text, 40)),
   });
+}
+
+// The suite takes longer than an agent's 10-minute shell limit. An implementer that runs `check`
+// in one call has to move it to a background shell, which dies with the agent if it reports first
+// (#581). check-start launches the same `check` detached (its own process group, so it outlives
+// the caller's shell) and returns at once; check-wait then waits in bounded slices, as
+// merge-down.mjs does.
+function checkStart(a, P) {
+  const epic = requireEpic(a);
+  const issue = requireIssue(a);
+  const dir = issueDir(P, epic, issue);
+  const label = checkLabelOf(a);
+  mkdirSync(join(dir, 'checks'), { recursive: true });
+  rmSync(join(dir, 'checks', `${label}.json`), { force: true });
+  const args = [fileURLToPath(import.meta.url), 'check', '--epic', String(epic)];
+  args.push('--issue', String(issue), '--label', label, '--root', P.root);
+  if (typeof a.repo === 'string') args.push('--repo', a.repo);
+  if (typeof a.cmd === 'string') args.push('--cmd', a.cmd);
+  const child = spawn(process.execPath, args, { detached: true, stdio: 'ignore' });
+  child.unref();
+  const started = { label, pid: child.pid, startedAt: nowIso() };
+  writeJson(join(dir, 'checks', `${label}.started.json`), started);
+  return { started: true, ...started };
+}
+
+const processAlive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === 'EPERM';
+  }
+};
+
+async function checkWait(a, P) {
+  const epic = requireEpic(a);
+  const issue = requireIssue(a);
+  const dir = issueDir(P, epic, issue);
+  const label = checkLabelOf(a);
+  const file = join(dir, 'checks', `${label}.json`);
+  const started = readJson(join(dir, 'checks', `${label}.started.json`));
+  if (!started) fail(`no check was started with label ${label}; run check-start first`);
+  const maxSeconds = Number(a['max-seconds'] ?? 540);
+  const begin = Date.now();
+  for (;;) {
+    if (existsSync(file)) return { done: true, label, ...readJson(file) };
+    if (!processAlive(started.pid)) {
+      if (existsSync(file)) return { done: true, label, ...readJson(file) };
+      return {
+        done: true,
+        label,
+        passed: false,
+        failedStep: null,
+        error: `the check process (pid ${started.pid}) exited without a result`,
+      };
+    }
+    const waitedSeconds = Math.round((Date.now() - begin) / 1000);
+    if (waitedSeconds >= maxSeconds) {
+      return { done: false, label, pid: started.pid, startedAt: started.startedAt, waitedSeconds };
+    }
+    await new Promise((r) => setTimeout(r, 5_000));
+  }
 }
 
 function snapshot(a, P, R) {
@@ -1358,6 +1434,23 @@ function closeIssue(a, P, R) {
   };
 }
 
+// Confirms a claimed duplicate before it settles a follow-up: a model-supplied number may be stale,
+// closed, or simply wrong.
+function issueState(a, P, R) {
+  requireEpic(a);
+  const number = requireNumber(a, 'number');
+  const i = ghJson([
+    'issue',
+    'view',
+    String(number),
+    '-R',
+    R.repo,
+    '--json',
+    'number,state,title,url',
+  ]);
+  return { number: i.number, state: i.state, title: i.title, url: i.url };
+}
+
 function fileIssue(a, P, R) {
   const epic = requireEpic(a);
   const title = requireString(a, 'title');
@@ -1512,6 +1605,8 @@ const COMMANDS = {
   start,
   save: (a, P) => save(a, P),
   check: (a, P) => check(a, P),
+  'check-start': (a, P) => checkStart(a, P),
+  'check-wait': (a, P) => checkWait(a, P),
   snapshot,
   verify,
   'open-pr': openPr,
@@ -1519,6 +1614,7 @@ const COMMANDS = {
   'close-issue': closeIssue,
   'file-issue': fileIssue,
   'ensure-epic': ensureEpic,
+  'issue-state': issueState,
   tick,
   ledger: (a, P) => ledger(a, P),
 };

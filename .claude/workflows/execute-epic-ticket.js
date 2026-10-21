@@ -758,7 +758,7 @@ Rules:
 - Never write to GitHub (no comments, issues, reviews, PRs) and never push: the workflow publishes. That includes issues a criterion asks for: list each in followups, and the workflow files it under the follow-up epic and links it from the PR. A criterion whose only remaining part is filing such issues is done once they are in followups; say so in evidence.
 - Commit on the current branch in small logical commits with concise imperative messages${A.commitTrailer ? `, each ending with a blank line and then:\n${A.commitTrailer}\n` : '.'} No new branches, no amending or rewriting existing commits.
 - Before checking, format and lint what you touched: \`cd ${sh(W)} && npx eslint --fix <files> && npx prettier --write <files>\` (prettier last: eslint --fix can leave formatting that format:check rejects).
-- Then run \`node ${sh(TOOL)} check --epic ${A.epic} --issue ${T.number}${ROOT ? ` --root ${sh(ROOT)}` : ''} --label ${label}\` (the full suite, about 11 minutes; prints JSON with passed, failedStep and the log path). It usually outlasts the shell tool's 10-minute foreground limit and moves to the background: then keep waiting until it prints its JSON. Never report while a check is still running; checkPassed must come from a check that printed its result. If it fails, fix and re-run, at most 4 runs. Never weaken, skip, or delete tests to get green; if a failure is unrelated to your change and pre-existing on origin/${DEF}, say so in notes.
+- Then run the full check suite (the gate). It takes about 11 minutes, longer than the shell tool's 10-minute foreground limit, so it runs detached: start it with \`node ${sh(TOOL)} check-start --epic ${A.epic} --issue ${T.number}${ROOT ? ` --root ${sh(ROOT)}` : ''} --label ${label}\`, then run \`node ${sh(TOOL)} check-wait --epic ${A.epic} --issue ${T.number}${ROOT ? ` --root ${sh(ROOT)}` : ''} --label ${label} --max-seconds 540\` in the foreground (never in the background), again each time it prints done: false. Its final JSON (done: true) has passed, failedStep and the log path; checkPassed must come from it, so never report before it. If it fails, fix and run both again, at most 4 runs. Never weaken, skip, or delete tests to get green; if a failure is unrelated to your change and pre-existing on origin/${DEF}, say so in notes.
 - Commit everything; leave the worktree clean. Finally run \`node ${sh(TOOL)} snapshot --epic ${A.epic} --issue ${T.number}${ROOT ? ` --root ${sh(ROOT)}` : ''}\`.
 Return one entry per plan acceptance id: status (done | verify-on-pr | deviation | partial | not-done), the short SHA of the commit that delivers it ('' if it was already met on main before this ticket; say so in evidence), and evidence (the test or file that shows it). Use verify-on-pr only for a criterion that cannot be checked until the PR exists, such as a CI job's duration or GitHub-side state like code-scanning alerts: do everything that can be done locally, and put in evidence exactly what to check on the PR and what result counts as met. Use deviation only when the criterion is met in substance but its literal wording cannot be met within this ticket's scope (e.g. a size or count estimate that turns out to depend on another ticket's work): put the measured result, why the literal target is out of scope, and the follow-up (also listed in followups) in evidence. The landing review judges every deviation. Also checkPassed (from your last check), head (from snapshot), deviations from the plan, followups, and notes. Plain text, no HTML entities.`,
     {
@@ -768,6 +768,54 @@ Return one entry per plan acceptance id: status (done | verify-on-pr | deviation
       schema: IMPLEMENTED(plan.acceptance.map((c) => c.id)),
     },
   );
+}
+
+// The gate check, run through clerks (detached, waited for in 9-minute slices).
+async function waitForCheck(label) {
+  for (let i = 1; i <= 5; i++) {
+    const w = await one(
+      `checks ${label} (wait ${i})`,
+      'Implement',
+      cmd('wait', 'check-wait', { issue: T.number, flags: `--label ${label} --max-seconds 540` }),
+    );
+    if (w.error || w.done) return w;
+  }
+  return {
+    passed: false,
+    timedOut: true,
+    error: `check ${label} did not finish within 45 minutes`,
+  };
+}
+
+// Waits out the implementer's own check (so two suites never share the worktree), runs the gate
+// itself if that did not pass at this head, and re-verifies. Returns {} or {error}.
+async function gateAtHead(label, head) {
+  const own = await waitForCheck(label);
+  if (own.timedOut) return { error: `the implementer's check ${label} is still running` };
+  if (!(own.passed && own.gate && own.clean && own.head === head)) {
+    log(`#${T.number}: no passing gate at ${head.slice(0, 7)}; running the check suite`);
+    const start = await one(
+      `checks ${label}-gate`,
+      'Implement',
+      cmd('start', 'check-start', { issue: T.number, flags: `--label ${label}-gate` }),
+    );
+    if (start.error) return { error: start.error };
+    const gate = await waitForCheck(`${label}-gate`);
+    if (gate.error || !gate.passed) {
+      return {
+        error: gate.error ?? `${gate.failedStep ?? 'the gate'} failed (${gate.log})`,
+      };
+    }
+  }
+  const v = await one(
+    `verify gate #${T.number}`,
+    'Implement',
+    cmd('verify', 'verify', { issue: T.number }),
+  );
+  if (v.error) return { error: v.error };
+  return v.checkPassedAtHead && v.head === head
+    ? {}
+    : { error: 'the gate did not record a pass at this head' };
 }
 
 // verify-on-pr: done locally, but only checkable once the PR exists (CI timings, alerts). Those
@@ -813,7 +861,7 @@ async function implementTicket(plan) {
     result = await implement(
       plan,
       TIER[tierName],
-      `\nA previous attempt committed work on the branch and reported:\n${JSON.stringify({ checkPassed: previous.checkPassed, criteria: previous.criteria, deviations: previous.deviations, followups: previous.followups, notes: previous.notes }, null, 1)}\nFinish only what is still open (and fix what the check finds); don't redo settled work. Run the check and wait until it prints its result, even after it outlasts the shell's foreground limit and moves to the background: checkPassed must come from a check that printed its result. In your report, carry the previous deviations, followups and notes forward (updated if they changed) together with your own.`,
+      `\nA previous attempt committed work on the branch and reported:\n${JSON.stringify({ checkPassed: previous.checkPassed, criteria: previous.criteria, deviations: previous.deviations, followups: previous.followups, notes: previous.notes }, null, 1)}\nFinish only what is still open (and fix what the check finds); don't redo settled work. Run the check with check-start, then check-wait in the foreground until it prints done: true: checkPassed must come from that result. In your report, carry the previous deviations, followups and notes forward (updated if they changed) together with your own.`,
     );
   }
   record.implementer = { tier: tierName, rounds: implRound };
@@ -845,12 +893,19 @@ async function implementTicket(plan) {
     return { error: `reported commits not on the branch: ${v.missingCommits.join(', ')}` };
   if (v.dirty.length) return { error: `worktree not clean: ${v.dirty.slice(0, 5).join(', ')}` };
   if (!v.checkPassedAtHead) {
-    // Surface the implementer's own diagnosis: twice a red gate was main's fault (a load-sensitive
-    // test already failing on origin/main), and the orchestrator needs to see that at a glance.
-    const why = result.notes.slice(0, 2).join(' | ').slice(0, 700);
-    return {
-      error: `no passing check recorded for head ${v.head.slice(0, 7)}${why ? `; implementer notes: ${why}` : ''}`,
-    };
+    // The commits are on the branch and the tree is clean; only the gate is missing. An
+    // implementer can report before its check finished (#581), so wait out its own check, and
+    // otherwise run the gate here, before blocking on its word.
+    const gate = await gateAtHead(`impl-${implRound}`, v.head);
+    if (gate.error) {
+      // Surface the implementer's own diagnosis: twice a red gate was main's fault (a
+      // load-sensitive test already failing on origin/main), and the orchestrator needs to see
+      // that at a glance.
+      const why = result.notes.slice(0, 2).join(' | ').slice(0, 700);
+      return {
+        error: `no passing check recorded for head ${v.head.slice(0, 7)}: ${gate.error}${why ? `; implementer notes: ${why}` : ''}`,
+      };
+    }
   }
   record.implementer = {
     ...record.implementer,
@@ -907,7 +962,20 @@ Return one entry per item with key f1, f2, …; duplicateOf is 0 when there is n
   const filed = [];
   for (const w of written?.issues ?? []) {
     if (w.duplicateOf) {
-      filed.push({ key: w.key, number: w.duplicateOf, action: 'duplicate' });
+      // The scribe's match is a claim: it settles the key only if that issue exists and is open.
+      const seen = await one(
+        `check duplicate ${w.key}`,
+        'Publish',
+        cmd(`dup-${w.key}`, 'issue-state', { flags: `--number ${w.duplicateOf}` }),
+      );
+      filed.push(
+        seen.error || seen.state !== 'OPEN'
+          ? {
+              key: w.key,
+              error: seen.error ?? `claimed duplicate #${w.duplicateOf} is ${seen.state}`,
+            }
+          : { key: w.key, number: w.duplicateOf, title: seen.title, action: 'duplicate' },
+      );
       continue;
     }
     // file-issue attaches the new issue to the epic named by --epic: the follow-up epic here.
