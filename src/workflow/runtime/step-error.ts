@@ -2,6 +2,7 @@ import { ExecError } from './exec-error.js';
 import { z } from 'zod';
 
 import { ConfigurationError } from './configuration-error.js';
+import { DecisionError } from './decision-error.js';
 import { CancelledError } from './fan-out.js';
 import { HarnessError } from './harness-error.js';
 import { outputLimitCode } from '../../processes/output-limit.js';
@@ -72,7 +73,8 @@ export const stepErrorSchema = z.object({
 export function errorKind(error: unknown): ErrorKind {
   if (error instanceof CancelledError) return 'cancelled';
   // Another quiet-choir copy (possibly another version) may build these; trust only known kinds.
-  if (error instanceof ExecError || error instanceof HarnessError) return knownKind(error.kind);
+  if (error instanceof ExecError || error instanceof HarnessError || error instanceof DecisionError)
+    return knownKind(error.kind);
   if (error instanceof z.ZodError || error instanceof SyntaxError) return 'schema';
   if (error instanceof Error) {
     if (error.name === 'AbortError') return 'cancelled';
