@@ -153,6 +153,11 @@ describe('buildStartChildArgv', () => {
         ids,
       ).args,
     ).toEqual(['wf.ts', '--provider-limit', 'codex=1', '--progress', '-v', ...tail]);
+    // The grant layer's boolean opt-in reaches the runner beside its grants (#577).
+    expect(flags['require-grants']?.type).toBe('boolean');
+    expect(
+      buildStartChildArgv(['wf.ts', '--require-grants', '--grant', 'fixer'], flags, ids).args,
+    ).toEqual(['wf.ts', '--require-grants', '--grant', 'fixer', ...tail]);
   });
 });
 

@@ -60,15 +60,23 @@ writeFileSync('body-started','yes');await ctx.claude.text('saved',{prompt:'saved
   assert.equal(manifest.profiles.scout.description, 'Reads code');
   assert.equal(manifest.profiles.scout.claude.model, 'fixture');
   assert.deepEqual(manifest.profiles.scout.claude.addDirRoots, ['runs']);
-  assert.deepEqual(manifest.requiredGrants, ['fixer']);
+  // Access classes stay as labels; required grants are listed only under requireGrants (#577).
+  assert.equal(manifest.profiles.fixer.access, 'write');
+  assert.equal(manifest.strictProfiles, false);
+  assert.deepEqual(manifest.requiredGrants, []);
+  const optedFile = join(fixture, 'opted.ts');
+  writeFileSync(optedFile, source.replace("version:'1',", "version:'1',requireGrants:true,"));
+  const opted = cli('validate', optedFile, '--json');
+  assert.equal(opted.status, 0, opted.stderr);
+  assert.deepEqual(JSON.parse(opted.stdout).workflow.capabilities.requiredGrants, ['fixer']);
   assert.equal(existsSync(join(fixture, 'body-started')), false);
   const args = ['execute', file, '--run-id', 'profiles', '--state-dir', state];
-  const denied = cli(...args);
+  const denied = cli(...args, '--require-grants');
   assert.equal(denied.status, 2, denied.stderr);
   assert.match(denied.stderr, /--grant fixer/);
   assert.equal(existsSync(join(fixture, 'body-started')), false);
   assert.equal(existsSync(join(state, 'profiles', 'run.json')), false);
-  const first = cli(...args, '--grant', 'fixer');
+  const first = cli(...args, '--require-grants', '--grant', 'fixer');
   assert.equal(first.status, 1, first.stderr);
   assert.match(first.stderr, /--resume[\s›]*--profile scout.maxTurns=60/);
   assert.match(first.stderr, /turns=30;[\s›]*costUsd=0.31/);
@@ -86,6 +94,7 @@ writeFileSync('body-started','yes');await ctx.claude.text('saved',{prompt:'saved
   assert.equal(resumed.status, 0, resumed.stderr);
   assert.equal(checkpoint().status, 'completed');
   assert.deepEqual(checkpoint().grants, ['fixer']);
+  assert.equal(checkpoint().requireGrants, true);
   assert.equal(checkpoint().steps.pending.attemptHistory[1].policy.maxTurns, 60);
   const calls = readFileSync(join(fixture, 'calls.jsonl'), 'utf8');
   assert.equal(calls.trim().split('\n').length, 3);

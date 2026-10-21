@@ -222,8 +222,9 @@ try {
     usageDocument.error.message,
   );
 
-  // A grant failure's next entry carries --grant and the recorded fixture selection (#284); run as
-  // emitted, it completes the run, reusing the recorded step.
+  // Grants are opt-in (#577): without --require-grants the edit role needs no grant. Under it, a
+  // grant failure's next entry carries --grant and the recorded fixture selection (#284); run as
+  // emitted, it completes the run, reusing the recorded step, without repeating --require-grants.
   const grantFixture = join(project, 'grant.fixture.json');
   writeFileSync(
     grantFixture,
@@ -239,6 +240,58 @@ export default defineWorkflow({name:'grant',version:'1',input:z.object({}),outpu
   return (await ctx.claude.text('edit',{prompt:'x',profile:'edit'})).output;
 }});`,
   );
+  const open = documentOf(
+    launch(project, [
+      'execute',
+      grantFile,
+      '--run-id',
+      'grant-open',
+      '--state-dir',
+      stateDir,
+      '--harness',
+      `fixture:${grantFixture}`,
+      '--json',
+    ]),
+    0,
+  );
+  assert.equal(open.status, 'completed');
+  assert.equal(open.output, 'edited');
+  const recorded = (id) =>
+    documentOf(launch(project, ['inspect', id, '--state-dir', stateDir, '--json']), 0);
+  assert.equal(recorded('grant-open').requireGrants, undefined);
+  // workflow resume takes --require-grants and saves it, even on a completed run.
+  documentOf(
+    launch(elsewhere, [
+      'resume',
+      'grant-open',
+      '--state-dir',
+      stateDir,
+      '--require-grants',
+      '--json',
+    ]),
+    0,
+  );
+  assert.equal(recorded('grant-open').requireGrants, true);
+  // A fork does not inherit the flag; --fork-from with --require-grants applies it to the fork,
+  // whose replayed edit call then needs its own grant.
+  const forkArgs = ['--fork-from', 'grant-open', '--state-dir', stateDir];
+  const forkGrant = (id, ...extra) =>
+    launch(project, [
+      'execute',
+      grantFile,
+      '--run-id',
+      id,
+      ...forkArgs,
+      '--harness',
+      `fixture:${grantFixture}`,
+      ...extra,
+      '--json',
+    ]);
+  assert.equal(documentOf(forkGrant('grant-fork'), 0).status, 'completed');
+  assert.equal(recorded('grant-fork').requireGrants, undefined);
+  const forkDenied = documentOf(forkGrant('grant-fork-strict', '--require-grants'), 1);
+  assert.match(forkDenied.error.message, /--grant edit/);
+  assert.equal(recorded('grant-fork-strict').requireGrants, true);
   const denied = documentOf(
     launch(project, [
       'execute',
@@ -249,6 +302,7 @@ export default defineWorkflow({name:'grant',version:'1',input:z.object({}),outpu
       stateDir,
       '--harness',
       `fixture:${grantFixture}`,
+      '--require-grants',
       '--json',
     ]),
     1,
@@ -271,7 +325,9 @@ export default defineWorkflow({name:'grant',version:'1',input:z.object({}),outpu
   const granted = documentOf(emitted([...denied.next[0].argv, '--json']), 0);
   assert.equal(granted.status, 'completed');
   assert.equal(granted.output, 'edited');
-  assert.equal(readFileSync(join(root, 'prepared'), 'utf8'), 'prepare\n');
+  assert.equal(recorded('grant').requireGrants, true);
+  // One prepare for grant-open and one for grant; the forks reused it and the resume replayed it.
+  assert.equal(readFileSync(join(root, 'prepared'), 'utf8'), 'prepare\nprepare\n');
 
   // Call-site capability overrides ignore profile grants, so that grant failure's entry names the
   // access class instead of the profile, and it completes the run as emitted.
@@ -294,6 +350,7 @@ export default defineWorkflow({name:'raw-grant',version:'1',strictProfiles:false
       stateDir,
       '--harness',
       `fixture:${grantFixture}`,
+      '--require-grants',
       '--json',
     ]),
     1,
