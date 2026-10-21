@@ -151,6 +151,11 @@ export const bound = defineWorkflow({
     reviewer.bind({ model: 'haiku' });
     // @ts-expect-error -- prompt stays per call on a re-bind.
     reviewer.bind({ prompt });
+    // @ts-expect-error -- a fixed key is refused alongside a both-sides one.
+    reviewer.bind({ model: 'haiku', timeoutMs: 1 });
+    // A non-strict client is unchanged: one call shape, with addDirs.
+    expectTypeOf(layered).toEqualTypeOf<typeof reviewer>();
+    expectTypeOf(ctx.claude.bind({ profile: 'scout' })).toEqualTypeOf<typeof reviewer>();
     return null;
   },
 });
@@ -171,6 +176,54 @@ export const strict = defineWorkflow({
   },
 });
 
+// A strict bound agent keeps the profile and addDirs pairing of a raw call (#385, ADR 0062): only a
+// profile that declares claude.addDirRoots leaves addDirs open to its calls.
+export const strictRoots = defineWorkflow({
+  ...base,
+  name: 'bound-strict-roots',
+  strictProfiles: true,
+  profiles: {
+    reader: { extends: 'readonly', claude: { addDirRoots: ['runs'] } },
+    plain: { extends: 'readonly' },
+  },
+  async run(ctx) {
+    const reader = ctx.claude.bind({ profile: 'reader', model: 'opus' });
+    await reader.text('t', { prompt, addDirs: ['runs/a'] });
+    await reader.value('v', { prompt, schema: Review, addDirs: ['runs/a'] });
+    await reviewWith(reader);
+    const plainAgent = ctx.claude.bind({ profile: 'plain' });
+    await plainAgent.text('t', { prompt });
+    // @ts-expect-error -- plain declares no claude.addDirRoots, so its agent takes no addDirs.
+    await plainAgent.text('t', { prompt, addDirs: ['runs/a'] });
+    // @ts-expect-error -- neither does the unrooted implicit default.
+    await ctx.claude.bind({ model: 'opus' }).text('t', { prompt, addDirs: ['runs/a'] });
+    // @ts-expect-error -- bind itself pairs addDirs with a rooted profile, as a call does.
+    ctx.claude.bind({ profile: 'plain', addDirs: ['runs/a'] });
+    ctx.claude.bind({ profile: 'reader', addDirs: ['runs/a'] });
+    // A re-bind keeps the pairing. Binding addDirs keeps only the member that admits them, which
+    // accepts exactly the calls the rooted agent does.
+    const again = reader.bind({ addDirs: ['runs/b'], timeoutMs: 1 });
+    expectTypeOf(again).toExtend<typeof reader>();
+    expectTypeOf(reader).toExtend<typeof again>();
+    expectTypeOf(reader.bind({ timeoutMs: 1 })).toEqualTypeOf<typeof reader>();
+    await again.text('t', { prompt, addDirs: ['runs/c'] });
+    expectTypeOf(plainAgent.bind({ timeoutMs: 1 })).toEqualTypeOf<typeof plainAgent>();
+    // @ts-expect-error -- re-binding addDirs is closed when the first bind left it closed.
+    plainAgent.bind({ addDirs: ['runs/a'] });
+    // The same through ctx.agent('claude') and a ctx.within scope.
+    await ctx
+      .agent('claude')
+      .bind({ profile: 'reader' })
+      .text('t', { prompt, addDirs: ['a'] });
+    await ctx
+      .within('x')
+      .claude.bind({ profile: 'plain' })
+      // @ts-expect-error -- the within scope keeps the pairing.
+      .text('t', { prompt, addDirs: ['a'] });
+    return null;
+  },
+});
+
 it('derives the bind and bound option types from the client options', () => {
   expectTypeOf<BoundOptionsOf<CodexOptions>>().toHaveProperty('images');
   expectTypeOf<BindOptions<CodexOptions>>().not.toHaveProperty('images');
@@ -180,4 +233,5 @@ it('derives the bind and bound option types from the client options', () => {
   >();
   expect(bound.name).toBe('bound-types');
   expect(strict.strictProfiles).toBe(true);
+  expect(strictRoots.strictProfiles).toBe(true);
 });

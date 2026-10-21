@@ -11,8 +11,10 @@
   records exactly as the raw call that spells the merged options, so a completed step stays reusable
   across an accepted code change that moves its call to a bound agent. A text-only registered
   harness binds to a text-only agent. New public types: `Agent`, `BoundCallOptions`, `BindOptions`,
-  `BoundOptionsOf` and `PerCallOnlyKey`. A hand-written `AgentClient` or `WorkflowContext` wrapper
-  now needs a `bind` member; forward it through the wrapper, as in
+  `BoundOptionsOf`, `PerCallOnlyKey`, `SelectBranch` and `BindExcess`. Under `strictProfiles: true`
+  a bound Claude agent keeps a raw call's pairing of `profile` and `addDirs`: binding a profile
+  without `claude.addDirRoots` leaves its calls no `addDirs`. A hand-written `AgentClient` or
+  `WorkflowContext` wrapper now needs a `bind` member; forward it through the wrapper, as in
   `bind: (options) => wrap(inner.bind(options))`. The durability lint does not yet check literal-ID
   reuse through a bound agent.
 

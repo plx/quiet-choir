@@ -80,7 +80,9 @@ export default defineWorkflow({
 - A bound agent binds again over `addDirs`, `timeoutMs` and `idleTimeoutMs` only; any other key
   fails typecheck and throws a `TypeError` at runtime, since the first bind fixed it.
 - `bind({ profile: 'scout' })` resolves like a raw `profile: 'scout'` call. Under
-  `strictProfiles: true`, `bind` rejects strict-owned keys such as `tools` just as a call does.
+  `strictProfiles: true`, `bind` rejects strict-owned keys such as `tools` just as a call does. A
+  strict agent bound to a profile without `claude.addDirRoots` takes no `addDirs`; a rooted one
+  does.
 
 ## Select a role and its capabilities
 

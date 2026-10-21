@@ -153,7 +153,10 @@ key, which the first bind fixed.
 
 `bind({ profile: 'scout' })` lifts a declared role into a value and resolves exactly as a raw
 `{ profile: 'scout' }` call, until rosters replace profiles. Under `strictProfiles: true`, `bind`
-accepts the same keys as a call site, so it cannot set strict-owned controls such as `tools`.
+accepts the same keys as a call site, so it cannot set strict-owned controls such as `tools`. It
+also keeps a call's pairing of `profile` and `addDirs`: an agent bound to a profile that declares
+`claude.addDirRoots` takes `addDirs` per call, while one bound to a profile without roots (or to the
+unrooted default) does not, at typecheck as at runtime.
 
 ## Validation and the capability manifest
 
