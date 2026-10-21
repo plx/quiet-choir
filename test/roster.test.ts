@@ -435,6 +435,67 @@ describe('ctx.roster calls', () => {
     expect(attempt(record.steps['think'])?.profile).toBe('Deep');
   });
 
+  it('validates a registered call with the entry limits, outside its identity', async ({
+    runs,
+  }) => {
+    // The schema requires timeoutMs; maxTurns is a declared option but not harness policy, so it
+    // would enter the identity if the entry's value stayed in the resolved options.
+    const timed = defineHarness({
+      name: 'timed',
+      revision: 1,
+      options: z.object({
+        prompt: z.string(),
+        timeoutMs: z.number().positive(),
+        maxTurns: z.number().int().positive().optional(),
+      }),
+      capabilities: { structuredOutput: 'native' },
+      access: () => 'read',
+    });
+    const sides = [];
+    for (const limited of [true, false]) {
+      const stateDir = await tempDir();
+      const fake = capture('ok');
+      const definition = defineWorkflow({
+        ...base,
+        name: 'roster-limits',
+        harnesses: [timed],
+        roster: defineRoster(
+          {
+            Timed: limited
+              ? { harness: 'timed', timeoutMs: 1_000, maxTurns: 5 }
+              : { harness: 'timed' },
+          },
+          { harnesses: [timed] },
+        ),
+        async run(ctx) {
+          const agent = ctx.roster.Timed;
+          return (
+            await (limited
+              ? agent.text('think', { prompt })
+              : agent.text('think', { prompt, timeoutMs: 1_000 }))
+          ).output;
+        },
+      });
+      const result = await runs.run(definition, {
+        stateDir,
+        runId: 'limits',
+        input: null,
+        adapters: { timed: fake.adapter },
+      });
+      expect(result.output).toBe('ok');
+      sides.push({ fake, record: await readRun({ stateDir, runId: 'limits' }) });
+    }
+    const [limited, open] = sides as [(typeof sides)[0], (typeof sides)[0]];
+    expect(attempt(limited.record.steps['think'])).toMatchObject({
+      policy: { timeoutMs: 1_000, maxTurns: 5 },
+      sources: { timeoutMs: 'profile:Timed', maxTurns: 'profile:Timed' },
+    });
+    expect(limited.fake.requests[0]?.options).toMatchObject({ timeoutMs: 1_000, maxTurns: 5 });
+    expect(limited.record.steps['think']?.fingerprint).toBe(
+      open.record.steps['think']?.fingerprint,
+    );
+  });
+
   it('refuses a pinned entry on another harness', async ({ stateDir, runs }) => {
     const definition = defineWorkflow({
       ...base,

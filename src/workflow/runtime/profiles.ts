@@ -29,6 +29,7 @@ const limits = {
   maxTurns: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
   maxBudgetUsd: z.number().positive().optional(),
 };
+const rosterLimitKeys = Object.keys(limits) as (keyof typeof limits)[];
 // Profiles select configuration mode only; checkout placement (worktree) is a per-call decision.
 const profileControlFields = {
   ...commonControlFields,
@@ -551,7 +552,27 @@ export function resolveProfileCall(
     };
     // Profile selection is runtime-only unless the adapter schema explicitly accepts it.
     Reflect.deleteProperty(merged, 'profile');
-    const options = definition.options.parse(merged);
+    // A roster entry's limits are profile limits, not block options, so a schema that requires
+    // one sees the entry's value here; policy supplies it to the request, and a filled key is
+    // dropped after parsing so step identity is unchanged (ADR 0005).
+    const shape =
+      definition.options instanceof z.ZodObject
+        ? (definition.options.shape as Record<string, unknown>)
+        : {};
+    const filled =
+      profile.harness === undefined
+        ? []
+        : rosterLimitKeys.filter(
+            (key) =>
+              Object.hasOwn(shape, key) &&
+              !Object.hasOwn(merged, key) &&
+              profile[key] !== undefined,
+          );
+    const options = definition.options.parse({
+      ...merged,
+      ...Object.fromEntries(filled.map((key) => [key, profile[key]])),
+    });
+    for (const key of filled) Reflect.deleteProperty(options, key);
     const { access } = registeredCapabilities(definition, options);
     if (requireGrants)
       requireGrant(

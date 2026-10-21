@@ -19,9 +19,10 @@
   stay at the text baseline, and under `requireGrants` a parent entry delegates only to a child
   entry pinned to the same harness at no higher access. A named grant of an entry is pinned to its
   harness too. A call that names an entry or a profile is checked against a registered harness's
-  schema after the role's options are merged in, so an entry can supply a required option. An entry
-  name equal to a `profiles` name, a built-in preset or a reserved word, and a `defaults.profile`
-  naming an entry, fail validation. New public API: `defineRoster`, `RosterEntry`, `Roster`,
+  schema after the role's options are merged in, so an entry can supply a required option, and an
+  entry's limits fill the limit keys that schema declares, outside step identity. An entry name
+  equal to a `profiles` name, a built-in preset or a reserved word, and a `defaults.profile` naming
+  an entry, fail validation. New public API: `defineRoster`, `RosterEntry`, `Roster`,
   `RosterAgents`, `RosterAgentOf` and their helper types. `WorkflowContext` and `WorkflowDefinition`
   gain a last type parameter `TRoster`, so an exact `toEqualTypeOf<WorkflowDefinition<…>>` of a
   `defineWorkflow` result needs `EmptyRoster` there, and a hand-written `WorkflowContext` object

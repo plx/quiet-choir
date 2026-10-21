@@ -104,7 +104,10 @@ Codex authority to carry into a grant pin or a child. A roster call resolves, in
 The request a roster call sends, and the step's fingerprint, are those of a raw call that spells the
 entry's options at the call site, so moving a call onto a roster agent keeps its completed steps
 reusable under an accepted code change. The attempt records the entry name as its role, and the
-entry's limits with the source `profile:<Name>`.
+entry's limits with the source `profile:<Name>`. A registered harness's schema is checked with the
+entry's limits filled in for the limit keys it declares, so a schema that requires `timeoutMs`
+accepts a call that leaves it to the entry; the limit still reaches the request only as policy, so a
+filled `maxTurns` or `maxBudgetUsd` stays out of the fingerprint.
 
 ## ctx.roster
 
