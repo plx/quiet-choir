@@ -7,6 +7,8 @@ import type {
   RegisteredAgentClient,
   CallOptions,
   CapabilitiesOf,
+  HarnessCapabilities,
+  NativeHarnessCapabilities,
 } from './harness-model.js';
 import type { ClaudeOptions } from '../../harnesses/builtins/claude-options.js';
 import type { CodexOptions } from '../../harnesses/builtins/codex-options.js';
@@ -401,8 +403,142 @@ export interface AgentResult<T> {
   readonly usage: AgentUsage;
 }
 
+/**
+ * Option keys that only a call may set (ADR 0063 section 1): the prompt and schema are the work,
+ * and `cwd`, `worktree`, `onError`, `retry` and Codex `images` are chosen per invocation. `bind`
+ * rejects them, at typecheck through {@link BindOptions} and at runtime with a `TypeError`.
+ */
+export type PerCallOnlyKey =
+  'prompt' | 'schema' | 'cwd' | 'worktree' | 'onError' | 'retry' | 'images';
+
+/**
+ * What a call to an {@link Agent} may pass (ADR 0063 section 1): the prompt, placement (`cwd`,
+ * `addDirs`, `worktree`) and policy (`onError`, `retry`, `timeoutMs`, `idleTimeoutMs`), plus the
+ * schema of a structured call. Everything else is fixed when the agent is bound. `addDirs`,
+ * `timeoutMs` and `idleTimeoutMs` may also be bound as defaults; a call's deadline wins and its
+ * `addDirs` append to the bound list.
+ */
+export type BoundCallOptions = Pick<
+  AgentOptions,
+  'prompt' | 'cwd' | 'addDirs' | 'worktree' | 'onError' | 'retry' | 'timeoutMs' | 'idleTimeoutMs'
+>;
+
+/**
+ * What {@link AgentClient.bind} accepts for a client with options `O`: every option except the
+ * {@link PerCallOnlyKey} keys. The both-sides keys (`addDirs`, `timeoutMs`, `idleTimeoutMs`) are
+ * optional even where `O` requires them, since a call may supply them instead. It distributes over
+ * a union option type, so `bind` accepts any member: a strict Claude client binds `addDirs` only
+ * together with a profile that declares `claude.addDirRoots`, as a call does. `bind` then keeps the
+ * members its options satisfy ({@link SelectBranch}).
+ */
+export type BindOptions<O> = O extends unknown
+  ? Omit<O, PerCallOnlyKey | 'addDirs' | 'timeoutMs' | 'idleTimeoutMs'> &
+      Partial<Pick<O, Extract<keyof O, 'addDirs' | 'timeoutMs' | 'idleTimeoutMs'>>> extends infer F
+    ? { [K in keyof F]: F[K] }
+    : never
+  : never;
+
+/**
+ * The keys of `B` that no member of {@link BindOptions} `<O>` declares, as `never` properties. A
+ * generic `bind` parameter is not checked for excess properties, so this restores the check: a
+ * per-call-only or unknown key fails typecheck as it would against `BindOptions<O>` itself.
+ */
+export type BindExcess<B, O> = Readonly<
+  Record<Exclude<keyof B, O extends unknown ? keyof Omit<O, PerCallOnlyKey> : never>, never>
+>;
+
+/**
+ * The members of a union option type `O` that the bound options `B` satisfy, so a bound agent keeps
+ * only the call shapes its bind left open: binding a strict Claude client to a profile without
+ * `claude.addDirRoots` drops the member that admits `addDirs`. If `B` satisfies no single member
+ * (only the union as a whole), it is all of `O`.
+ */
+export type SelectBranch<O, B> = [
+  O extends unknown ? (B extends Omit<O, PerCallOnlyKey> ? O : never) : never,
+] extends [never]
+  ? O
+  : O extends unknown
+    ? B extends Omit<O, PerCallOnlyKey>
+      ? O
+      : never
+    : never;
+
+/* eslint-disable @typescript-eslint/no-empty-object-type -- `{} | null` is any value but undefined. */
+/**
+ * The both-sides keys (`addDirs`, `timeoutMs`, `idleTimeoutMs`) whose default the bound options
+ * `B` supply: present, not optional and never `undefined`. A bound `undefined` counts as absent at
+ * runtime, so an optional or possibly `undefined` key supplies none. {@link BoundOptionsOf} makes
+ * these optional on calls and re-binds. Each key is tested by `B extends …`, so a generic `B` and
+ * `B & BindExcess<…>` stay related.
+ */
+export type BoundDefaultKey<B> = {
+  readonly [K in 'addDirs' | 'timeoutMs' | 'idleTimeoutMs']: B extends Readonly<
+    Record<K, {} | null>
+  >
+    ? K
+    : never;
+}['addDirs' | 'timeoutMs' | 'idleTimeoutMs'];
+/* eslint-enable @typescript-eslint/no-empty-object-type */
+
+/**
+ * The call options of a client bound from one with options `O` by bound options `B`: the
+ * {@link BoundCallOptions} keys that `O` declares, plus Codex's per-call `images` (ADR 0063 section
+ * 1). For Claude this is `BoundCallOptions`; a registered harness keeps only the bound keys its own
+ * schema declares. A both-sides key (`addDirs`, `timeoutMs`, `idleTimeoutMs`) that `B` definitely
+ * sets ({@link BoundDefaultKey}) is optional on calls and re-binds even where `O` requires it, since the bound default
+ * supplies it; one `B` leaves unset, optional or possibly `undefined` stays as `O` declares it. It distributes over a union, and `bind` passes it
+ * only the {@link SelectBranch} members: a strict Claude agent bound to a profile without
+ * `claude.addDirRoots` takes no `addDirs`. It is idempotent, and `B` defaults to `unknown` (no bound
+ * defaults), so a re-bind that sets no `addDirs` keeps the agent's type; one that sets them keeps
+ * the members that admit them, which accept the same calls.
+ */
+export type BoundOptionsOf<O, B = unknown> = O extends unknown
+  ? Omit<Pick<O, Extract<keyof O, keyof BoundCallOptions | 'images'>>, BoundDefaultKey<B>> &
+      Partial<Pick<O, Extract<keyof O, BoundDefaultKey<B>>>> & {
+        /** Instructions sent over stdin, never interpolated into a shell command. */
+        readonly prompt: string;
+      } extends infer F extends AgentOptions
+    ? { [K in keyof F]: F[K] }
+    : never
+  : never;
+
+/**
+ * The encapsulated agent of ADR 0063 section 1: configured in every respect except the prompt, the
+ * output contract and where it works, so a call takes only {@link BoundCallOptions}. Create one
+ * with `bind` on `ctx.claude`, `ctx.codex` or `ctx.agent(name)`.
+ *
+ * `C` carries the harness's capabilities, as in {@link RegisteredAgentClient}: a registration whose
+ * `structuredOutput` is `'none'` binds to a text-only agent without `object` or a schema-bearing
+ * `value`, so it is not assignable to the default, structured `Agent`. The default is
+ * {@link NativeHarnessCapabilities}, the capabilities of the two built-in harnesses (the ADR's
+ * `BuiltInCapabilities`).
+ */
+export type Agent<C extends HarnessCapabilities = NativeHarnessCapabilities> =
+  RegisteredAgentClient<BoundCallOptions, C>;
+
 /** Dedicated typed API for a harness, with durable calls keyed by unique step IDs. */
 export interface AgentClient<TOptions extends AgentOptions> {
+  /**
+   * Fix every option except the per-call ones and return an {@link Agent} whose calls take only the
+   * prompt, schema, placement and policy (ADR 0063 section 2). Binding is pure: it takes a deep,
+   * frozen copy of `options`, performs no effect, claims no step ID and reads no run state, so the agent can be
+   * created once and reused across `ctx.scope`, `ctx.map` and `ctx.within`; each call takes its
+   * step ID prefix where it is invoked, exactly as a raw call does.
+   *
+   * Each call merges its options over the bound ones: a call value replaces the bound one, except
+   * that `addDirs` entries are appended to the bound list (never deduplicated), so a call cannot
+   * drop a bound directory. A call's `timeoutMs` and `idleTimeoutMs` therefore win over bound
+   * defaults, and a call value that is `undefined` counts as absent and keeps the default. The
+   * merged options fingerprint, resolve policy and profiles, and record exactly as if they had been
+   * spelled at the call site. A bound agent binds again the same way over the both-sides keys only,
+   * layering its defaults; the first bind fixed every other key.
+   *
+   * `bind` throws a `TypeError` for a {@link PerCallOnlyKey}, and a bound call rejects before any
+   * step is claimed when it passes a key outside {@link BoundCallOptions} (and Codex `images`).
+   */
+  bind<const B extends BindOptions<TOptions>>(
+    options: B & BindExcess<B, TOptions>,
+  ): AgentClient<BoundOptionsOf<SelectBranch<TOptions, B>, B>>;
   /** Return only the structured output; checkpoint the same result and metadata as object(). */
   value<T>(
     id: string,

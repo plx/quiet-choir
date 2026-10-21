@@ -104,6 +104,66 @@ unknown/MCP tools imply `exec`. Codex read-only implies `read`, workspace-write 
 manifest shows both provider classes and their maximum; thus even `text` has aggregate access `read`
 (Claude alone is `none`). An explicit `access` must equal the role's inferred aggregate class.
 
+## Bound agents
+
+`bind` turns a harness client into an `Agent`: a value configured in every respect except the
+prompt, the output contract and where it works
+([ADR 0063](decisions/0063-bound-agents-and-typed-rosters.md) §1–2). It exists on `ctx.claude`,
+`ctx.codex` and `ctx.agent(name)`.
+
+```ts
+const reviewer = ctx.claude.bind({ model: 'opus', effort: 'high', tools: ['Read', 'Grep'] });
+const verdict = await reviewer.value('review', { prompt, schema: Review });
+```
+
+Keys fall into two groups. The per-call-only keys (`PerCallOnlyKey`) are `prompt`, `schema`, `cwd`,
+`worktree`, `onError`, `retry` and Codex `images`; `bind` cannot set them, at typecheck or at
+runtime, where it throws a `TypeError` naming the key. The both-sides keys are `addDirs`,
+`timeoutMs` and `idleTimeoutMs`: `bind` may set a default and a call may set its own. Everything
+else, such as the model, effort, tools, sandbox, environment and `profile`, is fixed by `bind`. A
+call through the agent takes only `BoundCallOptions` (plus `images` for a Codex agent); any other
+key fails typecheck, and an untyped call that passes one rejects before a step ID is claimed. These
+`bind` and bound-call errors are authoring errors, like a raw call's invalid options: inside an
+`onError: 'return'` map they fail the run instead of being saved as the item's result.
+
+Each call merges its options over the bound ones. A call's `addDirs` are appended to the bound list,
+not deduplicated, so a call cannot drop a bound directory. A call's deadline wins over the bound
+default. A call value that is `undefined` counts as absent and keeps the default. The merged options
+are what the runtime sees: the step fingerprints, resolves profiles and policy, and records its
+attempts exactly as a raw call that spells them at the call site, so after moving a call to a bound
+agent, an accepted code change still reuses its completed step.
+
+Binding is pure. It takes a deep, frozen copy of the options, so later changes to the object passed
+to `bind` do not reach the agent. The copy changes nothing: a nested getter, symbol key,
+non-enumerable property or array hole, which a raw call's JSON boundary would reject, makes `bind`
+throw a `TypeError` instead of being evaluated or dropped. The top-level options of `bind` and of
+each bound call are read the same way: a getter, symbol key or non-enumerable option throws at
+`bind`, or rejects the call before a step is claimed, and a call's `addDirs` is copied under the
+same rules. Binding performs no effect, claims no step ID and reads no run state, so one agent can
+be created early and reused. A call takes its step ID prefix where it is invoked: an agent bound
+before `ctx.scope` or `ctx.map` and called inside gets the same qualified IDs as a raw call there,
+and an agent bound from `ctx.within('w').claude` keeps the `w/` prefix. `bind` needs a harness
+client, so it is called inside the body; declaring agents at module load is the roster's job.
+
+`Agent<C>` is generic over the harness's capabilities, like `RegisteredAgentClient`. The default is
+`NativeHarnessCapabilities`, the built-in harnesses' capabilities (the ADR's `BuiltInCapabilities`).
+A registered harness whose `structuredOutput` is `'none'` binds to a text-only agent without
+`object` or a schema-bearing `value`, which a helper taking a structured `Agent` rejects at
+typecheck; `Agent<{ structuredOutput: 'none' }>` accepts both kinds. A registered harness's agent
+keeps only the both-sides keys its own option schema declares. When that schema requires one, `bind`
+may leave it to each call, and once `bind` sets it to a value whose type is always defined (not an
+optional property), the agent's calls and re-binds may omit it. An agent binds again over the
+both-sides keys only: `reviewer.bind({ addDirs: ['docs'] })` appends to its directories, while
+`reviewer.bind({ model: 'haiku' })` fails typecheck and, untyped, throws a `TypeError` naming the
+key, which the first bind fixed.
+
+`bind({ profile: 'scout' })` lifts a declared role into a value and resolves exactly as a raw
+`{ profile: 'scout' }` call, until rosters replace profiles. Under `strictProfiles: true`, `bind`
+accepts the same keys as a call site, so it cannot set strict-owned controls such as `tools`. It
+also keeps a call's pairing of `profile` and `addDirs`: an agent bound to a profile that declares
+`claude.addDirRoots` takes `addDirs` per call, while one bound to a profile without roots (or to the
+unrooted default) does not, at typecheck as at runtime.
+
 ## Validation and the capability manifest
 
 ```sh

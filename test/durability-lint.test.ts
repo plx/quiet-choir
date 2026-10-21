@@ -72,6 +72,13 @@ describe('durability lint', () => {
     },
   );
 
+  it('neither crashes on nor falsely flags calls through bound agents', () => {
+    // bind is not an effect, and bound calls with distinct IDs are clean. ID namespaces resolve
+    // only through .claude, .codex and .agent(x) receivers, so the fixture's reused ID through a
+    // bound agent goes unreported: a known coverage gap of #578, not a regression.
+    expect(found('bound-agent')).toEqual([]);
+  });
+
   it('flags discarded effect, scope and phase promises, also through then chains', () => {
     // Statement, void + then, statement + catch, scope, phase with a body; awaited, kept,
     // Promise.all-ed and body-less phase calls are clean.

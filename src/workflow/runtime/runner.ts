@@ -195,6 +195,7 @@ import { createMap, settledMapChange } from './map.js';
 import { ExecutionScopes } from './scopes.js';
 import { NameScopes } from './names.js';
 import { bindContext } from './context.js';
+import { bindAgent, type BindHooks } from './bound-agent.js';
 import { execFailureFields, stepError, errorKind, rootCauseKind } from './step-error.js';
 import { stepEventError } from './step-event-error.js';
 import { ConfigurationError, GrantRequiredError } from './configuration-error.js';
@@ -1552,6 +1553,17 @@ export async function runWorkflow<
     const scopes = new ExecutionScopes(signal);
     const names = new NameScopes();
     const origins = new FailureOrigins((error) => errorKind(error) === 'cancelled');
+    // A bound agent's bind and call validation errors are authoring errors, as a raw call's are,
+    // and a call's fails in an operation launched on its harness, so the tracker owns it.
+    const bindHooks = (harness: string): BindHooks => ({
+      markFatal: (error) => {
+        origins.markFatal(error);
+      },
+      reject: (id, error) =>
+        launch<never>(names.qualify(id), harness, () => {
+          throw error;
+        }),
+    });
     const visitedMaps = new Set<string>();
     // Per body execution, like visitedMaps: numbers repeated invocations of one map prefix.
     const mapInvocations = new Map<string, number>();
@@ -3378,7 +3390,7 @@ export async function runWorkflow<
           },
         );
       }
-      return {
+      const agentClient: AgentClient<TOptions> = {
         text: (id, agentOptions) =>
           invoke(
             id,
@@ -3389,7 +3401,9 @@ export async function runWorkflow<
           ),
         object,
         value,
+        bind: (bound) => bindAgent(agentClient, bound, bindHooks(harness)),
       };
+      return agentClient;
     }
 
     /**
@@ -3933,6 +3947,7 @@ export async function runWorkflow<
           context,
           names,
           scopeEntry(() => names.bind(prefix)),
+          bindHooks,
         ),
       claude: client<ClaudeOptions>('claude'),
       codex: client<CodexOptions>('codex'),

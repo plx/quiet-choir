@@ -1,5 +1,11 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { z, type WorkflowContext, type ClaudeOptions } from 'quiet-choir';
+import {
+  z,
+  type AgentClient,
+  type AgentOptions,
+  type WorkflowContext,
+  type ClaudeOptions,
+} from 'quiet-choir';
 
 // Explicit execution controls; source workflows inherited the interactive session.
 // Legacy strictProfiles:false ports expose $claude.tools; tools imply allowedTools unless narrowed.
@@ -46,18 +52,19 @@ export function scopedContext(ctx: WorkflowContext, prefix: string): WorkflowCon
     // Forward every overload unchanged, adding only the legacy explicit prefix.
     return ((id: string, ...args: never[]) => method(`${prefix}/${id}`, ...args)) as T;
   }
+  // A bound agent's calls take the same prefix.
+  function client<O extends AgentOptions>(inner: AgentClient<O>): AgentClient<O> {
+    return {
+      value: prefixed(inner.value),
+      text: prefixed(inner.text),
+      object: prefixed(inner.object),
+      bind: (options) => client(inner.bind(options)),
+    };
+  }
   return {
     ...ctx,
-    claude: {
-      value: prefixed(ctx.claude.value),
-      text: prefixed(ctx.claude.text),
-      object: prefixed(ctx.claude.object),
-    },
-    codex: {
-      value: prefixed(ctx.codex.value),
-      text: prefixed(ctx.codex.text),
-      object: prefixed(ctx.codex.object),
-    },
+    claude: client(ctx.claude),
+    codex: client(ctx.codex),
     exec: Object.assign(prefixed(ctx.exec), { json: prefixed(ctx.exec.json) }),
     readFile: prefixed(ctx.readFile),
     writeFile: prefixed(ctx.writeFile),
