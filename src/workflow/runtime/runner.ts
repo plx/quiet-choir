@@ -1327,6 +1327,9 @@ export async function runWorkflow<
         existing.profileOverrides = profileOverrides;
         existing.grants = grants;
         existing.grantedProfiles = grantedProfiles;
+        // The flag first turning on also refreshes the manifest, whose requiredGrants it changes.
+        if (runRequiresGrants && existing.requireGrants !== true)
+          existing.capabilities = publicCapabilityManifest(capabilities, definition.harnesses);
         if (runRequiresGrants) existing.requireGrants = true;
         existing.policy = policy;
         existing.allowModelOverride = allowModelOverride;

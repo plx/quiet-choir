@@ -1769,6 +1769,32 @@ describe('requireGrants and strictProfiles opt-in (#577)', () => {
     expect((await readRun(setup())).requireGrants).toBe(true);
   });
 
+  it('refreshes the manifest when the flag is first given to a completed run', async () => {
+    const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
+    const options = { ...setup(), harness: { invoke } };
+    await runWorkflow(fixerDefinition(), options);
+    const first = await readRun(setup());
+    expect(first).not.toHaveProperty('requireGrants');
+    expect(first.capabilities?.requiredGrants).toEqual([]);
+    const resumed = await runWorkflow(fixerDefinition(), {
+      ...options,
+      resume: true,
+      requireGrants: true,
+      grants: ['fixer'],
+    });
+    expect(resumed.requireGrants).toBe(true);
+    expect(resumed.capabilities?.requiredGrants).toEqual(['fixer']);
+    const saved = await readRun(setup());
+    expect(saved.requireGrants).toBe(true);
+    expect(saved.capabilities?.requiredGrants).toEqual(['fixer']);
+    // A later resume with no options leaves the manifest as it is.
+    await runWorkflow(fixerDefinition(), { ...options, resume: true });
+    const again = await readRun(setup());
+    expect(again.requireGrants).toBe(true);
+    expect(again.capabilities).toEqual(saved.capabilities);
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+
   it('saves the run-level flag when a resume that first gives it is refused before the body', async () => {
     const invoke = vi
       .fn<Harness['invoke']>()
