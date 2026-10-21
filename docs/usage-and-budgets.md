@@ -69,10 +69,12 @@ A report whose usage names a string `provider`, as every `ctx.decide` attempt's 
 ([ADR 0066](decisions/0066-decision-providers.md)), is also grouped in `byProvider`: per provider
 and, under `byProvider.<name>.byModel`, per served model (the single `model.effective` name, or
 `'(unknown)'` when the provider reported none, never the requested alias). Decision usage carries
-the provider's token counts, `costUsd: null` and its raw usage object as `reported`; `inspect`
-prints one `Provider <name> model <model>` line per group. Reported helper cost contributes to the
-next agent's cost gate, while helper calls never consume agent-attempt slots. Metadata is visible in
-inspection but does not change step identity.
+the provider's token counts, `costUsd: null` and its raw usage object as `reported`; an attempt that
+failed after its request may have been sent, such as a timeout, counts with unknown tokens under
+`'(unknown)'`, and a configuration failure before the request reports nothing. `inspect` prints one
+`Provider <name> model <model>` line per group. Reported helper cost contributes to the next agent's
+cost gate, while helper calls never consume agent-attempt slots. Metadata is visible in inspection
+but does not change step identity.
 
 ## Stop new attempts after a threshold
 

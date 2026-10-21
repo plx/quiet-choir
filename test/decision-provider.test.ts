@@ -623,6 +623,44 @@ describe('ctx.decide', () => {
     );
   });
 
+  it('counts a failed attempt in the usage totals with unknown tokens', async () => {
+    server.script({ hold: true }, { status: 200, body: noulBody() });
+    const result = await runWorkflow(
+      workflow([jev()], (ctx) =>
+        ctx.decide('ask', {
+          state: null,
+          questions: { refund },
+          timeoutMs: 100,
+          retry: { maxAttempts: 2, delayMs: 0, on: ['timeout'] },
+        }),
+      ),
+      options(),
+    );
+    expect(result.steps['ask']?.attemptHistory?.map((attempt) => attempt.errorKind)).toEqual([
+      'timeout',
+      undefined,
+    ]);
+    const usage = summarizeUsage(result);
+    expect(usage.attempts).toBe(0);
+    expect(usage.byIntegration['decision']).toMatchObject({
+      attempts: 2,
+      inputTokens: 7,
+      outputTokens: 3,
+      unknownTokenAttempts: 1,
+      outcomes: { completed: 1, failed: 1 },
+    });
+    expect(usage.byProvider['jev']).toMatchObject({ attempts: 2, inputTokens: 7 });
+    expect(usage.byProvider['jev']?.byModel['(unknown)']).toMatchObject({
+      attempts: 1,
+      inputTokens: null,
+      outcomes: { failed: 1 },
+    });
+    expect(usage.byProvider['jev']?.byModel['jev-1.13.0']).toMatchObject({
+      attempts: 1,
+      inputTokens: 7,
+    });
+  });
+
   it('groups usage without a served model under (unknown), never the requested alias', async () => {
     server.script({
       status: 200,
