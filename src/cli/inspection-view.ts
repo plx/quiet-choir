@@ -350,6 +350,11 @@ export function formatRunSummary(
     lines.push(
       `  Integration ${name}: ${String(group.attempts)} attempts, ${metric(group.costUsd)} reported USD`,
     );
+  for (const [name, provider] of Object.entries(usage.byProvider))
+    for (const [model, group] of Object.entries(provider.byModel))
+      lines.push(
+        `  Provider ${name} model ${model}: ${String(group.attempts)} attempts, ${metric(group.inputTokens)} in / ${metric(group.outputTokens)} out, ${metric(group.costUsd)} reported USD`,
+      );
   for (const [name, group] of Object.entries(usage.byModel))
     lines.push(
       `  Model ${name}: ${metric(group.inputTokens)} in / ${metric(group.outputTokens)} out, ${group.costUsd === null ? 'unknown cost' : `$${group.costUsd.toFixed(4)} reported`}`,
