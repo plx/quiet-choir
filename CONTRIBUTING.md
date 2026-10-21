@@ -106,6 +106,12 @@ needs no test edit. `.github/dependabot.yml` applies the same policy.
 - Other runtime dependencies, such as `@oclif/core`, are pinned to exact versions in `package.json`
   and may be bumped by Dependabot. The test checks that they are exact runtime dependencies, not
   which version they are.
+- `minijinja-js` is the prompt template engine
+  ([ADR 0064](docs/decisions/0064-prompt-templates-as-execution-dependencies.md)). It is pinned
+  exactly like the other runtime dependencies, used only through `src/workflow/prompts/engine.ts`,
+  and never substituted. Its README calls the binding experimental. Rendered text is step identity,
+  so a bump must leave the render goldens in `test/prompts.test.ts` unchanged; a moved golden is a
+  gate, as in `test/schema-identity.test.ts` below.
 
 A failing golden in `test/schema-identity.test.ts` after a dependency bump (usually zod, or tsx when
 it alters a schema encoding) is a gate, not a snapshot to refresh: the encoding enters step
