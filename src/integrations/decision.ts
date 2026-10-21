@@ -95,6 +95,13 @@ function headerValue(token: string): boolean {
   return token === token.trim() && !/[^\x20-\x7e\xa0-\xff]/u.test(token);
 }
 
+/** The value without its trailing slashes, in linear time. */
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 0x2f) end -= 1;
+  return value.slice(0, end);
+}
+
 function httpUrl(value: string, label: string): string {
   if (!URL.canParse(value) || !['http:', 'https:'].includes(new URL(value).protocol))
     throw new ConfigurationError(`${label} must be an http or https URL.`);
@@ -133,7 +140,7 @@ export function jevCompatible(options: JevCompatibleOptions): DecisionProviderDe
         throw new ConfigurationError(
           `Decision provider ${name} has no baseUrl; set it in jevCompatible or --harness-config decisions.${name}.baseUrl.`,
         );
-      const url = `${httpUrl(baseUrl, `Decision provider ${name} baseUrl`).replace(/\/+$/u, '')}${path}`;
+      const url = `${trimTrailingSlashes(httpUrl(baseUrl, `Decision provider ${name} baseUrl`))}${path}`;
       const apiKeyEnv = configuration.apiKeyEnv ?? options.apiKeyEnv;
       if (apiKeyEnv === undefined)
         throw new ConfigurationError(

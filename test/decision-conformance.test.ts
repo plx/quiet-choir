@@ -165,6 +165,12 @@ describe('jevCompatible', () => {
     expect(server.requests[0]?.path).toBe('/v2/decide');
   });
 
+  it('trims every trailing slash of the base URL', async () => {
+    server.script(success);
+    await runWorkflow(workflow({ baseUrl: `${server.url}///` }), options());
+    expect(server.requests[0]?.path).toBe('/v1/systemone');
+  });
+
   const invalid: [string, (body: typeof answers) => unknown][] = [
     [
       'a choice outside the options',
