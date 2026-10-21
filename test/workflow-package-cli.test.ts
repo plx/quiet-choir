@@ -666,7 +666,7 @@ describe('packages through the CLI', { timeout: 120_000 }, () => {
       '--json',
     ]);
     expect(ran.error, ran.stderr).toBeUndefined();
-    expect(json(ran.stdout)).toMatchObject({ ok: true, run: { output: 'other:reviewed' } });
+    expect(json(ran.stdout)).toMatchObject({ status: 'completed', output: 'other:reviewed' });
     expect((await readRun({ stateDir, runId: 'cli-cts' })).launch?.entrypoint).toBe(
       join(fixture.dir, 'workflows', 'other.cts'),
     );
