@@ -243,6 +243,7 @@ it('uses package capabilities for grants, strict profiles and bounded child dele
   const child = defineWorkflow({
     ...base,
     name: 'child',
+    requireGrants: true,
     harnesses: [tool],
     profiles: { worker: { harnesses: { tool: { tools: ['shell'] } } } },
     defaults: { profile: 'worker' },
@@ -264,6 +265,7 @@ it('uses package capabilities for grants, strict profiles and bounded child dele
   ).toBe('done');
   const parent = defineWorkflow({
     ...base,
+    requireGrants: true,
     harnesses: [tool],
     children: [child],
     async run(ctx) {
@@ -286,6 +288,7 @@ it('uses package capabilities for grants, strict profiles and bounded child dele
   expect(delegated.steps['child/work']?.request?.model).toBe('parent-model');
   const raw = defineWorkflow({
     ...base,
+    strictProfiles: true,
     harnesses: [tool],
     // The failed overload's result type would otherwise surface as a second error on run.
     async run(ctx): Promise<string> {

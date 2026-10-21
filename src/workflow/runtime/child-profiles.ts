@@ -237,11 +237,13 @@ function withinAncestors(
 }
 
 /**
- * Resolve declared child needs and check them against concrete parent roles before child effects.
- * With the run's working directory, Claude directories and `addDirRoots` are checked by canonical
- * containment in the parent's roots and, through `parentAncestry` (the parent authority's
- * `ancestry`), in every ancestor role's roots, canonicalized at each check; without it, only literal
- * membership delegates. @internal
+ * Resolve declared child needs and, under `requireGrants`, check them against concrete parent roles
+ * before child effects. With the run's working directory, Claude directories and `addDirRoots` are
+ * checked by canonical containment in the parent's roots and, through `parentAncestry` (the parent
+ * authority's `ancestry`), in every ancestor role's roots, canonicalized at each check; without it,
+ * only literal membership delegates. Without `requireGrants` (ADR 0063 §5) the child's roles are its
+ * own: no parent role is looked up, compared, clamped or granted, `options.profiles` is ignored, and
+ * the parent's override rules pass through unchanged. @internal
  */
 export function delegateCapabilities(
   definition: WorkflowDeclaration,
@@ -250,10 +252,23 @@ export function delegateCapabilities(
   parentPins: Readonly<Record<string, string>>,
   parentOverrides: readonly ProfileOverride[],
   options: ChildOptions,
+  requireGrants: boolean,
   rootCwd?: string,
   parentAncestry: Readonly<Record<string, readonly DirCeiling[]>> = {},
 ): ChildCapabilities {
-  let manifest = resolveCapabilities(definition);
+  let manifest = resolveCapabilities(definition, { requireGrants });
+  if (!requireGrants)
+    return {
+      manifest,
+      grants: [],
+      pins: {},
+      overrides: parentOverrides,
+      ancestry: {},
+      check() {
+        // No ceiling to check against: the child's own strictProfiles still governs its calls.
+      },
+      limits: (_name, policy) => policy,
+    };
   const mapping = options.profiles ?? {};
   for (const name of Object.keys(mapping))
     if (!Object.hasOwn(manifest.profiles, name))

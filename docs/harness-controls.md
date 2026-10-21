@@ -29,16 +29,18 @@ and grants nothing, so it is not a capability control. See
 
 Declare capability controls in [agent profiles](agent-profiles.md), including tools, permissions,
 MCP/settings, native agents/profiles/config, additional directories, environment and escape args.
-Default `strictProfiles` rejects those fields at call sites, with one bounded exception: a Claude
-call may pass `addDirs` when its profile declares `claude.addDirRoots` and every entry canonicalizes
-(no `..` segments, symlinks resolved) inside a root; accepted entries are appended to the profile's
-`addDirs` as canonical absolute paths. Under any other profile the call fails typecheck where
-`defineWorkflow` can see the profile's shape. See
+`strictProfiles: true` (opt-in; the default is `false`) rejects those fields at call sites, with one
+bounded exception: a Claude call may pass `addDirs` when its profile declares `claude.addDirRoots`
+and every entry canonicalizes (no `..` segments, symlinks resolved) inside a root; accepted entries
+are appended to the profile's `addDirs` as canonical absolute paths. Under any other profile the
+call fails typecheck where `defineWorkflow` can see the profile's shape. See
 [bounded call-site directories](agent-profiles.md#bounded-call-site-directories). Role prompts,
 models, effort, fallbacks and image attachments can be supplied per call. Native
-configuration/agent/escape/env controls and enabled network access conservatively require an
-**exec** grant. Codex additional writable directories require write access; Claude directories alone
-grant no tools. Named grants pin these declared controls and require renewal when they change.
+configuration/agent/escape/env controls and enabled network access are conservatively classified as
+**exec** access, and Codex additional writable directories as write access; Claude directories alone
+grant no tools. Under [`requireGrants`](agent-profiles.md#requiregrants-launch-grants-and-pins)
+those classes need launch grants, and named grants pin these declared controls and require renewal
+when they change.
 
 ```ts
 // Fields on defineWorkflow:

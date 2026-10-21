@@ -286,6 +286,7 @@ it('maps declared profile grants, caps child limits and refuses direct or nested
   const root = defineWorkflow({
     name: 'parent',
     ...base,
+    requireGrants: true,
     profiles: { editor: { extends: 'edit', maxTurns: 3, claude: { model: 'parent-model' } } },
     async run(ctx) {
       await expect(ctx.workflow('missing', writer, null)).rejects.toThrow('no parent grant');
@@ -536,6 +537,7 @@ it('does not let raw read capabilities or nested aliases escape delegated profil
   const root = defineWorkflow({
     name: 'parent',
     ...base,
+    requireGrants: true,
     async run(ctx) {
       return ctx.workflow('child', child, null);
     },
@@ -586,6 +588,7 @@ it('keeps a failing parent denial policy in children and refuses a weaker call o
   const root = defineWorkflow({
     name: 'parent',
     ...base,
+    requireGrants: true,
     output: z.string(),
     profiles: { scout: { extends: 'readonly', onPermissionDenied: 'fail' } },
     async run(ctx) {
@@ -1765,6 +1768,7 @@ it('delegates root-bounded Claude directories to children and refuses wider chil
   const bounded = defineWorkflow({
     name: 'bounded',
     ...base,
+    strictProfiles: true,
     profiles: { reader: { extends: 'readonly', claude: { addDirRoots: [join(root, 'pr-1')] } } },
     async run(ctx) {
       await ctx.claude.text('read', {
@@ -1784,6 +1788,7 @@ it('delegates root-bounded Claude directories to children and refuses wider chil
   const parent = defineWorkflow({
     name: 'parent',
     ...base,
+    requireGrants: true,
     profiles: { reader: { extends: 'readonly', claude: { addDirRoots: [root] } } },
     async run(ctx) {
       await expect(ctx.workflow('wider', wider, null)).rejects.toThrow(
@@ -1832,6 +1837,7 @@ async function ancestorRoots(retarget: 'none' | 'middle' | 'leaf') {
   const leaf = defineWorkflow({
     name: 'leaf',
     ...base,
+    strictProfiles: true,
     profiles: { reader: { extends: 'readonly', claude: { addDirRoots: [link] } } },
     async run(ctx) {
       if (retarget === 'leaf') await ctx.step('retarget', retargetStep);
@@ -1852,6 +1858,7 @@ async function ancestorRoots(retarget: 'none' | 'middle' | 'leaf') {
   const parent = defineWorkflow({
     name: 'parent',
     ...base,
+    requireGrants: true,
     profiles: { reader: { extends: 'readonly', claude: { addDirRoots: [allowed] } } },
     async run(ctx) {
       await ctx.workflow('middle', middle, null);
@@ -1893,4 +1900,103 @@ it('delegates a narrowed symlink root to a grandchild while it stays inside ever
   const { run, requests, inner } = await ancestorRoots('none');
   expect((await run()).status).toBe('completed');
   expect(requests).toEqual([[realpathSync.native(inner)]]);
+});
+
+// ADR 0063 §5 (#577): without requireGrants a child's roles are its own.
+it('runs a child role wider than its parent by default and refuses it under requireGrants', async () => {
+  const stateDir = await directory();
+  const options: string[][] = [];
+  const builder = defineWorkflow({
+    name: 'builder',
+    ...base,
+    profiles: { runner: { extends: 'edit', claude: { tools: ['Read', 'Edit', 'Bash'] } } },
+    async run(ctx) {
+      await ctx.claude.text('build', { profile: 'runner', prompt: 'x' });
+      // A raw call-site capability is not compared to the parent either.
+      await ctx.claude.text('fetch', { prompt: 'y', tools: ['WebFetch'] });
+      return null;
+    },
+  });
+  const parent = (requireGrants: boolean) =>
+    defineWorkflow({
+      name: 'parent',
+      ...base,
+      requireGrants,
+      children: [builder],
+      async run(ctx) {
+        // The remap names an unknown child role; without requireGrants it is accepted and ignored.
+        return ctx.workflow('builder', builder, null, { profiles: { missing: 'text' } });
+      },
+    });
+  const harness = {
+    invoke: (request: { readonly options: object }) => {
+      options.push((request.options as { readonly tools?: string[] }).tools ?? []);
+      return Promise.resolve({ text: 'ok', sessionId: null });
+    },
+  };
+  const run = await runWorkflow(parent(false), { stateDir, runId: 'open', input: null, harness });
+  expect(run.status).toBe('completed');
+  expect(options).toEqual([['Read', 'Edit', 'Bash'], ['WebFetch']]);
+  await expect(
+    runWorkflow(parent(true), { stateDir, runId: 'opted', input: null, grants: ['all'], harness }),
+  ).rejects.toThrow('Unknown child profile mapping: missing.');
+  const mapped = defineWorkflow({
+    name: 'parent',
+    ...base,
+    requireGrants: true,
+    children: [builder],
+    async run(ctx) {
+      return ctx.workflow('builder', builder, null, { profiles: { runner: 'edit' } });
+    },
+  });
+  await expect(
+    runWorkflow(mapped, { stateDir, runId: 'mapped', input: null, grants: ['all'], harness }),
+  ).rejects.toThrow('Child profile builder.runner exceeds parent profile edit: tools.');
+  // The run-level flag turns the same layer on for a root that does not declare it.
+  await expect(
+    runWorkflow(
+      { ...mapped, requireGrants: false },
+      { stateDir, runId: 'flagged', input: null, grants: ['all'], requireGrants: true, harness },
+    ),
+  ).rejects.toThrow('Child profile builder.runner exceeds parent profile edit: tools.');
+  expect(options).toHaveLength(2);
+});
+
+it('ignores a child definition requireGrants: the root decides for every child', async () => {
+  const stateDir = await directory();
+  let calls = 0;
+  const child = defineWorkflow({
+    name: 'child',
+    ...base,
+    requireGrants: true,
+    profiles: { fixer: { extends: 'edit' } },
+    async run(ctx) {
+      await ctx.claude.text('fix', { profile: 'fixer', prompt: 'x' });
+      return null;
+    },
+  });
+  const root = defineWorkflow({
+    name: 'parent',
+    ...base,
+    children: [child],
+    run: (ctx) => ctx.workflow('child', child, null),
+  });
+  const run = await runWorkflow(root, {
+    stateDir,
+    runId: 'child-flag',
+    input: null,
+    harness: {
+      invoke: () => {
+        calls++;
+        return Promise.resolve({ text: 'ok', sessionId: null });
+      },
+    },
+  });
+  expect(run.status).toBe('completed');
+  expect(calls).toBe(1);
+  // validate --json publishes child requiredGrants only when the root opts in.
+  expect(describeWorkflow(root).children[0]?.capabilities.requiredGrants).toEqual([]);
+  expect(
+    describeWorkflow({ ...root, requireGrants: true }).children[0]?.capabilities.requiredGrants,
+  ).toEqual(['fixer']);
 });

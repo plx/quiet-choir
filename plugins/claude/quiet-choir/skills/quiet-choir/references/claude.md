@@ -21,8 +21,9 @@ usage, retries, identity, and process recovery.
 | `fallbackModel`                      | Model string or nonempty array, passed as a comma-separated chain           |
 
 Agents, MCP and settings also use 0600 temporary files, removed in finally. Capability controls
-belong in profiles under default strict mode; native agent/config/MCP/settings/escape/env controls
-conservatively need exec grants. Role prompts and effort may be supplied per call. Each attempt
+belong in profiles under `strictProfiles: true` (opt-in); native
+agent/config/MCP/settings/escape/env controls are conservatively classified as exec access, which
+needs a grant under `requireGrants`. Role prompts and effort may be supplied per call. Each attempt
 records requested model/effort or `"inherited"`. All these semantic values, including fallback
 models, must match for completed replay. Escape-arg paths fingerprint the path string only.
 

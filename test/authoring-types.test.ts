@@ -60,10 +60,11 @@ const worktreeOptions = { prompt, worktree: true as const };
 const baseWorktreeOptions = { prompt, worktree: { base: 'main' } };
 const commit = 'a'.repeat(40);
 
-// Every built-in capability key is rejected under the default strictProfiles.
+// Every built-in capability key is rejected under an explicit strictProfiles: true.
 export const strict = defineWorkflow({
   ...base,
   name: 'strict',
+  strictProfiles: true,
   profiles: { scout: { claude: { tools: ['Read'] } } },
   harnesses: [tool, wide],
   async run(ctx) {
@@ -232,6 +233,25 @@ export const permissive = defineWorkflow({
     await ctx.claude.text('t', { prompt, worktree: { kind: 'worktree' } });
     // @ts-expect-error -- use worktree: { base }.
     await ctx.codex.text('t', { prompt, worktree: { kind: 'worktree', base: 'main' } });
+    return null;
+  },
+});
+
+// Omitted strictProfiles infers false (#577): raw capability keys type at every call site.
+export const omittedStrict = defineWorkflow({
+  ...base,
+  name: 'omitted-strict',
+  harnesses: [tool],
+  profiles: { plain: { extends: 'readonly' } },
+  async run(ctx) {
+    await ctx.claude.text('t', { prompt, tools: ['Read'] });
+    await ctx.claude.text('t', { prompt, profile: 'plain', addDirs: ['d'], env: { A: 'b' } });
+    await ctx.codex.text('t', { prompt, sandbox: 'workspace-write', networkAccess: true });
+    await ctx.agent('tool').text('t', { prompt, tools: ['shell'] });
+    await ctx.within('scope').claude.text('t', { prompt, isolation: 'inherit' });
+    await ctx.claude.text('t', claudeToolsOptions);
+    // @ts-expect-error -- profile names stay checked without strict profiles.
+    await ctx.claude.text('t', { prompt, profile: 'typo' });
     return null;
   },
 });
@@ -416,6 +436,7 @@ async function rootedHelper(ctx: WorkflowContext<'reader' | 'plain', BuiltInHarn
 export const rootedCalls = defineWorkflow({
   ...base,
   name: 'rooted-calls',
+  strictProfiles: true,
   profiles: {
     reader: { extends: 'readonly', claude: { addDirRoots: ['runs'] } },
     nested: { extends: 'reader' },
@@ -479,6 +500,7 @@ export const rootedCalls = defineWorkflow({
 export const rootedDefaultProfile = defineWorkflow({
   ...base,
   name: 'rooted-default-profile',
+  strictProfiles: true,
   defaults: { profile: 'reader' },
   profiles: { reader: { extends: 'readonly', claude: { addDirRoots: ['runs'] } } },
   async run(ctx) {
@@ -494,6 +516,7 @@ export const rootedDefaultProfile = defineWorkflow({
 export const rootedAllDefaults = defineWorkflow({
   ...base,
   name: 'rooted-all-defaults',
+  strictProfiles: true,
   defaults: { claude: { addDirRoots: ['runs'] } },
   profiles: { plain: { extends: 'readonly' } },
   async run(ctx) {
@@ -524,6 +547,7 @@ const wideProfiles: Readonly<Record<string, AgentProfile>> = { plain: { extends:
 export const wideAddDirs = defineWorkflow({
   ...base,
   name: 'wide-add-dirs',
+  strictProfiles: true,
   profiles: wideProfiles,
   async run(ctx) {
     await ctx.claude.text('t', { prompt, profile: 'plain', addDirs });
@@ -535,6 +559,7 @@ export const wideAddDirs = defineWorkflow({
 export const constProfiles = defineWorkflow({
   ...base,
   name: 'const-profiles',
+  strictProfiles: true,
   profiles: {
     tooled: { claude: { tools: ['Read'], settings: { list: [1] }, addDirRoots: ['runs'] } },
     listed: { claude: { tools: ['Read'], settings: { list: [1, { a: [true] }] } } },
@@ -561,12 +586,21 @@ const runConst = () =>
   runWorkflow(constProfiles, { runId: 'unused', stateDir: 'unused', input: null });
 // Explicit type arguments leave TProfiles and TDefaults empty: declared names stay permissive,
 // while built-ins and the omitted profile read as unrooted even under rooted defaults.
-export const prefixRootedDefaults = defineWorkflow<null, null>({
+export const prefixRootedDefaults = defineWorkflow<
+  null,
+  null,
+  never,
+  readonly [],
+  true,
+  readonly [],
+  'prefix-rooted-defaults'
+>({
   ...base,
   name: 'prefix-rooted-defaults',
+  strictProfiles: true,
   defaults: { claude: { addDirRoots: ['runs'] } },
   async run(ctx) {
-    // @ts-expect-error -- the <Input, Output> prefix cannot see defaults.claude.addDirRoots.
+    // @ts-expect-error -- explicit type arguments cannot see defaults.claude.addDirRoots.
     await ctx.claude.text('t', { prompt, addDirs });
     return null;
   },
@@ -582,6 +616,7 @@ export const explicitProfiles = defineWorkflow<
 >({
   ...base,
   name: 'explicit-profiles',
+  strictProfiles: true,
   profiles: { plain: { extends: 'readonly' } },
   async run(ctx) {
     await ctx.claude.text('t', { prompt, profile: 'plain', addDirs });
@@ -656,13 +691,22 @@ export const grandparent = defineWorkflow({
   },
 });
 // Explicit defineWorkflow type arguments are all-or-nothing: TypeScript has no partial inference,
-// so a shorter prefix takes the strict, childless defaults for the remaining parameters.
+// so a shorter prefix takes the permissive, childless defaults for the remaining parameters.
+export const prefixStrictRefused = defineWorkflow<null, null>({
+  ...base,
+  name: 'prefix-strict-refused',
+  // @ts-expect-error -- the <Input, Output> prefix defaults TStrict to false.
+  strictProfiles: true,
+  run: () => Promise.resolve(null),
+});
 export const prefixPermissive = defineWorkflow<null, null>({
   ...base,
   name: 'prefix-permissive',
-  // @ts-expect-error -- the <Input, Output> prefix defaults TStrict to true.
   strictProfiles: false,
-  run: () => Promise.resolve(null),
+  async run(ctx) {
+    await ctx.claude.text('t', { prompt, tools: ['Read'] });
+    return null;
+  },
 });
 export const prefixParent = defineWorkflow<null, null>({
   ...base,
@@ -671,7 +715,7 @@ export const prefixParent = defineWorkflow<null, null>({
   children: [child],
   run: () => Promise.resolve(null),
 });
-// The prefix form still compiles for a strict, childless workflow.
+// The prefix form still compiles for a childless workflow that omits strictProfiles.
 export const prefixStrict = defineWorkflow<null, null>({
   ...base,
   name: 'prefix-strict',
@@ -755,6 +799,7 @@ it('carries strictness, profiles and declared children into authoring types', ()
   expectTypeOf(parent.name).toEqualTypeOf<'parent'>();
   expectTypeOf(strict.strictProfiles).toEqualTypeOf<true | undefined>();
   expectTypeOf(permissive.strictProfiles).toEqualTypeOf<false | undefined>();
+  expectTypeOf(omittedStrict.strictProfiles).toEqualTypeOf<false | undefined>();
   // Strict built-in call options can set only a narrowed isolation of the shared key tuples, plus
   // Claude's root-bounded addDirs; the other capability keys remain as optional never properties.
   type StrictClaude = CallOptions<'claude', BuiltInHarnesses['claude'], never, true>;
@@ -928,6 +973,7 @@ const interfaceProfiles: InterfaceProfiles = {
 export const interfaceTypedProfiles = defineWorkflow({
   ...base,
   name: 'interface-typed-profiles',
+  strictProfiles: true,
   profiles: interfaceProfiles,
   async run(ctx) {
     await ctx.claude.text('t', { prompt, profile: 'reader', addDirs });
@@ -946,6 +992,7 @@ const badInterfaceProfiles: BadInterfaceProfiles = { bad: { extends: 'readonly',
 export const badInterfaceTypedProfiles = defineWorkflow({
   ...base,
   name: 'bad-interface-typed-profiles',
+  strictProfiles: true,
   profiles: badInterfaceProfiles,
   async run(ctx) {
     await ctx.claude.text('t', { prompt, profile: 'bad', addDirs });
@@ -961,6 +1008,7 @@ function genericProfileFactory<P extends AgentProfile>(profile: P) {
   return defineWorkflow({
     ...base,
     name: 'generic-profile',
+    strictProfiles: true,
     profiles: { worker: profile, plain: { extends: 'readonly' } },
     async run(ctx) {
       await ctx.claude.text('t', { prompt, profile: 'worker', addDirs });
@@ -980,6 +1028,7 @@ function genericDefaultsFactory<D extends AgentDefaults<never>>(defaults: D) {
   return defineWorkflow({
     ...base,
     name: 'generic-defaults',
+    strictProfiles: true,
     defaults,
     profiles: { plain: { extends: 'readonly' } },
     async run(ctx) {

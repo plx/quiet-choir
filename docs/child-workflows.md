@@ -13,8 +13,8 @@ fails typecheck, and the result has the child's output type; a workflow without 
 name dispatch at type level. A helper typed with a bare `WorkflowContext`, or a child typed as an
 erased `WorkflowDeclaration`, falls back to any name with JSON input and output, still validated at
 runtime. Explicit `defineWorkflow` type arguments are all-or-nothing: with a shorter prefix such as
-`defineWorkflow<Input, Output>`, the rest take the strict, childless defaults, so
-`strictProfiles: false` or a nonempty `children` list fails typecheck; drop the type arguments
+`defineWorkflow<Input, Output>`, the rest take the permissive, childless defaults, so
+`strictProfiles: true` or a nonempty `children` list fails typecheck; drop the type arguments
 (preferred) or spell all seven. Direct definition calls preserve inferred output types. Name
 dispatch does not search the filesystem registry. Plain function helpers remain useful with
 `ctx.scope` or `ctx.within`; a typed workflow adds validated I/O, a recorded version, profile
@@ -96,26 +96,38 @@ policy, outside identity; `execute --policy-reset` restores the default before e
 
 ## Profiles and observation
 
-Child roles map to parent roles of the same name by default. `options.profiles` maps a child's role
-to a differently named parent role. Declared/default child requirements are checked before child
-effects. Tools, permissions, sandbox and native escape controls cannot exceed the delegated role;
-opaque controls require matching configuration. A child's Claude `addDirRoots` must lie inside the
-parent role's roots, and a child call's Claude directories must be listed by the parent role or,
-when absolute, lie canonically inside its roots (`claude.addDirRoots`, `claude.addDirs`); Codex
-directories need literal membership. A grandchild's Claude directories and roots must also pass the
-same check, at delegation and at every call, against every ancestor role in the chain, each
-canonicalized when checked (`exceeds ancestor profile …`), so a retargeted symlink root cannot widen
-a descendant beyond the top-level root. Missing or insufficient roles fail explicitly. Optional
-built-ins that the parent cannot delegate disappear from the child's available roles, so a
-grandchild cannot recover them. Raw call-site capabilities are checked too, even with
-`strictProfiles: false`.
+By default a child's roles are its own: they are resolved from the child's declaration, no role is
+compared to the parent's, `options.profiles` is accepted and ignored, and the parent's `--profile`
+limit rules still apply by profile name. The child's own `strictProfiles` governs its call sites,
+and a child definition's `requireGrants` is ignored: only the root's setting, or the run's
+`--require-grants`, counts ([ADR 0063](decisions/0063-bound-agents-and-typed-rosters.md) §5).
 
-Child models/effort inherit the mapped parent's values when omitted. Parent profile limit overrides
-pass through role mappings, and child call limits are bounded by the delegated parent limits. Child
-profile definitions remain the source of its requested tools; mapping never promotes it to
-additional parent tools. A delegated role that fails on permission denials stays failing: a child
-role that omits `onPermissionDenied` inherits `fail`, and an explicit child profile or Claude call
-`warn` is refused. Workflow JavaScript remains trusted operator code, not a security sandbox.
+### requireGrants: delegation ceilings
+
+Under `requireGrants`, child roles map to parent roles of the same name by default, and
+`options.profiles` maps a child's role to a differently named parent role (an unknown child role in
+it is an error). Declared/default child requirements are checked before child effects. Tools,
+permissions, sandbox and native escape controls cannot exceed the delegated role; opaque controls
+require matching configuration. A child's Claude `addDirRoots` must lie inside the parent role's
+roots, and a child call's Claude directories must be listed by the parent role or, when absolute,
+lie canonically inside its roots (`claude.addDirRoots`, `claude.addDirs`); Codex directories need
+literal membership. A grandchild's Claude directories and roots must also pass the same check, at
+delegation and at every call, against every ancestor role in the chain, each canonicalized when
+checked (`exceeds ancestor profile …`), so a retargeted symlink root cannot widen a descendant
+beyond the top-level root. Missing or insufficient roles fail explicitly. Optional built-ins that
+the parent cannot delegate disappear from the child's available roles, so a grandchild cannot
+recover them. Raw call-site capabilities are checked too, even with `strictProfiles: false`. A
+parent role that is elevated still needs the run's grant before the child uses it.
+
+Under `requireGrants`, child models/effort inherit the mapped parent's values when omitted. Parent
+profile limit overrides pass through role mappings, and child call limits are bounded by the
+delegated parent limits. Child profile definitions remain the source of its requested tools; mapping
+never promotes it to additional parent tools. A delegated role that fails on permission denials
+stays failing: a child role that omits `onPermissionDenied` inherits `fail`, and an explicit child
+profile or Claude call `warn` is refused. Workflow JavaScript remains trusted operator code, not a
+security sandbox.
+
+### Observation
 
 Events carry `frame`; `child.started`, `child.completed`, `child.failed` and `child.settled` (a
 settled failure of an `onError: 'return'` frame) follow frame saves, `child.redefined` (message

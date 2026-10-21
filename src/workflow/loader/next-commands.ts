@@ -81,7 +81,10 @@ function failedNext(
     canFork(run) ? [{ why, argv: fork(launcher, entrypoint, run.id, stateDir) }] : [];
   switch (cause?.kind) {
     case 'grant':
-      // `workflow resume` takes no --grant; `execute --resume` resumes the stored entrypoint too.
+      // Only under requireGrants, which the record keeps (saved before the body starts, and by a
+      // pre-body grant refusal that first opts the run in), so the resume need not repeat
+      // --require-grants. `workflow resume` takes no --grant; `execute --resume` resumes the stored
+      // entrypoint too.
       // Call-site capability overrides ignore profile grants, so only the access class admits them.
       return [
         {

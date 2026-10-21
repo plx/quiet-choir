@@ -40,7 +40,7 @@ export interface ClaudeOptions extends AgentOptions {
   readonly settings?: Readonly<Record<string, JsonValue>>;
   /** Fallback model or ordered models; semantic identity, not a policy override. */
   readonly fallbackModel?: string | readonly string[];
-  /** Built-in tools to expose; use a workflow profile under default strictProfiles. Default: none. */
+  /** Built-in tools to expose; declare it in a workflow profile under strictProfiles. Default: none. */
   readonly tools?: readonly string[];
   /** Narrower tool permissions; omission pre-approves the exposed tools. */
   readonly allowedTools?: readonly string[];

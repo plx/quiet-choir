@@ -264,9 +264,9 @@ helpers can still use `within` or `scope`; see [child workflows and discovery](c
 
 **Rule:** use runtime isolation when targets may overlap, commands observe concurrent edits, or a
 failed writer's partial state is unsafe to reuse. Structural file sharding remains valid for
-disjoint writers. Launch from the target repository with `--grant editor` when edits are authorized.
-Git 2.38+ is required; embedded callers also supply `NodeProcessRunner` and may configure cache
-policy.
+disjoint writers. Launch from the target repository; under `--require-grants`, add `--grant editor`
+when edits are authorized. Git 2.38+ is required; embedded callers also supply `NodeProcessRunner`
+and may configure cache policy.
 
 <!-- skills-check: example pattern-worktrees -->
 
@@ -716,12 +716,12 @@ command output. When the agent changed nothing, the head does not move and the r
 covers GitHub reporting the previous head for a while after a push. Within that window, a head that
 `sha` descends from keeps the wait waiting instead of ending it as `head-moved`.
 
-Launch it from a checkout of the pull request's head branch with an upstream, with `--grant write`.
-`git diff --quiet` sees tracked files only, so a fix that adds a file needs a different commit
-command. `rounds` bounds the fixes. Every other status returns as data: `success`; `no-checks`
-(reported only after a 5-minute grace); `head-moved` (someone else pushed, so start a new run for
-the new head); `closed`; `timeout` (one hour after the wait first opened); `failure` once the rounds
-are spent; and `stuck`.
+Launch it from a checkout of the pull request's head branch with an upstream (under
+`--require-grants`, with `--grant write`). `git diff --quiet` sees tracked files only, so a fix that
+adds a file needs a different commit command. `rounds` bounds the fixes. Every other status returns
+as data: `success`; `no-checks` (reported only after a 5-minute grace); `head-moved` (someone else
+pushed, so start a new run for the new head); `closed`; `timeout` (one hour after the wait first
+opened); `failure` once the rounds are spent; and `stuck`.
 
 <!-- skills-check: example pattern-ci-gate -->
 
@@ -866,7 +866,7 @@ while [ "$n" != null ]; do
   if [ -n "$saved" ]; then
     qc resume "ticket-$n" >"$out"
   else
-    qc execute "$QC_WORKFLOW" --run-id "ticket-$n" --grant write \
+    qc execute "$QC_WORKFLOW" --run-id "ticket-$n" \
       --input "{\"repo\":\"$QC_REPO\",\"epic\":$QC_EPIC,\"ticket\":$n}" >"$out"
   fi || exit
   [ "$(tail -n 1 "$out" | jq -r .output.status)" = closed ] || break

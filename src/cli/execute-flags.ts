@@ -92,6 +92,7 @@ export interface WorkflowExecuteFlags {
   readonly 'harness-limit': string[] | undefined;
   profile: string[] | undefined;
   grant: string[] | undefined;
+  readonly 'require-grants': boolean | undefined;
   readonly input: string | undefined;
   readonly 'run-id': string | undefined;
   readonly resume: boolean | undefined;
@@ -245,8 +246,13 @@ export const executeFlags: Interfaces.FlagInput<WorkflowExecuteFlags> = {
     multiple: true,
   }),
   grant: Flags.string({
-    description: 'Authorize an elevated profile, write/exec class, or all; saved across resumes',
+    description:
+      'Authorize an elevated profile, write/exec class, or all; saved across resumes and checked under --require-grants',
     multiple: true,
+  }),
+  'require-grants': Flags.boolean({
+    description:
+      'Require --grant for write/exec roles and enforce child delegation ceilings; saved across resumes',
   }),
   policy: Flags.string({
     description: 'JSON policy override; repeat for ordered rules, saved across resumes',

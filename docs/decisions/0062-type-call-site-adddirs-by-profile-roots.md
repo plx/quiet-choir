@@ -5,6 +5,10 @@
 - Amends: [0054](0054-bounded-call-site-adddirs.md) §7 (types)
 - Builds on: [0010](0010-agent-profiles-and-grants.md) (profiles and grants) and
   [0026](0026-inline-children-and-definition-registry.md) (typed children)
+- Amended by #577 ([0063](0063-bound-agents-and-typed-rosters.md) §5): strict typing is opt-in.
+  `defineWorkflow` infers an omitted `strictProfiles` as `false`, so these types apply under an
+  explicit `strictProfiles: true`, and an `<Input, Output>` prefix now defaults the rest to the
+  permissive form.
 
 ## Context
 

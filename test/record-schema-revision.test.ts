@@ -82,6 +82,8 @@ const revisionDigests: Readonly<Record<string, string>> = {
   '16': '01979d40f27afb4d663d424a519d1b89a7d840c34dfdb7f4d206d99bc60a27a5',
   // Revision 17 (#371) added the top-level generation.
   '17': '63118cf801b40577a65f3e26aa1197f0aa7566b1e98ecfd2781e2a8b984ae449',
+  // Revision 18 (#577) added the top-level requireGrants.
+  '18': '76e465c736a943b3ea1b9383259e31640509d566ce15046a1a9387fdd579846c',
 };
 // digest(readRun(...)) of the installed pre-revision fixture, computed on unmodified main 91a6d2f.
 const preRevisionReadDigest = '714b6cb068de5c933b7ba04a26d1f931f589f7c9910f76f0e5c8cc493eb13016';
@@ -121,6 +123,9 @@ const revisionFifteenReadDigest =
 // digest(readRun(...)) of the installed revision-sixteen fixture, computed on unmodified main 03ba2b5.
 const revisionSixteenReadDigest =
   'c03e6499db22babe14b26645b8b37693c59242be9386ac0270af84875cea71e9';
+// digest(readRun(...)) of the installed revision-seventeen fixture, computed on unmodified main ecebb3e.
+const revisionSeventeenReadDigest =
+  '167409e560da92cba6f55648d2f3bebbe9837346974ab3f8b08eda026e7a0db0';
 
 // Digests of the run-level (without steps) and step JSON Schemas (recordShapeSchemas) per revision,
 // with the zod version that produced them. They start at revision 17: older revisions cannot be
@@ -130,6 +135,11 @@ const shapeDigests: Readonly<Record<string, { zod: string; run: string; steps: s
   '17': {
     zod: '4.5.4',
     run: '563c2ce563e5f1fd7a6ac44d26f794fcf34701a74ef486cec88fffd3aa03cca0',
+    steps: 'b8c0698a4791f24bc30576a4258b7631cb2dea80a3a6ddd17d830fc9a120bc79',
+  },
+  '18': {
+    zod: '4.5.4',
+    run: '867c70c593f1a2a038b9d3e0576fc9ffd8e3df316616abd6a0f714f7ff41f1db',
     steps: 'b8c0698a4791f24bc30576a4258b7631cb2dea80a3a6ddd17d830fc9a120bc79',
   },
 };
@@ -1761,7 +1771,7 @@ describe('revision-nine records (a grant failure before recoveryCause, #284)', (
     expect(saved.recoveryCause).toBeUndefined();
     expect(recordSchemaDrift(saved)).toBeUndefined();
     expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
-    expect(SUPPORTED_SCHEMA_REVISION).toBe(17);
+    expect(SUPPORTED_SCHEMA_REVISION).toBe(18);
   });
 
   it('round-trip every recovery cause through the record parser', async () => {
@@ -2071,6 +2081,8 @@ describe('revision-thirteen records (a pre-attempt grant refusal classified unkn
         runId,
         input: null,
         resume: true,
+        // The grant layer is opt-in since revision 18 (#577); the record does not carry it.
+        requireGrants: true,
         harness: { invoke },
       }),
     ).rejects.toThrow('--grant edit');
@@ -2372,6 +2384,102 @@ describe('revision-sixteen records (a waiting question before generation, #371)'
     expect((await readRun({ stateDir, runId })).steps['gate']?.question?.rejections).toEqual([
       expect.objectContaining({ error: 'Answer was addressed to an earlier run with this ID.' }),
     ]);
+  });
+});
+
+describe('revision-seventeen records (a saved grant before requireGrants, #577)', () => {
+  const runId = 'revision-seventeen';
+  async function install(): Promise<void> {
+    const fixture = await readFile(
+      new URL('./fixtures/schema-revision/revision-seventeen-checkpoint.json', import.meta.url),
+      'utf8',
+    );
+    await mkdir(join(stateDir, runId));
+    await writeFile(paths(runId).snapshot, fixture);
+    await writeFile(paths(runId).journal, '');
+  }
+  const fixer = (tail: boolean, call: boolean) =>
+    defineWorkflow({
+      name: 'schema-revision',
+      version: '1',
+      input: z.null(),
+      output: z.null(),
+      profiles: { fixer: { extends: 'edit' } },
+      async run(ctx) {
+        await ctx.now('prepare');
+        if (call) await ctx.claude.text('fix', { prompt: 'x', profile: 'fixer' });
+        if (tail) throw new Error('fixture tail');
+        return null;
+      },
+    });
+
+  it('read exactly as on main, with a saved grant, its pin and no requireGrants', async () => {
+    await install();
+    const record = await readRun({ stateDir, runId });
+    expect(record.schemaRevision).toBe(17);
+    expect(recordSchemaDrift(record)).toBeUndefined();
+    expect(digest(record)).toBe(revisionSeventeenReadDigest);
+    expect(record).not.toHaveProperty('requireGrants');
+    expect(record.grants).toEqual(['fixer']);
+    expect(Object.keys(record.grantedProfiles ?? {})).toEqual(['fixer']);
+    expect(record.capabilities?.requiredGrants).toEqual(['fixer']);
+    expect(record.status).toBe('failed');
+  });
+
+  it('resume with the layer off, keep the saved grants and pins, and save the current revision', async () => {
+    await install();
+    const original = await readRun({ stateDir, runId });
+    const result = await runWorkflow(fixer(false, false), {
+      ...options,
+      stateDir,
+      runId,
+      resume: true,
+    });
+    expect(result.status).toBe('completed');
+    const saved = await readRun({ stateDir, runId });
+    expect(saved.steps['prepare']).toEqual(original.steps['prepare']);
+    expect(saved.grants).toEqual(original.grants);
+    expect(saved.grantedProfiles).toEqual(original.grantedProfiles);
+    expect(saved).not.toHaveProperty('requireGrants');
+    // The manifest is recomputed with the layer off: labels stay, required grants go.
+    expect(saved.capabilities?.requiredGrants).toEqual([]);
+    expect(saved.capabilities?.profiles['fixer']?.access).toBe('write');
+    expect(recordSchemaDrift(saved)).toBeUndefined();
+    const raw = await rawSnapshot(runId);
+    expect(raw['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
+    expect(raw).not.toHaveProperty('requireGrants');
+  });
+
+  it('honour the saved named grant when a later resume turns the layer on', async () => {
+    await install();
+    const invoked: string[] = [];
+    const result = await runWorkflow(fixer(false, true), {
+      ...options,
+      stateDir,
+      runId,
+      resume: true,
+      requireGrants: true,
+      harness: {
+        invoke: (request) => {
+          invoked.push(request.stepId);
+          return Promise.resolve({ text: 'ok', sessionId: null });
+        },
+      },
+    });
+    expect(result.status).toBe('completed');
+    expect(invoked).toEqual(['fix']);
+    const raw = await rawSnapshot(runId);
+    expect(raw['requireGrants']).toBe(true);
+    expect((await readRun({ stateDir, runId })).capabilities?.requiredGrants).toEqual(['fixer']);
+  });
+
+  it('refuse a requireGrants that is not a boolean', async () => {
+    await install();
+    await editSnapshot(runId, (raw) => {
+      raw['schemaRevision'] = 18;
+      raw['requireGrants'] = 'yes';
+    });
+    await expect(readRun({ stateDir, runId })).rejects.toThrow();
   });
 });
 

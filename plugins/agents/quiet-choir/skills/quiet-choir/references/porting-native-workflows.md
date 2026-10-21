@@ -35,7 +35,7 @@ wait a durable named effect, checkpointed in a state directory you choose. Read
   A caught throw is not a durable decision: the call can heal on resume and take the other branch.
 - **The implicit `text` profile is far narrower than a native agent.** It has no Claude tools, 10
   turns, $0.50 and 5 minutes. A call that reads, edits or runs commands needs `readonly`, `edit` or
-  a declared profile, and every write or exec role needs `--grant` at launch.
+  a declared profile, and under `requireGrants` every write or exec role needs `--grant` at launch.
 - **Context is restricted.** quiet-choir calls run Claude restricted by default, without CLAUDE.md
   and project instructions, discovered MCP servers, user plugins and skills, or auto-memory. Native
   agents get CLAUDE.md and the session's MCP tools. Put the rules a call needs in its prompt, or opt
@@ -56,7 +56,9 @@ wait a durable named effect, checkpointed in a state directory you choose. Read
 
 A native agent can run any shell command it is permitted to. In quiet-choir, declare the role, name
 `Bash` in its tools, and narrow the allowed rules. `access: 'exec'` states the class the tools
-imply. The same role is in the repository's agent profiles guide.
+imply. By default the role runs as declared; an operator who wants a launch-time grant opts in with
+`--require-grants` (or `requireGrants: true`). The same role is in the repository's agent profiles
+guide.
 
 <!-- skills-check: example porting-exec-profile -->
 
@@ -84,15 +86,17 @@ export default defineWorkflow({
 });
 ```
 
-Rehearse it with its grant; without `--grant fixer` (or `--grant exec`, or `--grant all`) the launch
-is refused before any effect. Drop `--dry-run` to run it.
+Rehearse it under `--require-grants` with its grant; there, without `--grant fixer` (or
+`--grant exec`, or `--grant all`) the launch is refused before any effect. Drop `--dry-run` to run
+it.
 
 <!-- skills-check: example porting-exec-grant -->
 
 ```sh
 cd "$QC_TARGET" || exit 1
 node "$QC_CHECKOUT/bin/run.js" workflow execute "$QC_WORKFLOW" --run-id fix-1 \
-  --state-dir "$QC_RUNS" --input '{"task":"Make npm test pass."}' --grant fixer --dry-run --json
+  --state-dir "$QC_RUNS" --input '{"task":"Make npm test pass."}' --require-grants --grant fixer \
+  --dry-run --json
 ```
 
 ## A bounded loop under run caps

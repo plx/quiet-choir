@@ -131,11 +131,12 @@ npm run cli -- workflow validate \
   comparisons/batches/02-idiomatic-ports/ported/bug-hunt.workflow.ts
 ```
 
-For Batch 02, validate first, provide the described required input and grant only roles that write.
-A bootstrap launch needs `--grant writer`; its plan approval is a separate durable question. The
-source repository must have committed history and a clean checkout for isolated publication. Run
-state and worktree caches should remain outside the source checkout. Ordinary commands execute with
-the operator's privileges; the plan displays agent-proposed argv commands before approval.
+For Batch 02, validate first and provide the described required input. Launch grants are opt-in
+(`--require-grants`); under them, grant only roles that write: a bootstrap launch then needs
+`--grant writer`. Its plan approval is a separate durable question. The source repository must have
+committed history and a clean checkout for isolated publication. Run state and worktree caches
+should remain outside the source checkout. Ordinary commands execute with the operator's privileges;
+the plan displays agent-proposed argv commands before approval.
 
 For a bounded read-only hunt:
 
@@ -154,9 +155,10 @@ plan; SDLC passes a redo answer only to the requesting stage and its new round.
 
 Batch 01 preserves its optional `$claude` input (`model`, `tools`, `allowedTools`, `maxTurns`,
 `maxBudgetUsd`, `timeoutMs`) and `strictProfiles: false`. Tools are disabled by default; tools imply
-allowedTools unless narrowed, and elevated raw tools require write/exec/all launch grants. Its 68
-original per-call effort choices are supported. Use named roles for new workflows. The local support
-files shown in the reader are batch helpers, not additions to the runtime API.
+allowedTools unless narrowed, and under `--require-grants` elevated raw tools need write/exec/all
+launch grants. Its 68 original per-call effort choices are supported. Use named roles for new
+workflows. The local support files shown in the reader are batch helpers, not additions to the
+runtime API.
 
 ## Add a batch
 

@@ -167,6 +167,7 @@ export default class WorkflowExecute extends WorkflowCommand {
       policy,
       profileOverrides,
       grants: flags.grant ?? [],
+      ...(flags['require-grants'] === undefined ? {} : { requireGrants: flags['require-grants'] }),
       ...(flags['fork-from'] === undefined
         ? {}
         : {

@@ -854,11 +854,22 @@ export interface WorkflowDefinition<
   readonly profiles?: Readonly<Record<TProfile, AgentProfile>>;
   /**
    * Prohibit raw capability controls (tools, sandbox, env, `isolation: 'inherit'` and the rest) at
-   * call sites; defaults to true. `defineWorkflow` infers the literal: omitted or `true` removes those
-   * keys from `ctx.claude`, `ctx.codex` and `ctx.agent(name)` option types, while only a literal
-   * `false` (or a non-literal `boolean`) types them. The runtime check still applies to untyped code.
+   * call sites; opt-in, defaults to false. `defineWorkflow` infers the literal: only a literal `true`
+   * removes those keys from `ctx.claude`, `ctx.codex` and `ctx.agent(name)` option types, while
+   * omitted, `false` or a non-literal `boolean` types them. The runtime check applies to untyped
+   * code under an explicit `true`.
    */
   readonly strictProfiles?: TStrict;
+  /**
+   * Turn on the launch-grant and delegation layer (ADR 0063 §5): write- and exec-capable roles need
+   * `--grant` (`RunOptions.grants`) before the body runs, named grants pin their capabilities, and
+   * an inline child's roles are checked against its parent's and ancestors' roles at delegation and
+   * at every call. Off by default: no grant is required, grants are still accepted and recorded,
+   * and a child's roles are its own. A run can also opt in with `RunOptions.requireGrants` or
+   * `--require-grants`. Only the root definition passed to `runWorkflow` (or the CLI) is read;
+   * children inherit the root's setting and a child's field is ignored.
+   */
+  readonly requireGrants?: boolean;
   /**
    * Worktree cache and dependency-provisioning policy for isolated effects. Only the root definition
    * passed to `runWorkflow` (or the CLI) is read; a child's field is ignored. Each field that
@@ -891,8 +902,9 @@ export interface WorkflowDefinition<
 
 /**
  * Define a workflow with input/output types inferred from its runtime schemas. The literal
- * `strictProfiles` (omitted means `true`), `children` tuple and `name` are inferred too, so strict
- * call sites, declared profiles and by-name child dispatch are checked at type level. The literal
+ * `strictProfiles` (omitted means `false`), `children` tuple and `name` are inferred too, so strict
+ * call sites (under an explicit `strictProfiles: true`), declared profiles and by-name child
+ * dispatch are checked at type level. The literal
  * `profiles` and `defaults` (`TProfiles`, `TDefaults`) decide which profiles admit call-site Claude
  * `addDirs` under strict profiles ({@link AddDirProfilesOf}); `TProfiles` is constrained to `object`
  * so an interface-typed profile map (no index signature) is accepted, while the `profiles` property
@@ -912,7 +924,7 @@ export function defineWorkflow<
   TOutput,
   TProfile extends string = never,
   const H extends readonly HarnessDeclaration[] = readonly [],
-  const TStrict extends boolean = true,
+  const TStrict extends boolean = false,
   const TChildren extends readonly WorkflowDeclaration[] = readonly [],
   const TName extends string = string,
   // `{}` means "none declared": omitted profiles or defaults must not read as widened (rooted).
@@ -961,7 +973,7 @@ export function defineWorkflow<
   TOutput,
   TProfile extends string = never,
   const H extends readonly HarnessDeclaration[] = readonly [],
-  const TStrict extends boolean = true,
+  const TStrict extends boolean = false,
   const TChildren extends readonly WorkflowDeclaration[] = readonly [],
   const TName extends string = string,
 >(

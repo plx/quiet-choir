@@ -33,6 +33,8 @@ export interface WorkflowDeclaration {
   readonly defaults?: AgentDefaults;
   /** Call-site capability policy. */
   readonly strictProfiles?: boolean;
+  /** Launch-grant and delegation layer; read only from the root definition, ignored on a child. */
+  readonly requireGrants?: boolean;
 }
 
 /** An optional descriptive stage, not a durable effect or progress event. */
@@ -45,7 +47,11 @@ export interface WorkflowPhase {
 
 /** Capability delegation for an inline child in its parent's run. */
 export interface ChildOptions {
-  /** Child role to parent role; omitted roles use the same name. Delegation never expands capabilities. */
+  /**
+   * Child role to parent role under `requireGrants`; omitted roles use the same name, and delegation
+   * never expands capabilities. Without `requireGrants` it is accepted and ignored: a child's roles
+   * are its own.
+   */
   readonly profiles?: Readonly<Record<string, string>>;
   /**
    * Throw a child failure by default, or save the frame's outcome and return it as

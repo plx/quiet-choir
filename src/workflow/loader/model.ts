@@ -108,6 +108,11 @@ export interface ExecuteWorkflowPlan extends ExecutionPlan {
   readonly policy?: readonly PolicyOverride[];
   readonly profileOverrides?: readonly ProfileOverride[];
   readonly grants?: readonly string[];
+  /**
+   * Turn on the launch-grant and delegation layer for the run (`--require-grants`); sticky, so a
+   * later resume keeps it without repeating it, and a fork does not inherit it.
+   */
+  readonly requireGrants?: boolean;
   readonly policyReset?: boolean;
   readonly allowModelOverride?: boolean;
   readonly forkFrom?: ForkOptions;

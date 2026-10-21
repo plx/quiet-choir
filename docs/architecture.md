@@ -61,11 +61,13 @@ overrides before invoking the adapter, and records per-attempt limits and proven
 and `readRun` share working-directory and storage resolution.
 
 Plain-data profile declarations publish a capability manifest without running the body. Strict
-profiles prohibit call-site capability replacements by default. The core preflights write/exec
-grants for declared/default roles and checks elevated built-in calls before invocation. Named grants
-are pinned to tools/permissions/sandbox and saved for resume. Profile names and limits are policy;
-resolved semantic controls remain identity. See
-[ADR 0010](decisions/0010-agent-profiles-and-grants.md).
+profiles, an opt-in (`strictProfiles: true`), prohibit call-site capability replacements. Under the
+opt-in `requireGrants` layer the core preflights write/exec grants for declared/default roles,
+checks elevated built-in calls before invocation and bounds child roles by their parent's; named
+grants are pinned to tools/permissions/sandbox and saved for resume. Profile names and limits are
+policy; resolved semantic controls remain identity. See
+[ADR 0010](decisions/0010-agent-profiles-and-grants.md), as amended by
+[ADR 0063](decisions/0063-bound-agents-and-typed-rosters.md) §5.
 
 The core resolves configuration isolation before agent identity, defaulting to `restricted`.
 Adapters enforce native flags and scrub host-session environment before explicit set/unset edits.

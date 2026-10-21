@@ -245,6 +245,17 @@ with exit 2 before module loading. See
 [durability](durability.md#recovering-a-timeout-or-turn-limit) for compatibility and timeout
 recovery.
 
+## Grant flags
+
+Launch grants are opt-in. `--require-grants` on `execute` (also with `--resume` or `--fork-from`),
+`start` and `resume` turns them on for the run, as `requireGrants: true` on the root definition
+does: write and exec roles then need `--grant ROLE`, `--grant write`, `--grant exec` or
+`--grant all` before effects, and child roles are bounded by their parent's. The flag is saved with
+the run (even by a resume refused for a missing grant), so `resume`, `answer --resume`, `tick` and
+emitted commands keep it without repeating it; a fork does not inherit it. `--grant` (repeatable) is
+accepted and saved with or without it. See
+[agent calls](agent-calls.md#requiregrants-launch-grants).
+
 ## Worktree flags
 
 `--worktree-keep all|failed|none` and `--worktree-root DIR` on `execute`, `start` and `resume`

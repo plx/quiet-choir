@@ -166,13 +166,48 @@ function merge(base: AgentProfile, layer: AgentProfile): AgentProfile {
   };
 }
 
-/** Resolve live capabilities, retaining private environment values only for execution. @internal */
-export function resolveCapabilities(definition: {
+/** The declaration fields a capability manifest is resolved from. */
+interface CapabilityDeclaration {
   readonly defaults?: AgentDefaults;
   readonly profiles?: Readonly<Record<string, AgentProfile>>;
   readonly strictProfiles?: boolean;
+  readonly requireGrants?: boolean;
   readonly harnesses?: readonly HarnessDeclaration[];
-}): CapabilityManifest {
+}
+
+/**
+ * Whether the launch-grant and delegation layer is on (ADR 0063 §5). `requireGrants` is the
+ * caller's effective setting; without one, the definition's own field decides.
+ */
+interface GrantLayer {
+  readonly requireGrants?: boolean;
+}
+
+/**
+ * The default role and the declared roles at write access or above: the roles that must be granted
+ * before the body runs when the grant layer is on. @internal
+ */
+export function elevatedRoleNames(
+  manifest: Pick<CapabilityManifest, 'defaultProfile' | 'profiles'>,
+  definition: Pick<CapabilityDeclaration, 'profiles'>,
+): string[] {
+  return [...new Set([manifest.defaultProfile, ...Object.keys(definition.profiles ?? {})])].filter(
+    (name) => {
+      const role = Object.hasOwn(manifest.profiles, name) ? manifest.profiles[name] : undefined;
+      return role !== undefined && rank[role.access] >= rank.write;
+    },
+  );
+}
+
+/**
+ * Resolve live capabilities, retaining private environment values only for execution.
+ * `requiredGrants` lists the elevated roles only when the grant layer is on (`layer.requireGrants`,
+ * defaulting to the definition's own `requireGrants`), and is empty otherwise. @internal
+ */
+export function resolveCapabilities(
+  definition: CapabilityDeclaration,
+  layer: GrantLayer = {},
+): CapabilityManifest {
   rejectRenamedEffort('defaults.codex', codexBlock(definition.defaults));
   rejectCodexRoots('defaults.codex', codexBlock(definition.defaults));
   for (const [name, profile] of Object.entries(definition.profiles ?? {})) {
@@ -310,30 +345,33 @@ export function resolveCapabilities(definition: {
   const defaults = profiles[defaultProfile];
   if (!Object.hasOwn(profiles, defaultProfile) || !defaults)
     throw new Error(`Unknown default profile: ${defaultProfile}.`);
+  const requireGrants = layer.requireGrants ?? definition.requireGrants === true;
   return {
-    strictProfiles: config.strictProfiles ?? true,
+    strictProfiles: config.strictProfiles ?? false,
     defaultProfile,
     defaults,
     profiles,
-    requiredGrants: [...new Set([defaultProfile, ...Object.keys(declared)])].filter((name) => {
-      const role = profiles[name];
-      return role !== undefined && rank[role.access] >= rank.write;
-    }),
+    requiredGrants: requireGrants ? elevatedRoleNames({ defaultProfile, profiles }, config) : [],
   };
 }
 
 /**
  * Validate capability declarations and expose the public manifest: environment, settings, MCP
  * servers, subagents, system prompts, Codex config and registered harness `sensitiveOptions` appear
- * as names and digests only.
+ * as names and digests only. `requiredGrants` is empty unless the grant layer is on
+ * (`layer.requireGrants`, defaulting to the definition's own `requireGrants`).
  */
-export function capabilityManifest(definition: {
-  readonly defaults?: AgentDefaults;
-  readonly profiles?: Readonly<Record<string, AgentProfile>>;
-  readonly strictProfiles?: boolean;
-  readonly harnesses?: readonly HarnessDeclaration[];
-}): CapabilityManifest {
-  return publicCapabilityManifest(resolveCapabilities(definition), definition.harnesses);
+export function capabilityManifest(
+  definition: {
+    readonly defaults?: AgentDefaults;
+    readonly profiles?: Readonly<Record<string, AgentProfile>>;
+    readonly strictProfiles?: boolean;
+    readonly requireGrants?: boolean;
+    readonly harnesses?: readonly HarnessDeclaration[];
+  },
+  layer: { readonly requireGrants?: boolean } = {},
+): CapabilityManifest {
+  return publicCapabilityManifest(resolveCapabilities(definition, layer), definition.harnesses);
 }
 
 /** Validate launch rules and reject misspelled names before effects. @internal */
@@ -401,10 +439,11 @@ export function requireGrant(
 }
 
 /**
- * Resolve a call's role and semantics; raw capability calls still need class grants. Under strict
- * profiles a Claude call may pass `addDirs` when its profile declares `claude.addDirRoots`: each
- * entry must canonicalize inside a root (`paths.callCwd` resolves entries, `paths.rootCwd` roots),
- * and the canonical paths are appended to the profile's own `addDirs` (#171). @internal
+ * Resolve a call's role and semantics. Under `requireGrants` an elevated call needs a grant, and
+ * raw capability calls need class grants; otherwise no grant is checked. Under strict profiles a
+ * Claude call may pass `addDirs` when its profile declares `claude.addDirRoots`: each entry must
+ * canonicalize inside a root (`paths.callCwd` resolves entries, `paths.rootCwd` roots), and the
+ * canonical paths are appended to the profile's own `addDirs` (#171). @internal
  */
 export function resolveProfileCall(
   manifest: CapabilityManifest,
@@ -412,6 +451,7 @@ export function resolveProfileCall(
   call: AgentOptions,
   grants: readonly string[],
   pins: Readonly<Record<string, string>>,
+  requireGrants: boolean,
   definition?: HarnessDeclaration,
   paths?: { readonly callCwd: string; readonly rootCwd: string },
 ): { profile: ResolvedProfile; options: ClaudeOptions | CodexOptions } {
@@ -431,13 +471,14 @@ export function resolveProfileCall(
     Reflect.deleteProperty(merged, 'profile');
     const options = definition.options.parse(merged);
     const { access } = registeredCapabilities(definition, options);
-    requireGrant(
-      profile,
-      raw.length ? grants.filter((grant) => !Object.hasOwn(manifest.profiles, grant)) : grants,
-      pins,
-      access,
-      raw.length > 0,
-    );
+    if (requireGrants)
+      requireGrant(
+        profile,
+        raw.length ? grants.filter((grant) => !Object.hasOwn(manifest.profiles, grant)) : grants,
+        pins,
+        access,
+        raw.length > 0,
+      );
     return { profile, options };
   }
   const roots = harness === 'claude' ? profile.claude.addDirRoots : undefined;
@@ -485,21 +526,23 @@ export function resolveProfileCall(
     checkAllowedTools(tools, allowedTools);
     Object.assign(resolved, { allowedTools });
     const access = controlAccess('claude', { ...claude, tools });
-    requireGrant(
-      profile,
-      raw.length ? grants.filter((grant) => !Object.hasOwn(manifest.profiles, grant)) : grants,
-      pins,
-      access,
-      raw.length > 0,
-    );
+    if (requireGrants)
+      requireGrant(
+        profile,
+        raw.length ? grants.filter((grant) => !Object.hasOwn(manifest.profiles, grant)) : grants,
+        pins,
+        access,
+        raw.length > 0,
+      );
   } else {
-    requireGrant(
-      profile,
-      raw.length ? grants.filter((grant) => !Object.hasOwn(manifest.profiles, grant)) : grants,
-      pins,
-      controlAccess('codex', resolved),
-      raw.length > 0,
-    );
+    if (requireGrants)
+      requireGrant(
+        profile,
+        raw.length ? grants.filter((grant) => !Object.hasOwn(manifest.profiles, grant)) : grants,
+        pins,
+        controlAccess('codex', resolved),
+        raw.length > 0,
+      );
   }
   validateAgentOptions(harness, resolved);
   return { profile, options: resolved };

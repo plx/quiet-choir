@@ -11,6 +11,7 @@ import {
   codexCapabilityKeys,
   defineHarness,
   defineWorkflow,
+  FileRunStore,
   HarnessError,
   readRun,
   runWorkflow,
@@ -18,7 +19,9 @@ import {
   type AgentProfile,
   type Harness,
   type HarnessAdapter,
+  type OwnedRunStore,
   type ProfileOverride,
+  type RunStore,
 } from '../src/index.js';
 import {
   capabilityManifestSchema,
@@ -55,7 +58,7 @@ it('publishes presets and default access without evaluating the body', () => {
   const manifest = capabilityManifest(definition);
   expect(run).not.toHaveBeenCalled();
   expect(manifest).toMatchObject({
-    strictProfiles: true,
+    strictProfiles: false,
     defaultProfile: 'text',
     requiredGrants: [],
   });
@@ -81,6 +84,27 @@ it('publishes presets and default access without evaluating the body', () => {
     timeoutMs: 1_800_000,
     access: 'write',
   });
+  // Access classes stay as labels; requiredGrants lists elevated roles only under requireGrants.
+  const declared = {
+    ...base,
+    profiles: { fixer: { extends: 'edit' }, scout: { extends: 'readonly' } },
+    run,
+  } as const;
+  const labels = capabilityManifest(defineWorkflow(declared));
+  expect(labels.requiredGrants).toEqual([]);
+  expect(labels.profiles['fixer']).toMatchObject({
+    access: 'write',
+    claudeAccess: 'write',
+    codexAccess: 'write',
+  });
+  const opted = capabilityManifest(defineWorkflow({ ...declared, requireGrants: true }));
+  expect(opted.requiredGrants).toEqual(['fixer']);
+  expect({ ...opted, requiredGrants: [] }).toEqual(labels);
+  expect(
+    capabilityManifest(defineWorkflow(declared), { requireGrants: true }).requiredGrants,
+  ).toEqual(['fixer']);
+  expect(capabilityManifest({ strictProfiles: true }).strictProfiles).toBe(true);
+  expect(run).not.toHaveBeenCalled();
 });
 
 it('merges preset, defaults, ancestors, role, call, named launch rules, and step policy in order', async () => {
@@ -147,6 +171,7 @@ it('merges preset, defaults, ancestors, role, call, named launch rules, and step
 
 it('infers permissions from the final exposure list and permits narrower rules', () => {
   const manifest = capabilityManifest({
+    requireGrants: true,
     profiles: {
       parent: { extends: 'readonly', claude: { allowedTools: ['Read'] } },
       fixer: {
@@ -241,6 +266,7 @@ it.each(['fixer', 'write', 'exec', 'all'])(
     const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
     const definition = defineWorkflow({
       ...base,
+      requireGrants: true,
       profiles: { fixer: { extends: 'edit' } },
       async run(ctx) {
         body();
@@ -268,6 +294,7 @@ it('advises a grant, not a code change, for a grant failure and names the agent 
   const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
   const definition = defineWorkflow({
     ...base,
+    requireGrants: true,
     async run(ctx) {
       await ctx.step('prepare', { input: null, schema: z.string(), run: () => 'ready' });
       return (await ctx.claude.text('edit', { prompt: 'x', profile: 'edit' })).output;
@@ -303,6 +330,7 @@ it('advises a grant, not a code change, for a grant failure and names the agent 
 it('saves no recovery hint for a grant failure on the first effect', async () => {
   const definition = defineWorkflow({
     ...base,
+    requireGrants: true,
     async run(ctx) {
       return (await ctx.claude.text('edit', { prompt: 'x', profile: 'edit' })).output;
     },
@@ -325,6 +353,7 @@ it('advises an access-class grant when call-site capability overrides ignore pro
   const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
   const definition = defineWorkflow({
     ...base,
+    requireGrants: true,
     strictProfiles: false,
     async run(ctx) {
       await ctx.step('prepare', { input: null, schema: z.string(), run: () => 'ready' });
@@ -364,7 +393,7 @@ it('advises an access-class grant when call-site capability overrides ignore pro
 it('pins named grants to capabilities across explicit source acceptance', async () => {
   const profiles: Record<string, AgentProfile> = { fixer: { extends: 'edit' } };
   const body = vi.fn(() => Promise.resolve('ok'));
-  const definition = defineWorkflow({ ...base, profiles, run: body });
+  const definition = defineWorkflow({ ...base, requireGrants: true, profiles, run: body });
   await runWorkflow(definition, { ...setup(), grants: ['fixer'] });
   profiles['fixer'] = { extends: 'edit', claude: { tools: ['Bash'] } };
   await expect(
@@ -385,6 +414,7 @@ it('checks elevated built-ins at invocation and does not treat write as exec per
   const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
   const definition = defineWorkflow({
     ...base,
+    requireGrants: true,
     async run(ctx) {
       return (await ctx.claude.text('edit', { prompt: 'x', profile: 'edit' })).output;
     },
@@ -401,6 +431,7 @@ it('checks elevated built-ins at invocation and does not treat write as exec per
   });
   const exec = defineWorkflow({
     ...base,
+    requireGrants: true,
     profiles: { runner: { claude: { tools: ['Bash'] } } },
     run: () => Promise.resolve('ok'),
   });
@@ -418,10 +449,10 @@ it.each([
     // One list drives the definition, the runtime check and the call-site types.
     expect(declared).toBe(shared);
     const manifest = capabilityManifest(
-      defineWorkflow({ ...base, run: () => Promise.resolve('') }),
+      defineWorkflow({ ...base, strictProfiles: true, run: () => Promise.resolve('') }),
     );
     const call = (options: Record<string, unknown>) => () =>
-      resolveProfileCall(manifest, harness, { prompt: 'x', ...options }, [], {});
+      resolveProfileCall(manifest, harness, { prompt: 'x', ...options }, [], {}, true);
     for (const key of shared) {
       // The strict check reads only the key's presence; isolation is raw only when inherited.
       const value = key === 'isolation' ? 'inherit' : [];
@@ -431,10 +462,12 @@ it.each([
   },
 );
 
-it('rejects raw capabilities by default; escape-hatch calls still require class grants', async () => {
+it('rejects raw capabilities under strictProfiles; escape-hatch calls still require class grants', async () => {
   const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
   const definition = defineWorkflow({
     ...base,
+    strictProfiles: true,
+    requireGrants: true,
     async run(ctx) {
       // @ts-expect-error -- strictProfiles omits tools at type level too; the runtime still rejects it.
       return (await ctx.claude.text('edit', { prompt: 'x', tools: ['Edit'] })).output;
@@ -710,6 +743,7 @@ it('checks raw Codex sandbox calls, unknown runtime names, and fresh fork grants
   const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
   const definition = defineWorkflow({
     ...base,
+    requireGrants: true,
     profiles: { fixer: { extends: 'edit' } },
     async run(ctx) {
       return (await ctx.codex.text('fix', { prompt: 'x', profile: 'fixer' })).output;
@@ -727,6 +761,7 @@ it('checks raw Codex sandbox calls, unknown runtime names, and fresh fork grants
   expect(invoke).toHaveBeenCalledTimes(1);
   const raw = defineWorkflow({
     ...base,
+    strictProfiles: true,
     async run(ctx) {
       // @ts-expect-error -- strictProfiles omits sandbox at type level too; the runtime still rejects it.
       return (await ctx.codex.text('raw', { prompt: 'x', sandbox: 'workspace-write' })).output;
@@ -960,6 +995,7 @@ it('refuses a named grant for a pending step whose profile changed only in a red
   const invoke = vi.fn<Harness['invoke']>().mockRejectedValue(new Error('offline'));
   const definition = defineWorkflow({
     ...base,
+    requireGrants: true,
     profiles,
     async run(ctx) {
       return (await ctx.claude.text('pending', { prompt: 'x', profile: 'p' })).output;
@@ -1266,6 +1302,7 @@ it('refuses a saved named grant for a pending step whose sensitive capability op
   const invoke = vi.fn<HarnessAdapter['invoke']>().mockRejectedValue(new Error('offline'));
   const definition = defineWorkflow({
     ...base,
+    requireGrants: true,
     harnesses: [vault],
     profiles,
     async run(ctx) {
@@ -1296,6 +1333,7 @@ it.each([
     const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
     const definition = defineWorkflow({
       ...base,
+      strictProfiles: true,
       profiles: { reader: { extends: 'readonly', claude: { addDirRoots: [root] } } },
       async run(ctx) {
         return (
@@ -1330,6 +1368,7 @@ it('rejects strict call-site directories outside the roots, without roots, and f
   const { tree, root, real, outside } = rootedTree();
   symlinkSync(outside, join(root, 'link'));
   const manifest = resolveCapabilities({
+    strictProfiles: true,
     profiles: {
       reader: { extends: 'readonly', claude: { addDirRoots: [root] } },
       plain: { extends: 'readonly' },
@@ -1345,6 +1384,7 @@ it('rejects strict call-site directories outside the roots, without roots, and f
         { prompt: 'x', profile, ...options },
         [],
         {},
+        true,
         undefined,
         paths,
       );
@@ -1380,6 +1420,7 @@ it('rejects strict call-site directories outside the roots, without roots, and f
       { prompt: 'x', profile: 'reader', addDirs: [join(root, 'pr-1')] },
       [],
       {},
+      true,
     ),
   ).toThrow('Internal error: bounded call-site addDirs need');
 });
@@ -1389,6 +1430,7 @@ it('fails a strict step with an out-of-root directory before invoking the harnes
   const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
   const definition = defineWorkflow({
     ...base,
+    strictProfiles: true,
     profiles: { reader: { extends: 'readonly', claude: { addDirRoots: [root] } } },
     async run(ctx) {
       return (await ctx.claude.text('read', { prompt: 'x', profile: 'reader', addDirs: [outside] }))
@@ -1438,6 +1480,7 @@ it('appends bounded call-site directories to the profile addDirs; non-strict sti
       { prompt: 'x', profile: 'reader', addDirs },
       [],
       {},
+      true,
       undefined,
       { callCwd: tree, rootCwd: tree },
     ).options;
@@ -1461,6 +1504,8 @@ it('keeps write grants for rooted profiles and pins addDirRoots in named grants'
   const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
   const definition = defineWorkflow({
     ...base,
+    strictProfiles: true,
+    requireGrants: true,
     profiles,
     async run(ctx) {
       body();
@@ -1574,4 +1619,327 @@ it('never accepts addDirRoots as a call option, even with strictProfiles: false'
     'Unrecognized key(s) "addDirRoots"',
   );
   expect(invoke).not.toHaveBeenCalled();
+});
+
+// ADR 0063 §5 (#577): grants, pins and strict call sites are opt-in.
+describe('requireGrants and strictProfiles opt-in (#577)', () => {
+  const fixerDefinition = (requireGrants?: boolean) =>
+    defineWorkflow({
+      ...base,
+      ...(requireGrants === undefined ? {} : { requireGrants }),
+      profiles: { fixer: { extends: 'edit' } },
+      async run(ctx) {
+        await ctx.now('prepare');
+        return (await ctx.claude.text('fix', { prompt: 'x', profile: 'fixer' })).output;
+      },
+    });
+  const editAfterPrepare = defineWorkflow({
+    ...base,
+    async run(ctx) {
+      await ctx.now('prepare');
+      return (await ctx.claude.text('edit', { prompt: 'x', profile: 'edit' })).output;
+    },
+  });
+
+  it('runs an edit-class role without a grant by default', async () => {
+    const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
+    const run = await runWorkflow(fixerDefinition(), { ...setup(), harness: { invoke } });
+    expect(run.status).toBe('completed');
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(invoke.mock.calls[0]?.[0].options).toMatchObject({
+      tools: ['Read', 'Grep', 'Glob', 'Edit', 'Write'],
+    });
+    const saved = await readRun(setup());
+    expect(saved.grants).toEqual([]);
+    expect(saved).not.toHaveProperty('requireGrants');
+    expect(saved.capabilities).toMatchObject({ requiredGrants: [], strictProfiles: false });
+    expect(saved.capabilities?.profiles['fixer']?.access).toBe('write');
+    // The built-in edit preset needs no grant at the call either.
+    await expect(
+      runWorkflow(editAfterPrepare, { ...setup(), runId: 'edit', harness: { invoke } }),
+    ).resolves.toMatchObject({ status: 'completed' });
+    expect(invoke).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ['the definition', true, {}],
+    ['RunOptions', undefined, { requireGrants: true }],
+  ] as const)(
+    'refuses an ungranted declared role before the body when %s opts in',
+    async (_label, flag, extra) => {
+      const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
+      const error: unknown = await runWorkflow(fixerDefinition(flag), {
+        ...setup(),
+        ...extra,
+        harness: { invoke },
+      }).catch((cause: unknown) => cause);
+      expect(error).toBeInstanceOf(GrantRequiredError);
+      expect((error as Error).message).toBe(
+        'Profile fixer requires write access. Retry with --grant fixer, --grant write, or --grant all.',
+      );
+      expect(invoke).not.toHaveBeenCalled();
+      // Refused before any record exists, so the same launch with the grant creates the run.
+      await expect(
+        runWorkflow(fixerDefinition(flag), {
+          ...setup(),
+          ...extra,
+          harness: { invoke },
+          grants: ['fixer'],
+        }),
+      ).resolves.toMatchObject({ status: 'completed' });
+      expect((await readRun(setup())).capabilities?.requiredGrants).toEqual(['fixer']);
+    },
+  );
+
+  it.each([
+    ['the definition', { ...editAfterPrepare, requireGrants: true }, {}],
+    ['RunOptions', editAfterPrepare, { requireGrants: true }],
+  ] as const)(
+    'refuses an ungranted call with the grant cause and hint when %s opts in',
+    async (_label, definition, extra) => {
+      const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
+      const error: unknown = await runWorkflow(definition, {
+        ...setup(),
+        ...extra,
+        harness: { invoke },
+      }).catch((cause: unknown) => cause);
+      expect(error).toBeInstanceOf(WorkflowRunError);
+      expect((error as Error).message).toContain(
+        'Profile edit requires write access. Retry with --grant edit, --grant write, or --grant all.',
+      );
+      expect(invoke).not.toHaveBeenCalled();
+      const saved = await readRun(setup());
+      expect(saved.recoveryCause).toEqual({ kind: 'grant', profile: 'edit', access: 'write' });
+      expect(saved.recoveryHint).toContain('--resume --grant edit');
+      const launch = { entrypoint: join(stateDir, 'w.mts'), tsconfig: null };
+      expect(runNextCommands({ ...saved, launch }, 'failed', stateDir)[0]?.argv.slice(-2)).toEqual([
+        '--grant',
+        'edit',
+      ]);
+    },
+  );
+
+  it('records and pins grants with the layer off and still rejects unknown names', async () => {
+    const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
+    await runWorkflow(fixerDefinition(), { ...setup(), harness: { invoke }, grants: ['fixer'] });
+    const saved = await readRun(setup());
+    expect(saved.grants).toEqual(['fixer']);
+    const fixer = resolveCapabilities(fixerDefinition()).profiles['fixer'];
+    if (!fixer) throw new Error('fixer missing');
+    expect(saved.grantedProfiles).toEqual({ fixer: profileGrantDigest(fixer) });
+    await expect(
+      runWorkflow(fixerDefinition(), { ...setup(), runId: 'typo', grants: ['fixr'] }),
+    ).rejects.toThrow('Unknown grant: fixr.');
+  });
+
+  it('keeps the run-level flag across resumes and does not pass it to a fork', async () => {
+    const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
+    const options = { ...setup(), harness: { invoke } };
+    await expect(
+      runWorkflow(editAfterPrepare, { ...options, requireGrants: true }),
+    ).rejects.toThrow('--grant edit');
+    expect((await readRun(setup())).requireGrants).toBe(true);
+    // A resume without the option keeps the layer on, so the ungranted call is refused again.
+    await expect(runWorkflow(editAfterPrepare, { ...options, resume: true })).rejects.toThrow(
+      '--grant edit',
+    );
+    // requireGrants: false does not turn it off either.
+    await expect(
+      runWorkflow(editAfterPrepare, { ...options, resume: true, requireGrants: false }),
+    ).rejects.toThrow('--grant edit');
+    expect(invoke).not.toHaveBeenCalled();
+    // A fork is a new run: it does not inherit the flag and needs no grant.
+    await expect(
+      runWorkflow(editAfterPrepare, { ...options, runId: 'fork', forkFrom: { runId: 'profiles' } }),
+    ).resolves.toMatchObject({ status: 'completed' });
+    expect(await readRun({ stateDir, runId: 'fork' })).not.toHaveProperty('requireGrants');
+    expect(invoke).toHaveBeenCalledTimes(1);
+    // The emitted grant resume completes without repeating the flag.
+    await expect(
+      runWorkflow(editAfterPrepare, { ...options, resume: true, grants: ['edit'] }),
+    ).resolves.toMatchObject({ status: 'completed' });
+    expect((await readRun(setup())).requireGrants).toBe(true);
+  });
+
+  it('saves the run-level flag when it is first given to a completed run', async () => {
+    const definition = defineWorkflow({ ...base, run: () => Promise.resolve('ok') });
+    await runWorkflow(definition, setup());
+    expect(await readRun(setup())).not.toHaveProperty('requireGrants');
+    await runWorkflow(definition, { ...setup(), resume: true, requireGrants: true });
+    expect((await readRun(setup())).requireGrants).toBe(true);
+  });
+
+  it('refreshes the manifest when the flag is first given to a completed run', async () => {
+    const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
+    const options = { ...setup(), harness: { invoke } };
+    await runWorkflow(fixerDefinition(), options);
+    const first = await readRun(setup());
+    expect(first).not.toHaveProperty('requireGrants');
+    expect(first.capabilities?.requiredGrants).toEqual([]);
+    const resumed = await runWorkflow(fixerDefinition(), {
+      ...options,
+      resume: true,
+      requireGrants: true,
+      grants: ['fixer'],
+    });
+    expect(resumed.requireGrants).toBe(true);
+    expect(resumed.capabilities?.requiredGrants).toEqual(['fixer']);
+    const saved = await readRun(setup());
+    expect(saved.requireGrants).toBe(true);
+    expect(saved.capabilities?.requiredGrants).toEqual(['fixer']);
+    // A later resume with no options leaves the manifest as it is.
+    await runWorkflow(fixerDefinition(), { ...options, resume: true });
+    const again = await readRun(setup());
+    expect(again.requireGrants).toBe(true);
+    expect(again.capabilities).toEqual(saved.capabilities);
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it('refreshes the manifest of a completed run after a grant refusal already saved the flag', async () => {
+    const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
+    const options = { ...setup(), harness: { invoke } };
+    await runWorkflow(fixerDefinition(), options);
+    expect(invoke).toHaveBeenCalledTimes(1);
+    await expect(
+      runWorkflow(fixerDefinition(), { ...options, resume: true, requireGrants: true }),
+    ).rejects.toBeInstanceOf(GrantRequiredError);
+    const refused = await readRun(setup());
+    expect(refused.requireGrants).toBe(true);
+    expect(refused.capabilities?.requiredGrants).toEqual([]);
+    const resumed = await runWorkflow(fixerDefinition(), {
+      ...options,
+      resume: true,
+      grants: ['fixer'],
+    });
+    expect(resumed.requireGrants).toBe(true);
+    expect(resumed.capabilities?.requiredGrants).toEqual(['fixer']);
+    const saved = await readRun(setup());
+    expect(saved.requireGrants).toBe(true);
+    expect(saved.capabilities?.requiredGrants).toEqual(['fixer']);
+    await runWorkflow(fixerDefinition(), { ...options, resume: true });
+    expect((await readRun(setup())).capabilities).toEqual(saved.capabilities);
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it('saves the run-level flag when a resume that first gives it is refused before the body', async () => {
+    const invoke = vi
+      .fn<Harness['invoke']>()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue(reply);
+    const options = { ...setup(), harness: { invoke } };
+    // With the layer off the declared write role runs ungranted, and this run fails.
+    await expect(runWorkflow(fixerDefinition(), options)).rejects.toThrow('offline');
+    const failed = await readRun(setup());
+    expect(failed.status).toBe('failed');
+    expect(failed).not.toHaveProperty('requireGrants');
+    const refused: unknown = await runWorkflow(fixerDefinition(), {
+      ...options,
+      resume: true,
+      requireGrants: true,
+    }).catch((cause: unknown) => cause);
+    expect(refused).toBeInstanceOf(GrantRequiredError);
+    expect((refused as Error).message).toBe(
+      'Profile fixer requires write access. Retry with --grant fixer, --grant write, or --grant all.',
+    );
+    expect(invoke).toHaveBeenCalledTimes(1);
+    // Only the flag is saved: the status, grants and policy are those of the failed run.
+    const saved = await readRun(setup());
+    expect(saved.requireGrants).toBe(true);
+    expect(saved).toMatchObject({
+      status: 'failed',
+      grants: [],
+      grantedProfiles: {},
+      policy: failed.policy,
+      capabilities: failed.capabilities,
+    });
+    // The printed retry without --require-grants still enforces, so a resume with no grant is
+    // refused again, and one with only the grant completes.
+    await expect(runWorkflow(fixerDefinition(), { ...options, resume: true })).rejects.toThrow(
+      GrantRequiredError,
+    );
+    expect(invoke).toHaveBeenCalledTimes(1);
+    await expect(
+      runWorkflow(fixerDefinition(), { ...options, resume: true, grants: ['fixer'] }),
+    ).resolves.toMatchObject({ status: 'completed' });
+    expect(invoke).toHaveBeenCalledTimes(2);
+    const completed = await readRun(setup());
+    expect(completed.requireGrants).toBe(true);
+    expect(completed.capabilities?.requiredGrants).toEqual(['fixer']);
+  });
+
+  it('repeats --require-grants in the retry text when the refusal cannot save the flag', async () => {
+    const definition = fixerDefinition();
+    const invoke = vi.fn<Harness['invoke']>().mockRejectedValueOnce(new Error('offline'));
+    await expect(runWorkflow(definition, { ...setup(), harness: { invoke } })).rejects.toThrow(
+      'offline',
+    );
+    const file = new FileRunStore(stateDir);
+    const store: RunStore = {
+      stateDir: file.stateDir,
+      read: (id) => file.read(id),
+      list: () => file.list(),
+      open: async (id, openOptions): Promise<OwnedRunStore> => {
+        const owned = await file.open(id, openOptions);
+        return {
+          read: () => owned.read(),
+          append: () => Promise.reject(new Error('disk full')),
+          compact: () => owned.compact(),
+          artifacts: (stepId, attempt) => owned.artifacts(stepId, attempt),
+          trackProcess: (invocation, process) => owned.trackProcess(invocation, process),
+          release: () => owned.release(),
+        };
+      },
+    };
+    const refused: unknown = await runWorkflow(definition, {
+      ...setup(),
+      harness: { invoke },
+      store,
+      resume: true,
+      requireGrants: true,
+    }).catch((cause: unknown) => cause);
+    expect(refused).toBeInstanceOf(AggregateError);
+    const grant = (refused as AggregateError).errors[0] as unknown;
+    expect(grant).toBeInstanceOf(GrantRequiredError);
+    expect((grant as Error).message).toBe(
+      'Profile fixer requires write access. Retry with --require-grants and --grant fixer, --grant write, or --grant all.',
+    );
+    expect((refused as Error).message).toContain('disk full');
+    expect(await readRun(setup())).not.toHaveProperty('requireGrants');
+  });
+
+  it('rejects a requireGrants that is not a boolean before the body', async () => {
+    const run = vi.fn(() => Promise.resolve('ok'));
+    const definition = { ...defineWorkflow({ ...base, run }), requireGrants: 'yes' as never };
+    await expect(runWorkflow(definition, setup())).rejects.toThrow(
+      'Workflow profiles requireGrants must be a boolean.',
+    );
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('runs raw call-site capabilities when strictProfiles is omitted', async () => {
+    const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
+    const definition = defineWorkflow({
+      ...base,
+      async run(ctx) {
+        await ctx.claude.text('t', { prompt: 'x', tools: ['Read'] });
+        return (await ctx.codex.text('c', { prompt: 'y', sandbox: 'workspace-write' })).output;
+      },
+    });
+    await expect(
+      runWorkflow(definition, { ...setup(), harness: { invoke } }),
+    ).resolves.toMatchObject({ status: 'completed' });
+    expect(invoke.mock.calls[0]?.[0].options).toMatchObject({
+      tools: ['Read'],
+      allowedTools: ['Read'],
+    });
+    expect(invoke.mock.calls[1]?.[0].options).toMatchObject({ sandbox: 'workspace-write' });
+    // The same calls stay refused under an explicit strictProfiles: true.
+    await expect(
+      runWorkflow(
+        { ...definition, strictProfiles: true },
+        { ...setup(), runId: 'strict', harness: { invoke } },
+      ),
+    ).rejects.toThrow('strictProfiles forbids call-site tools; declare a named profile.');
+    expect(invoke).toHaveBeenCalledTimes(2);
+  });
 });
