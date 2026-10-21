@@ -504,6 +504,44 @@ describe('ctx.decide', () => {
     ]);
   });
 
+  it('tracks an unawaited failing decision, in the body and in a settled map', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      server.script({ status: 500, text: 'boom' });
+      await expect(
+        runWorkflow(
+          workflow([jev()], (ctx) => {
+            void ctx.decide('ask', { state: null, questions: { refund } });
+            return Promise.resolve('ok');
+          }),
+          options(),
+        ),
+      ).rejects.toThrow('Unawaited workflow operation "ask" failed');
+      // The mapper drops the failed decision and returns normally; the item is not a success.
+      const mapped = runWorkflow(
+        workflow([jev()], (ctx) =>
+          ctx.map('items', ['x'], { concurrency: 1, onError: 'return' }, () => {
+            void ctx.decide('ask', { state: null, questions: { refund } });
+            return Promise.resolve('done');
+          }),
+        ),
+        options({ runId: 'mapped' }),
+      );
+      await expect(mapped).rejects.toThrow('Unawaited workflow operation "items/0/ask" failed');
+      const run = await readRun({ stateDir, runId: 'mapped' });
+      expect(run.status).toBe('failed');
+      expect(JSON.stringify(run.maps ?? {})).not.toContain('"done"');
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
   it('strips a confidence a server sends for a noul answer', async () => {
     server.script({
       status: 200,

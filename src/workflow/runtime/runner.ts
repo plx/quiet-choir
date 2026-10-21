@@ -3728,6 +3728,43 @@ export async function runWorkflow<
         true,
       );
     }
+    // A local step's effect, called synchronously inside its tracked operation.
+    function localStep<T, TMode extends ErrorMode = 'throw'>(
+      id: string,
+      step: StepDefinition<T> & { readonly onError?: TMode | undefined },
+    ): Promise<EffectResult<T, TMode>> {
+      return effect<T, TMode>({
+        id,
+        kind: 'step',
+        dependencies: step.input,
+        schema: step.schema,
+        execution: resolvePolicy(
+          id,
+          'step',
+          step.retry === undefined ? {} : { retry: step.retry },
+          {},
+          policy,
+          matchedPolicy,
+        ),
+        action:
+          options.rehearsal === undefined
+            ? step.run
+            : (context) => {
+                options.rehearsal?.onSchema?.(id, step.schema);
+                const stub = options.rehearsal?.localStep?.(id, schemaJson(step.schema));
+                return stub === undefined ? step.run(context) : step.schema.parse(stub.output);
+              },
+        local: step,
+        ...(step.onError === undefined ? {} : { onError: step.onError }),
+        ...(step.worktree === undefined
+          ? {}
+          : {
+              isolation: { value: worktreeHandleSchema.parse(step.worktree), cwd },
+              // Only the accepted-replay probe synthesizes an isolated local step.
+              rehearsalSynthesized: probe,
+            }),
+      });
+    }
     // Roster agents are bound over the context's own clients, so they share its bind hooks.
     const readRoster = rosterReader((harness) =>
       harness === 'claude'
@@ -3959,12 +3996,15 @@ export async function runWorkflow<
             throw error;
           });
         }
-        const result = context.step<DecisionResult, ErrorMode>(leaf, prepared.step);
-        return prepared.settled
-          ? (result as Promise<Settled<DecisionResult>>).then((outcome) =>
-              outcome.ok ? { ok: true, value: outcome.value.answers } : outcome,
-            )
-          : (result as Promise<DecisionResult>).then((outcome) => outcome.answers);
+        // The answers are projected inside the tracked operation, so the promise the body gets is
+        // the one an unawaited failure check and a settled map's failure drain watch.
+        const id = names.qualify(leaf);
+        return launch(id, 'step', async () => {
+          const outcome = await localStep<DecisionResult, ErrorMode>(id, prepared.step);
+          if (!prepared.settled) return (outcome as DecisionResult).answers;
+          const settled = outcome as Settled<DecisionResult>;
+          return settled.ok ? { ok: true, value: settled.value.answers } : settled;
+        });
       }) as WorkflowContext['decide'],
       // Cast: WaitSources<N> types previous.note for the author from noteSchema; the runtime passes
       // stored JSON, validated with noteSchema when the poll has one.
@@ -4044,39 +4084,7 @@ export async function runWorkflow<
         step: StepDefinition<T> & { readonly onError?: TMode | undefined },
       ): Promise<EffectResult<T, TMode>> => {
         const id = names.qualify(leaf);
-        return launch(id, 'step', () =>
-          effect<T, TMode>({
-            id,
-            kind: 'step',
-            dependencies: step.input,
-            schema: step.schema,
-            execution: resolvePolicy(
-              id,
-              'step',
-              step.retry === undefined ? {} : { retry: step.retry },
-              {},
-              policy,
-              matchedPolicy,
-            ),
-            action:
-              options.rehearsal === undefined
-                ? step.run
-                : (context) => {
-                    options.rehearsal?.onSchema?.(id, step.schema);
-                    const stub = options.rehearsal?.localStep?.(id, schemaJson(step.schema));
-                    return stub === undefined ? step.run(context) : step.schema.parse(stub.output);
-                  },
-            local: step,
-            ...(step.onError === undefined ? {} : { onError: step.onError }),
-            ...(step.worktree === undefined
-              ? {}
-              : {
-                  isolation: { value: worktreeHandleSchema.parse(step.worktree), cwd },
-                  // Only the accepted-replay probe synthesizes an isolated local step.
-                  rehearsalSynthesized: probe,
-                }),
-          }),
-        );
+        return launch(id, 'step', () => localStep(id, step));
       },
       sleep: (leaf, milliseconds) => {
         const id = names.qualify(leaf);
