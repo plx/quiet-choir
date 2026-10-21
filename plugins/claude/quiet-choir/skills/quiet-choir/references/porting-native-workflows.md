@@ -71,6 +71,8 @@ const roster = defineRoster({
     tools: ['Read', 'Grep', 'Glob', 'Edit', 'Bash'],
     allowedTools: ['Read', 'Grep', 'Glob', 'Edit', 'Bash(npm test:*)', 'Bash(gh pr checks:*)'],
     maxTurns: 40,
+    maxBudgetUsd: 5,
+    timeoutMs: 1_800_000,
   },
 });
 
@@ -111,7 +113,13 @@ import { defineRoster, defineWorkflow, z } from 'quiet-choir';
 
 const findings = z.object({ findings: z.array(z.string()) });
 const roster = defineRoster({
-  Hunter: { harness: 'claude', tools: ['Read', 'Grep', 'Glob'], maxTurns: 25 },
+  Hunter: {
+    harness: 'claude',
+    tools: ['Read', 'Grep', 'Glob'],
+    maxTurns: 25,
+    maxBudgetUsd: 2,
+    timeoutMs: 900_000,
+  },
 });
 export default defineWorkflow({
   name: 'bounded-hunt',

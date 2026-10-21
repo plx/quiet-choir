@@ -992,7 +992,13 @@ import { defineRoster, defineWorkflow, z } from 'quiet-choir';
 import { github, nextTicket } from 'quiet-choir/github';
 
 const roster = defineRoster({
-  Editor: { harness: 'claude', tools: ['Read', 'Grep', 'Glob', 'Edit', 'Write'], maxTurns: 40 },
+  Editor: {
+    harness: 'claude',
+    tools: ['Read', 'Grep', 'Glob', 'Edit', 'Write'],
+    maxTurns: 40,
+    maxBudgetUsd: 5,
+    timeoutMs: 1_800_000,
+  },
 });
 const ticket = defineWorkflow({
   name: 'ticket',
@@ -1007,6 +1013,7 @@ const ticket = defineWorkflow({
 export default defineWorkflow({
   name: 'epic-burndown',
   version: '1',
+  roster,
   input: z.object({ repo: z.string(), epic: z.int().positive(), rounds: z.int().positive() }),
   output: z.array(z.int()),
   async run(ctx, { repo, epic, rounds }) {
