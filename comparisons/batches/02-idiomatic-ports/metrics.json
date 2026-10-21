@@ -1,11 +1,12 @@
 {
-  "method": "Matched six intents with deterministic schema-valid replies; Batch 01 receives global Read/Grep/Glob/Write/Edit/Bash, Batch 02 uses named least-privilege profiles. Counts are fixture path observations, not quality or billing savings. Formatted entrypoint lines exclude shared helpers and typed children. Strict errors are verified separately by tsc.",
+  "method": "Matched six intents with deterministic schema-valid replies; Batch 01 receives global Read/Grep/Glob/Write/Edit/Bash, Batch 02 uses named least-privilege roster entries. Counts are fixture path observations, not quality or billing savings. Formatted entrypoint lines exclude shared helpers and typed children. Strict errors are verified separately by tsc.",
   "sharedFormattedLines": {
     "01-direct-ports": { "children.ts": 14, "sdlc-support.ts": 69, "support.ts": 148 },
     "02-idiomatic-ports": {
-      "lifecycle-stages.ts": 112,
+      "lifecycle-stages.ts": 110,
       "mutation-worker.ts": 45,
-      "support.ts": 130
+      "roster.ts": 34,
+      "support.ts": 109
     }
   },
   "rows": [
@@ -67,7 +68,7 @@
           }
         },
         "2": {
-          "formattedLines": 109,
+          "formattedLines": 97,
           "agentCalls": 3,
           "writeToolCalls": 0,
           "strictErrors": 0,
@@ -183,7 +184,7 @@
           }
         },
         "2": {
-          "formattedLines": 161,
+          "formattedLines": 148,
           "agentCalls": 4,
           "writeToolCalls": 2,
           "strictErrors": 0,
@@ -299,7 +300,7 @@
           }
         },
         "2": {
-          "formattedLines": 140,
+          "formattedLines": 138,
           "agentCalls": 4,
           "writeToolCalls": 0,
           "strictErrors": 0,
@@ -410,7 +411,7 @@
           }
         },
         "2": {
-          "formattedLines": 81,
+          "formattedLines": 78,
           "agentCalls": 6,
           "writeToolCalls": 0,
           "strictErrors": 0,
@@ -632,7 +633,7 @@
           }
         },
         "2": {
-          "formattedLines": 156,
+          "formattedLines": 155,
           "agentCalls": 9,
           "writeToolCalls": 0,
           "strictErrors": 0,

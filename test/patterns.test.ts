@@ -13,6 +13,7 @@ import {
   FixtureHarness,
   HarnessError,
   NodeProcessRunner,
+  capabilityManifest,
   parseHarnessFixtures,
   readRun,
   RunInterruptedError,
@@ -41,6 +42,9 @@ import latch from '../examples/patterns/latch.workflow.js';
 import extraction from '../examples/patterns/work-then-extract.workflow.js';
 import rehearse from '../examples/patterns/rehearse.workflow.js';
 import humanReview from '../examples/patterns/human-review.workflow.js';
+import bound from '../examples/patterns/bound-agent.workflow.js';
+import ciGate from '../examples/patterns/ci-gate.workflow.js';
+import ticketLoop from '../examples/patterns/ticket-loop.workflow.js';
 
 it('replays a human-reviewed plan and its answer after a tail failure', async () => {
   const harness = new Fake(() => 'The saved plan');
@@ -260,6 +264,52 @@ it('reusable helper gives repeated leaf IDs distinct stable file scopes', async 
   expect(ids.every((id) => id.endsWith('/review/verdict'))).toBe(true);
 });
 
+it('reusable helper runs its read-only child under launch grants with no grant', async () => {
+  const harness = new Fake((request) => request.options.prompt);
+  const result = await runWorkflow(helper, {
+    ...options(),
+    harness,
+    requireGrants: true,
+    input: { paths: ['src/a.ts', 'src/b.ts'] },
+  });
+  assertCompleted(result);
+  expect(result.output).toHaveLength(2);
+  expect(harness.calls).toHaveLength(2);
+  expect(harness.calls[0]?.options).toMatchObject({ tools: ['Read', 'Grep', 'Glob'] });
+});
+
+it('each roster recipe asks for grants only on the write entries it calls', () => {
+  const required = (workflow: object) =>
+    capabilityManifest(workflow, { requireGrants: true }).requiredGrants;
+  expect(required(worktrees)).toEqual(['CodexEditor']);
+  expect(required(ciGate)).toEqual(['Editor']);
+  expect(required(ticketLoop)).toEqual(['Editor']);
+  expect(required(extraction)).toEqual([]);
+  expect(required(helper)).toEqual([]);
+});
+
+it('bound agent applies one set of options to every call and places each item itself', async () => {
+  const harness = new Fake(() => JSON.stringify({ summary: 'ok', severe: false }));
+  const input = { repos: ['/srv/a', '/srv/b'] };
+  const result = await replayAfterTail(bound, input, harness);
+  expect(result.output).toEqual([
+    { summary: 'ok', severe: false },
+    { summary: 'ok', severe: false },
+  ]);
+  expect(harness.calls).toHaveLength(2);
+  const ids = harness.calls.map((call) => call.call.stepId).sort();
+  expect(ids[0]).toMatch(/^repos\/srv-a-[0-9a-f]{8}\/triage$/u);
+  expect(ids[1]).toMatch(/^repos\/srv-b-[0-9a-f]{8}\/triage$/u);
+  for (const call of harness.calls) {
+    expect(call.options).toMatchObject({
+      model: 'sonnet',
+      effort: 'low',
+      tools: ['Read', 'Grep', 'Glob'],
+    });
+  }
+  expect(harness.calls.map((call) => call.cwd).sort()).toEqual(['/srv/a', '/srv/b']);
+});
+
 // measured: 0.7 s alone, 2.1 s in the full coverage run (dominated by real Git processes)
 it('worktree recipe integrates pinned edits and replays without repeating writers', async () => {
   const repo = join(root, 'repo'),
@@ -296,7 +346,7 @@ it('worktree recipe integrates pinned edits and replays without repeating writer
   const setup = {
     ...options(),
     cwd: repo,
-    grants: ['editor'],
+    grants: ['CodexEditor'],
     harness,
     processRunner: new NodeProcessRunner(),
     worktrees: { root: worktreeRoot },
@@ -876,6 +926,10 @@ it('ticket loop resumes after an interruption without repeating its reads or the
   expect(log).toEqual(['before', 'issue']);
   expect(harness.calls).toHaveLength(1);
   expect(JSON.stringify(harness.calls[0]?.options)).toContain('Implement #163: ');
+  // The Editor roster entry supplies the tools the old edit preset gave.
+  expect(harness.calls[0]?.options).toMatchObject({
+    tools: ['Read', 'Grep', 'Glob', 'Edit', 'Write'],
+  });
   // The resume replays the snapshot, the issue read and the implement call.
   const result = await runWorkflow(loop, { ...setup, resume: true });
   assertCompleted(result);

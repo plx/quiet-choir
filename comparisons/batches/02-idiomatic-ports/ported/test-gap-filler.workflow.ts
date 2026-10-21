@@ -1,6 +1,7 @@
 // Idiomatic rewrite of the pinned MIT upstream; see ../LICENSE and ../notes.json.
 import { defineWorkflow, z } from 'quiet-choir';
-import { Argv, Digest, Path, Receipt, json, profiles } from './support.js';
+import { readers } from './roster.js';
+import { Argv, Digest, Path, Receipt, json } from './support.js';
 import { mutationWorker } from './mutation-worker.js';
 
 const Mutant = z.object({
@@ -20,7 +21,7 @@ export default defineWorkflow({
   version: 'idiomatic-02',
   description:
     'Generate a test and mutation plan; code owns guarded writes, tests and interrupted-attempt recovery.',
-  profiles: { reader: profiles.reader },
+  roster: readers,
   input: z.object({
     target: Path.describe('Existing UTF-8 source file whose behavior needs tests'),
     testFile: Path.describe('New test file; existing unrelated content is never overwritten'),
@@ -47,8 +48,7 @@ export default defineWorkflow({
       ['existing coverage', 'failure risk'],
       { concurrency: 2 },
       (lens) =>
-        ctx.claude.value('gaps', {
-          profile: 'reader',
+        ctx.roster.Reader.value('gaps', {
           schema: z.object({
             gaps: z
               .array(z.object({ key: z.string().min(1).max(80), reason: z.string().min(1) }))
@@ -70,8 +70,7 @@ export default defineWorkflow({
         mutations: [],
         surviving: [],
       };
-    const ranking = await ctx.claude.value('rank', {
-      profile: 'reader',
+    const ranking = await ctx.roster.Reader.value('rank', {
       schema: z.object({
         selected: z
           .array(z.enum(gaps.map((gap) => gap.key)))
@@ -81,8 +80,7 @@ export default defineWorkflow({
       prompt: `Rank these gaps by blast radius. Select unique keys for the highest-risk gaps, up to ${input.maxGaps}.\n${json(gaps)}`,
     });
     const selected = [...new Set(ranking.selected)];
-    const plan = await ctx.claude.value('plan', {
-      profile: 'reader',
+    const plan = await ctx.roster.Reader.value('plan', {
       schema: z.object({
         test: z.string().min(1),
         mutants: z.array(Mutant).min(1).max(input.maxMutants),

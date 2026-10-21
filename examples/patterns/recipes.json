@@ -1,5 +1,15 @@
 [
   {
+    "id": "pattern-roster",
+    "file": "roster.ts",
+    "kind": "support"
+  },
+  {
+    "id": "pattern-bound-agent",
+    "file": "bound-agent.workflow.ts",
+    "kind": "workflow"
+  },
+  {
     "id": "pattern-cross-harness",
     "file": "cross-harness.workflow.ts",
     "kind": "workflow"

@@ -2,6 +2,18 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- The Workflow Lab Batch 02 ports, the pattern recipes and both skill copies now use rosters instead
+  of profiles (#580, [ADR 0063](docs/decisions/0063-bound-agents-and-typed-rosters.md)). Batch 02
+  declares its agents in a data-only `roster.ts` (`Reader`, `CodexReader`, `Writer`) with the same
+  tools, sandbox and limits as the old profiles, so its requests and fingerprints do not move and
+  its verified fault matrix is unchanged; only line counts and the method text in `metrics.json`
+  differ. The recipes share an `examples/patterns/roster.ts` (`Reader`, `Editor`, `CodexReader`,
+  `CodexEditor`, registered as `pattern-roster`), a new `pattern-bound-agent` recipe shows
+  `ctx.claude.bind` with per-call placement, and the `worktrees` recipe is granted as
+  `--grant CodexEditor`. The skill references teach the roster first, then bound agents and the raw
+  text baseline, with a short legacy-profiles note; the porting exec role is the `Fixer` roster
+  entry (`--grant Fixer`). Profiles, the `profile` option, the presets and `strictProfiles` keep
+  working.
 - `defineRoster(entries, options?)` declares a workflow's inventory of agents: named, concrete
   configurations, each pinned to one harness, and `defineWorkflow` takes it as `roster` (#579,
   [ADR 0063](docs/decisions/0063-bound-agents-and-typed-rosters.md) §3–4). An entry is

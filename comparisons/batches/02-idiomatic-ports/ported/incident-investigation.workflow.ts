@@ -1,12 +1,13 @@
 // Idiomatic rewrite of the pinned MIT upstream; see ../LICENSE and ../notes.json.
 import { defineWorkflow, z } from 'quiet-choir';
-import { Sha, assertClean, git, gitWindow, json, profiles } from './support.js';
+import { readers } from './roster.js';
+import { Sha, assertClean, git, gitWindow, json } from './support.js';
 
 export default defineWorkflow({
   name: 'incident-investigation',
   version: 'idiomatic-02',
   description: 'Investigate an incident with a pinned Git window and read-only Codex collectors.',
-  profiles: { reader: profiles.reader },
+  roster: readers,
   input: z.object({
     incident: z.string().min(1).describe('Observed symptoms, impact and incident timeline'),
     since: z.string().min(1).describe('Exclusive starting Git revision for the investigation'),
@@ -40,16 +41,14 @@ export default defineWorkflow({
       '--',
     ]);
     const evidence = await ctx.map('collectors', input.lenses, { concurrency: 3 }, (lens) =>
-      ctx.codex.value('collect', {
-        profile: 'reader',
+      ctx.roster.CodexReader.value('collect', {
         schema: z.object({ observations: z.array(z.string()), unknowns: z.array(z.string()) }),
         prompt: `Collect evidence for this incident through the ${lens} lens. Do not change files. Cite artifacts and distinguish observations from guesses.\n${json({ incident: input.incident, artifacts: input.artifacts, changes })}`,
       }),
     );
     // Check immediately after collection as well as after the remaining read-only calls.
     await assertClean(ctx, 'after-collection');
-    const hypotheses = await ctx.codex.value('hypotheses', {
-      profile: 'reader',
+    const hypotheses = await ctx.roster.CodexReader.value('hypotheses', {
       schema: z.object({
         items: z
           .array(z.object({ cause: z.string().min(1), evidence: z.array(z.string()) }))
@@ -63,15 +62,13 @@ export default defineWorkflow({
       { concurrency: 3 },
       async (hypothesis) => ({
         ...hypothesis,
-        ...(await ctx.codex.value('challenge', {
-          profile: 'reader',
+        ...(await ctx.roster.CodexReader.value('challenge', {
           schema: z.object({ counterEvidence: z.array(z.string()) }),
           prompt: `Try to disprove this hypothesis using the repository and supplied evidence.\n${json({ hypothesis, evidence })}`,
         })),
       }),
     );
-    const report = await ctx.codex.value('report', {
-      profile: 'reader',
+    const report = await ctx.roster.CodexReader.value('report', {
       schema: z.object({ conclusion: z.string(), uncertainties: z.array(z.string()) }),
       prompt: `Write a grounded incident conclusion, including uncertainty, from these challenged hypotheses.\n${json(challenged)}`,
     });

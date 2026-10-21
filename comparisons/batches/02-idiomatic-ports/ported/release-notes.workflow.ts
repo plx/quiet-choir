@@ -1,22 +1,14 @@
 // Idiomatic rewrite of the pinned MIT upstream; see ../LICENSE and ../notes.json.
 import { defineWorkflow, z } from 'quiet-choir';
-import {
-  Path,
-  Receipt,
-  Sha,
-  git,
-  gitWindow,
-  json,
-  profiles,
-  writeCommittedArtifact,
-} from './support.js';
+import { readers } from './roster.js';
+import { Path, Receipt, Sha, git, gitWindow, json, writeCommittedArtifact } from './support.js';
 
 export default defineWorkflow({
   name: 'release-notes',
   version: 'idiomatic-02',
   description:
     'Compute a Git manifest, summarize disjoint slices, fact-check and write notes in code.',
-  profiles: { reader: profiles.reader },
+  roster: readers,
   input: z.object({
     since: z.string().min(1).describe('Exclusive starting Git revision'),
     until: z.string().min(1).default('HEAD'),
@@ -54,8 +46,7 @@ export default defineWorkflow({
         ...shas,
         '--',
       ]);
-      return ctx.claude.value('summarize', {
-        profile: 'reader',
+      return ctx.roster.Reader.value('summarize', {
         schema: z.object({
           changes: z
             .array(
@@ -73,21 +64,18 @@ export default defineWorkflow({
     const changes = summaries.flatMap((summary) => summary.changes);
     const covered = window.manifest.filter((sha) => changes.some((change) => change.sha === sha));
     const missing = window.manifest.filter((sha) => !covered.includes(sha));
-    let notes = await ctx.claude.value('draft', {
-      profile: 'reader',
+    let notes = await ctx.roster.Reader.value('draft', {
       prompt: `Draft release notes from these changes. Do not claim completeness when missing commits are listed.\n${json({ changes, missing })}`,
     });
     let concerns: string[] = [];
     for (let round = 0; round <= input.maxRevisions; round++) {
-      const review = await ctx.claude.value(ctx.id('fact-check', round), {
-        profile: 'reader',
+      const review = await ctx.roster.Reader.value(ctx.id('fact-check', round), {
         schema: z.object({ concerns: z.array(z.string().min(1)) }),
         prompt: `Fact-check the notes against the commit summaries; list unsupported claims or omissions.\n${json({ notes, changes, missing })}`,
       });
       concerns = review.concerns;
       if (!concerns.length || round === input.maxRevisions) break;
-      notes = await ctx.claude.value(ctx.id('revise', round), {
-        profile: 'reader',
+      notes = await ctx.roster.Reader.value(ctx.id('revise', round), {
         prompt: `Revise the release notes using this evidence and review.\n${json({ notes, changes, concerns, missing })}`,
       });
     }

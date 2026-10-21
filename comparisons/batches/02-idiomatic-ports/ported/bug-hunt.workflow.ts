@@ -1,6 +1,7 @@
 // Idiomatic rewrite of the pinned MIT upstream; see ../LICENSE and ../notes.json.
 import { defineWorkflow, z } from 'quiet-choir';
-import { Path, json, profiles } from './support.js';
+import { readers } from './roster.js';
+import { Path, json } from './support.js';
 
 const Bug = z.object({
   title: z.string().min(1),
@@ -32,7 +33,7 @@ export default defineWorkflow({
   version: 'idiomatic-02',
   description:
     'Run settled finder and skeptic panels, preserve uncertainty, and bound logical admissions.',
-  profiles: { reader: profiles.reader },
+  roster: readers,
   input: z.object({
     scope: z.string().min(1).describe('Repository area to inspect'),
     maxRounds: z.number().int().min(1).max(8).default(4),
@@ -80,8 +81,7 @@ export default defineWorkflow({
         panel,
         { concurrency: 3, onError: 'return' },
         (lens) =>
-          round.claude.value('find', {
-            profile: 'reader',
+          round.roster.Reader.value('find', {
             schema: z.object({ bugs: z.array(Bug).max(20) }),
             prompt: `Hunt concrete runtime bugs in ${input.scope}; lens: ${lens}. Cite evidence and a reproducible failure scenario. An empty list is valid. Round ${rounds}.`,
           }),
@@ -109,8 +109,7 @@ export default defineWorkflow({
           Array.from({ length: votes }, (_, vote) => vote),
           { concurrency: 3, onError: 'return' },
           (vote) =>
-            round.claude.value('verify', {
-              profile: 'reader',
+            round.roster.Reader.value('verify', {
               schema: z.object({ refuted: z.boolean(), reasoning: z.string().min(1) }),
               prompt: `Independently try to refute this candidate. Panel seat ${vote + 1}/${input.votes}.\n${json(bug)}`,
             }),

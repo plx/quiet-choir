@@ -282,6 +282,14 @@ async function portingRecipes(skillRoot) {
       name,
       sourceExample(await example(skillRoot, file, id), join(repository, 'dist/index.js')),
     );
+  // The pattern recipes import ./roster.js, so the documented support module sits beside them.
+  await write(
+    'roster.ts',
+    sourceExample(
+      await example(skillRoot, 'references/patterns.md', 'pattern-roster'),
+      join(repository, 'dist/index.js'),
+    ),
+  );
   const env = { ...process.env, QC_CHECKOUT: repository, QC_TARGET: target, QC_RUNS: state };
   const cli = (args) =>
     shell(`node "$QC_CHECKOUT/bin/run.js" workflow ${args}`, { cwd: target, env });
@@ -536,7 +544,7 @@ process.exit(status ?? 1);
     QC_WORKFLOW: await workflowFile(
       'fix.workflow.mts',
       'references/porting-native-workflows.md',
-      'porting-exec-profile',
+      'porting-exec-roster',
     ),
   };
   const grantFence = await example(
@@ -547,10 +555,10 @@ process.exit(status ?? 1);
   const granted = shell(grantFence, { cwd: target, env: roleEnv });
   assert.equal(granted.status, 0, granted.output);
   assert.equal(granted.lines.at(-1).ok, true);
-  const refused = shell(grantFence.replace(' --grant fixer', ''), { cwd: target, env: roleEnv });
+  const refused = shell(grantFence.replace(' --grant Fixer', ''), { cwd: target, env: roleEnv });
   assert.equal(refused.status, 2, refused.output);
-  assert.match(refused.lines.at(-1).error.message, /Profile fixer requires exec access/u);
-  const ungated = grantFence.replace(' --require-grants --grant fixer', '');
+  assert.match(refused.lines.at(-1).error.message, /Profile Fixer requires exec access/u);
+  const ungated = grantFence.replace(' --require-grants --grant Fixer', '');
   assert.notEqual(ungated, grantFence);
   const open = shell(ungated, { cwd: target, env: roleEnv });
   assert.equal(open.status, 0, open.output);

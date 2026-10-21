@@ -53,8 +53,9 @@ try {
     join(project, 'examples/patterns/worktrees.workflow.ts'),
     '--input',
     '{"items":["a","b"]}',
+    '--require-grants',
     '--grant',
-    'editor',
+    'CodexEditor',
   );
   assert.equal(pattern.status, 0, pattern.stderr);
   const report = pattern.value;

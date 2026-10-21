@@ -1,45 +1,108 @@
 # Agent calls
 
-Use `ctx.claude` or `ctx.codex` from any agent host. `value(id, options)` returns just the answer:
-text without `schema`, or a locally validated value with `schema`. `text` and `object` return
-`{ output, sessionId, usage, diagnostics }`. All three checkpoint the same full result and effect
-identity. Use `onError: 'return'` for a durable `Settled` outcome; cancellation, checkpoint, and
-pre-launch configuration failures still reject. See
+Declare the agents a workflow uses in a [roster](#roster) and call them as `ctx.roster.Name`; reach
+for `ctx.claude` or `ctx.codex` directly when a call needs raw options. `value(id, options)` returns
+just the answer: text without `schema`, or a locally validated value with `schema`. `text` and
+`object` return `{ output, sessionId, usage, diagnostics }`. All three checkpoint the same full
+result and effect identity. Use `onError: 'return'` for a durable `Settled` outcome; cancellation,
+checkpoint, and pre-launch configuration failures still reject. See
 [failure handling](workflow-authoring.md#failure-handling).
 
 ## Shared options and enforcement
 
-These are quiet-choir options. The core resolves profile defaults and validates requests;
-`CliHarness` translates them to native flags and enforces process limits. A custom harness must
-honor the resolved request itself. Native binaries/configuration still determine model support.
+These are quiet-choir options. The core resolves roster-entry and profile defaults and validates
+requests; `CliHarness` translates them to native flags and enforces process limits. A custom harness
+must honor the resolved request itself. Native binaries/configuration still determine model support.
 
-| Option                   | Claude                          | Codex                            | Default                                      | Enforced by                                                    |
-| ------------------------ | ------------------------------- | -------------------------------- | -------------------------------------------- | -------------------------------------------------------------- |
-| `prompt`                 | stdin                           | stdin                            | Required                                     | Core validates; adapter supplies without a shell               |
-| `schema`                 | Object root                     | Compat accepts common Zod shapes | No schema for text                           | Core validates output; provider adapter prepares wire schema   |
-| `profile`                | Declared role/preset            | Same                             | Workflow default, otherwise `text`           | Core resolves capabilities and grants                          |
-| `model`                  | Name/alias                      | Name/alias                       | Inherited native model                       | Adapter passes; native CLI selects                             |
-| `effort`                 | low/medium/high/xhigh/max       | Same, plus none/minimal          | Inherited                                    | Core validates; native CLI applies                             |
-| `cwd`                    | Relative to run cwd or absolute | Same                             | Run cwd                                      | Core resolves absolute path; adapter must use `request.cwd`    |
-| `timeoutMs`              | Wall-clock                      | Wall-clock                       | Text 300,000 ms                              | Profile supplies; adapter times and terminates                 |
-| `maxTurns`               | Positive integer                | Unsupported                      | Text 10                                      | Profile supplies; Claude enforces                              |
-| `maxBudgetUsd`           | Positive finite USD             | Unsupported                      | Text $0.50                                   | Profile supplies; Claude enforces                              |
-| `tools` / `allowedTools` | Exposed / permitted tools       | Unsupported                      | Text empty; allowed copies tools             | Core grants; Claude enforces                                   |
-| `sandbox`                | Unsupported                     | read-only/workspace-write        | read-only                                    | Core grants; Codex enforces                                    |
-| `addDirs`                | Extra dirs; rooted at call site | Extra writable directories       | None                                         | Core resolves/bounds/grants; native CLI enforces               |
-| `extraArgs`              | `--flag` or `--flag=value`      | Same                             | None                                         | Adapter rejects owned flags/aliases; core fingerprints strings |
-| `env`                    | Environment overlay             | Same                             | Inherit parent environment                   | Adapter overlays; core fingerprints explicit values            |
-| `retry`                  | Safe-to-repeat calls only       | Same                             | One attempt; opted-in delay starts at 100 ms | Core owns retry, removes it from adapter request               |
-| `onError`                | throw/return                    | Same                             | throw                                        | Core journals final outcomes                                   |
+| Option                   | Claude                                   | Codex                            | Default                                      | Enforced by                                                    |
+| ------------------------ | ---------------------------------------- | -------------------------------- | -------------------------------------------- | -------------------------------------------------------------- |
+| `prompt`                 | stdin                                    | stdin                            | Required                                     | Core validates; adapter supplies without a shell               |
+| `schema`                 | Object root                              | Compat accepts common Zod shapes | No schema for text                           | Core validates output; provider adapter prepares wire schema   |
+| roster entry             | `ctx.roster.Name`, see [Roster](#roster) | Same                             | Text baseline                                | Core resolves capabilities and grants                          |
+| `model`                  | Name/alias                               | Name/alias                       | Inherited native model                       | Adapter passes; native CLI selects                             |
+| `effort`                 | low/medium/high/xhigh/max                | Same, plus none/minimal          | Inherited                                    | Core validates; native CLI applies                             |
+| `cwd`                    | Relative to run cwd or absolute          | Same                             | Run cwd                                      | Core resolves absolute path; adapter must use `request.cwd`    |
+| `timeoutMs`              | Wall-clock                               | Wall-clock                       | Text 300,000 ms                              | Entry or baseline supplies; adapter times and terminates       |
+| `maxTurns`               | Positive integer                         | Unsupported                      | Text 10                                      | Entry or baseline supplies; Claude enforces                    |
+| `maxBudgetUsd`           | Positive finite USD                      | Unsupported                      | Text $0.50                                   | Entry or baseline supplies; Claude enforces                    |
+| `tools` / `allowedTools` | Exposed / permitted tools                | Unsupported                      | Text empty; allowed copies tools             | Core grants; Claude enforces                                   |
+| `sandbox`                | Unsupported                              | read-only/workspace-write        | read-only                                    | Core grants; Codex enforces                                    |
+| `addDirs`                | Extra dirs; rooted at call site          | Extra writable directories       | None                                         | Core resolves/bounds/grants; native CLI enforces               |
+| `extraArgs`              | `--flag` or `--flag=value`               | Same                             | None                                         | Adapter rejects owned flags/aliases; core fingerprints strings |
+| `env`                    | Environment overlay                      | Same                             | Inherit parent environment                   | Adapter overlays; core fingerprints explicit values            |
+| `retry`                  | Safe-to-repeat calls only                | Same                             | One attempt; opted-in delay starts at 100 ms | Core owns retry, removes it from adapter request               |
+| `onError`                | throw/return                             | Same                             | throw                                        | Core journals final outcomes                                   |
 
 See [Claude controls/protocol](claude.md) and [Codex controls/protocol](codex.md) for
 native-specific fields. Keep rotating secrets in the inherited environment; explicit `env` values
 affect replay. Escape-argument paths fingerprint their strings, not file contents.
 
+## Roster
+
+A roster is the workflow's inventory of agents: named, concrete configurations, each pinned to one
+harness. Keep it in a data-only `roster.ts` module that workflows import, so typos in a name fail
+typecheck. The complete example below inlines it; see the `pattern-roster` module in
+[patterns](patterns.md#roster-and-bound-agents) for the shape to copy.
+
+```ts
+import { defineRoster, defineWorkflow, z } from 'quiet-choir';
+
+const roster = defineRoster({
+  Reviewer: {
+    harness: 'claude',
+    model: 'opus',
+    effort: 'high',
+    tools: ['Read', 'Grep', 'Glob'],
+    maxTurns: 40,
+    maxBudgetUsd: 4,
+    appendSystemPrompt: 'Review for correctness first.',
+  },
+  Mechanic: { harness: 'codex', sandbox: 'workspace-write', timeoutMs: 1_800_000 },
+});
+const Review = z.object({ verdict: z.enum(['approve', 'revise']), notes: z.string() });
+
+export default defineWorkflow({
+  name: 'review',
+  version: '1',
+  input: z.object({ diff: z.string() }),
+  output: Review,
+  roster,
+  run: (ctx, input) => ctx.roster.Reviewer.value('review', { prompt: input.diff, schema: Review }),
+});
+```
+
+- An entry is `{ harness, description?, expectsToolUse? }` plus that harness's own options.
+  `harness` is the discriminant: `'claude'` takes `ClaudeOptions`, `'codex'` takes `CodexOptions`,
+  and a registered harness takes its declared schema. A Codex key on a Claude entry fails typecheck:
+  there are no cross-harness `claude:` and `codex:` blocks, so a role that serves both harnesses
+  becomes one entry per harness (`Reader`, `CodexReader`).
+- There is no `extends`: spread a shared entry (`{ ...Reviewer, model: 'sonnet' }`). An entry sets
+  no per-call keys (`prompt`, `schema`, `cwd`, `worktree`, `onError`, `retry`); a standing prompt is
+  a plain string such as `appendSystemPrompt`. Names are PascalCase identifiers; `text`, `readonly`
+  and `edit` are refused.
+- `ctx.roster.Name` is the entry's harness client bound to it, so a call takes the prompt, the
+  schema, placement (`cwd`, `addDirs`, `worktree`) and policy (`onError`, `retry`, deadlines), and
+  `ctx.roster.Reviwer` fails typecheck. A call's `addDirs` append to the entry's. Pass an agent to a
+  helper typed `Agent` (`review(ctx.roster.Reviewer, diff)`); a bare `WorkflowContext` helper sees
+  every name as a possibly text-only agent.
+- A call resolves in order: the text baseline, workflow `defaults`, the entry, the call's own
+  options, `--profile Name.limit=` overrides, then `--policy` rules. The request and fingerprint are
+  those of a raw call that spells the entry's options, so moving a call onto a roster keeps its
+  completed steps reusable under `--accept-code-change`.
+- An attempt records the entry name as its role. `workflow validate --json` lists each entry under
+  `workflow.capabilities.profiles` with its `harness`, model, tools or sandbox, limits and derived
+  access (a tool-less Claude entry is `none`).
+- An entry runs only on its own harness: selecting it from the other one (an untyped
+  `ctx.codex.text(id, { prompt, profile: 'Reviewer' })`) fails with
+  `Roster entry Reviewer is pinned to harness claude; it cannot run on codex.`
+- Inside an inline child, `ctx.roster` is the child's own roster, so read it where you call it
+  rather than carrying a parent's agent through shared state.
+
 ## Bound agents
 
 `ctx.claude.bind(options)` (also `ctx.codex` and `ctx.agent(name)`) returns an `Agent` that fixes
-everything except the prompt, the schema, placement and policy:
+everything except the prompt, the schema, placement and policy. Each roster entry is such an agent;
+bind directly when one call site needs a configuration no entry names:
 
 ```ts
 import { defineWorkflow, z, type Agent } from 'quiet-choir';
@@ -86,44 +149,37 @@ export default defineWorkflow({
   strict agent bound to a profile without `claude.addDirRoots` takes no `addDirs`; a rooted one
   does.
 
-## Select a role and its capabilities
+## Raw-call defaults
 
-`text` is tool-less for Claude and read-only for Codex (300s, 10 Claude turns, $0.50). `readonly`
-exposes Claude Read/Grep/Glob and Codex read-only (900s, 25 turns, $2). `edit` adds Claude
-Edit/Write and Codex workspace-write (1800s, 40 turns, $5). Codex text still has read access; Claude
-turn/USD limits do not apply to Codex.
+A raw `ctx.claude` or `ctx.codex` call that names no roster entry and no profile runs on the text
+baseline: tool-less for Claude and read-only for Codex (300s, 10 Claude turns, $0.50). Codex text
+still has read access; Claude turn and USD limits do not apply to Codex. A call that needs tools, a
+sandbox beyond read-only or other limits uses a roster entry or a bound agent, or spells them at the
+call site. Workflow `defaults` (per-harness model and effort, and limits) apply to every call;
+replacing Claude `tools` re-infers `allowedTools` unless supplied explicitly.
+`workflow validate FILE --json` lists the resolved `workflow.capabilities` without running the body,
+compactly (each fact once, harness option schemas omitted); `--harness-schemas` prints the complete
+document, and `requiredGrants` there is empty unless `requireGrants` is on. Unknown tools and native
+config controls are conservatively classified as exec access. Configuration loading defaults to
+restricted mode; [harness isolation](harness-isolation.md) explains inherited roles, environment
+edits and provider boundaries.
 
-Merge order is built-in preset, workflow defaults, custom ancestors, selected role, then call
-options. Replacing Claude tools re-infers allowedTools unless supplied explicitly. `strictProfiles`
-is opt-in (default `false`): by default a call site may pass raw capability controls such as
-`tools: ['Read']`. Under `strictProfiles: true`, declare capability controls in profiles, including
-permissions, MCP, native config/agents, dirs, escape args, and environment. Call-site types enforce
-this: the inferred literal `true` removes those keys (and `isolation: 'inherit'`) from `ctx.claude`,
-`ctx.codex` and `ctx.agent(name)` options (as optional `never` properties, so a pre-built options
-variable fails too), so a raw key fails typecheck and `workflow validate`; an omitted or literal
-`false` `strictProfiles` types them. One bounded exception: Claude `addDirs` stay typed, and a
-profile declaring `claude: { addDirRoots: ['.state/runs'] }` accepts call-site `addDirs` whose
-canonical paths (no `..` segments, symlinks resolved, roots against the run cwd) lie inside a root,
-appending them to its own `addDirs` as absolute paths. `addDirs` typechecks only with a rooted
-profile (declared, inherited through `extends`, or from `defaults.claude`) or, with `profile`
-omitted, a rooted `defaults.profile`; elsewhere, including the implicit `text`, it fails typecheck,
-and shapes the types cannot see (a widened profiles object, or a generic profile or defaults value a
-factory forwards) are checked when the call runs. Codex cannot declare roots, because its
-directories are writable. Roots are pinned by named grants and, under `requireGrants`, bound child
-roles by containment in every ancestor's roots, rechecked at each call. `ctx.agent(name)` profiles
-accept only built-in or declared roles. A bare `WorkflowContext` helper stays permissive (the
-runtime still checks); `WorkflowContext<'role', BuiltInHarnesses, true>` is a strict helper
-contract. Explicit `defineWorkflow` type arguments are all-or-nothing: with a shorter prefix such as
-`defineWorkflow<Input, Output>`, the rest take the permissive, childless defaults, so
-`strictProfiles: true` or a nonempty `children` list fails typecheck; drop the type arguments
-(preferred) or spell all seven. They also leave `profiles`/`defaults` uninferred, so rooted defaults
-no longer admit built-in or omitted-profile `addDirs`. `workflow validate FILE --json` lists
-resolved `workflow.capabilities` without running the body, compactly: each fact once (no `defaults`;
-read `profiles[defaultProfile]`), harness option schemas omitted; `--harness-schemas` prints the
-complete document; `requiredGrants` there is empty unless `requireGrants` is on. Unknown
-tools/native config controls are conservatively classified as exec access. Configuration loading
-defaults to restricted mode; [harness isolation](harness-isolation.md) explains inherited roles,
-environment edits, and provider boundaries.
+### Legacy profiles
+
+Profiles, the call-site `profile` option, the presets (`text`, `readonly`, `edit`) and
+`strictProfiles` still work and are removed later; new code uses a roster. `readonly` exposes Claude
+Read/Grep/Glob and Codex read-only (900s, 25 turns, $2); `edit` adds Claude Edit/Write and Codex
+workspace-write (1800s, 40 turns, $5). A profile merges over the preset, workflow defaults and its
+`extends` chain, then call options. `strictProfiles` is opt-in (default `false`): under `true`, raw
+capability controls (tools, permissions, MCP, native config and agents, dirs, escape args,
+environment, and `isolation: 'inherit'`) are rejected at call sites by type and by
+`workflow validate`, and must be declared in a profile. One bounded exception: a profile declaring
+`claude: { addDirRoots: ['.state/runs'] }` accepts call-site `addDirs` inside those roots. A roster
+entry may not be a profile's `extends` parent, the default profile, or share a profile's name.
+Explicit `defineWorkflow` type arguments are all-or-nothing: with a shorter prefix such as
+`defineWorkflow<Input, Output>`, the rest take the permissive, childless defaults and leave
+`profiles`, `roster` and `defaults` uninferred; drop the type arguments (preferred) or spell all
+seven.
 
 ### requireGrants: launch grants
 
@@ -132,37 +188,40 @@ Launch grants are opt-in: by default a write or exec role runs without one. Set
 `execute --resume`, `execute --fork-from`, `workflow start` or `workflow resume`
 (`RunOptions.requireGrants` when embedding). The run-level flag is saved with the run, even by a
 resume refused for a missing grant before the body: later resumes, `tick` and emitted commands keep
-it, and a fork does not inherit it. Under it, every declared/default write or exec role needs a
-launch grant: `--grant fixer`, `--grant write`, `--grant exec` (includes write), or `--grant all`.
-Declared roles preflight before effects; selecting built-in `edit` directly needs a grant before
-that call. Grants persist on resume. Named grants pin capability declarations and must be renewed if
-those change. Elevated raw call-site controls need class/all grants. Without the layer, `--grant` is
+it, and a fork does not inherit it. Under it, every declared/default write or exec roster entry
+needs a launch grant: `--grant Fixer` (the entry's name), `--grant write`, `--grant exec` (includes
+write), or `--grant all`. A write or exec entry is listed in `requiredGrants` and preflights before
+effects, even when no branch uses it; an entry's access is its pinned harness's alone. Grants
+persist on resume. Named grants pin the entry's capability declarations and its harness, and must be
+renewed if those change. Elevated raw call-site controls need class/all grants, and selecting the
+built-in `edit` profile directly needs a grant before that call. Without the layer, `--grant` is
 still validated and saved, so a later `--require-grants` resume honours it.
 
-Raise execution limits without source edits using `--resume --run-id ID --profile scout.maxTurns=60`
-or `--profile '*.timeoutMs=1800000'`. Profile override fields are maxTurns, maxBudgetUsd, timeoutMs
-and idleTimeoutMs. Rules persist; `--policy-reset` clears profile and step rules. Matching step
-`--policy` rules win. Embedders use `profileOverrides` and `grants` in `RunOptions`. Permission
+Raise execution limits without source edits using
+`--resume --run-id ID --profile Reviewer.maxTurns=60` or `--profile '*.timeoutMs=1800000'`;
+`--profile` names a roster entry as well as a profile. Override fields are maxTurns, maxBudgetUsd,
+timeoutMs and idleTimeoutMs. Rules persist; `--policy-reset` clears profile and step rules. Matching
+step `--policy` rules win. Embedders use `profileOverrides` and `grants` in `RunOptions`. Permission
 denials are warnings unless `onPermissionDenied: 'fail'` makes them permission-kind failures while
 retaining usage.
 
-`idleTimeoutMs` (off by default; set on `defaults`, a profile, a call, `--profile` or an agent
+`idleTimeoutMs` (off by default; set on `defaults`, a roster entry, a call, `--profile` or an agent
 `--policy` rule) ends an attempt whose CLI writes no stdout/stderr for that long, with kind
 `idle-timeout`; streaming output never trips it. It is policy outside identity, so raise it on
-resume as the error suggests (`--profile role.idleTimeoutMs=N`). Size it above the longest silent
+resume as the error suggests (`--profile Name.idleTimeoutMs=N`). Size it above the longest silent
 tool run or reasoning stretch: a too-small deadline fails the same way on every retry, including
 `'transient'` ones. Each attempt counts its tool calls in `diagnostics.toolUses` (Claude `tool_use`
 blocks without the `StructuredOutput` carrier, Codex command/file/MCP/web-search items). When the
-profile's `expectsToolUse` is true (default: any Claude tool or a Codex sandbox beyond read-only, so
-`readonly` and `edit` but not `text`) and a completed attempt used none, the step gets a warning
+entry's or profile's `expectsToolUse` is true (default: any Claude tool or a Codex sandbox beyond
+read-only) and a completed attempt used none, the step gets a warning
 `no-tool-use: Profile <name> expects tool use, ...`, shown on `agent.finished` and in `inspect`; it
 never fails the call. Custom adapters opt in by passing `idleTimeoutMs` to `runProcess` and
 reporting `toolUses`.
 
 ## Replay, retry, and usage
 
-Prompts, schemas, resolved models/effort, cwd, and capabilities must match completed effects.
-Profile names, execution limits, retry policy, and run concurrency stay outside identity.
+Prompts, schemas, resolved models/effort, cwd, and capabilities must match completed effects. Entry
+and profile names, execution limits, retry policy, and run concurrency stay outside identity.
 `attemptHistory` records resolved limits, provenance, requested model/effort (or inherited), timing,
 and outcome. Model/effort policy replacements require `--allow-model-override` and affect unfinished
 attempts only. Source edits require [acceptance or a fork](durability.md#choose-a-recovery-path).
@@ -206,13 +265,13 @@ Use [usage and budgets](usage-budgets.md) to interpret nulls, count failures onc
 and set sticky run-wide cost/attempt gates. These are operator stops outside effect identity;
 per-call retries or settled error handling cannot bypass a latched run gate.
 
-## Child profile delegation
+## Child rosters and delegation
 
-By default a child's roles are its own: nothing is compared to the parent's roles and
-`ctx.workflow`'s `profiles` option is accepted and ignored; the parent's `--profile` limit rules
-still match by name. Under `requireGrants`, inline child roles map to parent roles of the same name,
-or the `profiles` option maps them explicitly, and missing/insufficient grants fail before child
-effects. Child tool exposure cannot grow; mapped parent model/effort defaults and limit overrides
-pass down, and limits are bounded by the parent. A parent `onPermissionDenied: 'fail'` passes down
-too; a child cannot weaken it to `warn`. Root concurrency and budgets span every frame. See
-[child workflows](child-workflows.md).
+A child has its own roster: nothing is compared to the parent's entries, and `ctx.workflow`'s
+`profiles` option is accepted and ignored; the parent's `--profile` limit rules still match by name.
+Parent-child ceilings apply only under `requireGrants`: inline child roles map to parent roles of
+the same name (or the `profiles` option maps them explicitly), and missing or insufficient grants
+fail before child effects. Child tool exposure cannot grow; mapped parent model and effort defaults
+and limit overrides pass down, and limits are bounded by the parent. A parent
+`onPermissionDenied: 'fail'` passes down too; a child cannot weaken it to `warn`. Root concurrency
+and budgets span every frame. See [child workflows](child-workflows.md).

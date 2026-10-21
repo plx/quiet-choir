@@ -1,28 +1,7 @@
 import { createHash } from 'node:crypto';
 import { mkdir, realpath, writeFile } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
-import { z, type AgentProfile, type WorkflowContext, type JsonValue } from 'quiet-choir';
-
-export const profiles = {
-  reader: {
-    extends: 'readonly',
-    claude: { tools: ['Read', 'Grep', 'Glob'], allowedTools: ['Read', 'Grep', 'Glob'] },
-    codex: { sandbox: 'read-only' },
-    maxTurns: 20,
-    maxBudgetUsd: 2,
-    timeoutMs: 300_000,
-  },
-  writer: {
-    extends: 'edit',
-    claude: {
-      tools: ['Read', 'Grep', 'Glob', 'Write', 'Edit'],
-      allowedTools: ['Read', 'Grep', 'Glob', 'Write', 'Edit'],
-    },
-    maxTurns: 40,
-    maxBudgetUsd: 5,
-    timeoutMs: 600_000,
-  },
-} satisfies Record<string, AgentProfile>;
+import { z, type WorkflowContext, type JsonValue } from 'quiet-choir';
 
 export const Sha = z.string().regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/u);
 export const Digest = z.string().regex(/^[a-f0-9]{64}$/u);
