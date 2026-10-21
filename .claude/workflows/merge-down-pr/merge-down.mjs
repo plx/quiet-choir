@@ -230,8 +230,17 @@ function latestChecks(rollup) {
   }
   return [...groups.values()].map((runs) => {
     const live = runs.filter((c) => c.conclusion !== 'CANCELLED');
-    return (live.length ? live : runs).reduce((a, b) =>
-      String(b.startedAt ?? '') > String(a.startedAt ?? '') ? b : a,
+    const pool = live.length ? live : runs;
+    // A queued attempt has no startedAt yet, so an unfinished sibling wins outright: the check
+    // is still running however its older attempts ended.
+    const unfinished = pool.find((c) =>
+      c.__typename === 'StatusContext'
+        ? c.state === 'PENDING' || c.state === 'EXPECTED'
+        : c.status !== 'COMPLETED',
+    );
+    return (
+      unfinished ??
+      pool.reduce((a, b) => (String(b.startedAt ?? '') > String(a.startedAt ?? '') ? b : a))
     );
   });
 }
