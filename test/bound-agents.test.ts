@@ -422,6 +422,63 @@ it('fails the run on a bound validation error in a settled map, as on a raw one'
   }
 });
 
+it('fails the run on an unawaited invalid bound call in a settled map, as on a raw one', async ({
+  runs,
+  stateDir,
+}) => {
+  const untyped = (value: unknown) => value as never;
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => {
+    unhandled.push(reason);
+  };
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    type Fire = (ctx: Context) => Promise<unknown>;
+    const cases: [string, Fire, string, string][] = [
+      [
+        'raw',
+        (ctx) => ctx.claude.value('call', untyped({ prompt, addDirs: 'invalid' })),
+        'items/0/call',
+        'Invalid claude options: addDirs',
+      ],
+      [
+        'bound',
+        (ctx) =>
+          ctx.claude.bind({ model: 'opus' }).value('call', untyped({ prompt, model: 'haiku' })),
+        'items/0/call',
+        'A bound agent call cannot set model',
+      ],
+      [
+        'within',
+        (ctx) => ctx.within('w').claude.bind({}).text('call', untyped(null)),
+        'items/0/w/call',
+        'Bound agent call options must be an object.',
+      ],
+    ];
+    for (const [runId, fire, stepId, message] of cases) {
+      const fake = capture();
+      // The mapper drops the failed call and returns normally; the tracker still owns the call.
+      const definition = workflow(runId, (ctx) =>
+        ctx.map('items', ['x'], { concurrency: 1, onError: 'return' }, () => {
+          void fire(ctx);
+          return Promise.resolve('done');
+        }),
+      );
+      const failure = runs.run(definition, { stateDir, runId, input: null, harness: fake.harness });
+      await expect(failure).rejects.toThrow(
+        `Step ${stepId} (claude) failed: Unawaited workflow operation "${stepId}" failed: `,
+      );
+      await expect(failure).rejects.toThrow(message);
+      expect(fake.requests).toEqual([]);
+      expect((await readRun({ stateDir, runId })).steps).toEqual({});
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(unhandled).toEqual([]);
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+  }
+});
+
 it('snapshots bound options so later mutation cannot change the agent', async ({
   runs,
   stateDir,

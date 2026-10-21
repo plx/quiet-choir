@@ -24,6 +24,12 @@ export interface BindHooks {
    * call's, so a settled map fails the run instead of journaling it as item data.
    */
   readonly markFatal?: ((error: unknown) => void) | undefined;
+  /**
+   * Fail a bound call whose options do not merge as an operation launched under `id` on the bound
+   * client's harness, as a raw call's invalid options fail, so the runtime tracks it and an
+   * unawaited failed call fails the run. Without it the call returns a rejected Promise.
+   */
+  readonly reject?: ((id: string, error: Error) => Promise<never>) | undefined;
 }
 
 type Options = Readonly<Record<string, unknown>>;
@@ -119,7 +125,7 @@ function layer(client: Methods, options: unknown, hooks: BindHooks, again: boole
       } catch (error) {
         const failure = error instanceof Error ? error : new TypeError(String(error));
         hooks.markFatal?.(failure);
-        return Promise.reject(failure);
+        return hooks.reject ? hooks.reject(id, failure) : Promise.reject(failure);
       }
       return client[method](id, merged);
     };

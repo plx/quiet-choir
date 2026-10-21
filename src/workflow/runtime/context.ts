@@ -3,35 +3,42 @@ import { bindAgent, type BindHooks } from './bound-agent.js';
 import type { NameFrame, NameScopes } from './names.js';
 
 /**
- * Bind an existing context without dropping overloads or eagerly reading its signal. `hooks` are
- * the runtime's, passed to the agents bound from its clients. @internal
+ * Bind an existing context without dropping overloads or eagerly reading its signal. `hooks` gives
+ * the runtime's hooks for a harness, passed to the agents bound from its client. @internal
  */
 export function bindContext(
   context: WorkflowContext,
   names: NameScopes,
   frame: NameFrame,
-  hooks: BindHooks = {},
+  hooks: (harness: string) => BindHooks = () => ({}),
 ): WorkflowContext {
   function bind<T extends (...args: never[]) => unknown>(method: T): T {
     // This transparent wrapper forwards the same arguments/result, including generic overloads.
     return ((...args: never[]) => names.bound(frame, () => method(...args))) as T;
   }
-  // A bound agent wraps this prefixed client, never the inner one, so it keeps the prefix.
+  // A bound agent wraps this prefixed client, never the inner one, so it keeps the prefix; a
+  // rejected bound call launches under the prefix too.
   function client<TOptions extends AgentOptions>(
     inner: AgentClient<TOptions>,
+    harness: string,
   ): AgentClient<TOptions> {
+    const { markFatal, reject } = hooks(harness);
+    const scoped: BindHooks = {
+      markFatal,
+      reject: reject && bind(reject),
+    };
     const wrapped: AgentClient<TOptions> = {
       value: bind(inner.value.bind(inner)),
       text: bind(inner.text.bind(inner)),
       object: bind(inner.object.bind(inner)),
-      bind: (options) => bindAgent(wrapped, options, hooks),
+      bind: (options) => bindAgent(wrapped, options, scoped),
     };
     return wrapped;
   }
   return {
     runId: context.runId,
     cwd: context.cwd,
-    agent: (name: Parameters<WorkflowContext['agent']>[0]) => client(context.agent(name)),
+    agent: (name: Parameters<WorkflowContext['agent']>[0]) => client(context.agent(name), name),
     workflow: bind(context.workflow.bind(context)),
     merge: bind(context.merge.bind(context)),
     worktree: bind(context.worktree.bind(context)),
@@ -55,7 +62,7 @@ export function bindContext(
     step: bind(context.step.bind(context)),
     sleep: bind(context.sleep.bind(context)),
     map: bind(context.map.bind(context)),
-    claude: client(context.claude),
-    codex: client(context.codex),
+    claude: client(context.claude, 'claude'),
+    codex: client(context.codex, 'codex'),
   };
 }
