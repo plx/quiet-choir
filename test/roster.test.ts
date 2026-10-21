@@ -651,7 +651,10 @@ describe('launch overrides and grants', () => {
   });
 
   it('pins a named grant to the harness an entry is pinned to', () => {
-    const role = (entry: object, harnesses: readonly (typeof third)[] = []) => {
+    const role = (
+      entry: object,
+      harnesses: Parameters<typeof resolveCapabilities>[0]['harnesses'] = [],
+    ) => {
       const resolved = resolveCapabilities({
         name: 'repinned',
         harnesses,
