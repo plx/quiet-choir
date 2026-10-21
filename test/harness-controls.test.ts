@@ -16,6 +16,7 @@ import {
   type CodexOptions,
   type Harness,
   type ProjectInstructionsRecord,
+  type PromptText,
 } from '../src/index.js';
 import {
   codexEffortValues,
@@ -68,7 +69,7 @@ const capture = `const fs = require('node:fs');const args=process.argv.slice(2);
 
 it('passes every Claude control literally and stores large/structured values in cleaned private files', async () => {
   const path = await binary(capture);
-  const controls: ClaudeOptions = {
+  const controls: PromptText<ClaudeOptions> = {
     prompt: 'task $(not a shell)',
     model: 'primary',
     tools: ['Read', 'Bash'],
@@ -142,7 +143,7 @@ it('passes every Codex control, preserves TOML values, snapshots images, and sep
   const path = await binary(capture);
   const image = join(directory, 'one.png');
   await writeFile(image, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
-  const options: CodexOptions = {
+  const options: PromptText<CodexOptions> = {
     prompt: 'stdin task',
     effort: 'max',
     model: 'model',

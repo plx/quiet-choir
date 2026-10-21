@@ -30,6 +30,7 @@ function description(name: string, children: WorkflowDescription[] = []): Workfl
     outputSchema: { type: 'string' },
     capabilities: {},
     profiles: {},
+    prompts: [],
     children,
     recursive: false,
     entrypoint: `/work/${name}.workflow.ts`,

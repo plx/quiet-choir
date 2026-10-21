@@ -14,6 +14,7 @@ import { analyzeTypecheckEntrypoint } from '../typecheck/plan.js';
 import type { TypecheckPlan } from '../typecheck/model.js';
 import type { ValidatedWorkflow, WorkflowCommandResult } from './model.js';
 import { workflowLaunch } from './source.js';
+import { promptRootFiles } from '../prompts/check.js';
 
 const metadata: z.ZodType<WorkflowDescription> = z.lazy(() =>
   z.object({
@@ -41,6 +42,20 @@ const metadata: z.ZodType<WorkflowDescription> = z.lazy(() =>
     outputSchema: z.json(),
     capabilities: capabilityManifestSchema,
     profiles: z.record(z.string(), capabilityManifestSchema.shape.defaults),
+    prompts: z.array(
+      z.object({
+        root: z.string(),
+        entries: z.array(
+          z.object({
+            name: z.string(),
+            file: z.string(),
+            description: z.string().nullable(),
+            variables: z.array(z.string()),
+            warnings: z.array(z.string()),
+          }),
+        ),
+      }),
+    ),
     children: z.array(metadata),
     recursive: z.boolean(),
     entrypoint: z.string().nullable(),
@@ -67,12 +82,18 @@ const validation = z.object({
 // (#103); they are never served and are rewritten with the redacted manifest. Version 4: version 3
 // results may hold plaintext registered harness options now listed in sensitiveOptions (#247).
 // Version 5 (#345): entries are keyed on the engine code and toolchain digest; version 4 entries
-// keyed on the version string alone are revalidated and rewritten.
+// keyed on the version string alone are revalidated and rewritten. Version 6 (#581): results gain
+// the checked `prompts` section and entries list every file under each prompt root as a source, so
+// a template edit invalidates them; version 5 entries have neither and are revalidated. Version 7
+// (#581): prompt-root files move to `promptSources`, fingerprinted by real path as well as bytes, so
+// a file symlink retargeted to identical contents elsewhere revalidates; version 6 entries hashed
+// bytes alone and are revalidated.
 const cache = z.object({
-  version: z.literal(5),
+  version: z.literal(7),
   engine: z.string(),
   plan: z.json(),
   sources: z.record(z.string(), z.string()),
+  promptSources: z.record(z.string(), z.string()),
   result: validation,
 });
 const definitionFile = /\.workflow\.(?:ts|mts|cts)$/u;
@@ -80,6 +101,34 @@ const ignored = new Set(['node_modules', '.git', '.quiet-choir', '.context', 'di
 
 function hash(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
+}
+
+/**
+ * A prompt-root file's fingerprint: its real path and its bytes. A render reads a template through
+ * its links and the loader refuses one that resolves outside the root, so a link retargeted to an
+ * identical file elsewhere (even outside the root) must revalidate.
+ */
+async function promptSourceHash(file: string): Promise<string> {
+  const real = await realpath(file);
+  return createHash('sha256')
+    .update(real)
+    .update('\0')
+    .update(await readFile(real))
+    .digest('hex');
+}
+
+/** Whether every recorded fingerprint still matches; a missing or unreadable file never does. */
+async function sourcesMatch(
+  recorded: Readonly<Record<string, string>>,
+  fingerprint: (path: string) => Promise<string>,
+): Promise<boolean> {
+  return (
+    await Promise.all(
+      Object.entries(recorded).map(
+        async ([path, expected]) => (await fingerprint(path)) === expected,
+      ),
+    )
+  ).every(Boolean);
 }
 
 /** Deterministic discovery of `*.workflow.ts`, `.mts` and `.cts` files (never `.d.ts` or `.tsx`); symlink directories are not followed and overlapping roots deduplicate. @internal */
@@ -103,7 +152,7 @@ export async function definitionFiles(directories: readonly string[]): Promise<s
 async function cacheSources(
   plan: TypecheckPlan,
   result: ValidatedWorkflow,
-): Promise<Record<string, string>> {
+): Promise<{ sources: Record<string, string>; promptSources: Record<string, string> }> {
   const identity = result.workflow.identity;
   if (!identity?.code)
     throw new Error('Validated registry definitions require a source fingerprint.');
@@ -123,6 +172,15 @@ async function cacheSources(
     for (const extended of sourceFile.extendedSourceFiles ?? [])
       sources[resolve(extended)] = hash(await readFile(extended));
   }
+  // Templates are read at validation, not compiled, so every file under a declared prompt root
+  // is a source too (ADR 0064 section 4 makes the same set an execution dependency).
+  const roots = (workflow: WorkflowDescription): string[] => [
+    ...workflow.prompts.map((set) => set.root),
+    ...workflow.children.flatMap(roots),
+  ];
+  const promptSources: Record<string, string> = {};
+  for (const root of new Set(roots(result.workflow)))
+    for (const file of promptRootFiles(root)) promptSources[file] = await promptSourceHash(file);
   const lockfiles = ['package-lock.json', 'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'yarn.lock'];
   let directory = dirname(plan.entrypoint);
   for (;;) {
@@ -141,7 +199,7 @@ async function cacheSources(
     if (controllingRoot || dirname(directory) === directory) break;
     directory = dirname(directory);
   }
-  return sources;
+  return { sources, promptSources };
 }
 
 const engineExtensions = new Set(['.ts', '.mts', '.cts', '.js', '.mjs', '.cjs', '.json']);
@@ -231,13 +289,8 @@ export async function listDefinitions(
           digest(prior.plan) === digest(plan) &&
           prior.result.entrypoint === entrypoint &&
           Object.keys(prior.sources).length > 0 &&
-          (
-            await Promise.all(
-              Object.entries(prior.sources).map(
-                async ([path, expected]) => hash(await readFile(path)) === expected,
-              ),
-            )
-          ).every(Boolean)
+          (await sourcesMatch(prior.sources, async (path) => hash(await readFile(path)))) &&
+          (await sourcesMatch(prior.promptSources, promptSourceHash))
         )
           result = prior.result;
       } catch {
@@ -258,12 +311,12 @@ export async function listDefinitions(
       };
       if (engine !== undefined)
         try {
-          const sources = await cacheSources(plan, result);
+          const { sources, promptSources } = await cacheSources(plan, result);
           await mkdir(root, { recursive: true, mode: 0o700 });
           const temporary = `${path}.${randomUUID()}.tmp`;
           await writeFile(
             temporary,
-            JSON.stringify({ version: 5, engine, plan, sources, result }),
+            JSON.stringify({ version: 7, engine, plan, sources, promptSources, result }),
             {
               mode: 0o600,
               flag: 'wx',

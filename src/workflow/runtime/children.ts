@@ -226,8 +226,13 @@ export class RunChildren {
           throw error;
         }
         // The run validated only the root's declaration tree; a dynamic child's own tree is checked
-        // here so duplicate names cannot make named dispatch and resume select different children.
-        if (!declared && definition.children !== undefined && !this.#described.has(definition)) {
+        // here so duplicate names cannot make named dispatch and resume select different children,
+        // and so its prompt sets pass their load-time checks before it runs (ADR 0064 section 3).
+        if (
+          !declared &&
+          (definition.children !== undefined || definition.prompts !== undefined) &&
+          !this.#described.has(definition)
+        ) {
           describeWorkflow(definition);
           this.#described.add(definition);
         }

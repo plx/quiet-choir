@@ -8,3 +8,7 @@ package-lock.json
 
 # Immutable upstream source in its original harness dialect.
 comparisons/batches/*/originals/
+
+# Prompt template fixtures: their rendered text is step identity and the goldens pin it, so a
+# formatter must never rewrite them (ADR 0064).
+test/fixtures/prompts/

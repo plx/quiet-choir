@@ -2,6 +2,38 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `definePrompts(root, entries)` declares markdown prompt templates with Zod parameter schemas
+  (#581, [ADR 0064](docs/decisions/0064-prompt-templates-as-execution-dependencies.md) §1–3; see
+  [docs/prompts.md](docs/prompts.md)). Each entry (`{ file, params, description? }`) becomes a pure,
+  synchronous function typed from `z.input` of its schema. It parses its parameters (unknown
+  top-level keys rejected), renders the template with MiniJinja through the `minijinja-js` binding,
+  and returns a frozen `Prompt`, `{ text, template, params }`, whose `toString()` is its text. The
+  environment is fixed: strict undefined, no auto-escaping, `trimBlocks`, `lstripBlocks`, no kept
+  trailing newline, bounded fuel, no custom filters or globals, and `random`, `randrange` and
+  `lipsum` removed. Include, extends and import targets are single string literals resolved relative
+  to the including file and confined to the root; a symlink cannot escape. Front matter may hold
+  only `description`. `AgentOptions.prompt`, `ClaudeOptions.systemPrompt` and `appendSystemPrompt`
+  widen to `string | Prompt`, on raw, named-harness, bound and roster calls and in roster entries.
+  The runtime replaces a `Prompt` with its text before identity, so it fingerprints, records and
+  replays exactly like the equal string. Adapters still receive strings: request options are typed
+  `PromptText<O>`, so a test that builds a request from a `ClaudeOptions` or `CodexOptions` value
+  now annotates it `PromptText<ClaudeOptions>`. A roster stores a `Prompt` entry option as its text,
+  and `Roster` types it `string` (`StoredRosterEntry`). Profiles keep string-only system prompts.
+  `WorkflowDefinition.prompts` lists the sets a workflow uses. `workflow validate`, the execute
+  preflight, `list-defs` and `runWorkflow` check them before any effect. A check fails on a missing
+  or unparsable template, a computed, list or `ignore missing` dependency, one outside the root, a
+  nondeterministic built-in, or a variable or plain-object path the schema lacks, and warns on an
+  unused schema key. `WorkflowDescription` (and so `validate --json` and `list-defs --json`) gains
+  `prompts` (`[]` when none). Validate and execute log each warning at `warn`. Every failure throws
+  `PromptError`, a branded fatal authoring error that a settled map never journals. The `list-defs`
+  cache is now version 7: entries carry `prompts` and list every file under each prompt root as a
+  source, fingerprinted by real path and bytes, so a template edit or link retarget revalidates;
+  older entries are revalidated once. `minijinja-js` 3.0.1 is a new exact runtime dependency, loaded
+  only on the first render or check. New public API: `definePrompts`, `PromptError`, `Prompt`,
+  `PromptSet`, `PromptEntry`, `PromptEntries`, `PromptFunction`, `AnyPromptSet`,
+  `CheckedPromptEntries`, `PromptErrorDetails`, `PromptText`, `StoredRosterEntry` and
+  `WorkflowPromptSet`. Templates are not yet fingerprinted as execution dependencies (#582).
+
 - The Workflow Lab Batch 02 ports, the pattern recipes and both skill copies now use rosters instead
   of profiles (#580, [ADR 0063](docs/decisions/0063-bound-agents-and-typed-rosters.md)). Batch 02
   declares its agents in a data-only `roster.ts` (`Reader`, `CodexReader`, `Writer`) with the same

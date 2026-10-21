@@ -1,4 +1,5 @@
 import { brandError, isBranded } from './error-brand.js';
+import { PromptError } from '../prompts/error.js';
 import type { ErrorKind, StepError } from './model.js';
 
 /** Attribution for the first failure that ended a run. */
@@ -118,11 +119,16 @@ export class FailureOrigins {
   public markFatal(error: unknown): void {
     this.fatalErrors.add(error);
   }
+  /**
+   * Whether `error` is fatal: marked, a prompt authoring error (ADR 0064, recognized from any
+   * module instance), or a fan-out or cause chain that reaches one.
+   */
   public isFatal(error: unknown, visited = new Set<unknown>()): boolean {
     if (visited.has(error)) return false;
     visited.add(error);
     return (
       this.fatalErrors.has(error) ||
+      error instanceof PromptError ||
       (error instanceof FanOutError &&
         error.failures.some((failure) => this.isFatal(failure.error, visited))) ||
       (error instanceof Error && error.cause !== undefined && this.isFatal(error.cause, visited))

@@ -72,6 +72,7 @@ import {
 import { defaultAgentLimits, validateAgentLimits } from '../runtime/agent-limiter.js';
 import type { ProcessSupervisor } from '../../processes/supervisor.js';
 import { describeWorkflow } from '../runtime/definition.js';
+import type { WorkflowDescription } from '../runtime/child-model.js';
 import { listDefinitions } from './registry.js';
 import { analyzeTypecheckEntrypoint } from '../typecheck/plan.js';
 
@@ -225,6 +226,18 @@ export type WorkflowExecutorPlan =
   | CancelWorkflowPlan
   | ListDefinitionsPlan
   | ExecuteNamedWorkflowPlan;
+
+/** Each prompt warning of a description tree once, in tree order (ADR 0064 section 3). */
+function promptWarnings(description: WorkflowDescription): string[] {
+  const warnings = new Set<string>();
+  const visit = (node: WorkflowDescription): void => {
+    for (const set of node.prompts)
+      for (const entry of set.entries) for (const warning of entry.warnings) warnings.add(warning);
+    node.children.forEach(visit);
+  };
+  visit(description);
+  return [...warnings];
+}
 
 /** Type-check, import, and optionally run trusted workflow code behind a plain-data boundary. */
 export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, WorkflowCommandResult> {
@@ -790,6 +803,9 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
           `Registry name ${plan.registryName} now resolves to workflow ${definition.name}; refresh workflow list-defs before executing by name.`,
         );
       const description = describeWorkflow(definition, plan.typecheck.entrypoint);
+      if (plan.kind === 'workflow.validate' || plan.kind === 'workflow.execute')
+        for (const warning of promptWarnings(description))
+          this.#options.logger.log('warn', warning);
       if (plan.kind === 'workflow.validate') {
         return {
           kind: 'workflow.validate.result',

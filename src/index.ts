@@ -37,6 +37,7 @@ export type {
   WorkflowDeclaration,
   WorkflowDescription,
   WorkflowPhase,
+  WorkflowPromptSet,
 } from './workflow/runtime/child-model.js';
 export type {
   AgentDiagnostics,
@@ -176,8 +177,20 @@ export type {
   RosterEntryCommon,
   RosterEntryOptions,
   RosterOptions,
+  StoredRosterEntry,
   DeepReadonlyOption,
 } from './workflow/runtime/roster-model.js';
+export { definePrompts, PromptError } from './workflow/prompts/index.js';
+export type { CheckedPromptEntries, PromptErrorDetails } from './workflow/prompts/index.js';
+export type {
+  AnyPromptSet,
+  Prompt,
+  PromptEntries,
+  PromptEntry,
+  PromptFunction,
+  PromptSet,
+  PromptText,
+} from './workflow/runtime/model.js';
 export { capabilityManifest } from './workflow/runtime/profiles.js';
 export type {
   BuiltinProfile,

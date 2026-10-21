@@ -1,7 +1,7 @@
 import type { HarnessCapabilities } from './harness-model.js';
 import type { HarnessDeclaration } from './harness-model.js';
 import type { z } from 'zod';
-import type { ErrorMode, JsonValue, Settled } from './model.js';
+import type { AnyPromptSet, ErrorMode, JsonValue, Settled } from './model.js';
 import type { MapStepError } from './fan-out.js';
 import type { AgentDefaults, AgentProfile, CapabilityManifest } from './profiles-model.js';
 
@@ -41,6 +41,8 @@ export interface WorkflowDeclaration {
   >;
   /** Implicit role and common agent settings. */
   readonly defaults?: AgentDefaults;
+  /** Prompt sets checked before any effect (ADR 0064 section 3). */
+  readonly prompts?: readonly AnyPromptSet[];
   /** Call-site capability policy. */
   readonly strictProfiles?: boolean;
   /** Launch-grant and delegation layer; read only from the root definition, ignored on a child. */
@@ -192,10 +194,34 @@ export interface WorkflowDescription {
   readonly capabilities: CapabilityManifest;
   /** Declared profile names, separate from implicit built-ins. */
   readonly profiles: Readonly<Record<string, CapabilityManifest['defaults']>>;
+  /**
+   * The checked prompt sets this node declares (ADR 0064 section 3), in order; empty when it
+   * declares none. A definition whose templates fail a check has no description: validation fails.
+   */
+  readonly prompts: readonly WorkflowPromptSet[];
   /** Declared child tree. A recursive reference has an empty children array. */
   readonly children: readonly WorkflowDescription[];
   /** A repeated ancestor in a recursive declaration; recursion is permitted at runtime. */
   readonly recursive: boolean;
   /** Trusted source path when known; inline definitions need not have separate entrypoints. */
   readonly entrypoint: string | null;
+}
+
+/** One checked prompt set in a {@link WorkflowDescription}. */
+export interface WorkflowPromptSet {
+  /** Absolute template root. */
+  readonly root: string;
+  /** The set's prompts, in declaration order. */
+  readonly entries: readonly {
+    /** Prompt name. */
+    readonly name: string;
+    /** Template file, relative to the root. */
+    readonly file: string;
+    /** The entry's description, else its front matter description, else null. */
+    readonly description: string | null;
+    /** Top-level variables the template reads, sorted. */
+    readonly variables: readonly string[];
+    /** Non-fatal findings, such as a parameter the template never reads. */
+    readonly warnings: readonly string[];
+  }[];
 }
