@@ -133,7 +133,7 @@ npm run cli -- workflow validate \
 
 For Batch 02, validate first and provide the described required input. Launch grants are opt-in
 (`--require-grants`); under them, grant only roles that write: a bootstrap launch then needs
-`--grant writer`. Its plan approval is a separate durable question. The source repository must have
+`--grant Writer`. Its plan approval is a separate durable question. The source repository must have
 committed history and a clean checkout for isolated publication. Run state and worktree caches
 should remain outside the source checkout. Ordinary commands execute with the operator's privileges;
 the plan displays agent-proposed argv commands before approval.
