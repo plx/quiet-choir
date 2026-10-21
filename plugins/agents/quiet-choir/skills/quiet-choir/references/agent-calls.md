@@ -36,6 +36,50 @@ See [Claude controls/protocol](claude.md) and [Codex controls/protocol](codex.md
 native-specific fields. Keep rotating secrets in the inherited environment; explicit `env` values
 affect replay. Escape-argument paths fingerprint their strings, not file contents.
 
+## Bound agents
+
+`ctx.claude.bind(options)` (also `ctx.codex` and `ctx.agent(name)`) returns an `Agent` that fixes
+everything except the prompt, the schema, placement and policy:
+
+```ts
+import { defineWorkflow, z, type Agent } from 'quiet-choir';
+
+const Review = z.object({ verdict: z.enum(['approve', 'revise']) });
+
+async function review(agent: Agent, diff: string) {
+  return agent.value('review', { prompt: `Review this diff:\n${diff}`, schema: Review });
+}
+
+export default defineWorkflow({
+  name: 'bound-review',
+  version: '1',
+  input: z.object({ diff: z.string() }),
+  output: Review,
+  run: (ctx, input) =>
+    review(ctx.claude.bind({ model: 'opus', effort: 'high', tools: ['Read', 'Grep'] }), input.diff),
+});
+```
+
+- `bind` cannot set `prompt`, `schema`, `cwd`, `worktree`, `onError`, `retry` or Codex `images`
+  (typecheck, and a runtime `TypeError`). A bound call takes only those plus `addDirs`, `timeoutMs`
+  and `idleTimeoutMs` (and `images` for Codex); any other key fails typecheck and an untyped one
+  rejects before a step ID is claimed.
+- `addDirs`, `timeoutMs` and `idleTimeoutMs` may be bound as defaults and set per call. Call
+  `addDirs` append to the bound list; the call's deadline wins; an `undefined` call value keeps the
+  default.
+- Identity is the raw call's: the merged options fingerprint, resolve profiles and policy, and
+  record exactly as if spelled at the call site, so after moving a call to a bound agent,
+  `--accept-code-change` still reuses its completed step.
+- Binding performs no effect. The step ID prefix comes from where the agent is called, so bind once
+  and reuse it inside `ctx.scope`, `ctx.map` items or helpers; an agent bound from
+  `ctx.within('w').claude` keeps `w/`.
+- A registered harness with `structuredOutput: 'none'` binds to a text-only agent (no `object`, no
+  schema on `value`), which a parameter typed `Agent` rejects; use
+  `Agent<{ structuredOutput: 'none' }>` for helpers that only need text. `Agent` defaults to
+  `NativeHarnessCapabilities`.
+- `bind({ profile: 'scout' })` resolves like a raw `profile: 'scout'` call. Under
+  `strictProfiles: true`, `bind` rejects strict-owned keys such as `tools` just as a call does.
+
 ## Select a role and its capabilities
 
 `text` is tool-less for Claude and read-only for Codex (300s, 10 Claude turns, $0.50). `readonly`
