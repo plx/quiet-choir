@@ -102,7 +102,9 @@ const validation = z.object({
 // `*.quiet-choir` package, holding `results` (one per declared workflow, with the package summary)
 // and `packageFiles`, the walked files of the package (null for a loose file); a package entry is
 // served only while the walk lists exactly those files, and its sources include every one of them.
-// Version 7 entries hold a single `result` and are revalidated.
+// `packagePromptRoots` records the roots of the package's own prompt sets (null for a loose file),
+// whose files join `promptSources` like a workflow's prompt roots. Version 7 entries hold a single
+// `result` and are revalidated.
 const cache = z.object({
   version: z.literal(8),
   engine: z.string(),
@@ -110,6 +112,7 @@ const cache = z.object({
   sources: z.record(z.string(), z.string()),
   promptSources: z.record(z.string(), z.string()),
   packageFiles: z.array(z.string()).nullable(),
+  packagePromptRoots: z.array(z.string()).nullable(),
   results: z.array(validation),
 });
 const definitionFile = /\.workflow\.(?:ts|mts|cts)$/u;
@@ -237,16 +240,20 @@ export function selectDefinition(
 }
 
 /**
- * Whether the files now under the prompt roots of every cached result are exactly those the entry
- * recorded, so a file added or removed (or a root that appeared) is a cache miss even when every
- * recorded file is unchanged. Both sides use {@link promptRootFiles}' path form.
+ * Whether the files now under the prompt roots of every cached result and of the package's own
+ * prompt sets are exactly those the entry recorded, so a file added or removed (or a root that
+ * appeared) is a cache miss even when every recorded file is unchanged. Both sides use
+ * {@link promptRootFiles}' path form.
  */
 function promptFilesMatch(
   recorded: Readonly<Record<string, string>>,
   results: readonly ValidatedWorkflow[],
+  packagePromptRoots: readonly string[],
 ): boolean {
   const current = new Set(
-    results.flatMap((result) => promptRoots(result.workflow).flatMap(promptRootFiles)),
+    [...results.flatMap((result) => promptRoots(result.workflow)), ...packagePromptRoots].flatMap(
+      promptRootFiles,
+    ),
   );
   const prior = Object.keys(recorded);
   return current.size === prior.length && prior.every((file) => current.has(file));
@@ -255,6 +262,7 @@ function promptFilesMatch(
 async function cacheSources(
   plan: TypecheckPlan,
   result: ValidatedWorkflow,
+  packagePromptRoots: readonly string[],
 ): Promise<{ sources: Record<string, string>; promptSources: Record<string, string> }> {
   const identity = result.workflow.identity;
   if (!identity?.code)
@@ -275,10 +283,11 @@ async function cacheSources(
     for (const extended of sourceFile.extendedSourceFiles ?? [])
       sources[resolve(extended)] = hash(await readFile(extended));
   }
-  // Templates are read at validation, not compiled, so every file under a declared prompt root
-  // is a source too (ADR 0064 section 4 makes the same set an execution dependency).
+  // Templates are read at validation, not compiled, so every file under a declared prompt root,
+  // a package's own included, is a source too (ADR 0064 section 4 makes the same set an execution
+  // dependency).
   const promptSources: Record<string, string> = {};
-  for (const root of promptRoots(result.workflow))
+  for (const root of new Set([...promptRoots(result.workflow), ...packagePromptRoots]))
     for (const file of promptRootFiles(root)) promptSources[file] = await promptSourceHash(file);
   const lockfiles = ['package-lock.json', 'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'yarn.lock'];
   let directory = dirname(plan.entrypoint);
@@ -412,6 +421,7 @@ export async function listDefinitions(
       `${digest({ entrypoint: plan.entrypoint, configuration: plan.configuration })}.json`,
     );
     let results: ValidatedWorkflow[] | undefined;
+    let packagePromptRoots: string[] | null = null;
     if (!refresh && engine !== undefined) {
       try {
         const prior = cache.parse(JSON.parse(await readFile(path, 'utf8')));
@@ -421,12 +431,15 @@ export async function listDefinitions(
           prior.results.length > 0 &&
           (walked === null
             ? prior.packageFiles === null &&
+              prior.packagePromptRoots === null &&
               prior.results.length === 1 &&
               prior.results.every((result) => result.entrypoint === entry.path)
-            : prior.packageFiles !== null && samePaths(prior.packageFiles, walked)) &&
+            : prior.packageFiles !== null &&
+              prior.packagePromptRoots !== null &&
+              samePaths(prior.packageFiles, walked)) &&
           Object.keys(prior.sources).length > 0 &&
           (await sourcesMatch(prior.sources, async (path) => hash(await readFile(path)))) &&
-          promptFilesMatch(prior.promptSources, prior.results) &&
+          promptFilesMatch(prior.promptSources, prior.results, prior.packagePromptRoots ?? []) &&
           (await sourcesMatch(prior.promptSources, promptSourceHash))
         )
           results = prior.results;
@@ -453,13 +466,14 @@ export async function listDefinitions(
         if (checked.kind !== 'workflow.list-defs.result')
           throw new Error('Definition registry expected a package listing.');
         results = [...checked.definitions];
+        packagePromptRoots = [...(checked.packagePromptRoots ?? [])];
       }
       if (engine !== undefined)
         try {
           const sources: Record<string, string> = {};
           const promptSources: Record<string, string> = {};
           for (const result of results) {
-            const fingerprints = await cacheSources(plan, result);
+            const fingerprints = await cacheSources(plan, result, packagePromptRoots ?? []);
             Object.assign(sources, fingerprints.sources);
             Object.assign(promptSources, fingerprints.promptSources);
           }
@@ -474,6 +488,7 @@ export async function listDefinitions(
               sources,
               promptSources,
               packageFiles: walked,
+              packagePromptRoots,
               results,
             }),
             {

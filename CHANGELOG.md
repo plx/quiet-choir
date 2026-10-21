@@ -16,19 +16,20 @@
   `Workflow name X is ambiguous: a/X, b/X; use <package>/<workflow>`. Without `--registry-dir`, a
   missing argument shaped `<package>/<workflow>` is a registered name, not `usage.file_not_found`,
   and the unknown-name message says the argument was treated as one. The definition cache envelope
-  is version 8 (one entry per package with all its results, invalidated when a package file is
-  edited, added or removed); version 7 and older entries are revalidated and rewritten. A package
-  run's `launch.sources` now holds every regular file under the package root except `node_modules/`
-  and `.git/` (symlinks not followed), besides compiler dependencies and prompt roots outside it, so
-  editing a resource or an un-imported helper between execute and resume is a code change under the
-  ADR 0006 rules; package runs launched before this change see one such code change on their next
-  resume (accept it with `--accept-code-change`). `validate` and `execute` warn when those files
-  exceed 10 MiB, naming the five largest. `validate --json` on a package describes every declared
-  workflow (a broken template in an unselected workflow now fails it as `load.definition`) and its
-  `package` section gains `description`, `whenToUse`, `entry`, `workflows` (module, input schema and
-  roster summary each), `prompts` (with params keys and variables) and
-  `files: {count, bytes, sha256}`, a location-independent digest. Single-module runs, the run record
-  (revision 21) and `model.ts` are unchanged.
+  is version 8 (one entry per package with all its results, invalidated when a package file or a
+  file under the package's own prompt roots is edited, added or removed); version 7 and older
+  entries are revalidated and rewritten. A package run's `launch.sources` now holds every regular
+  file under the package root except `node_modules/` and `.git/` (symlinks not followed), besides
+  compiler dependencies and prompt roots outside it, so editing a resource or an un-imported helper
+  between execute and resume is a code change under the ADR 0006 rules; package runs launched before
+  this change see one such code change on their next resume (accept it with `--accept-code-change`).
+  `validate` and `execute` warn when those files exceed 10 MiB, naming the five largest.
+  `validate --json` on a package describes every declared workflow (a broken template in an
+  unselected workflow now fails it as `load.definition`) and its `package` section gains
+  `description`, `whenToUse`, `entry`, `workflows` (module, input schema and roster summary each),
+  `prompts` (with params keys and variables) and `files: {count, bytes, sha256}`, a
+  location-independent digest. Single-module runs, the run record (revision 21) and `model.ts` are
+  unchanged.
 - Workflow packages (#584, [ADR 0065](docs/decisions/0065-workflow-packages.md) §1–2; see
   [docs/packages.md](docs/packages.md)). The root entry point exports `definePackage`,
   `PackageOptions`, `WorkflowPackage` and `WorkflowLaunchPackage`. A `<name>.quiet-choir` directory

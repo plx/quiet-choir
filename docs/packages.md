@@ -229,7 +229,9 @@ a registered name rather than a missing file.
 
 The private definition cache keeps one entry per package holding all of its workflows. It is served
 only while the package's walked files are exactly the recorded ones and none has changed, so
-editing, adding or removing a file under the package revalidates it.
+editing, adding or removing a file under the package revalidates it. The files under the package's
+own prompt roots, inside the package or outside it, are checked like a workflow's prompt roots: by
+real path and contents, and an added or removed file revalidates too.
 
 ## Fingerprinting
 

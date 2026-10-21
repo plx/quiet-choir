@@ -386,6 +386,12 @@ export type WorkflowCommandResult = ExecutionResult &
         readonly kind: 'workflow.list-defs.result';
         readonly ok: true;
         readonly definitions: readonly ValidatedWorkflow[];
+        /**
+         * Internal, set only by an `everyWorkflow` validation for the definition registry: the
+         * roots of the package's own prompt sets, which the registry cache fingerprints like a
+         * workflow's prompt roots. `list-defs` never publishes it. @internal
+         */
+        readonly packagePromptRoots?: readonly string[];
       }
     | (WorktreeCleanResult & { readonly kind: 'workflow.clean.result'; readonly ok: true })
     | (RunRemovalResult & { readonly kind: 'workflow.rm.result'; readonly ok: true })

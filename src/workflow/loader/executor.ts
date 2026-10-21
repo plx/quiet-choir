@@ -1356,7 +1356,8 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
    * The registry's validation of a whole package (`everyWorkflow`): one {@link ValidatedWorkflow}
    * per declared workflow, in declaration order, each with the package's listing summary and its
    * own fingerprint (the TypeScript closure, its prompt roots and the package's, and every walked
-   * file). Prompt and size warnings are logged once for the package.
+   * file). Prompt and size warnings are logged once for the package. The result also carries the
+   * package's own prompt roots for the registry cache.
    */
   async #packageListing(
     typecheck: TypecheckPlan,
@@ -1397,7 +1398,12 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
     for (const warning of warnings) this.#options.logger.log('warn', warning);
     const large = packageSizeWarning(pkg.name, walked);
     if (large !== null) this.#options.logger.log('warn', large);
-    return { kind: 'workflow.list-defs.result', ok: true, definitions };
+    return {
+      kind: 'workflow.list-defs.result',
+      ok: true,
+      definitions,
+      packagePromptRoots: [...new Set(packagePrompts.sets.map((set) => set.root))],
+    };
   }
 
   /**

@@ -281,6 +281,8 @@ interface PackageFixture {
   readonly marker?: string;
   /** Workflow module suffix, `.ts` by default; `.workflow.ts` names it like a loose definition. */
   readonly suffix?: '.ts' | '.workflow.ts';
+  /** A prompt root for a package-level set with one `Review.md` template taking `title`. */
+  readonly prompts?: string;
 }
 
 /** Write `<name>.quiet-choir/` under `root` with one `workflows/<name><suffix>` per workflow. */
@@ -298,7 +300,7 @@ async function writePackage(root: string, options: PackageFixture): Promise<stri
     );
   await writeFile(
     join(dir, 'package.ts'),
-    `${options.marker === undefined ? '' : `import { appendFileSync } from 'node:fs';\nappendFileSync(${JSON.stringify(options.marker)}, 'x');\n`}import { definePackage } from ${engineIndex};
+    `${options.marker === undefined ? '' : `import { appendFileSync } from 'node:fs';\nappendFileSync(${JSON.stringify(options.marker)}, 'x');\n`}import { definePackage, definePrompts, z } from ${engineIndex};
 ${workflows.map((workflow, index) => `import w${String(index)} from './workflows/${workflow}${suffix.replace(/\.ts$/u, '.js')}';`).join('\n')}
 export default definePackage({
   root: import.meta.dirname,
@@ -307,7 +309,7 @@ export default definePackage({
   description: 'The ${options.name} package.',
   whenToUse: 'When testing.',
   workflows: [${workflows.map((_, index) => `w${String(index)}`).join(', ')}],
-${options.entry === false ? '' : '  entry: w0,\n'}});
+${options.entry === false ? '' : '  entry: w0,\n'}${options.prompts === undefined ? '' : `  prompts: [definePrompts(${JSON.stringify(options.prompts)}, { Review: { file: 'Review.md', params: z.object({ title: z.string() }) } })],\n`}});
 `,
   );
   return realpath(dir);
@@ -442,6 +444,51 @@ describe('package discovery in the registry (#585)', { timeout: 60_000 }, () => 
     await rm(join(dir, 'resources', 'added.txt'));
     await engine.execute(plan);
     expect(await readFile(marker, 'utf8')).toBe('xxxxxx');
+  });
+
+  it('fingerprints package-level prompt roots in the cache entry', async () => {
+    const root = await project();
+    const marker = join(root, 'imported');
+    // (a) A template symlink in a package-only prompt root, retargeted to identical bytes outside
+    // the root: neither the walked files nor the hashed bytes change, but the real path does.
+    const inner = join(root, 'inner.quiet-choir', 'prompts');
+    await mkdir(inner, { recursive: true });
+    await writeFile(join(inner, 'A.md'), '{{ title }}\n');
+    await writeFile(join(root, 'Outside.md'), '{{ title }}\n');
+    await symlink('A.md', join(inner, 'Review.md'));
+    await writePackage(root, { name: 'inner', prompts: inner });
+    const engine = executor();
+    const innerPlan = {
+      kind: 'workflow.list-defs' as const,
+      directories: [join(root, 'inner.quiet-choir')],
+    };
+    const first = await engine.execute(innerPlan);
+    expect(first).toMatchObject({ ok: true });
+    expect(await engine.execute(innerPlan)).toEqual(first);
+    await rm(join(inner, 'Review.md'));
+    await symlink(join('..', '..', 'Outside.md'), join(inner, 'Review.md'));
+    expect(await engine.execute(innerPlan)).toMatchObject({
+      ok: false,
+      code: 'load.definition',
+      message: expect.stringContaining('resolves outside the prompt root') as unknown,
+    });
+    // (b) A file added to a package-only prompt root outside the package.
+    const shared = join(root, 'shared-prompts');
+    await mkdir(shared);
+    await writeFile(join(shared, 'Review.md'), '{{ title }}\n');
+    await writePackage(root, { name: 'outer', marker, prompts: shared });
+    const outerPlan = {
+      kind: 'workflow.list-defs' as const,
+      directories: [join(root, 'outer.quiet-choir')],
+    };
+    expect(listed(await engine.execute(outerPlan))).toEqual(['outer/main', 'outer/other']);
+    await engine.execute(outerPlan);
+    expect(await readFile(marker, 'utf8')).toBe('x');
+    await writeFile(join(shared, 'fragment.md'), 'A new fragment.\n');
+    expect(listed(await engine.execute(outerPlan))).toEqual(['outer/main', 'outer/other']);
+    expect(await readFile(marker, 'utf8')).toBe('xx');
+    await engine.execute(outerPlan);
+    expect(await readFile(marker, 'utf8')).toBe('xx');
   });
 
   it('lists a package without entry and the same workflow name in two packages', async () => {
