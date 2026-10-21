@@ -20,6 +20,7 @@ import { agentUsageSchema, normalizeUsage } from './usage.js';
 import { legacyAttemptKind } from './usage-summary.js';
 import { mergeOptionsSchema, mergeResultSchema } from './worktree-schema.js';
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { deriveAgentSessionId } from './agent-session.js';
 import { agentDiagnosticsSchema } from './agent-stream-schema.js';
 import { agentResultIdentitySchema, legacyAgentResultSchema } from './agent-result-schema.js';
@@ -1310,6 +1311,14 @@ export async function runWorkflow<
       const output = jsonValue(definition.output.parse(existing.output), 'Workflow output', {
         canonical: false,
       });
+      // A grant refusal can save the flag without the manifest, so staleness is read off the
+      // manifest itself rather than the flag's previous value.
+      const manifestStale =
+        runRequiresGrants &&
+        !isDeepStrictEqual(
+          existing.capabilities?.requiredGrants ?? [],
+          capabilities.requiredGrants,
+        );
       if (
         migrating ||
         engineChanged ||
@@ -1319,6 +1328,7 @@ export async function runWorkflow<
         incomingProfiles.length ||
         incomingGrants.length ||
         (runRequiresGrants && existing.requireGrants !== true) ||
+        manifestStale ||
         options.policyReset ||
         options.allowModelOverride !== undefined
       ) {
@@ -1327,8 +1337,8 @@ export async function runWorkflow<
         existing.profileOverrides = profileOverrides;
         existing.grants = grants;
         existing.grantedProfiles = grantedProfiles;
-        // The flag first turning on also refreshes the manifest, whose requiredGrants it changes.
-        if (runRequiresGrants && existing.requireGrants !== true)
+        // The flag turning on changes the manifest's requiredGrants; refresh it whenever it is stale.
+        if (manifestStale)
           existing.capabilities = publicCapabilityManifest(capabilities, definition.harnesses);
         if (runRequiresGrants) existing.requireGrants = true;
         existing.policy = policy;

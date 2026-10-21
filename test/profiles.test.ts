@@ -1795,6 +1795,32 @@ describe('requireGrants and strictProfiles opt-in (#577)', () => {
     expect(invoke).toHaveBeenCalledTimes(1);
   });
 
+  it('refreshes the manifest of a completed run after a grant refusal already saved the flag', async () => {
+    const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
+    const options = { ...setup(), harness: { invoke } };
+    await runWorkflow(fixerDefinition(), options);
+    expect(invoke).toHaveBeenCalledTimes(1);
+    await expect(
+      runWorkflow(fixerDefinition(), { ...options, resume: true, requireGrants: true }),
+    ).rejects.toBeInstanceOf(GrantRequiredError);
+    const refused = await readRun(setup());
+    expect(refused.requireGrants).toBe(true);
+    expect(refused.capabilities?.requiredGrants).toEqual([]);
+    const resumed = await runWorkflow(fixerDefinition(), {
+      ...options,
+      resume: true,
+      grants: ['fixer'],
+    });
+    expect(resumed.requireGrants).toBe(true);
+    expect(resumed.capabilities?.requiredGrants).toEqual(['fixer']);
+    const saved = await readRun(setup());
+    expect(saved.requireGrants).toBe(true);
+    expect(saved.capabilities?.requiredGrants).toEqual(['fixer']);
+    await runWorkflow(fixerDefinition(), { ...options, resume: true });
+    expect((await readRun(setup())).capabilities).toEqual(saved.capabilities);
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+
   it('saves the run-level flag when a resume that first gives it is refused before the body', async () => {
     const invoke = vi
       .fn<Harness['invoke']>()
