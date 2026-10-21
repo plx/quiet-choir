@@ -11,12 +11,12 @@
   records exactly as the raw call that spells the merged options, so a completed step stays reusable
   across an accepted code change that moves its call to a bound agent. A text-only registered
   harness binds to a text-only agent. New public types: `Agent`, `BoundCallOptions`, `BindOptions`,
-  `BoundOptionsOf`, `PerCallOnlyKey`, `SelectBranch` and `BindExcess`. Under `strictProfiles: true`
-  a bound Claude agent keeps a raw call's pairing of `profile` and `addDirs`: binding a profile
-  without `claude.addDirRoots` leaves its calls no `addDirs`. A hand-written `AgentClient` or
-  `WorkflowContext` wrapper now needs a `bind` member; forward it through the wrapper, as in
-  `bind: (options) => wrap(inner.bind(options))`. The durability lint does not yet check literal-ID
-  reuse through a bound agent.
+  `BoundOptionsOf`, `BoundDefaultKey`, `PerCallOnlyKey`, `SelectBranch` and `BindExcess`. Under
+  `strictProfiles: true` a bound Claude agent keeps a raw call's pairing of `profile` and `addDirs`:
+  binding a profile without `claude.addDirRoots` leaves its calls no `addDirs`. A hand-written
+  `AgentClient` or `WorkflowContext` wrapper now needs a `bind` member; forward it through the
+  wrapper, as in `bind: (options) => wrap(inner.bind(options))`. The durability lint does not yet
+  check literal-ID reuse through a bound agent.
 
 - Launch grants and child delegation ceilings are now opt-in, and `strictProfiles` defaults to
   `false` (#577, [ADR 0063](docs/decisions/0063-bound-agents-and-typed-rosters.md) §5). A write- or

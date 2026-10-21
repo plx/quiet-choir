@@ -463,24 +463,29 @@ export type SelectBranch<O, B> = [
       : never
     : never;
 
+/* eslint-disable @typescript-eslint/no-empty-object-type -- `{} | null` is any value but undefined. */
 /**
- * The both-sides keys that `B` definitely sets: present, not optional and never `undefined`. A
- * bound `undefined` counts as absent at runtime, so only these keys supply a default. Each key is
- * tested by `B extends …` so that a generic `B` and `B & BindExcess<…>` stay related.
+ * The both-sides keys (`addDirs`, `timeoutMs`, `idleTimeoutMs`) whose default the bound options
+ * `B` supply: present, not optional and never `undefined`. A bound `undefined` counts as absent at
+ * runtime, so an optional or possibly `undefined` key supplies none. {@link BoundOptionsOf} makes
+ * these optional on calls and re-binds. Each key is tested by `B extends …`, so a generic `B` and
+ * `B & BindExcess<…>` stay related.
  */
-type DefinedBothSidesKey<B, K = 'addDirs' | 'timeoutMs' | 'idleTimeoutMs'> = K extends PropertyKey
-  ? // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- any defined value.
-    B extends Readonly<Record<K, {} | null>>
+export type BoundDefaultKey<B> = {
+  readonly [K in 'addDirs' | 'timeoutMs' | 'idleTimeoutMs']: B extends Readonly<
+    Record<K, {} | null>
+  >
     ? K
-    : never
-  : never;
+    : never;
+}['addDirs' | 'timeoutMs' | 'idleTimeoutMs'];
+/* eslint-enable @typescript-eslint/no-empty-object-type */
 
 /**
  * The call options of a client bound from one with options `O` by bound options `B`: the
  * {@link BoundCallOptions} keys that `O` declares, plus Codex's per-call `images` (ADR 0063 section
  * 1). For Claude this is `BoundCallOptions`; a registered harness keeps only the bound keys its own
  * schema declares. A both-sides key (`addDirs`, `timeoutMs`, `idleTimeoutMs`) that `B` definitely
- * sets is optional on calls and re-binds even where `O` requires it, since the bound default
+ * sets ({@link BoundDefaultKey}) is optional on calls and re-binds even where `O` requires it, since the bound default
  * supplies it; one `B` leaves unset, optional or possibly `undefined` stays as `O` declares it. It distributes over a union, and `bind` passes it
  * only the {@link SelectBranch} members: a strict Claude agent bound to a profile without
  * `claude.addDirRoots` takes no `addDirs`. It is idempotent, and `B` defaults to `unknown` (no bound
@@ -488,8 +493,8 @@ type DefinedBothSidesKey<B, K = 'addDirs' | 'timeoutMs' | 'idleTimeoutMs'> = K e
  * the members that admit them, which accept the same calls.
  */
 export type BoundOptionsOf<O, B = unknown> = O extends unknown
-  ? Omit<Pick<O, Extract<keyof O, keyof BoundCallOptions | 'images'>>, DefinedBothSidesKey<B>> &
-      Partial<Pick<O, Extract<keyof O, DefinedBothSidesKey<B>>>> & {
+  ? Omit<Pick<O, Extract<keyof O, keyof BoundCallOptions | 'images'>>, BoundDefaultKey<B>> &
+      Partial<Pick<O, Extract<keyof O, BoundDefaultKey<B>>>> & {
         /** Instructions sent over stdin, never interpolated into a shell command. */
         readonly prompt: string;
       } extends infer F extends AgentOptions

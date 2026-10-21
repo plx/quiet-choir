@@ -85,6 +85,7 @@ export type {
   BoundCallOptions,
   BindExcess,
   BindOptions,
+  BoundDefaultKey,
   BoundOptionsOf,
   PerCallOnlyKey,
   SelectBranch,

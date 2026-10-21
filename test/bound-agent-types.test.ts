@@ -11,6 +11,7 @@ import {
   type AgentResult,
   type BindOptions,
   type BoundCallOptions,
+  type BoundDefaultKey,
   type BoundOptionsOf,
   type CodexOptions,
 } from '../src/index.js';
@@ -292,6 +293,14 @@ it('derives the bind and bound option types from the client options', () => {
   expectTypeOf<BindOptions<BoundCallOptions>>().toEqualTypeOf<
     Omit<BoundCallOptions, 'prompt' | 'cwd' | 'worktree' | 'onError' | 'retry'>
   >();
+  // Only a definitely set both-sides key supplies a default.
+  expectTypeOf<BoundDefaultKey<{ timeoutMs: 5; addDirs: string[] }>>().toEqualTypeOf<
+    'timeoutMs' | 'addDirs'
+  >();
+  expectTypeOf<BoundDefaultKey<{ timeoutMs?: number }>>().toBeNever();
+  expectTypeOf<BoundDefaultKey<{ timeoutMs: number | undefined }>>().toBeNever();
+  expectTypeOf<BoundDefaultKey<{ model: 'opus' }>>().toBeNever();
+  expectTypeOf<BoundDefaultKey<unknown>>().toBeNever();
   expect(bound.name).toBe('bound-types');
   expect(strict.strictProfiles).toBe(true);
   expect(strictRoots.strictProfiles).toBe(true);
