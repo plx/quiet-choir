@@ -11,6 +11,7 @@ import {
   runWorkflow,
   StepIdentityChangedError,
   summarizeUsage,
+  synthesizeOutput,
   z,
   type RunOptions,
   type WorkflowContext,
@@ -540,6 +541,43 @@ describe('ctx.decide', () => {
     } finally {
       process.off('unhandledRejection', onUnhandled);
     }
+  });
+
+  it('synthesizes valid choice and score answers when stubbed in a rehearsal', async () => {
+    const stubbed: string[] = [];
+    const result = await runWorkflow(
+      workflow([jev()], (ctx) =>
+        ctx.decide('ask', {
+          state: null,
+          questions: {
+            refund,
+            team: choice({ instructions: 'Which team?', options: { a: null, b: 'B', c: null } }),
+            urgency: score({ instructions: 'How urgent?', levels: ['low', 'mid', 'high'] }),
+          },
+        }),
+      ),
+      options({
+        harness: { kind: 'dry-run', invoke: () => Promise.reject(new Error('no agents')) },
+        rehearsal: {
+          localStep: (id, schema) => {
+            stubbed.push(id);
+            return { output: synthesizeOutput(schema, id) };
+          },
+        },
+      }),
+    );
+    expect(stubbed).toEqual(['ask']);
+    expect(server.count).toBe(0);
+    expect(result.output).toEqual({
+      refund: { noul: 0 },
+      team: { choice: 'a', probabilities: { a: 1, b: 0, c: 0 }, confidence: 1 },
+      urgency: {
+        score: 0,
+        probabilities: [1, 0, 0],
+        legend: ['low', 'mid', 'high'],
+        confidence: 1,
+      },
+    });
   });
 
   it('strips a confidence a server sends for a noul answer', async () => {

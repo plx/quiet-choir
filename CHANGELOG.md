@@ -36,8 +36,9 @@
   unchanged. `UsageSummary` gains `byProvider` (per provider and served model; also in
   `byIntegration.decision`, never in agent totals) and `inspect` prints a provider/model usage line.
   Under `--dry-run`, `ctx.decide` runs live like a local step until decision fixtures arrive (#587);
-  `--stub-steps` can synthesize it. `model.ts` changed, so both Workflow Lab `apiSnapshot` hashes
-  are bumped; the run record revision is unchanged.
+  `--stub-steps` can synthesize it: choice and score answer schemas carry a one-hot `default`, and
+  synthesis now uses any schema's valid JSON Schema `default` as its sample. `model.ts` changed, so
+  both Workflow Lab `apiSnapshot` hashes are bumped; the run record revision is unchanged.
 - Packages in the registry, whole-directory fingerprints and the validate package section (#585,
   [ADR 0065](docs/decisions/0065-workflow-packages.md) §3–5; see
   [docs/packages.md](docs/packages.md)). `workflow list-defs` discovers `<stem>.quiet-choir`

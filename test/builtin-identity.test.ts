@@ -252,10 +252,10 @@ describe('ctx.decide identity (decision/2)', () => {
       identity: {
         ...sharedComponents,
         input: '282c33ca0b75b7f0babddeec1e2a66b54906cd2f7d2deddfec0ec412f3d7f99b',
-        schema: 'd5dec0aea6b8db27f707eb164b58fd82f4e9c7603d50f56550b6039d9556ea4f',
+        schema: '2f55fb0354589e341ef3a708e8e69570e5cf6ae2b92919649ea0faebdad39bbd',
         version: '8c5619a3cbd5cdde9c8a035e6955e8f9a7ccb5ea8685ae1d7156cb7286a44fb9',
       },
-      fingerprint: '49f8a0d1339980f5486ea5ccc837e055b72d093f7eb7a4c983d37d46ec8ab05e',
+      fingerprint: '4d0ec19631d3aff4e18faab6c0964abc734ddde852a85d980f6ed66befec84e0',
     });
   });
 

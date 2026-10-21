@@ -436,6 +436,10 @@ const probability = z.number().min(0).max(1);
 const sumsToOne = (values: readonly number[]): boolean =>
   Math.abs(values.reduce((total, value) => total + value, 0) - 1) <= sumTolerance;
 
+/**
+ * One answer's schema. A choice or score answer carries a one-hot JSON Schema `default`, the sample
+ * rehearsal synthesizes, because a type-based sample cannot satisfy its sum-to-one refinement.
+ */
 function answerSchema(question: ProtocolQuestion): z.ZodType {
   if (question.type === 'noul') return z.object({ noul: probability });
   if (question.type === 'choice') {
@@ -449,6 +453,13 @@ function answerSchema(question: ProtocolQuestion): z.ZodType {
       .refine((answer) => sumsToOne(Object.values(answer.probabilities)), {
         message: `Probabilities must sum to 1 within ${String(sumTolerance)}.`,
         path: ['probabilities'],
+      })
+      .meta({
+        default: {
+          choice: names[0],
+          probabilities: Object.fromEntries(names.map((name, index) => [name, index ? 0 : 1])),
+          confidence: 1,
+        },
       });
   }
   const levels = question.levels;
@@ -465,6 +476,14 @@ function answerSchema(question: ProtocolQuestion): z.ZodType {
     .refine((answer) => sumsToOne(answer.probabilities), {
       message: `Probabilities must sum to 1 within ${String(sumTolerance)}.`,
       path: ['probabilities'],
+    })
+    .meta({
+      default: {
+        score: 0,
+        probabilities: levels.map((_, index) => (index ? 0 : 1)),
+        legend: [...levels],
+        confidence: 1,
+      },
     });
 }
 
