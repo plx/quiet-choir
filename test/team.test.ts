@@ -158,3 +158,19 @@ it('from throws naming a slot an untyped caller left empty', () => {
   expect(() => from({ actor: {}, critic: undefined })).toThrow(TypeError);
   expect(() => from({ actor: null, critic: {} })).toThrow('Team slot actor is not filled.');
 });
+
+it('from keeps a __proto__ slot as an own property and returns the agent by identity', () => {
+  const Odd = defineTeam({ ['__proto__']: 'Odd slot.', actor: 'Does.' });
+  expect(Object.keys(Odd.slots)).toEqual(['__proto__', 'actor']);
+  const protoAgent = { name: 'proto-agent' };
+  const actorAgent = { name: 'actor-agent' };
+  const record = {};
+  Object.defineProperty(record, '__proto__', { value: protoAgent, enumerable: true });
+  Object.defineProperty(record, 'actor', { value: actorAgent, enumerable: true });
+  const team = Odd.from(record as never);
+  expect(Object.keys(team)).toEqual(['__proto__', 'actor']);
+  expect(Object.getPrototypeOf(team)).toBeNull();
+  expect(Object.getOwnPropertyDescriptor(team, '__proto__')?.value).toBe(protoAgent);
+  expect(team.actor).toBe(actorAgent);
+  expect(Object.isFrozen(team)).toBe(true);
+});

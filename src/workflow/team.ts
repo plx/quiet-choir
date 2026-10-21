@@ -53,7 +53,10 @@ export function defineTeam<const K extends string>(
 ): {
   /** The slot descriptions: a frozen, null-prototype copy that later edits to the input cannot change. */
   readonly slots: Readonly<Record<K, string>>;
-  /** Fill the team by picking the slot keys from `record`; extra keys are dropped. */
+  /**
+   * Fill the team by picking the slot keys from `record`; extra keys are dropped. The result is a
+   * frozen, null-prototype record of own properties, so a slot named `__proto__` is an ordinary slot.
+   */
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- `R` admits records with extra keys (a whole roster) without an excess-property error.
   from<R extends Team<K>>(record: R): Team<K>;
 } {
@@ -81,7 +84,7 @@ export function defineTeam<const K extends string>(
     slots: copy,
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- Mirrors the declared signature.
     from<R extends Team<K>>(record: R): Team<K> {
-      const team = {} as Record<K, Agent>;
+      const team = Object.create(null) as Record<K, Agent>;
       for (const name of names) {
         const agent: unknown = (record as Partial<Record<K, Agent>>)[name];
         if (agent === undefined || agent === null) {
