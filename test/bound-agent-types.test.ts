@@ -164,6 +164,25 @@ export const bound = defineWorkflow({
     // @ts-expect-error -- bind left timeoutMs unset, so each call still supplies it.
     await rooted.text('t', { prompt });
     await rooted.bind({ timeoutMs: 1 }).text('t', { prompt });
+    // Only a bound value that is definitely set supplies the default: an optional or undefined
+    // one is absent at runtime, so the call must still spell timeoutMs.
+    const maybe: { timeoutMs?: number } = {};
+    const optionalTimed = ctx.agent('deadline').bind(maybe);
+    // @ts-expect-error -- an optional bound timeoutMs may be unset, so each call supplies it.
+    await optionalTimed.text('t', { prompt, addDirs: ['docs'] });
+    await optionalTimed.text('t', { prompt, addDirs: ['docs'], timeoutMs: 1 });
+    // @ts-expect-error -- an optional bound timeoutMs leaves it required on a re-bound call too.
+    await optionalTimed.bind({ addDirs: ['docs'] }).text('t', { prompt });
+    // @ts-expect-error -- exactOptionalPropertyTypes: the schema's timeoutMs is not undefined.
+    const unsetTimed = ctx.agent('deadline').bind({ timeoutMs: undefined });
+    // @ts-expect-error -- a bound undefined counts as absent, so each call supplies timeoutMs.
+    await unsetTimed.text('t', { prompt, addDirs: ['docs'] });
+    await ctx
+      .agent('deadline')
+      .bind({ timeoutMs: 5 })
+      .text('t', { prompt, addDirs: ['docs'] });
+    expectTypeOf(optionalTimed.bind({})).toEqualTypeOf<typeof optionalTimed>();
+    expectTypeOf(unsetTimed.bind({})).toEqualTypeOf<typeof unsetTimed>();
     const plainTimed = ctx.agent('plain-deadline').bind({ timeoutMs: 1, addDirs: ['docs'] });
     expectTypeOf(await plainTimed.value('t', { prompt })).toEqualTypeOf<string>();
     await summarize(plainTimed.bind({}));
