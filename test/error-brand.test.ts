@@ -87,6 +87,12 @@ function samples(api: Api): Record<string, Error> {
       legacy: false,
     }),
     WorkflowInputError: new api.WorkflowInputError(null, new Error('invalid')),
+    PromptError: new api.PromptError('Prompt A (A.md): bad', {
+      prompt: 'A',
+      file: 'A.md',
+      kind: 'SyntaxError',
+      line: 1,
+    }),
     AnswerError: new api.AnswerError('invalid', 'bad answer', [
       { code: 'invalid_type', path: ['approved'], message: 'Invalid input' },
     ]),

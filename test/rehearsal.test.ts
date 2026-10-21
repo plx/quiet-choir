@@ -30,6 +30,7 @@ import {
   type BuiltinHarnessRequestInput as HarnessRequestInput,
   type WorkflowContext,
   type CodexOptions,
+  type PromptText,
   NodeProcessRunner,
   type ProcessRunner,
 } from '../src/index.js';
@@ -1428,7 +1429,7 @@ it.each(['claude', 'codex'] as const)(
 it('shows a Codex private CODEX_HOME and its flag in the dry-run plan', async () => {
   const harness = new RehearsalHarness({ kind: 'cli', config: {} });
   const base = request('private-home', 'codex');
-  const options: CodexOptions = { prompt: 'prompt', instructions: 'none' };
+  const options: PromptText<CodexOptions> = { prompt: 'prompt', instructions: 'none' };
   await harness.invoke({ ...base, options }, { ...testInvocation(), stepId: 'private-home' });
   const plan = harness.report(null).calls[0]?.plan;
   expect(plan?.codexHome).toBe('private');

@@ -1,0 +1,1 @@
+- {{ thread.author }}: {{ thread.body | trim }}

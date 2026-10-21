@@ -1,4 +1,4 @@
-import type { AgentOptions, Effort, JsonValue } from '../../workflow/runtime/model.js';
+import type { AgentOptions, Effort, JsonValue, Prompt } from '../../workflow/runtime/model.js';
 
 /** Claude-specific controls. CliHarness denies unapproved tools by default. */
 export interface ClaudeOptions extends AgentOptions {
@@ -12,10 +12,16 @@ export interface ClaudeOptions extends AgentOptions {
   readonly disallowedTools?: readonly string[];
   /** Permission mode; bypass and interactive modes remain unsupported. */
   readonly permissionMode?: 'dontAsk' | 'acceptEdits' | 'plan';
-  /** Replace the system prompt via a private temporary file. */
-  readonly systemPrompt?: string;
-  /** Append stable role instructions via a private temporary file. */
-  readonly appendSystemPrompt?: string;
+  /**
+   * Replace the system prompt via a private temporary file. A `Prompt` is replaced by its text
+   * before step identity, as for `prompt`.
+   */
+  readonly systemPrompt?: string | Prompt;
+  /**
+   * Append stable role instructions via a private temporary file. A `Prompt` is replaced by its
+   * text before step identity, as for `prompt`.
+   */
+  readonly appendSystemPrompt?: string | Prompt;
   /** Select a native agent definition. */
   readonly agent?: string;
   /** Native subagent definitions, passed through a private JSON file. */

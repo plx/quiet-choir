@@ -189,6 +189,7 @@ import {
 } from './policy.js';
 import { OperationTracker } from './tracking.js';
 import { optionData, validateAgentOptions } from './options.js';
+import { promptOptionsAsText } from '../prompts/prompt.js';
 import { HarnessError, boundedResponse, harnessEvidence } from './harness-error.js';
 import { CancelledError, FailureOrigins } from './fan-out.js';
 import { createMap, settledMapChange } from './map.js';
@@ -860,7 +861,9 @@ export async function runWorkflow<
     .optional()
     .parse(options.maxChildDepth);
   checkedDefinition(definition);
-  if (definition.children !== undefined) describeWorkflow(definition);
+  // Children and prompt sets are checked before the body runs (ADR 0026, ADR 0064 section 3).
+  if (definition.children !== undefined || definition.prompts !== undefined)
+    describeWorkflow(definition);
   const limiter = resolveAgentLimiter(options.agentLimit);
   // requiredGrants is recomputed once the record shows whether a resumed run opted in.
   let capabilities = resolveCapabilities(definition);
@@ -2840,8 +2843,10 @@ export async function runWorkflow<
           const replayOnly = saved !== undefined && isTerminalStep(saved);
           let adapter: Harness | undefined;
           try {
+            // A Prompt becomes its text here, before identity, so it fingerprints, records and
+            // replays exactly like the same string (ADR 0064 section 2).
             const data = jsonValue(
-              { options: optionData(agentOptions, structured) },
+              { options: optionData(promptOptionsAsText(agentOptions), structured) },
               `Step "${id}" agent request`,
             ) as {
               options: TOptions & JsonValue;

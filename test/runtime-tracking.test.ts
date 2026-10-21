@@ -20,6 +20,7 @@ import {
   type ClaudeOptions,
   type CodexOptions,
   type Harness,
+  type PromptText,
   type JsonValue,
   type WorkflowContext,
 } from '../src/index.js';
@@ -441,7 +442,7 @@ it('rejects a CliHarness.invoke request with an unknown option key', async () =>
         harness: 'claude',
         cwd: process.cwd(),
         outputSchema: null,
-        options: { prompt: 'p', maxTurn: 5 } as unknown as ClaudeOptions,
+        options: { prompt: 'p', maxTurn: 5 } as unknown as PromptText<ClaudeOptions>,
       },
       testInvocation(controller.signal),
     ),

@@ -180,6 +180,83 @@ export interface ImageAttachment {
   readonly base64: string;
 }
 
+/** Type-only marker that only `definePrompts` results carry; it never exists at runtime. */
+declare const promptSetBrand: unique symbol;
+
+/**
+ * A rendered prompt template (ADR 0064 section 2): what a `definePrompts` function returns. It is
+ * frozen, and `toString()` returns {@link Prompt.text}, so `String(prompt)` and a template literal
+ * spell the rendered text. `prompt`, Claude `systemPrompt` and `appendSystemPrompt` accept it
+ * wherever they accept a string, and step identity hashes its text exactly as it hashes that
+ * string. Code that needs a string uses `.text`.
+ */
+export interface Prompt {
+  /** The rendered text, exactly what the agent receives. */
+  readonly text: string;
+  /** The prompt's name in its `definePrompts` index, such as `Review`. */
+  readonly template: string;
+  /** The parameters after parsing with the entry's schema, as the template saw them. */
+  readonly params: Readonly<Record<string, unknown>>;
+  /** The rendered text. */
+  toString(): string;
+}
+
+/** One `definePrompts` entry: a markdown template file and the schema of its parameters. */
+export interface PromptEntry {
+  /** Template path relative to the prompt root, a POSIX path ending in `.md`. */
+  readonly file: string;
+  /** Parameter schema. Rendering parses with it and rejects unknown top-level keys. */
+  readonly params: z.ZodObject;
+  /** Human-readable purpose, shown by `workflow validate`; it wins over front matter. */
+  readonly description?: string;
+}
+
+/** The entries of a `definePrompts` index, by prompt name. */
+export type PromptEntries = Readonly<Record<string, PromptEntry>>;
+
+/**
+ * The function `definePrompts` makes for entry `E`: pure and synchronous, it parses its parameters
+ * with `E['params']` and renders the template. It throws a `PromptError` for invalid parameters or
+ * a template error.
+ */
+export type PromptFunction<E extends PromptEntry> = (params: z.input<E['params']>) => Prompt;
+
+/**
+ * A frozen prompt set returned by `definePrompts`: one {@link PromptFunction} per entry of `E`,
+ * plus a type-only brand, so `WorkflowDefinition.prompts` accepts only `definePrompts` results.
+ */
+export type PromptSet<E extends PromptEntries = PromptEntries> = {
+  readonly [K in keyof E]: PromptFunction<E[K]>;
+} & {
+  /** Type-only brand; absent at runtime. */
+  readonly [promptSetBrand]: {
+    /** The entries, by name. */
+    readonly entries: E;
+  };
+};
+
+/** Any {@link PromptSet}: the element type of a workflow definition's `prompts`. */
+export interface AnyPromptSet {
+  /** Type-only brand; absent at runtime. */
+  readonly [promptSetBrand]: {
+    /** The entries, by name. */
+    readonly entries: object;
+  };
+}
+
+/**
+ * Agent options `O` as an adapter receives them: the runtime replaces a {@link Prompt} in `prompt`,
+ * `systemPrompt` or `appendSystemPrompt` with its text before step identity, so those fields are
+ * strings in every request. Every other field keeps its type.
+ */
+export type PromptText<O> = O extends unknown
+  ? {
+      [K in keyof O]: K extends 'prompt' | 'systemPrompt' | 'appendSystemPrompt'
+        ? Exclude<O[K], Prompt>
+        : O[K];
+    }
+  : never;
+
 /** Options shared by headless agent calls. */
 export interface AgentOptions {
   /** Native configuration loading, default restricted. It never selects a checkout. */
@@ -199,8 +276,12 @@ export interface AgentOptions {
   readonly profile?: string | undefined;
   /** Persist a terminal outcome for branching; cancellation, configuration (e.g. missing harness), and checkpoint-write failures still reject. */
   readonly onError?: ErrorMode | undefined;
-  /** Instructions sent over stdin, never interpolated into a shell command. */
-  readonly prompt: string;
+  /**
+   * Instructions sent over stdin, never interpolated into a shell command. A {@link Prompt} from
+   * `definePrompts` is replaced by its text before step identity, so it fingerprints exactly like
+   * the same string and adapters always receive a string.
+   */
+  readonly prompt: string | Prompt;
   /** Model name or harness alias; omission uses the harness default. */
   readonly model?: string | undefined;
   /** Working directory, relative to the workflow run's working directory. */
@@ -219,13 +300,13 @@ export type BuiltinHarnessRequestInput = (
       /** Claude Code integration. */
       readonly harness: 'claude';
       /** Claude-specific invocation options. */
-      readonly options: ClaudeOptions;
+      readonly options: PromptText<ClaudeOptions>;
     }
   | {
       /** Codex integration. */
       readonly harness: 'codex';
       /** Codex-specific invocation options. */
-      readonly options: CodexOptions;
+      readonly options: PromptText<CodexOptions>;
     }
 ) & {
   /** Absolute execution directory. */
@@ -242,8 +323,8 @@ export interface HarnessRequestInput<O extends AgentOptions = AgentOptions> {
   readonly harness: string;
   /** Definition revision; pure planners may omit it for built-in revision one. */
   readonly revision?: number;
-  /** Validated options from the corresponding registration. */
-  readonly options: O;
+  /** Validated options from the corresponding registration, with prompts as text. */
+  readonly options: PromptText<O>;
   /** Absolute execution directory. */
   readonly cwd: string;
   /** Structured response schema, or null for text. */
@@ -496,8 +577,8 @@ export type BoundDefaultKey<B> = {
 export type BoundOptionsOf<O, B = unknown> = O extends unknown
   ? Omit<Pick<O, Extract<keyof O, keyof BoundCallOptions | 'images'>>, BoundDefaultKey<B>> &
       Partial<Pick<O, Extract<keyof O, BoundDefaultKey<B>>>> & {
-        /** Instructions sent over stdin, never interpolated into a shell command. */
-        readonly prompt: string;
+        /** Instructions sent over stdin, never interpolated into a shell command; see {@link AgentOptions.prompt}. */
+        readonly prompt: string | Prompt;
       } extends infer F extends AgentOptions
     ? { [K in keyof F]: F[K] }
     : never
@@ -1034,6 +1115,14 @@ export interface WorkflowDefinition<
    * children inherit the root's setting and a child's field is ignored.
    */
   readonly requireGrants?: boolean;
+  /**
+   * The prompt sets (`definePrompts` results) this workflow renders, for validation (ADR 0064
+   * section 3). `workflow validate`, the execute preflight, `list-defs` and `runWorkflow` check every
+   * template before any effect and fail on an error; `validate --json` reports each entry's
+   * variables and warnings under `prompts`. Calls stay plain function calls; listing a set here
+   * changes nothing about rendering.
+   */
+  readonly prompts?: readonly AnyPromptSet[];
   /**
    * Worktree cache and dependency-provisioning policy for isolated effects. Only the root definition
    * passed to `runWorkflow` (or the CLI) is read; a child's field is ignored. Each field that

@@ -19,6 +19,8 @@ import type {
   ImageAttachment,
   JsonValue,
   ProjectInstructions,
+  Prompt,
+  PromptText,
 } from './model.js';
 import type { AccessClass, BuiltinProfile } from './profiles-model.js';
 import type { HarnessIsolation } from './agent-isolation.js';
@@ -52,8 +54,11 @@ export interface AgentRequest<O extends AgentOptions = AgentOptions> {
   readonly harness: string;
   /** Definition revision whose option semantics this attempt uses. */
   readonly revision: number;
-  /** Validated author options with resolved workflow policy; adapters own native defaults. */
-  readonly options: O;
+  /**
+   * Validated author options with resolved workflow policy; adapters own native defaults. Prompts
+   * are text: a `Prompt` value never reaches an adapter.
+   */
+  readonly options: PromptText<O>;
   /** Absolute execution directory, including any runtime-owned worktree. */
   readonly cwd: string;
   /** Structured response contract, or null for a text response. */
@@ -305,7 +310,7 @@ export type CallOptions<
 > = Extract<
   ([TStrict] extends [true]
     ? K extends 'claude' | 'codex'
-      ? Omit<OptionsOf<D>, 'profile' | 'isolation' | CapabilityKeysOf<D>> &
+      ? Omit<OptionsOf<D>, 'profile' | 'prompt' | 'isolation' | CapabilityKeysOf<D>> &
           Readonly<
             Partial<
               Record<
@@ -320,11 +325,13 @@ export type CallOptions<
             /** Native configuration mode; strict profiles own `'inherit'`. */
             readonly isolation?: Exclude<HarnessIsolation, 'inherit'> | undefined;
           } & (K extends 'claude' ? ClaudeAddDirSelection<TProfile, TAddDirProfile> : unknown)
-      : Omit<OptionsOf<D>, 'profile' | CapabilityKeysOf<D>> &
+      : Omit<OptionsOf<D>, 'profile' | 'prompt' | CapabilityKeysOf<D>> &
           Readonly<Partial<Record<CapabilityKeysOf<D>, never>>>
-    : Omit<OptionsOf<D>, 'profile'>) & {
+    : Omit<OptionsOf<D>, 'profile' | 'prompt'>) & {
     /** Built-in preset or one of this workflow's declared role names. */
     readonly profile?: BuiltinProfile | TProfile | undefined;
+    /** The task; a `Prompt` is replaced by its text before identity, so the adapter receives a string. */
+    readonly prompt: string | Prompt;
   },
   AgentOptions
 >;

@@ -12,6 +12,7 @@ import {
   z,
   type ClaudeOptions,
   type Harness,
+  type PromptText,
   type PolicyOverride,
   type WorkflowContext,
 } from '../src/index.js';
@@ -627,7 +628,7 @@ it('rejects undeclared native options even when their names resemble identity co
         harness: 'claude',
         cwd: '/w',
         outputSchema: null,
-        options: { prompt: 'x', kind } as ClaudeOptions,
+        options: { prompt: 'x', kind } as PromptText<ClaudeOptions>,
       },
       null,
     );

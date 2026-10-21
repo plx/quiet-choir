@@ -49,8 +49,14 @@ export interface AgentProfile extends ProfileLimits {
     | 'retry'
     | 'isolation'
     | 'worktree'
+    | 'systemPrompt'
+    | 'appendSystemPrompt'
     | keyof ProfileLimits
   > & {
+    /** Replace the system prompt via a private temporary file. Profiles take a string. */
+    readonly systemPrompt?: string;
+    /** Append stable role instructions via a private temporary file. Profiles take a string. */
+    readonly appendSystemPrompt?: string;
     /** Overrides the profile-wide configuration mode; checkout placement stays per call. */
     readonly isolation?: HarnessIsolation;
     /**

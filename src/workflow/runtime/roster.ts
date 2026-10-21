@@ -3,6 +3,7 @@ import type { AgentOptions, JsonValue } from './model.js';
 import type { AgentProfile } from './profiles-model.js';
 import type { CheckedRosterEntries, Roster, RosterEntries, RosterOptions } from './roster-model.js';
 import { jsonValue } from './json.js';
+import { promptOptionsAsText } from '../prompts/prompt.js';
 
 // ADR 0063 sections 3-4. A roster entry compiles to an ordinary declared profile under its own
 // name, pinned to one harness, so resolution, launch overrides, attempt records, grants and the
@@ -98,7 +99,8 @@ function checkedEntries(
       throw new Error(`Roster entry ${name} description must be a string.`);
     if (entry['expectsToolUse'] !== undefined && typeof entry['expectsToolUse'] !== 'boolean')
       throw new Error(`Roster entry ${name} expectsToolUse must be a boolean.`);
-    result[name] = jsonValue(entry, `Roster entry ${name}`) as EntryData;
+    // A standing systemPrompt or appendSystemPrompt may be a rendered Prompt (ADR 0064 section 2).
+    result[name] = jsonValue(promptOptionsAsText(entry), `Roster entry ${name}`) as EntryData;
   }
   return result;
 }
