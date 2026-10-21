@@ -637,7 +637,11 @@ async function waitForCheck(label, phaseName, title) {
     ]);
     if (!waited.wait || waited.wait.error || waited.wait.done) return waited.wait;
   }
-  return { passed: false, error: 'the local check did not finish within 45 minutes' };
+  return {
+    passed: false,
+    timedOut: true,
+    error: 'the local check did not finish within 45 minutes',
+  };
 }
 
 // Local Codex review: a haiku clerk runs `codex review` on one head (detached, like the check
@@ -1146,6 +1150,8 @@ async function fixRoundOf(threads, work) {
       // The fixer's own detached check may still be running: wait it out first, so two suites never
       // share the worktree, and accept it if it passed at this head.
       const own = await waitForCheck(`fix-${fixRound}`, 'Fix', `checks fix-${fixRound}`);
+      // Still running after the full wait: a second suite would race it in the same worktree.
+      if (own?.timedOut) return { error: `the fixer's check fix-${fixRound} is still running` };
       const label = `fix-${fixRound}-gate`;
       let gate = own;
       if (!own?.passed || own.head !== verified.head) {
