@@ -95,6 +95,42 @@ function headerValue(token: string): boolean {
   return token === token.trim() && !/[^\x20-\x7e\xa0-\xff]/u.test(token);
 }
 
+/**
+ * Response bytes read before a call fails: far above any valid response, and above the 256 KiB a
+ * failed attempt keeps as evidence.
+ */
+const maxResponseBytes = 1024 * 1024;
+
+/**
+ * Read a response body as UTF-8, like `Response.text()`, but stop and cancel the stream once it
+ * passes {@link maxResponseBytes}, so an oversized or unending body cannot exhaust memory.
+ */
+async function boundedText(response: Response): Promise<{ text: string; exceeded: boolean }> {
+  if (response.body === null) return { text: '', exceeded: false };
+  const reader: ReadableStreamDefaultReader<Uint8Array> = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  let exceeded = false;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    length += value.byteLength;
+    if (length > maxResponseBytes) {
+      exceeded = true;
+      await reader.cancel().catch(() => undefined);
+      break;
+    }
+  }
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return { text: new TextDecoder().decode(bytes), exceeded };
+}
+
 /** The value without its trailing slashes, in linear time. */
 function trimTrailingSlashes(value: string): string {
   let end = value.length;
@@ -114,7 +150,9 @@ function httpUrl(value: string, label: string): string {
  * `apiKeyEnv` at request time. The step's idempotency key is sent as an `Idempotency-Key` header
  * only when `capabilities.idempotencyKey` is true. HTTP 429 fails with kind `rate-limit`, 5xx with
  * `overloaded` (both transient), 401 with `authentication`, 403 with `permission` and other 4xx
- * with `invalid-request`. A missing base URL or token variable, or a token that is not a valid
+ * with `invalid-request`. A response body over 1 MiB is cancelled unread past that point and fails
+ * with its status's kind (`schema` for a 2xx), keeping the prefix as evidence. A missing base URL
+ * or token variable, or a token that is not a valid
  * header value, is a configuration failure: the step stays unfinished, and resuming after fixing it
  * runs the decision live.
  */
@@ -159,6 +197,7 @@ export function jevCompatible(options: JevCompatibleOptions): DecisionProviderDe
           );
         let response: Response;
         let text: string;
+        let exceeded: boolean;
         try {
           response = await fetch(url, {
             method: 'POST',
@@ -173,7 +212,7 @@ export function jevCompatible(options: JevCompatibleOptions): DecisionProviderDe
             body: JSON.stringify(request.body),
             signal: context.signal,
           });
-          text = await response.text();
+          ({ text, exceeded } = await boundedText(response));
         } catch (cause) {
           // Cancellation and the call's own timeout propagate unchanged; the runtime classifies them.
           if (context.signal.aborted) throw cause;
@@ -184,6 +223,14 @@ export function jevCompatible(options: JevCompatibleOptions): DecisionProviderDe
             message: `request failed: ${(cause instanceof Error ? cause.message : String(cause)).replaceAll(token, '[redacted]')}`,
           });
         }
+        if (exceeded)
+          throw new DecisionError({
+            provider: name,
+            kind: response.ok ? 'schema' : statusKind(response.status),
+            status: response.status,
+            message: `${response.ok ? '' : `HTTP ${String(response.status)}: `}response exceeds ${String(maxResponseBytes)} bytes`,
+            rawText: text,
+          });
         if (!response.ok)
           throw new DecisionError({
             provider: name,

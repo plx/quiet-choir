@@ -772,6 +772,32 @@ describe('ctx.decide', () => {
     expect(errorKind(cause)).toBe('overloaded');
   });
 
+  it('cancels an unending response body at the cap and keeps truncated evidence', async () => {
+    for (const [status, kind, message] of [
+      [200, 'schema', /jev: response exceeds 1048576 bytes/u],
+      [503, 'overloaded', /jev: HTTP 503: response exceeds 1048576 bytes/u],
+    ] as const) {
+      server.script({ flood: true, status });
+      const runId = `flood${String(status)}`;
+      const error: unknown = await runWorkflow(
+        workflow([jev()], (ctx) => ctx.decide('ask', { state: null, questions: { refund } })),
+        options({ runId }),
+      ).catch((caught: unknown) => caught);
+      const cause = (error as Error).cause;
+      expect(cause).toBeInstanceOf(DecisionError);
+      expect(cause).toMatchObject({ provider: 'jev', kind, status, responseTruncated: true });
+      expect((cause as Error).message).toMatch(message);
+      expect((cause as DecisionError).rawText).toBe('x'.repeat(256 * 1024));
+      const run = await readRun({ stateDir, runId });
+      expect(run.steps['ask']?.attemptHistory?.[0]).toMatchObject({
+        status: 'failed',
+        errorKind: kind,
+        responseTruncated: true,
+      });
+    }
+    await server.disconnected;
+  });
+
   it('fails a token that is not a valid header value as configuration without echoing it', async () => {
     const secret = 'secret-token-part';
     for (const [index, token] of [

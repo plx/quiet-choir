@@ -30,6 +30,8 @@
   `overloaded`, 401 `authentication`, 403 `permission`, other 4xx `invalid-request`, and `timeoutMs`
   `timeout`. A missing base URL, `apiKeyEnv` or token value, or a token that is not a valid header
   value, is a fatal `ConfigurationError` that leaves the step unfinished and never echoes the token.
+  A response body is read up to 1 MiB; past that the stream is cancelled and the call fails with its
+  status's kind (`schema` for a 2xx), keeping the prefix as truncated evidence.
   `RunOptions.decisionConfigurations` and `--harness-config` `decisions.<name>` (strict
   `{ baseUrl, apiKeyEnv, defaultModel }`) replace a provider's own values; an undeclared name warns,
   and the harness config digest includes `decisions` only when present, so recorded digests are

@@ -3,7 +3,10 @@
 import { createServer, type IncomingHttpHeaders } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
-/** One scripted reply; `hold` never answers, so the client must abort. */
+/**
+ * One scripted reply; `hold` never answers, so the client must abort, and `flood` streams an
+ * unending body until the client disconnects.
+ */
 export type FakeReply =
   | {
       readonly status?: number;
@@ -11,7 +14,8 @@ export type FakeReply =
       readonly body?: unknown;
       readonly text?: string;
     }
-  | { readonly hold: true };
+  | { readonly hold: true }
+  | { readonly flood: true; readonly status?: number };
 
 /** A request the server received. */
 export interface FakeRequest {
@@ -33,7 +37,7 @@ export interface FakeDecisionServer {
   script(...replies: FakeReply[]): void;
   /** Resolves when a held request arrives. */
   readonly held: Promise<void>;
-  /** Resolves when a held request's connection closes. */
+  /** Resolves when a held or flooded request's connection closes. */
   readonly disconnected: Promise<void>;
   close(): Promise<void>;
 }
@@ -81,6 +85,21 @@ export async function startFakeDecisionServer(token: string): Promise<FakeDecisi
         return;
       }
       response.writeHead(reply.status ?? 200, { 'content-type': 'application/json' });
+      if ('flood' in reply) {
+        const chunk = Buffer.alloc(64 * 1024, 'x');
+        response.on('error', () => undefined);
+        response.on('close', () => {
+          resolveDisconnected();
+        });
+        const pump = (): void => {
+          while (!response.destroyed && response.write(chunk)) {
+            // Keep writing until the socket pushes back.
+          }
+          if (!response.destroyed) response.once('drain', pump);
+        };
+        pump();
+        return;
+      }
       response.end(reply.text ?? JSON.stringify(reply.body ?? null));
     });
   });
