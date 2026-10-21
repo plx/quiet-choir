@@ -149,6 +149,20 @@ export async function definitionFiles(directories: readonly string[]): Promise<s
   return [...files].sort();
 }
 
+/**
+ * Whether the files now under the workflow's prompt roots are exactly those the entry recorded, so
+ * a file added or removed (or a root that appeared) is a cache miss even when every recorded file
+ * is unchanged. Both sides use {@link promptRootFiles}' path form.
+ */
+function promptFilesMatch(
+  recorded: Readonly<Record<string, string>>,
+  workflow: ValidatedWorkflow['workflow'],
+): boolean {
+  const current = new Set(promptRoots(workflow).flatMap(promptRootFiles));
+  const prior = Object.keys(recorded);
+  return current.size === prior.length && prior.every((file) => current.has(file));
+}
+
 async function cacheSources(
   plan: TypecheckPlan,
   result: ValidatedWorkflow,
@@ -286,6 +300,7 @@ export async function listDefinitions(
           prior.result.entrypoint === entrypoint &&
           Object.keys(prior.sources).length > 0 &&
           (await sourcesMatch(prior.sources, async (path) => hash(await readFile(path)))) &&
+          promptFilesMatch(prior.promptSources, prior.result.workflow) &&
           (await sourcesMatch(prior.promptSources, promptSourceHash))
         )
           result = prior.result;

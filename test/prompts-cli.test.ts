@@ -176,6 +176,25 @@ describe('prompt checks in the CLI loader', { timeout: 30_000 }, () => {
     });
   });
 
+  it('revalidates list-defs when an unreferenced file is added under a prompt root', async () => {
+    const { root } = await project();
+    const engine = executor();
+    const plan = { kind: 'workflow.list-defs' as const, directories: [root] };
+    const listed = await engine.execute(plan);
+    if (listed.kind !== 'workflow.list-defs.result') throw new Error(JSON.stringify(listed));
+    expect(await engine.execute(plan)).toEqual(listed);
+    await writeFile(join(root, 'prompts', 'new-fragment.md'), 'A new fragment.\n');
+    const added = await engine.execute(plan);
+    if (added.kind !== 'workflow.list-defs.result') throw new Error(JSON.stringify(added));
+    const files = added.definitions[0]?.workflow.identity?.files ?? {};
+    expect(Object.keys(files)).toContain('prompts/new-fragment.md');
+    expect(added.definitions[0]?.workflow.identity?.code).not.toBe(
+      listed.definitions[0]?.workflow.identity?.code,
+    );
+    const refreshed = await engine.execute({ ...plan, refresh: true });
+    expect(refreshed).toEqual(added);
+  });
+
   it('revalidates list-defs when an in-root template symlink is retargeted', async () => {
     const { root } = await project();
     const prompts = join(root, 'prompts');
