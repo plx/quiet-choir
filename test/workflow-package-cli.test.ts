@@ -974,8 +974,8 @@ async function resume(fixture: Project, stateDir: string, runId: string, acceptC
 }
 
 // Whole-directory fingerprinting and the validate package section (ADR 0065 sections 4-5, #585).
-// measured: as the executor cases above (0.2-1.1 s each on the shared program cache), except the
-// size-warning case, which hashes a 10 MiB resource twice.
+// measured: 0.4-1.6 s each in a two-file local run without coverage (dominated by the tsImport
+// compiles on the shared program cache); about 2.5x that under coverage.
 describe('package fingerprints and the validate package section', { timeout: 60_000 }, () => {
   it.for(['resources/notes.txt', 'lib/unused.ts'])(
     'refuses an edit to %s between execute and resume as a code change',
@@ -1104,7 +1104,8 @@ describe('package fingerprints and the validate package section', { timeout: 60_
   });
 });
 
-// measured: as the CLI cases above; every command compiles the engine from scratch.
+// measured: 4.6-4.7 s each in a two-file local run without coverage, since every command compiles
+// the engine from scratch (the CLI passes no program cache); about 2.5x that under coverage.
 describe('package sections and registry names through the CLI', { timeout: 120_000 }, () => {
   it('pins the package section of validate --json, independent of the package location', async ({
     cli,

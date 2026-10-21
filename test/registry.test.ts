@@ -317,8 +317,10 @@ function listed(result: Awaited<ReturnType<WorkflowExecutor['execute']>>): strin
   return result.definitions.map(listingName);
 }
 
-// measured: as the registry cases above (dominated by tsImport compiles on the shared cache).
-describe('package discovery in the registry (#585)', { timeout: 30_000 }, () => {
+// measured: the cache case (eight list-defs validations) takes 8.6 s and the by-name case 5.7 s
+// in a two-file local run without coverage, the others under 1 s (dominated by tsImport compiles on
+// the shared program cache); coverage slows these compiles about 2.5x, hence 60 s.
+describe('package discovery in the registry (#585)', { timeout: 60_000 }, () => {
   it('discovers packages beside loose files without descending into them', async () => {
     const root = await project();
     await writeFile(join(root, 'a.workflow.ts'), source('a'));
