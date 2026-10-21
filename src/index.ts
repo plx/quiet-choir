@@ -175,7 +175,7 @@ export type {
   RosterEntryCommon,
   RosterEntryOptions,
   RosterOptions,
-  ReadonlyArrayOf,
+  DeepReadonlyOption,
 } from './workflow/runtime/roster-model.js';
 export { capabilityManifest } from './workflow/runtime/profiles.js';
 export type {

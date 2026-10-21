@@ -40,15 +40,21 @@ export interface RosterEntryCommon {
  */
 export type RosterEntryOptions<O> =
   Omit<BindOptions<O>, 'profile'> extends infer F
-    ? { readonly [K in keyof F]: ReadonlyArrayOf<F[K]> }
+    ? { readonly [K in keyof F]: DeepReadonlyOption<F[K]> }
     : never;
 
 /**
- * `T` with a mutable array type made readonly, so a `defineRoster` literal (inferred readonly
- * under `const`) matches a registered harness whose schema declares a mutable array, such as
- * `z.array(z.string())`. Other types are unchanged. It distributes over unions.
+ * `T` made readonly at every depth, so a `defineRoster` literal (inferred readonly under `const`)
+ * matches a registered harness whose schema declares mutable arrays, such as `z.array(z.string())`
+ * or an object option holding one. Arrays and tuples become readonly with their positions and
+ * length kept, plain objects map their properties, and functions and primitives are unchanged. It
+ * distributes over unions.
  */
-export type ReadonlyArrayOf<T> = T extends readonly (infer U)[] ? readonly U[] : T;
+export type DeepReadonlyOption<T> = T extends (...args: never[]) => unknown
+  ? T
+  : T extends object
+    ? { readonly [K in keyof T]: DeepReadonlyOption<T[K]> }
+    : T;
 
 /**
  * One roster entry: `{ harness, description?, expectsToolUse? }` plus that harness's own option

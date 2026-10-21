@@ -9,6 +9,7 @@ import {
   z,
   type Agent,
   type AgentResult,
+  type DeepReadonlyOption,
   type RosterAgentOf,
   type RosterAgents,
   type WorkflowContext,
@@ -254,6 +255,39 @@ it('types each entry from its own harness options', () => {
   };
   defineRoster({ Mechanic: { harness: 'codex', effort: 'none' } });
   expect([claude, codex, registered, rejected]).toHaveLength(4);
+});
+
+it('makes registered harness options readonly at every depth, keeping tuples', () => {
+  const shaped = defineHarness({
+    name: 'shaped',
+    revision: 1,
+    options: z.object({
+      prompt: z.string(),
+      filters: z.object({ paths: z.array(z.string()), depth: z.number() }).optional(),
+      pair: z.tuple([z.string(), z.number()]).optional(),
+    }),
+    capabilities: { structuredOutput: 'native' },
+    access: () => 'read',
+  });
+  const nested = defineRoster(
+    { Scout: { harness: 'shaped', filters: { paths: ['src', 'test'], depth: 2 }, pair: ['a', 1] } },
+    { harnesses: [shaped] },
+  );
+  expectTypeOf<DeepReadonlyOption<[string, number]>>().toEqualTypeOf<readonly [string, number]>();
+  expectTypeOf<DeepReadonlyOption<{ paths: string[] } | undefined>>().toEqualTypeOf<
+    { readonly paths: readonly string[] } | undefined
+  >();
+  // Never called: each of these would also fail validation at runtime.
+  const rejected = () => {
+    // @ts-expect-error -- the tuple's positions are kept, so a reversed pair is refused.
+    defineRoster({ Scout: { harness: 'shaped', pair: [1, 'a'] } }, { harnesses: [shaped] });
+    defineRoster(
+      // @ts-expect-error -- nested option values are still checked.
+      { Scout: { harness: 'shaped', filters: { paths: [1], depth: 2 } } },
+      { harnesses: [shaped] },
+    );
+  };
+  expect([nested, rejected]).toHaveLength(2);
 });
 
 it('accepts only a defineRoster result as a workflow roster', () => {
