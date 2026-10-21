@@ -623,18 +623,25 @@ const majorBump = (() => {
 // The suite can outlast a clerk's 10-minute shell limit. Run in one call, its output then never
 // reached the relay (#273, #279), and the landing paid for a fix round that only re-ran the suite.
 // Instead, start it detached and wait for it in 9-minute slices, each a cheap clerk call.
-async function localCheck(label, phaseName) {
-  const start = await clerk('local checks', phaseName, [
-    step('start', 'check-start', `--label ${label}`),
-  ]);
+async function localCheck(label, phaseName, title = 'local checks') {
+  const start = await clerk(title, phaseName, [step('start', 'check-start', `--label ${label}`)]);
   if (!start.start || start.start.error) return start.start;
+  return waitForCheck(label, phaseName, title);
+}
+
+// Waits for a detached check with this label; {error} when none was started.
+async function waitForCheck(label, phaseName, title) {
   for (let i = 1; i <= 5; i++) {
-    const waited = await clerk(`local checks (wait ${i})`, phaseName, [
+    const waited = await clerk(`${title} (wait ${i})`, phaseName, [
       step('wait', 'check-wait', `--label ${label} --max-seconds 540`),
     ]);
     if (!waited.wait || waited.wait.error || waited.wait.done) return waited.wait;
   }
-  return { passed: false, error: 'the local check did not finish within 45 minutes' };
+  return {
+    passed: false,
+    timedOut: true,
+    error: 'the local check did not finish within 45 minutes',
+  };
 }
 
 // Local Codex review: a haiku clerk runs `codex review` on one head (detached, like the check
@@ -988,7 +995,7 @@ Rules:
 - Never write to GitHub (no comments, issues, reviews, or PR edits), even if a plan asks: the workflow publishes. Mention anything that should be communicated in notes. When the only part of an item left undone is such a GitHub-side edit (for example a PR description value), report the item fixed and put the exact edit in notes; don't report it partly fixed for that.
 - Commit on the current local branch in small logical commits with concise imperative messages. No new branches, no amending or rewriting existing commits, no push.
 - Before checking, format and lint what you touched: \`cd ${sh(W)} && npx eslint --fix <files> && npx prettier --write <files>\` (prettier last: eslint --fix can leave formatting that format:check rejects).
-- Then run \`node ${sh(TOOL)} check --pr ${A.pr} --root ${sh(ROOT)} --label ${label}\` (about 11 minutes; prints JSON with passed, failedStep, and the log path). It usually outlasts the shell tool's 10-minute foreground limit and moves to the background: keep waiting until it prints its JSON, and never report while it is still running. If it fails, fix and re-run, at most 3 runs. Never weaken or skip tests to get green.
+- Then run the full check suite. It takes about 11 minutes, longer than the shell tool's 10-minute foreground limit, so it runs detached: start it with \`node ${sh(TOOL)} check-start --pr ${A.pr} --root ${sh(ROOT)} --label ${label}\`, then run \`node ${sh(TOOL)} check-wait --pr ${A.pr} --root ${sh(ROOT)} --label ${label} --max-seconds 540\` in the foreground (never in the background), again each time it prints done: false. Its final JSON (done: true) has passed, failedStep, and the log path; checkPassed must come from it, so never report before it. If it fails, fix and run both commands again, at most 3 runs. Never weaken or skip tests to get green.
 - Finally run \`node ${sh(TOOL)} snapshot --pr ${A.pr} --root ${sh(ROOT)}\`.
 Return one entry per item key: status (fixed | partly | not-fixed), the short SHA of the commit that addresses it ('' if none), and a one-sentence summary. Also return checkPassed (from your last check run), head (from snapshot), and notes (deviations from plans, anything a reviewer should know). Write plain text (no HTML entities) and keep each summary to one sentence.`,
       { ...t, label, phase: 'Fix', schema: FIX(items.map((i) => i.key)) },
@@ -1122,8 +1129,6 @@ async function fixRoundOf(threads, work) {
   );
   if (unfixed.length)
     return { error: `could not fix: ${unfixed.map((i) => `${i.key} (${i.summary})`).join('; ')}` };
-  if (fixed && !fixed.checkPassed)
-    return { error: `local checks still fail after fixes: ${fixed.notes.join('; ')}` };
   if (fixed) {
     // Don't take the implementer's word: its commits must be in the branch, and the last check
     // must have passed against the head we are about to publish.
@@ -1137,8 +1142,30 @@ async function fixRoundOf(threads, work) {
     if (verified.missingCommits.length) {
       return { error: `reported commits not in the branch: ${verified.missingCommits.join(', ')}` };
     }
-    if (!verified.checkPassedAtHead) {
-      return { error: `no passing check recorded for head ${verified.head.slice(0, 7)}` };
+    if (!fixed.checkPassed || !verified.checkPassedAtHead) {
+      // The fixer's commits are verified; only the gate is missing. A fixer can report before its
+      // check finished: the suite outlasts the shell's 10-minute foreground limit, and a check left
+      // in a background shell dies with the agent (#610). Run the suite here, detached, rather than
+      // block the landing on the fixer's word. A real failure still blocks, with its log.
+      // The fixer's own detached check may still be running: wait it out first, so two suites never
+      // share the worktree, and accept it if it passed at this head.
+      const own = await waitForCheck(`fix-${fixRound}`, 'Fix', `checks fix-${fixRound}`);
+      // Still running after the full wait: a second suite would race it in the same worktree.
+      if (own?.timedOut) return { error: `the fixer's check fix-${fixRound} is still running` };
+      const label = `fix-${fixRound}-gate`;
+      let gate = own;
+      if (!own?.passed || own.head !== verified.head) {
+        log(
+          `${label}: ${fixed.checkPassed ? 'no passing check recorded' : 'the fixer reported failing checks'} at ${verified.head.slice(0, 7)}; running the check suite`,
+        );
+        gate = await localCheck(label, 'Fix', `checks ${label}`);
+      }
+      if (!gate?.passed || gate.head !== verified.head) {
+        const why = gate?.error ?? (gate?.failedStep ? `${gate.failedStep} failed` : 'failed');
+        return {
+          error: `local checks at ${verified.head.slice(0, 7)} after fixes: ${why}${gate?.log ? ` (${gate.log})` : ''}${fixed.notes.length ? `; fixer notes: ${fixed.notes.join('; ')}` : ''}`,
+        };
+      }
     }
   }
   // Filed only once the round is otherwise sound (checks green, commits verified).

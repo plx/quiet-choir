@@ -153,7 +153,11 @@ directory path, and another couldn't escape a multi-line test log inside a JSON 
   about 11 minutes, so the first check runs as `check-start` (detached) followed by `check-wait`
   calls of up to 9 minutes each, the same bounded-slice pattern `await` uses for CI. Before this, a
   check that ran past 10 minutes (#273 and #279) lost its output, and the landing paid for a fix
-  round that only re-ran the suite.
+  round that only re-ran the suite;
+- fixers run the suite the same way (`check-start`, then `check-wait` in the foreground). A fixer
+  that still reports without a passing check at its head is not taken at its word: the workflow
+  waits out the fixer's own check, and otherwise runs the suite itself, before blocking. In the #610
+  landing a fixer left its check in a background shell, which died with the agent.
 
 ## Files
 
