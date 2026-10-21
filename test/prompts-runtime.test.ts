@@ -16,8 +16,11 @@ import {
   z,
   type AgentRequest,
   type Harness,
+  type StepRecord,
   type WorkflowContext,
+  type WorkflowEvent,
 } from '../src/index.js';
+import { PROMPT_BRAND, promptTemplateOf } from '../src/workflow/prompts/prompt.js';
 import { it } from './setup/state-dir.js';
 
 const repository = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -56,7 +59,20 @@ afterEach(async () => {
 it('sends a Prompt as its text and fingerprints it exactly like the literal string', async ({
   runs,
 }) => {
-  const sides = [];
+  type Request = NonNullable<StepRecord['request']>;
+  interface Side {
+    readonly requests: AgentRequest['options'][];
+    readonly steps: Record<
+      string,
+      {
+        readonly fingerprint: string;
+        readonly preview: string | undefined;
+        readonly stepRequest: Request | null | undefined;
+        readonly request: Request | null | undefined;
+      }
+    >;
+  }
+  const sides: Side[] = [];
   for (const prompt of [render(), text]) {
     const stateDir = await mkdtemp(join(tmpdir(), 'choir-prompt-runtime-'));
     directories.push(stateDir);
@@ -86,6 +102,7 @@ it('sends a Prompt as its text and fingerprints it exactly like the literal stri
           {
             fingerprint: step.fingerprint,
             preview: step.request?.promptPreview,
+            stepRequest: step.request,
             request: step.attemptHistory?.[0]?.request,
           },
         ]),
@@ -93,13 +110,118 @@ it('sends a Prompt as its text and fingerprints it exactly like the literal stri
     });
   }
   const [prompted, literal] = sides;
-  expect(prompted).toEqual(literal);
+  // Only the observational template name differs (ADR 0064 section 5): the prompted side records
+  // it on the step and attempt request summaries, the literal side records nothing.
+  for (const id of ['claude', 'codex']) {
+    expect(prompted?.steps[id]?.stepRequest?.promptTemplate).toBe('Optional');
+    expect(prompted?.steps[id]?.request?.promptTemplate).toBe('Optional');
+    expect(literal?.steps[id]?.stepRequest).not.toHaveProperty('promptTemplate');
+    expect(literal?.steps[id]?.request).not.toHaveProperty('promptTemplate');
+  }
+  const strip = (request: Request | null | undefined) => {
+    if (request === null || request === undefined) return request;
+    return Object.fromEntries(Object.entries(request).filter(([key]) => key !== 'promptTemplate'));
+  };
+  const withoutTemplate = (side: Side | undefined) => ({
+    requests: side?.requests,
+    steps: Object.fromEntries(
+      Object.entries(side?.steps ?? {}).map(([id, step]) => [
+        id,
+        { ...step, stepRequest: strip(step.stepRequest), request: strip(step.request) },
+      ]),
+    ),
+  });
+  expect(withoutTemplate(prompted)).toEqual(withoutTemplate(literal));
   expect(prompted?.requests[0]).toMatchObject({
     prompt: text,
     systemPrompt: text,
     appendSystemPrompt: text,
   });
   expect(prompted?.requests[1]).toMatchObject({ prompt: text });
+});
+
+it('records the template name of a Prompt in prompt only, on the record and agent.finished', async ({
+  runs,
+  stateDir,
+}) => {
+  const requests: string[] = [];
+  const harness: Harness = {
+    invoke: (request) => {
+      requests.push(request.stepId);
+      return request.stepId === 'failing'
+        ? Promise.reject(new Error('harness down'))
+        : Promise.resolve({ text: 'ok', sessionId: null });
+    },
+  };
+  const events: WorkflowEvent[] = [];
+  await runs.run(
+    defineWorkflow({
+      ...base,
+      name: 'template-name',
+      run: async (ctx) => {
+        await ctx.claude.text('templated', { prompt: render() });
+        await ctx.codex.text('codex', { prompt: render() });
+        await ctx.claude.text('literal', { prompt: text });
+        await ctx.claude.text('system', { prompt: text, systemPrompt: render() });
+        await ctx.claude.text('failing', { prompt: render(), onError: 'return' });
+        return null;
+      },
+    }),
+    {
+      stateDir,
+      runId: 'template-name',
+      input: null,
+      harness,
+      onEvent: (event) => {
+        events.push(event);
+      },
+    },
+  );
+  expect(requests).toEqual(['templated', 'codex', 'literal', 'system', 'failing']);
+  const record = await readRun({ stateDir, runId: 'template-name' });
+  for (const id of ['templated', 'codex', 'failing']) {
+    expect(record.steps[id]?.request?.promptTemplate, id).toBe('Optional');
+    expect(record.steps[id]?.attemptHistory?.[0]?.request?.promptTemplate, id).toBe('Optional');
+  }
+  expect(record.steps['failing']?.status).toBe('settled-failed');
+  for (const id of ['literal', 'system']) {
+    expect(record.steps[id]?.request, id).not.toHaveProperty('promptTemplate');
+    expect(record.steps[id]?.attemptHistory?.[0]?.request, id).not.toHaveProperty('promptTemplate');
+  }
+  // The name is observational: the Prompt and literal spellings share one fingerprint.
+  expect(record.steps['templated']?.fingerprint).toBe(record.steps['literal']?.fingerprint);
+  const finished = (stepId: string): WorkflowEvent | undefined =>
+    events.find((event) => event.type === 'agent.finished' && event.stepId === stepId);
+  expect(finished('templated')).toMatchObject({ outcome: 'completed', promptTemplate: 'Optional' });
+  expect(finished('codex')).toMatchObject({ outcome: 'completed', promptTemplate: 'Optional' });
+  expect(finished('failing')).toMatchObject({ outcome: 'failed', promptTemplate: 'Optional' });
+  expect(finished('literal')).toMatchObject({ outcome: 'completed' });
+  expect(finished('literal')).not.toHaveProperty('promptTemplate');
+  expect(finished('system')).toMatchObject({ outcome: 'completed' });
+  expect(finished('system')).not.toHaveProperty('promptTemplate');
+});
+
+it('reads a template name only from an own Prompt data property with a prompt name', () => {
+  expect(promptTemplateOf({ prompt: render() })).toBe('Optional');
+  expect(promptTemplateOf({ prompt: text })).toBeUndefined();
+  expect(promptTemplateOf({ prompt: text, appendSystemPrompt: render() })).toBeUndefined();
+  expect(
+    promptTemplateOf({
+      get prompt() {
+        return render();
+      },
+    }),
+  ).toBeUndefined();
+  expect(promptTemplateOf(Object.create({ prompt: render() }) as object)).toBeUndefined();
+  const forged = (template: unknown) => ({
+    prompt: Object.assign(Object.create({ [PROMPT_BRAND]: true }) as object, {
+      text: 'x',
+      template,
+    }),
+  });
+  expect(promptTemplateOf(forged('Review'))).toBe('Review');
+  expect(promptTemplateOf(forged('not a name'))).toBeUndefined();
+  expect(promptTemplateOf(forged(7))).toBeUndefined();
 });
 
 it('replays a step recorded from a Prompt when the resumed body spells the literal', async ({

@@ -87,7 +87,8 @@ import type { WorkflowClock } from '../runtime/wait-model.js';
 import { TypeScriptExecutor } from '../typecheck/typescript-executor.js';
 import type { TypecheckProgramCache } from '../typecheck/program-cache.js';
 import { formatDurabilityDiagnostic } from '../typecheck/model.js';
-import { fingerprintSources, workflowLaunch } from './source.js';
+import { fingerprintSources, withPromptSources, workflowLaunch } from './source.js';
+import { promptRoots } from '../prompts/check.js';
 import { formatRateLimitWindows, readRateLimit } from '../runtime/rate-limit.js';
 import type { WorkflowEvent } from '../runtime/runner.js';
 import {
@@ -784,7 +785,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         );
       stopIfAborted();
       stage = 'load.import';
-      const source = await fingerprintSources(plan.typecheck, checked.sourceFiles);
+      const typescriptSource = await fingerprintSources(plan.typecheck, checked.sourceFiles);
       this.#options.logger.log(
         'debug',
         `Importing trusted workflow module ${plan.typecheck.entrypoint}`,
@@ -803,6 +804,13 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
           `Registry name ${plan.registryName} now resolves to workflow ${definition.name}; refresh workflow list-defs before executing by name.`,
         );
       const description = describeWorkflow(definition, plan.typecheck.entrypoint);
+      // Prompt roots are known only after import. Every file under them joins the launch sources
+      // (ADR 0064 section 4), and validate, check-resume and execute all use this one fingerprint.
+      const source = await withPromptSources(
+        plan.typecheck,
+        typescriptSource,
+        promptRoots(description),
+      );
       if (plan.kind === 'workflow.validate' || plan.kind === 'workflow.execute')
         for (const warning of promptWarnings(description))
           this.#options.logger.log('warn', warning);

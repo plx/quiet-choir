@@ -193,6 +193,62 @@ describe('checkPromptSets errors', () => {
     ]);
   });
 
+  it.for([
+    ['the root', '..'],
+    ['its own directory', '.'],
+  ] as const)(
+    'refuses at check and at render a template reached through a link back to %s',
+    async ([, target]) => {
+      const directory = await root({ 'Main.md': '{% include "sub/up/A.md" %}', 'A.md': 'a' });
+      await mkdir(join(directory, 'sub'));
+      await writeFile(join(directory, 'sub', 'A.md'), 'a');
+      await symlink(target, join(directory, 'sub', 'up'));
+      const set = definePrompts(directory, {
+        Main: { file: 'Main.md', params: z.object({}) },
+        Direct: { file: 'sub/up/A.md', params: z.object({}) },
+      });
+      const descriptor = promptSetDescriptor(set);
+      if (!descriptor) throw new Error('Expected a descriptor.');
+      const loops =
+        'traverses a directory symlink that loops back to an ancestor directory (sub/up)';
+      expect(checkPromptSets([descriptor]).errors).toEqual([
+        expect.stringMatching(/^Prompt Main \(Main\.md\): sub\/up\/A\.md: /u),
+        expect.stringMatching(/^Prompt Direct \(sub\/up\/A\.md\): sub\/up\/A\.md: /u),
+      ]);
+      for (const error of checkPromptSets([descriptor]).errors) expect(error).toContain(loops);
+      expect(() => set.Main({})).toThrow(loops);
+      expect(() => set.Direct({})).toThrow(loops);
+      expect(promptRootFiles(directory)).not.toContain(join(directory, 'sub', 'up', 'A.md'));
+    },
+  );
+
+  it('refuses a template reached through a directory link that leaves the root', async () => {
+    const directory = await root({ 'Main.md': '{% include "away/prompts/A.md" %}', 'A.md': 'a' });
+    await symlink('..', join(directory, 'away'));
+    const descriptor = promptSetDescriptor(
+      definePrompts(directory, { Main: { file: 'Main.md', params: z.object({}) } }),
+    );
+    if (!descriptor) throw new Error('Expected a descriptor.');
+    expect(checkPromptSets([descriptor]).errors).toEqual([
+      expect.stringContaining('traverses a directory symlink that leaves the prompt root (away)'),
+    ]);
+  });
+
+  it('renders and lists a template reached through an in-root link to a sibling directory', async () => {
+    const directory = await root({
+      'Main.md': '{% include "sub/sibling/A.md" %}',
+      'other/A.md': 'a',
+    });
+    await mkdir(join(directory, 'sub'));
+    await symlink(join('..', 'other'), join(directory, 'sub', 'sibling'));
+    const set = definePrompts(directory, { Main: { file: 'Main.md', params: z.object({}) } });
+    const descriptor = promptSetDescriptor(set);
+    if (!descriptor) throw new Error('Expected a descriptor.');
+    expect(checkPromptSets([descriptor]).errors).toEqual([]);
+    expect(set.Main({}).text).toBe('a');
+    expect(promptRootFiles(directory)).toContain(join(directory, 'sub', 'sibling', 'A.md'));
+  });
+
   it('aggregates every error of every entry and set', async () => {
     const first = await root({ 'A.md': '{{ a }}', 'B.md': '{{ b | random }}' });
     const second = await root({ 'C.md': '{% include x %}' });

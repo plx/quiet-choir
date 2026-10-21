@@ -1,16 +1,13 @@
 # Prompt templates
 
 Long prompts can live in markdown template files instead of template literals.
-[ADR 0064](decisions/0064-prompt-templates-as-execution-dependencies.md) §1–3 describes the design.
-A TypeScript index declares each template with a Zod schema for its parameters. Each entry becomes a
+[ADR 0064](decisions/0064-prompt-templates-as-execution-dependencies.md) describes the design. A
+TypeScript index declares each template with a Zod schema for its parameters. Each entry becomes a
 plain, synchronous function that returns a `Prompt`. Before any effect, `workflow validate`, the
-execute preflight, `list-defs` and `runWorkflow` check every template a workflow lists.
-
-Templates are not yet execution dependencies: ADR 0064 §4–5 (#582) is not implemented. A template
-edit is not refused when a run resumes, unlike a code edit, and agent records do not name the
-template. The rendered text is part of step identity, though. So if a completed step's rendered
-prompt changes, that step still fails its fingerprint check on replay, the same as an edited string
-literal.
+execute preflight, `list-defs` and `runWorkflow` check every template a workflow lists. Template
+files are execution dependencies like the TypeScript sources, so a template edit is refused on
+resume like a code edit ([below](#templates-as-execution-dependencies)), and agent records name the
+template a call rendered ([records](#records)).
 
 ## Declare prompts
 
@@ -121,7 +118,9 @@ over template directories, because reformatting changes the rendered text.
   `"it\'s.md"` names `it's.md`, and a malformed escape is an error.
 - The loader refuses absolute paths, backslashes, NUL bytes and any path that normalizes outside the
   root. It also refuses a file whose real path is outside the root's real path, so a symlink cannot
-  escape the root. A symlink that stays inside the root is followed.
+  escape the root, and a path through a directory symlink that leaves the root or loops back to an
+  ancestor directory (such as `sub/up/A.md` with `sub/up -> ..`), which the fingerprint walk below
+  skips. Any other symlink that stays inside the root is followed.
 - By convention, shared fragments live under `root/_fragments/`. A fragment sees its includer's
   context, including loop variables. It loses its own final newline, so leave a blank line after the
   `include` tag where the output needs one.
@@ -187,8 +186,67 @@ field is `[]` when a node declares no prompt sets:
 `validate` and `execute` also log each warning at `warn` level on stderr. The `list-defs` cache
 treats every file under a declared prompt root as a source, including a file symlink (hashed by its
 target's real path and contents) and the files under a directory symlink that stays inside the root
-(listed at the path a render reads), so editing a template or retargeting a link, even to identical
-contents, revalidates the entry without `--refresh`.
+and does not loop back to an ancestor directory (listed at the path a render reads), so editing a
+template or retargeting a link, even to identical contents, revalidates the entry without
+`--refresh`.
+
+## Templates as execution dependencies
+
+ADR 0064 §4 makes every regular file under each declared prompt root part of the workflow's source
+fingerprint, beside the TypeScript sources and with the same rules
+([ADR 0006](decisions/0006-code-change-recovery.md)). The CLI hashes them after importing the
+workflow, so `workflow validate --json` (`workflow.identity.files`), `workflow check-resume` and
+`workflow execute` report one identity, and the run's `launch.sources` lists the templates too.
+
+- **The whole root counts.** Every file under the root is hashed, whether or not a template
+  currently includes it: an unused fragment, a draft and a file that is not markdown all count.
+  Because dependency targets are literal and confined to the root, that set covers every file a
+  render can read. Nothing is excluded, not even a root under `node_modules`.
+- **Keys.** A file is keyed by its root's real path joined with its path inside the root, relative
+  to the project root (the directory of the nearest `package.json` or the selected tsconfig), such
+  as `prompts/Review.md` or `prompts/_fragments/header.md`. The value is the SHA-256 of the bytes a
+  render reads, through any in-root link, so retargeting a link changes the hash under the link's
+  own path. The walk skips a directory symlink that leaves the root or loops back to an ancestor
+  directory, and the loader refuses any template path through one, so every file a render reads is
+  hashed.
+- **Resume.** A changed, added or removed file under a root is a code change: resume and
+  `check-resume` refuse it with `Workflow code (prompts/Review.md) changed; ...` and list the path
+  in the report's `files`. `--accept-code-change` waives the run-level check and records the files
+  in `codeChanges`. A completed step whose rendered prompt changed still fails its own fingerprint
+  check, because the prompt text is step identity: the accepted-change preflight refuses with
+  `Step <id>: prompt changed on a completed step` and the `--fork-from ... --invalidate <id>`
+  command to run instead, and the run is left unchanged. An edit that changes no completed step's
+  prompt, such as an unused fragment or a template only later steps render, resumes under the flag.
+- **Forks** follow the same rules as code: a forked step reuses its result only when its own
+  identity, including the rendered prompt, still matches.
+- **Scope.** The roots are those of the static workflow tree: the root workflow's `prompts` and
+  those of its declared `children`, recursively. A child known only at runtime (`ctx.workflow` given
+  a definition outside the static tree) has its templates checked when it starts, but its prompt
+  roots are not part of the launch fingerprint. An embedded `runWorkflow` caller supplies its own
+  `source` and is not affected.
+
+A workflow that declares no prompts keeps a byte-identical fingerprint. A run launched by an earlier
+build from a workflow that declares prompts sees the template files as new entries once, so its
+first resume needs `--accept-code-change`.
+
+A template edit is now refused at launch like a code edit. To let a prompt vary without a
+code-change acceptance, keep the varying text in parameters and the template stable.
+
+## Records
+
+When an agent call's `prompt` is a `Prompt`, its step and attempt request summaries record the
+prompt name as `promptTemplate` (ADR 0064 §5), beside `promptSha256` and the 200-character
+`promptPreview`. A string prompt records nothing, and so does a `Prompt` passed only as
+`systemPrompt` or `appendSystemPrompt`. The field is observational, outside step identity
+([ADR 0015](decisions/0015-observe-runs-without-changing-effect-identity.md)): a `Prompt` and the
+equal string still share one fingerprint, and replay keeps the saved summary. Records before schema
+revision 20 have no field.
+
+`workflow inspect` prints `template <Name>` on agent lines and on the step-list line of a listed
+agent step; `inspect --json` carries `request.promptTemplate` on the step and each attempt, and the
+summary's agent rows (`agents.recent[]`) carry `promptTemplate`. An embedder's `onEvent` sees
+`promptTemplate` on `agent.finished` for both completed and failed attempts. The compact `--events`
+lines do not change.
 
 ## Errors
 

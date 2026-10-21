@@ -1,9 +1,9 @@
 import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { join, sep } from 'node:path';
+import { join, posix, sep } from 'node:path';
 import type * as Minijinja from 'minijinja-js';
 
-import { joinTemplateName, templateNameProblem } from './paths.js';
+import { directoryProblem, joinTemplateName, templateNameProblem } from './paths.js';
 
 // ADR 0064 section 1: the one module that knows the template engine. Callers see a narrow
 // interface (render, undeclared variables, source reads), so the engine can be replaced without
@@ -219,6 +219,22 @@ function confinedReader(root: string): (name: string) => TemplateSource | null {
         name,
         `template ${JSON.stringify(name)} resolves outside the prompt root (to ${real})`,
       );
+    // The directories on the way, by the rule promptRootFiles walks with, so every template a
+    // render reads is one the source fingerprint hashes.
+    const ancestors = new Set([realRoot]);
+    const parts = posix.normalize(name).split('/');
+    for (let depth = 1; depth < parts.length; depth++) {
+      const directory = parts.slice(0, depth).join('/');
+      const resolved = realpathSync(join(root, directory));
+      const refused = directoryProblem(resolved, realRoot, ancestors);
+      if (refused !== null)
+        throw new TemplateFileError(
+          'TemplateRefused',
+          name,
+          `template ${JSON.stringify(name)} traverses a directory symlink that ${refused} (${directory})`,
+        );
+      ancestors.add(resolved);
+    }
     if (!statSync(real).isFile())
       throw new TemplateFileError(
         'TemplateRefused',
@@ -241,7 +257,8 @@ function templateLoader(
 /**
  * A confined environment over the template directory `root` (an absolute path). Template names are
  * root-relative POSIX paths; the loader refuses an absolute, backslashed, NUL-containing or escaping
- * name, and a file whose real path leaves the root's real path, so a symlink cannot escape. Files
+ * name, a file whose real path leaves the root's real path, so a symlink cannot escape, and a path
+ * through a directory symlink that leaves the root or loops back to an ancestor directory. Files
  * are read synchronously once and cached, and the engine is created on the first render or
  * analysis. Call `dispose` when done with a short-lived environment. @internal
  */

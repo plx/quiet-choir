@@ -73,6 +73,11 @@ export interface AgentRow {
    * full list is in `inspect --full` or the step record.
    */
   readonly warnings?: readonly string[];
+  /**
+   * The prompt name when the call's `prompt` was a rendered `Prompt` (ADR 0064 section 5), from
+   * the latest attempt's request summary, else the step's; absent for a string prompt.
+   */
+  readonly promptTemplate?: string;
 }
 
 /** Agent calls rolled up by their requested harness, model, effort and profile. @internal */
@@ -317,14 +322,22 @@ function boundedWarnings(warnings: readonly string[]): string[] {
   return dropped > 0 ? [...rows, `+${String(dropped)} more warnings`] : rows;
 }
 
-/** The latest attempt's reported tool count and the step's warnings, each only when present. */
-function optionalAgentFields(step: StepRecord): Pick<AgentRow, 'toolUses' | 'warnings'> {
-  const value = step.attemptHistory?.at(-1)?.diagnostics?.['toolUses'];
+/**
+ * The latest attempt's reported tool count, the step's warnings and the prompt template name, each
+ * only when present.
+ */
+function optionalAgentFields(
+  step: StepRecord,
+): Pick<AgentRow, 'toolUses' | 'warnings' | 'promptTemplate'> {
+  const attempt = step.attemptHistory?.at(-1);
+  const value = attempt?.diagnostics?.['toolUses'];
+  const promptTemplate = (attempt?.request ?? step.request)?.promptTemplate;
   return {
     ...(typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
       ? { toolUses: value }
       : {}),
     ...(step.warnings?.length ? { warnings: boundedWarnings(step.warnings) } : {}),
+    ...(promptTemplate === undefined ? {} : { promptTemplate }),
   };
 }
 

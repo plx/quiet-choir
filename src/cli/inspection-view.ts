@@ -116,7 +116,7 @@ function integrationLabel(meta: RunSummary['steps'][number]['meta']): string | u
 }
 
 function agentLine(row: RunSummary['agents']['recent'][number]): string {
-  return `${row.status === 'completed' ? '' : `${row.status} `}${row.id}  ${row.harness} ${row.model ?? '(native model)'} effort ${row.effort ?? '-'}${row.profile === null ? '' : ` profile ${row.profile}`}${row.elapsedMs === null ? '' : `  ${duration(row.elapsedMs)}`}  ${row.costUsd === null ? 'unknown cost' : `$${row.costUsd.toFixed(4)}`}${row.toolUses === undefined ? '' : `  tools ${String(row.toolUses)}`}${row.warnings?.length ? `  warnings: ${row.warnings.join(' ')}` : ''}`;
+  return `${row.status === 'completed' ? '' : `${row.status} `}${row.id}  ${row.harness} ${row.model ?? '(native model)'} effort ${row.effort ?? '-'}${row.profile === null ? '' : ` profile ${row.profile}`}${row.promptTemplate === undefined ? '' : `  template ${row.promptTemplate}`}${row.elapsedMs === null ? '' : `  ${duration(row.elapsedMs)}`}  ${row.costUsd === null ? 'unknown cost' : `$${row.costUsd.toFixed(4)}`}${row.toolUses === undefined ? '' : `  tools ${String(row.toolUses)}`}${row.warnings?.length ? `  warnings: ${row.warnings.join(' ')}` : ''}`;
 }
 
 /** Statuses whose steps already print in full in the step list. */
@@ -287,7 +287,7 @@ export function formatRunSummary(
       : '';
     const label = integrationLabel(step.meta) ?? step.kind;
     lines.push(
-      `${step.status} ${step.id}  ${request ? `${request.harness} ${request.model ?? '(native model)'}` : label}${step.elapsedMs === null ? '' : `  ${duration(step.elapsedMs)} elapsed`}${limits ? `; ${limits}` : ''}${step.errorKind ? ` [${step.errorKind}]` : ''}${step.rootCause ? ' [root cause]' : ''}${step.error ? `  ${step.error}` : ''}`,
+      `${step.status} ${step.id}  ${request ? `${request.harness} ${request.model ?? '(native model)'}${request.promptTemplate === undefined ? '' : ` template ${request.promptTemplate}`}` : label}${step.elapsedMs === null ? '' : `  ${duration(step.elapsedMs)} elapsed`}${limits ? `; ${limits}` : ''}${step.errorKind ? ` [${step.errorKind}]` : ''}${step.rootCause ? ' [root cause]' : ''}${step.error ? `  ${step.error}` : ''}`,
     );
   }
   if (run.agents.total > 0) {

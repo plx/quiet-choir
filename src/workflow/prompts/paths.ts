@@ -1,4 +1,4 @@
-import { posix } from 'node:path';
+import { posix, sep } from 'node:path';
 
 // ADR 0064 section 1: template names are POSIX paths relative to the prompt root, and include,
 // extends and import targets resolve relative to the including file. The renderer's path-join
@@ -30,5 +30,24 @@ export function templateNameProblem(name: string): string | null {
   if (normalized === '..' || normalized.startsWith('../'))
     return 'resolves outside the prompt root';
   if (normalized === '.' || normalized.endsWith('/')) return 'names a directory';
+  return null;
+}
+
+/**
+ * Why a directory on the way to a template, at real path `real`, is one no render may pass
+ * through, or null when it may: it leaves the root's real path `realRoot`, or it is the real path
+ * of the root or of a directory before it on the path (`ancestors`, which holds `realRoot`), as a
+ * directory symlink back up would be. Only a directory symlink can do either. `promptRootFiles`
+ * skips such a directory and the confined reader refuses a template reached
+ * through one, so every template a render reads is a file the source fingerprint hashes. @internal
+ */
+export function directoryProblem(
+  real: string,
+  realRoot: string,
+  ancestors: ReadonlySet<string>,
+): string | null {
+  if (ancestors.has(real)) return 'loops back to an ancestor directory';
+  if (!real.startsWith(realRoot.endsWith(sep) ? realRoot : realRoot + sep))
+    return 'leaves the prompt root';
   return null;
 }

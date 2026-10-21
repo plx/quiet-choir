@@ -79,9 +79,12 @@ real paths named relative to the tsconfig directory (or nearest package root, th
 directory when neither exists). Symlink aliases share a fingerprint. Quiet-choir's own `src/` and
 `dist/` implementation files are excluded, except an explicitly selected entrypoint; engine package
 version and checkpoint format are recorded in `workflow.identity.engine`. A comment or formatting
-edit still changes the strict **run** source hash. `workflow.identity.files` and schema hashes make
-errors identify changed components and files. `validate --json` reports the same full fingerprint
-that a new run stores.
+edit still changes the strict **run** source hash. After import, every file under each prompt root
+the static workflow tree declares joins the same map, keyed by the root's real path plus the file's
+in-root path and hashed by the bytes a render reads, with no exclusions, so a template or fragment
+edit is refused like a code edit (see [prompt templates](prompts.md)). `workflow.identity.files` and
+schema hashes make errors identify changed components and files. `validate --json` reports the same
+full fingerprint that a new run stores.
 
 Schema identity hashes the JSON Schema that the installed zod produces (`z.toJSONSchema`, draft-7),
 so a zod upgrade can change that encoding and strand completed steps. `test/schema-identity.test.ts`

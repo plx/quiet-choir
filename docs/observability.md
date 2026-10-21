@@ -316,9 +316,12 @@ unchanged.
 
 Request summaries contain harness, explicit model (null means inherited native configuration),
 profile, effective timeout/turn/budget/sandbox/cleanup limits, tools, cwd, structured-output flag,
-SHA-256 of the UTF-8 prompt, and its first 200 UTF-16 code units. These diagnostics are outside
-semantic identity. **Checkpoints contain prompt previews, log data, and stack paths; treat them as
-sensitive.** They are local private files under the existing storage permissions.
+SHA-256 of the UTF-8 prompt, and its first 200 UTF-16 code units. When the call's `prompt` was a
+rendered `Prompt`, they also carry its name as `promptTemplate`
+([prompt records](prompts.md#records), schema revision 20); a string prompt, a `Prompt` only in a
+system prompt, and older records have none. These diagnostics are outside semantic identity.
+**Checkpoints contain prompt previews, log data, and stack paths; treat them as sensitive.** They
+are local private files under the existing storage permissions.
 
 `executions` records each actual workflow-body invocation, its PID, start/end, outcome, error and
 stack. Reading a completed run through the resume fast path adds no execution. Historical `running`
@@ -331,9 +334,10 @@ a null `stepId`, except `run.failed` can name the root effect. `step.failed` als
 line derives `retryable` from it. `step.failed` and `step.settled` also carry `error`, the step's
 error text bounded to one line of at most 500 characters (`STEP_EVENT_ERROR_MAX_CHARS`, ending in
 `…` when cut) with no stack, and absent when the message is empty; `message` keeps its other
-meanings. Debug lines include timestamp, run ID, and event type. Notification data is copied;
-observer mutation or failure cannot invalidate committed work, and observer promises are not
-awaited.
+meanings. `agent.finished` carries `promptTemplate`, the attempt's request summary field, on both
+completed and failed attempts of a templated call; the compact event line does not write it. Debug
+lines include timestamp, run ID, and event type. Notification data is copied; observer mutation or
+failure cannot invalidate committed work, and observer promises are not awaited.
 
 `rootCause` is `{ stepId, error, errorKind, effect }`: `errorKind` is the classified kind of the
 root effect's failure, null for a body failure, and absent in records from before the field. A

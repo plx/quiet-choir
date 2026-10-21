@@ -508,7 +508,11 @@ gains the optional `harness`, the one harness a roster entry is pinned to
 ([roster](roster.md#manifest-and-validate-output)). Revision-18 records read and resume unchanged,
 since profiles and built-ins carry no pin. A revision-18 build cannot read a record whose manifest
 lists a roster entry (its strict manifest parse rejects the field), and refuses to rewrite any other
-revision-19 record.
+revision-19 record. Revision 20 (#582) is nested-only: a request summary in `steps` (the step's and
+each attempt's `request`) gains the optional `promptTemplate`, the prompt name of a call whose
+`prompt` was a rendered `Prompt` ([prompt records](prompts.md#records)). Revision-19 records read,
+inspect and resume unchanged without it. A revision-19 build reads a revision-20 record and drops
+the field from its view (its request summary parse strips unknown keys), and refuses to rewrite it.
 
 **Refusals.** A build must not rewrite a record it cannot fully read: its parse strips unknown
 top-level fields, and the next compaction would write the record back without them. When a record

@@ -8,6 +8,7 @@ import { PromptError, promptLabel } from './error.js';
 import { templateNameProblem } from './paths.js';
 import {
   createPrompt,
+  PROMPT_NAME_PATTERN,
   PROMPT_SET,
   type PromptEntryDescriptor,
   type PromptSetDescriptor,
@@ -17,7 +18,6 @@ import {
 // arguments without touching the disk; templates are read and parsed on the first render, and the
 // load-time checks (check.ts) run when a workflow that lists the set is validated or launched.
 
-const namePattern = /^[A-Za-z][A-Za-z0-9_]*$/u;
 const entryKeys: ReadonlySet<string> = new Set(['file', 'params', 'description']);
 
 /**
@@ -75,7 +75,7 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 }
 
 function checkedEntry(name: string, value: unknown): PromptEntryDescriptor {
-  if (!namePattern.test(name))
+  if (!PROMPT_NAME_PATTERN.test(name))
     return definitionError(
       `prompt name ${JSON.stringify(name)} must be an identifier matching /^[A-Za-z][A-Za-z0-9_]*$/`,
       null,

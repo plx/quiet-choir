@@ -1,10 +1,11 @@
 import { readdirSync, realpathSync, statSync } from 'node:fs';
-import { join, sep } from 'node:path';
+import { join } from 'node:path';
 
 import { createPromptEnvironment, engineFailure, type PromptEnvironment } from './engine.js';
 import { promptLabel } from './error.js';
-import { joinTemplateName, templateNameProblem } from './paths.js';
+import { directoryProblem, joinTemplateName, templateNameProblem } from './paths.js';
 import type { PromptSetDescriptor } from './prompt.js';
+import type { WorkflowDescription } from '../runtime/child-model.js';
 import { scanTemplate } from './scan.js';
 
 // ADR 0064 section 3: the static checks that `workflow validate`, the execute preflight,
@@ -257,13 +258,27 @@ export function checkPromptSets(descriptors: readonly PromptSetDescriptor[]): Pr
 }
 
 /**
+ * The prompt roots a description's static tree declares: the workflow's own prompt sets, then
+ * each declared child's, depth first, deduplicated in that order. A child invoked only at runtime
+ * by definition is not in the description, so its roots are not listed. @internal
+ */
+export function promptRoots(description: WorkflowDescription): string[] {
+  const visit = (workflow: WorkflowDescription): string[] => [
+    ...workflow.prompts.map((set) => set.root),
+    ...workflow.children.flatMap(visit),
+  ];
+  return [...new Set(visit(description))];
+}
+
+/**
  * Every regular file or file symlink under a prompt root, as sorted absolute paths: the superset of
  * what a render can read, since dependency targets are literal and confined. Paths are the logical
  * names a render reads: a file symlink is listed at its own path, and a directory symlink whose
  * target lies inside the root's real path is walked at its own path, so hashing reads through the
  * current links and a retarget or a target edit changes the hash. A directory symlink that leaves
- * the root (which the renderer refuses) or leads back to a directory being walked is skipped, as
- * is a dangling symlink (no render can read it), and a missing root has no files. @internal
+ * the root or leads back to a directory being walked is skipped by the rule of
+ * `directoryProblem`, which the renderer applies to refuse any template reached through one, as is
+ * a dangling symlink (no render can read it), and a missing root has no files. @internal
  */
 export function promptRootFiles(root: string): string[] {
   let realRoot: string;
@@ -273,7 +288,6 @@ export function promptRootFiles(root: string): string[] {
     if (errorCode(error) === 'ENOENT') return [];
     throw error;
   }
-  const inside = realRoot.endsWith(sep) ? realRoot : realRoot + sep;
   const files: string[] = [];
   const visit = (directory: string, real: string, walking: ReadonlySet<string>): void => {
     const ancestors = new Set(walking).add(real);
@@ -286,7 +300,7 @@ export function promptRootFiles(root: string): string[] {
         if (target === 'file') files.push(path);
         else if (target === 'directory') {
           const resolved = realpathSync(path);
-          if (resolved.startsWith(inside) && !ancestors.has(resolved))
+          if (directoryProblem(resolved, realRoot, ancestors) === null)
             visit(path, resolved, ancestors);
         }
       }

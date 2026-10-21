@@ -38,6 +38,7 @@ import type {
   RunEvent,
 } from './observability-model.js';
 import { codexEffortValues } from './agent-controls.js';
+import { PROMPT_NAME_PATTERN } from '../prompts/prompt.js';
 import type {
   HarnessMetadata,
   InstructionSource,
@@ -636,6 +637,7 @@ const requestSummarySchema = z
     structured: z.boolean(),
     promptSha256: z.string().regex(/^[a-f0-9]{64}$/u),
     promptPreview: z.string().max(200),
+    promptTemplate: z.string().regex(PROMPT_NAME_PATTERN).optional(),
   })
   .refine(
     (value) => value.harness !== undefined || value.provider !== undefined,
@@ -1372,9 +1374,11 @@ export function withProjectInstructions(
  * launch-grant and delegation layer.
  * Revision 19 (#579) changed only a nested shape: the optional `harness` pin of a roster entry's
  * resolved profile in `capabilities`.
+ * Revision 20 (#582) changed only a nested shape: the optional `promptTemplate` of a request
+ * summary in `steps` (step and attempt `request`).
  * @internal
  */
-export const SUPPORTED_SCHEMA_REVISION = 19;
+export const SUPPORTED_SCHEMA_REVISION = 20;
 
 /**
  * The identity a run's answer deliveries and `workflow rm` bind to: its random `generation`, or
