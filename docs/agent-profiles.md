@@ -142,9 +142,11 @@ on `workflow execute`, `execute --resume`, `execute --fork-from`, `workflow star
 `workflow resume` (`RunOptions.requireGrants` for embedders). A child's own `requireGrants` is
 ignored; children inherit the root's setting. The run-level flag is sticky: it is saved with the run
 (`requireGrants: true` in the record), so every later resume, `workflow tick` and the emitted grant
-command keep it without repeating it, and it cannot be turned off. A fork is a new run and does not
-inherit it. Removing the definition field under `--accept-code-change` turns the layer off unless
-the run-level flag was given.
+command keep it without repeating it, and it cannot be turned off. A resume that first gives it and
+is refused for a missing grant before the body still saves it (and nothing else), so the printed
+`--resume --grant` retry enforces; if that save fails, the refusal says to repeat
+`--require-grants`. A fork is a new run and does not inherit it. Removing the definition field under
+`--accept-code-change` turns the layer off unless the run-level flag was given.
 
 ```sh
 quiet-choir workflow execute review.workflow.ts --run-id review-1 --require-grants --grant fixer

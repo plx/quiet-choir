@@ -54,11 +54,17 @@ export class GrantRequiredError extends ConfigurationError {
      * admit it and only an access-class grant (`access` or `all`) does.
      */
     public readonly classOnly = false,
+    /**
+     * Whether the retry must repeat `--require-grants`: the layer came only from this invocation
+     * and the run record could not keep it.
+     */
+    repeatRequireGrants = false,
   ) {
+    const retry = repeatRequireGrants ? 'Retry with --require-grants and' : 'Retry with';
     super(
       classOnly
-        ? `Profile ${profile} requires ${access} access for call-site capability overrides, which profile grants do not cover. Retry with --grant ${access} or --grant all.`
-        : `Profile ${profile} requires ${access} access. Retry with --grant ${profile}, --grant ${access}, or --grant all.`,
+        ? `Profile ${profile} requires ${access} access for call-site capability overrides, which profile grants do not cover. ${retry} --grant ${access} or --grant all.`
+        : `Profile ${profile} requires ${access} access. ${retry} --grant ${profile}, --grant ${access}, or --grant all.`,
     );
     this.name = 'GrantRequiredError';
   }

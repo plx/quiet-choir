@@ -80,14 +80,14 @@ environment edits, and provider boundaries.
 Launch grants are opt-in: by default a write or exec role runs without one. Set
 `requireGrants: true` on the root definition, or pass `--require-grants` to `workflow execute`,
 `execute --resume`, `execute --fork-from`, `workflow start` or `workflow resume`
-(`RunOptions.requireGrants` when embedding). The run-level flag is saved with the run: later
-resumes, `tick` and emitted commands keep it, and a fork does not inherit it. Under it, every
-declared/default write or exec role needs a launch grant: `--grant fixer`, `--grant write`,
-`--grant exec` (includes write), or `--grant all`. Declared roles preflight before effects;
-selecting built-in `edit` directly needs a grant before that call. Grants persist on resume. Named
-grants pin capability declarations and must be renewed if those change. Elevated raw call-site
-controls need class/all grants. Without the layer, `--grant` is still validated and saved, so a
-later `--require-grants` resume honours it.
+(`RunOptions.requireGrants` when embedding). The run-level flag is saved with the run, even by a
+resume refused for a missing grant before the body: later resumes, `tick` and emitted commands keep
+it, and a fork does not inherit it. Under it, every declared/default write or exec role needs a
+launch grant: `--grant fixer`, `--grant write`, `--grant exec` (includes write), or `--grant all`.
+Declared roles preflight before effects; selecting built-in `edit` directly needs a grant before
+that call. Grants persist on resume. Named grants pin capability declarations and must be renewed if
+those change. Elevated raw call-site controls need class/all grants. Without the layer, `--grant` is
+still validated and saved, so a later `--require-grants` resume honours it.
 
 Raise execution limits without source edits using `--resume --run-id ID --profile scout.maxTurns=60`
 or `--profile '*.timeoutMs=1800000'`. Profile override fields are maxTurns, maxBudgetUsd, timeoutMs

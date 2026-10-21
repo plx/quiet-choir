@@ -251,8 +251,9 @@ Launch grants are opt-in. `--require-grants` on `execute` (also with `--resume` 
 `start` and `resume` turns them on for the run, as `requireGrants: true` on the root definition
 does: write and exec roles then need `--grant ROLE`, `--grant write`, `--grant exec` or
 `--grant all` before effects, and child roles are bounded by their parent's. The flag is saved with
-the run, so `resume`, `answer --resume`, `tick` and emitted commands keep it without repeating it; a
-fork does not inherit it. `--grant` (repeatable) is accepted and saved with or without it. See
+the run (even by a resume refused for a missing grant), so `resume`, `answer --resume`, `tick` and
+emitted commands keep it without repeating it; a fork does not inherit it. `--grant` (repeatable) is
+accepted and saved with or without it. See
 [agent calls](agent-calls.md#requiregrants-launch-grants).
 
 ## Worktree flags

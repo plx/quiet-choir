@@ -11,6 +11,7 @@ import {
   codexCapabilityKeys,
   defineHarness,
   defineWorkflow,
+  FileRunStore,
   HarnessError,
   readRun,
   runWorkflow,
@@ -18,7 +19,9 @@ import {
   type AgentProfile,
   type Harness,
   type HarnessAdapter,
+  type OwnedRunStore,
   type ProfileOverride,
+  type RunStore,
 } from '../src/index.js';
 import {
   capabilityManifestSchema,
@@ -1764,6 +1767,92 @@ describe('requireGrants and strictProfiles opt-in (#577)', () => {
     expect(await readRun(setup())).not.toHaveProperty('requireGrants');
     await runWorkflow(definition, { ...setup(), resume: true, requireGrants: true });
     expect((await readRun(setup())).requireGrants).toBe(true);
+  });
+
+  it('saves the run-level flag when a resume that first gives it is refused before the body', async () => {
+    const invoke = vi
+      .fn<Harness['invoke']>()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue(reply);
+    const options = { ...setup(), harness: { invoke } };
+    // With the layer off the declared write role runs ungranted, and this run fails.
+    await expect(runWorkflow(fixerDefinition(), options)).rejects.toThrow('offline');
+    const failed = await readRun(setup());
+    expect(failed.status).toBe('failed');
+    expect(failed).not.toHaveProperty('requireGrants');
+    const refused: unknown = await runWorkflow(fixerDefinition(), {
+      ...options,
+      resume: true,
+      requireGrants: true,
+    }).catch((cause: unknown) => cause);
+    expect(refused).toBeInstanceOf(GrantRequiredError);
+    expect((refused as Error).message).toBe(
+      'Profile fixer requires write access. Retry with --grant fixer, --grant write, or --grant all.',
+    );
+    expect(invoke).toHaveBeenCalledTimes(1);
+    // Only the flag is saved: the status, grants and policy are those of the failed run.
+    const saved = await readRun(setup());
+    expect(saved.requireGrants).toBe(true);
+    expect(saved).toMatchObject({
+      status: 'failed',
+      grants: [],
+      grantedProfiles: {},
+      policy: failed.policy,
+      capabilities: failed.capabilities,
+    });
+    // The printed retry without --require-grants still enforces, so a resume with no grant is
+    // refused again, and one with only the grant completes.
+    await expect(runWorkflow(fixerDefinition(), { ...options, resume: true })).rejects.toThrow(
+      GrantRequiredError,
+    );
+    expect(invoke).toHaveBeenCalledTimes(1);
+    await expect(
+      runWorkflow(fixerDefinition(), { ...options, resume: true, grants: ['fixer'] }),
+    ).resolves.toMatchObject({ status: 'completed' });
+    expect(invoke).toHaveBeenCalledTimes(2);
+    const completed = await readRun(setup());
+    expect(completed.requireGrants).toBe(true);
+    expect(completed.capabilities?.requiredGrants).toEqual(['fixer']);
+  });
+
+  it('repeats --require-grants in the retry text when the refusal cannot save the flag', async () => {
+    const definition = fixerDefinition();
+    const invoke = vi.fn<Harness['invoke']>().mockRejectedValueOnce(new Error('offline'));
+    await expect(runWorkflow(definition, { ...setup(), harness: { invoke } })).rejects.toThrow(
+      'offline',
+    );
+    const file = new FileRunStore(stateDir);
+    const store: RunStore = {
+      stateDir: file.stateDir,
+      read: (id) => file.read(id),
+      list: () => file.list(),
+      open: async (id, openOptions): Promise<OwnedRunStore> => {
+        const owned = await file.open(id, openOptions);
+        return {
+          read: () => owned.read(),
+          append: () => Promise.reject(new Error('disk full')),
+          compact: () => owned.compact(),
+          artifacts: (stepId, attempt) => owned.artifacts(stepId, attempt),
+          trackProcess: (invocation, process) => owned.trackProcess(invocation, process),
+          release: () => owned.release(),
+        };
+      },
+    };
+    const refused: unknown = await runWorkflow(definition, {
+      ...setup(),
+      harness: { invoke },
+      store,
+      resume: true,
+      requireGrants: true,
+    }).catch((cause: unknown) => cause);
+    expect(refused).toBeInstanceOf(AggregateError);
+    const grant = (refused as AggregateError).errors[0] as unknown;
+    expect(grant).toBeInstanceOf(GrantRequiredError);
+    expect((grant as Error).message).toBe(
+      'Profile fixer requires write access. Retry with --require-grants and --grant fixer, --grant write, or --grant all.',
+    );
+    expect((refused as Error).message).toContain('disk full');
+    expect(await readRun(setup())).not.toHaveProperty('requireGrants');
   });
 
   it('rejects a requireGrants that is not a boolean before the body', async () => {
