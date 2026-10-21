@@ -15,6 +15,14 @@ export function eventsFlag(
   });
 }
 
+/**
+ * The `--workflow <name>` flag of execute (and so start) and validate: the declared workflow of a
+ * `*.quiet-choir` package to run instead of its entry (ADR 0065 section 2). @internal
+ */
+export const workflowFlag: Interfaces.OptionFlag<string | undefined> = Flags.string({
+  description: 'Workflow to run from a .quiet-choir package; defaults to its entry',
+});
+
 /** The sticky worktree flags shared by execute (and so start) and resume. @internal */
 export const worktreeFlags = {
   'worktree-keep': Flags.option({ options: ['all', 'failed', 'none'] as const })({
@@ -65,6 +73,7 @@ export function worktreePlan(
 
 /** Parsed flags of `workflow execute`, shared with `workflow start`. @internal */
 export interface WorkflowExecuteFlags {
+  readonly workflow: string | undefined;
   readonly 'max-child-depth': number | undefined;
   readonly 'registry-dir': string[] | undefined;
   readonly 'max-run-cost-usd': string | undefined;
@@ -116,6 +125,7 @@ export interface WorkflowExecuteFlags {
  * booleans, so a new execute flag reaches both commands. @internal
  */
 export const executeFlags: Interfaces.FlagInput<WorkflowExecuteFlags> = {
+  workflow: workflowFlag,
   'max-child-depth': Flags.integer({
     min: 0,
     max: Number.MAX_SAFE_INTEGER,

@@ -39,16 +39,25 @@ function resume(
   );
 }
 
+/**
+ * The `workflow execute` words that start a new run from where `run` was launched: its package
+ * directory and workflow for a package run (ADR 0065 section 2), else its module.
+ */
+function launchSource(run: RunRecord, entrypoint: string): string[] {
+  const pkg = run.launch?.package;
+  return pkg === undefined ? [entrypoint] : [pkg.root, '--workflow', run.workflow.name];
+}
+
 function fork(
   launcher: CommandLauncher | undefined,
-  entrypoint: string,
+  source: readonly string[],
   runId: string,
   stateDir: string,
 ): string[] {
   return workflowArgv(
     launcher,
     'execute',
-    entrypoint,
+    ...source,
     '--fork-from',
     runId,
     '--run-id',
@@ -78,7 +87,9 @@ function failedNext(
 ): NextCommand[] {
   const cause: RecoveryCause | undefined = run.recoveryCause;
   const forks = (why: string): NextCommand[] =>
-    canFork(run) ? [{ why, argv: fork(launcher, entrypoint, run.id, stateDir) }] : [];
+    canFork(run)
+      ? [{ why, argv: fork(launcher, launchSource(run, entrypoint), run.id, stateDir) }]
+      : [];
   switch (cause?.kind) {
     case 'grant':
       // Only under requireGrants, which the record keeps (saved before the body starts, and by a
@@ -304,7 +315,7 @@ function incompatibleNext(
       ? [
           {
             why: 'The stored entrypoint is gone (moved checkout or deleted file); fork from its new location, substituting <ENTRYPOINT>.',
-            argv: fork(launcher, '<ENTRYPOINT>', runId, stateDir),
+            argv: fork(launcher, ['<ENTRYPOINT>'], runId, stateDir),
           },
         ]
       : [];
@@ -319,6 +330,15 @@ function incompatibleNext(
     ];
   const stored = details['storedEntrypoint'];
   const requested = details['requestedEntrypoint'];
+  // A package request forks from the package directory with its selected workflow.
+  const requestedPackage = details['requestedPackage'];
+  const requestedWorkflow = details['requestedWorkflow'];
+  const requestedSource =
+    typeof requestedPackage === 'string' && typeof requestedWorkflow === 'string'
+      ? [requestedPackage, '--workflow', requestedWorkflow]
+      : typeof requested === 'string'
+        ? [requested]
+        : [];
   if (typeof stored === 'string' && typeof requested === 'string')
     return [
       {
@@ -329,20 +349,20 @@ function incompatibleNext(
         ? [
             {
               why: 'Or fork a new run from the requested entrypoint.',
-              argv: fork(launcher, requested, runId, stateDir),
+              argv: fork(launcher, requestedSource, runId, stateDir),
             },
           ]
         : []),
     ];
   const changed = strings(details['changed']);
   const entrypoint = run?.launch?.entrypoint;
-  if (!changed || entrypoint === undefined || changed.includes('name')) return [];
+  if (!run || !changed || entrypoint === undefined || changed.includes('name')) return [];
   const forkEntry = {
     why: 'Fork a new run under the current code, reusing matching completed steps.',
-    argv: fork(launcher, entrypoint, runId, stateDir),
+    argv: fork(launcher, launchSource(run, entrypoint), runId, stateDir),
   };
   const forks = forkable ? [forkEntry] : [];
-  return details['canAcceptCodeChange'] === true && run?.status !== 'completed'
+  return details['canAcceptCodeChange'] === true && run.status !== 'completed'
     ? [
         {
           why: 'Only code or schemas changed; accept the change and resume (refused without changes if a completed step changed).',

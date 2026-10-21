@@ -2,6 +2,7 @@ import { Args, Flags, type Interfaces } from '@oclif/core';
 
 import { compactWorkflowMetadata } from '../../cli/workflow-metadata-view.js';
 import { WorkflowCommand } from '../../cli/workflow-command.js';
+import { workflowFlag } from '../../cli/execute-flags.js';
 import { formatWorkflowDiagnostic } from '../../cli/presentation.js';
 import { WorkflowExecutor } from '../../workflow/loader/executor.js';
 
@@ -12,12 +13,13 @@ interface WorkflowValidateArgs {
 interface WorkflowValidateFlags {
   readonly json: boolean | undefined;
   readonly 'harness-schemas': boolean | undefined;
+  readonly workflow: string | undefined;
 }
 
 export default class WorkflowValidate extends WorkflowCommand {
   public static override readonly args: Interfaces.ArgInput<WorkflowValidateArgs> = {
     file: Args.string({
-      description: 'Trusted TypeScript workflow module',
+      description: 'Trusted TypeScript workflow module or *.quiet-choir package directory',
       required: true,
     }),
   };
@@ -29,6 +31,7 @@ export default class WorkflowValidate extends WorkflowCommand {
         'With --json, print the complete document: harness option JSON Schemas, the uncompacted capability manifest and the root entrypoint',
       dependsOn: ['json'],
     }),
+    workflow: workflowFlag,
   };
 
   public static override readonly summary =
@@ -38,13 +41,16 @@ export default class WorkflowValidate extends WorkflowCommand {
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(WorkflowValidate);
-    const typecheck = await this.entrypoint(args.file);
+    const source = await this.sourcePlan(args.file, flags.workflow);
     const executor = new WorkflowExecutor({
       logger: this.createExecutionLogger(flags),
       commandLauncher: this.commandLauncher,
       signal: this.signal,
     });
-    const result = await executor.execute({ kind: 'workflow.validate', typecheck });
+    const result = await executor.execute({
+      kind: 'workflow.validate',
+      ...source,
+    });
     if (!result.ok) {
       for (const diagnostic of result.diagnostics) {
         this.logToStderr(formatWorkflowDiagnostic(diagnostic, process.cwd()));
@@ -59,7 +65,9 @@ export default class WorkflowValidate extends WorkflowCommand {
               ...result,
               workflow: compactWorkflowMetadata(result.workflow, result.entrypoint),
             },
-        `Validated ${result.workflow.name}@${result.workflow.version} (${result.entrypoint}).`,
+        result.package === undefined
+          ? `Validated ${result.workflow.name}@${result.workflow.version} (${result.entrypoint}).`
+          : `Validated ${result.package.name}/${result.workflow.name}@${result.workflow.version} (package ${result.package.name}@${result.package.version}, ${result.entrypoint}).`,
       );
     }
   }

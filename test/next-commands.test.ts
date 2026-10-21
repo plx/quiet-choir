@@ -919,3 +919,77 @@ describe('formatArgv', () => {
     ).toBe(`'human:<name>' 'human:Pat<x>' 'Human:<NAME>' 'human:<NAME>x' 'a:b:<NAME>'`);
   });
 });
+
+describe('package runs (#584)', () => {
+  const root = '/project/demo.quiet-choir';
+  const packageRun = (overrides: Record<string, unknown> = {}): RunRecord =>
+    run({
+      launch: {
+        entrypoint: `${root}/workflows/other.ts`,
+        tsconfig: null,
+        package: { root, name: 'demo', version: '1' },
+      },
+      workflow: { name: 'other', version: '1' },
+      ...overrides,
+    });
+  const packageFork = (from: string, workflow: string) => [
+    ...prefix,
+    'execute',
+    from,
+    '--workflow',
+    workflow,
+    '--fork-from',
+    'r1',
+    '--run-id',
+    '<NEW_RUN_ID>',
+    '--state-dir',
+    stateDir,
+  ];
+
+  it('forks a diverged package run from its package directory and workflow', () => {
+    const next = runNextCommands(
+      packageRun({ recoveryCause: { kind: 'divergence' } }),
+      'failed',
+      stateDir,
+      launcher,
+    );
+    expect(next.map((entry) => entry.argv)).toEqual([packageFork(root, 'other')]);
+  });
+
+  it('forks a code-changed package run the same way, after the accepting resume', () => {
+    expect(
+      failure({
+        code: 'run.incompatible',
+        details: compatibility(['code'], true),
+        run: packageRun(),
+      }),
+    ).toEqual([resume('--accept-code-change'), packageFork(root, 'other')]);
+  });
+
+  it('keeps the resume entry and forks a requested package with its workflow', () => {
+    expect(
+      failure({
+        code: 'run.incompatible',
+        details: {
+          storedEntrypoint: entrypoint,
+          requestedEntrypoint: '/elsewhere/x.quiet-choir',
+          requestedPackage: '/elsewhere/x.quiet-choir',
+          requestedWorkflow: 'main',
+        },
+      }),
+    ).toEqual([resume(), packageFork('/elsewhere/x.quiet-choir', 'main')]);
+  });
+
+  it('spells a package fork target in a divergence refusal', () => {
+    const change = new StepIdentityChangedError('changed', {
+      stepId: 'review',
+      components: ['callback'],
+      status: 'completed',
+    });
+    const target = { runId: 'r1', stateDir, entrypoint: root, workflow: 'other' };
+    const expected = forkCommand(change, target, launcher);
+    expect(expected.slice(3, 7)).toEqual(['execute', root, '--workflow', 'other']);
+    const refusal = divergenceRefusal(change, target, launcher);
+    expect(failure({ code: 'run.incompatible', details: refusal.details })).toEqual([expected]);
+  });
+});

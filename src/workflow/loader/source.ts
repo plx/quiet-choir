@@ -107,20 +107,39 @@ export async function withPromptSources(
   return { hash: digest(files), files };
 }
 
-/** Persist launch paths separately from semantic identity so pending can check bytes without imports. @internal */
+/**
+ * Persist launch paths separately from semantic identity so pending can check bytes without
+ * imports. A package run (ADR 0065 section 2) passes `override`: `entrypoint` becomes the real path
+ * of the selected workflow's module and `package` records the package's real root, name and
+ * version, while the project root that keys `sources` still comes from the plan's entrypoint (the
+ * manifest), so a launch and its resume agree. @internal
+ */
 export async function workflowLaunch(
   plan: TypecheckPlan,
   source: SourceFingerprint,
+  override?: {
+    readonly entrypoint: string;
+    readonly package: { readonly root: string; readonly name: string; readonly version: string };
+  },
 ): Promise<WorkflowLaunch> {
-  const entrypoint = await realpath(plan.entrypoint);
+  const typecheckEntrypoint = await realpath(plan.entrypoint);
   const tsconfig =
     plan.configuration.kind === 'tsconfig' ? await realpath(plan.configuration.path) : null;
-  const root = await projectRoot(entrypoint, tsconfig ?? undefined);
+  const root = await projectRoot(typecheckEntrypoint, tsconfig ?? undefined);
   return {
-    entrypoint,
+    entrypoint: override === undefined ? typecheckEntrypoint : await realpath(override.entrypoint),
     tsconfig,
     sources: Object.fromEntries(
       Object.entries(source.files).map(([path, hash]) => [resolve(root, path), hash]),
     ),
+    ...(override === undefined
+      ? {}
+      : {
+          package: {
+            root: await realpath(override.package.root),
+            name: override.package.name,
+            version: override.package.version,
+          },
+        }),
   };
 }

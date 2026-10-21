@@ -184,6 +184,8 @@ export { defineTeam } from './workflow/team.js';
 export type { Team, TeamOf } from './workflow/team.js';
 export { definePrompts, PromptError } from './workflow/prompts/index.js';
 export type { CheckedPromptEntries, PromptErrorDetails } from './workflow/prompts/index.js';
+export { definePackage } from './workflow/package/index.js';
+export type { PackageOptions, WorkflowPackage } from './workflow/package/model.js';
 export type {
   AnyPromptSet,
   Prompt,
@@ -268,6 +270,7 @@ export type {
   PendingQuestion,
   WorkflowLaunch,
   WorkflowLaunchOptions,
+  WorkflowLaunchPackage,
   LaunchPolicy,
 } from './workflow/runtime/question-model.js';
 export { writeAnswer, listPending, AnswerError } from './workflow/runtime/inbox.js';

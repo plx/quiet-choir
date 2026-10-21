@@ -36,7 +36,7 @@ interface WorkflowExecuteArgs {
 export default class WorkflowExecute extends WorkflowCommand {
   public static override readonly args: Interfaces.ArgInput<WorkflowExecuteArgs> = {
     file: Args.string({
-      description: 'Trusted TypeScript workflow module',
+      description: 'Trusted TypeScript workflow module or *.quiet-choir package directory',
     }),
   };
 
@@ -107,10 +107,20 @@ export default class WorkflowExecute extends WorkflowCommand {
     }
     if (args.file === undefined && !flags.resume)
       this.fail('usage.flag', 'A workflow file is required unless --resume --run-id is used.');
+    // A path, a TypeScript file name or a .quiet-choir package name is a file argument, so a
+    // missing one is a file error rather than a registry lookup.
     const useRegistry =
       args.file !== undefined &&
       ((flags['registry-dir']?.length ?? 0) > 0 ||
-        (!existsSync(args.file) && !/[\\/]|\.(?:ts|tsx|mts|cts)$/iu.test(args.file)));
+        (!existsSync(args.file) &&
+          !/[\\/]|\.(?:ts|tsx|mts|cts)$|\.quiet-choir$/iu.test(args.file)));
+    if (flags.workflow !== undefined && (args.file === undefined || useRegistry))
+      this.fail(
+        'usage.flag',
+        args.file === undefined
+          ? "--workflow selects a workflow of a .quiet-choir package; a resume by run ID resumes the run's own workflow."
+          : '--workflow selects a workflow of a .quiet-choir package, not of a registered name.',
+      );
     const launch =
       args.file === undefined
         ? { kind: 'workflow.resume' as const }
@@ -126,7 +136,7 @@ export default class WorkflowExecute extends WorkflowCommand {
             }
           : {
               kind: 'workflow.execute' as const,
-              typecheck: await this.entrypoint(args.file),
+              ...(await this.sourcePlan(args.file, flags.workflow)),
               cwd: process.cwd(),
               resume: flags.resume ?? false,
             };

@@ -27,11 +27,32 @@ import type { NextCommand } from './next-commands.js';
 import type { AnswerDelivery } from '../runtime/inbox.js';
 import type { ForkOptions, ResumeCheck, WorkflowIdentity } from '../runtime/replay-model.js';
 import type { DurabilityDiagnostic, TypecheckPlan } from '../typecheck/model.js';
+import type { WorkflowLaunchPackage } from '../runtime/question-model.js';
+
+/**
+ * A `*.quiet-choir` package to load (ADR 0065 section 2). The plan's `typecheck` is the manifest's;
+ * the executor imports the manifest, selects `workflow` and resolves that workflow's own module
+ * afterwards, because only an import can tell which module default-exports it.
+ */
+export interface PackageSelection {
+  readonly kind: 'workflow.package';
+  /** Absolute package directory. */
+  readonly root: string;
+  /** Absolute `<root>/package.ts`. */
+  readonly manifest: string;
+  /**
+   * The declared workflow to run (`--workflow`). Null selects the package's `entry`, except on a
+   * resume or check-resume, where it selects the run's recorded workflow.
+   */
+  readonly workflow: string | null;
+}
 
 /** Plain-data instructions for checking and importing a trusted workflow module. */
 export interface ValidateWorkflowPlan extends ExecutionPlan {
   readonly kind: 'workflow.validate';
   readonly typecheck: TypecheckPlan;
+  /** Load a package: `typecheck` is its manifest's plan. */
+  readonly package?: PackageSelection;
   /**
    * How durability lint findings (ADR 0041) affect the result: `'error'` (the default) fails it as
    * `load.typecheck` before import; `'warn'` logs them and validates, as `list-defs` does.
@@ -47,7 +68,10 @@ export interface ListDefinitionsPlan extends ExecutionPlan {
 }
 
 /** Resolve a registry name before using the ordinary source-file execution path. */
-export interface ExecuteNamedWorkflowPlan extends Omit<ExecuteWorkflowPlan, 'kind' | 'typecheck'> {
+export interface ExecuteNamedWorkflowPlan extends Omit<
+  ExecuteWorkflowPlan,
+  'kind' | 'typecheck' | 'package'
+> {
   readonly kind: 'workflow.execute-name';
   readonly name: string;
   readonly directories: readonly string[];
@@ -100,6 +124,8 @@ export interface ExecuteWorkflowPlan extends ExecutionPlan {
    */
   readonly events?: string;
   readonly typecheck: TypecheckPlan;
+  /** Load a package: `typecheck` is its manifest's plan. */
+  readonly package?: PackageSelection;
   readonly runId: string;
   readonly stateDir: string;
   readonly cwd: string;
@@ -123,7 +149,7 @@ export interface ExecuteWorkflowPlan extends ExecutionPlan {
 /** Resume using a checkpoint's stored entrypoint, compiler configuration, and working directory. */
 export interface ResumeWorkflowPlan extends Omit<
   ExecuteWorkflowPlan,
-  'kind' | 'typecheck' | 'cwd' | 'resume'
+  'kind' | 'typecheck' | 'package' | 'cwd' | 'resume'
 > {
   readonly kind: 'workflow.resume';
 }
@@ -166,6 +192,8 @@ export interface PendingWorkflowsPlan extends ExecutionPlan {
 export interface CheckResumePlan extends ExecutionPlan {
   readonly kind: 'workflow.check-resume';
   readonly typecheck: TypecheckPlan;
+  /** Load a package: `typecheck` is its manifest's plan. */
+  readonly package?: PackageSelection;
   readonly runId: string;
   readonly stateDir: string;
   readonly cwd: string;
@@ -456,7 +484,10 @@ export type WorkflowCommandResult = ExecutionResult &
     | {
         readonly kind: 'workflow.validate.result';
         readonly ok: true;
+        /** The workflow's module: for a package, the selected workflow's own module. */
         readonly entrypoint: string;
+        /** The package a `*.quiet-choir` validation loaded; absent for a single module. */
+        readonly package?: WorkflowLaunchPackage;
         /** Durability lint diagnostics; always empty on success, since findings fail validation. */
         readonly diagnostics: readonly DurabilityDiagnostic[];
         readonly workflow: WorkflowDescription & {

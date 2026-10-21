@@ -12,7 +12,8 @@ interface WorkflowTypecheckArgs {
 export default class WorkflowTypecheck extends WorkflowCommand {
   public static override readonly args: Interfaces.ArgInput<WorkflowTypecheckArgs> = {
     file: Args.string({
-      description: 'TypeScript workflow entrypoint to check',
+      description:
+        'TypeScript workflow entrypoint to check, or a *.quiet-choir package directory (checks its package.ts manifest)',
       required: true,
     }),
   };
@@ -25,7 +26,7 @@ export default class WorkflowTypecheck extends WorkflowCommand {
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(WorkflowTypecheck);
-    const typecheck = await this.entrypoint(args.file);
+    const { typecheck } = await this.entrypoint(args.file);
 
     const executor = new TypeScriptExecutor(this.createExecutionLogger(flags));
     const result = await executor.execute(typecheck);

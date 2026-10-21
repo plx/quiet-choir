@@ -62,7 +62,8 @@ export default class WorkflowStart extends WorkflowCommand {
 
   public static override readonly args: Interfaces.ArgInput<WorkflowStartArgs> = {
     file: Args.string({
-      description: 'Trusted TypeScript workflow module; optional with --resume --run-id',
+      description:
+        'Trusted TypeScript workflow module or *.quiet-choir package directory; optional with --resume --run-id',
     }),
   };
 

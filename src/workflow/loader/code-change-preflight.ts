@@ -27,16 +27,28 @@ function invalidatedId(
   return change instanceof ReplaySkippedError ? (change.skipped[0] ?? '<STEP_ID>') : change.stepId;
 }
 
+/**
+ * Where a refusal's fork command starts the new run: a module `entrypoint`, or a package directory
+ * with the `workflow` it selects (ADR 0065 section 2).
+ */
+interface ForkTarget {
+  readonly runId: string;
+  readonly stateDir: string;
+  readonly entrypoint: string;
+  readonly workflow?: string;
+}
+
 /** The fork command that replaces a refused accepted resume, spelled like `resumeCommand`. @internal */
 export function forkCommand(
   change: Pick<StepIdentityChangedError, 'stepId'> | ReplaySkippedError | SettledMapChangedError,
-  target: { readonly runId: string; readonly stateDir: string; readonly entrypoint: string },
+  target: ForkTarget,
   launcher?: CommandLauncher,
 ): string[] {
   return workflowArgv(
     launcher,
     'execute',
     target.entrypoint,
+    ...(target.workflow === undefined ? [] : ['--workflow', target.workflow]),
     '--fork-from',
     target.runId,
     '--reuse',
@@ -60,7 +72,7 @@ export function forkCommand(
  */
 export function divergenceRefusal(
   change: StepIdentityChangedError | ReplaySkippedError | SettledMapChangedError,
-  target: { readonly runId: string; readonly stateDir: string; readonly entrypoint: string },
+  target: ForkTarget,
   launcher?: CommandLauncher,
 ): RunRefusedError {
   const next = forkCommand(change, target, launcher);
