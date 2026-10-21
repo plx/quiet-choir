@@ -64,12 +64,12 @@ until #N closes.
 
 | Stage     | Who (model / effort)                  | What                                                                                                                                                                                                                                                                                                                     |
 | --------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Survey    | haiku / low                           | `epic.mjs survey`: the epic's checklist order, sub-issues, each ticket's state, dependencies, hold labels, split markers, and open PRs. Picks in-flight work first, then a finished split parent, then the first ready ticket.                                                                                           |
+| Survey    | sonnet / low                          | `epic.mjs survey`: the epic's checklist order, sub-issues, each ticket's state, dependencies, hold labels, split markers, and open PRs. Picks in-flight work first, then a finished split parent, then the first ready ticket.                                                                                           |
 | Plan      | opus / high (+ opus / medium skeptic) | `epic.mjs start` prepares the ticket's branch in the dedicated worktree. One planner reads the ticket and the code once and decides whether it is ready, obsolete, needs a decision, is blocked, or should be split. For a ready ticket it writes the plan (`plan.json`).                                                |
 | Implement | sonnet / high or opus / high          | The implementer follows the plan, commits, and runs the full check suite through `epic.mjs check`. The mechanic escalates to the surgeon when it leaves work unfinished. `epic.mjs verify` then checks the report mechanically.                                                                                          |
 | Publish   | sonnet / medium ∥ sonnet / medium     | A scribe writes the PR description while another writes up out-of-scope follow-ups (filed by `epic.mjs file-issue`). `epic.mjs open-pr` opens the PR. Only with `mergeDown: { codexMode: 'github' }` does the workflow then wait for Codex's automatic first review; by default the landing runs a local `codex review`. |
 | Land      | `merge-down-pr`                       | Inline child workflow: review against the ticket, thread triage and fixes, CI + Codex + CodeQL gate, squash-merge, issue summary comment.                                                                                                                                                                                |
-| Report    | haiku / low                           | `epic.mjs tick` checks the ticket off in the epic, `ledger` appends a line, and a fresh `survey` gives `remaining` and `next`.                                                                                                                                                                                           |
+| Report    | sonnet / low                          | `epic.mjs tick` checks the ticket off in the epic, `ledger` appends a line, and a fresh `survey` gives `remaining` and `next`.                                                                                                                                                                                           |
 
 ### Structural verification
 
@@ -83,6 +83,13 @@ depends on. Here:
   by the landing review); anything `partial` or `not-done` blocks. `verify` confirms that every
   commit-shaped value is on the branch (a criterion already met on main leaves the commit empty),
   the tree is clean, and the last full check passed at the exact head.
+- **The gate is observed, not reported.** Implementers run the suite as `epic.mjs check-start`
+  followed by foreground `check-wait` slices, because it outlasts the shell's 10-minute limit. If
+  the verified head still has no passing gate, the workflow waits out the implementer's own check
+  and otherwise runs the gate itself before blocking (#581).
+- **Follow-ups are filed before the PR opens.** Every follow-up an implementer lists must be filed,
+  or matched to an issue that `epic.mjs issue-state` confirms is open, before the PR opens; the PR
+  body links them.
 - **Closing a ticket needs two opinions.** An "obsolete" verdict is closed only if an independent
   skeptic agrees. If the skeptic disagrees, the ticket is re-planned instead.
 - **Relayed outputs are verified.** Every clerk copy is checked by nonce and FNV-1a hash. A failed
