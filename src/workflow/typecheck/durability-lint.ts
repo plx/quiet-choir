@@ -22,6 +22,7 @@ const contextEffects = new Set([
   'sleep',
   'sleepUntil',
   'now',
+  'decide',
   'wait',
   'poll',
   'ask',

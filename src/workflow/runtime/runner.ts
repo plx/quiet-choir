@@ -16,6 +16,15 @@ import {
 import { windowSuspensionMessage } from './rate-limit.js';
 import { RunChildren } from './children.js';
 import { checkedDefinition, describeWorkflow } from './definition.js';
+import { DecisionError } from './decision-error.js';
+import type { DecisionProviderConfiguration } from './decision-model.js';
+import type { DecisionResult } from './decision-protocol.js';
+import {
+  DecisionProviders,
+  checkedDecisionConfigurations,
+  prepareDecision,
+  type PreparedDecision,
+} from './decisions.js';
 import { agentUsageSchema, normalizeUsage } from './usage.js';
 import { legacyAttemptKind } from './usage-summary.js';
 import { mergeOptionsSchema, mergeResultSchema } from './worktree-schema.js';
@@ -521,6 +530,14 @@ export interface RunOptions extends WorkflowCodeOptions {
   readonly adapters?: HarnessAdapters;
   /** Per-harness operator configuration supplied only to declared adapter factories. */
   readonly harnessConfigurations?: HarnessConfigurations;
+  /**
+   * Per-provider operator configuration for declared decision providers (ADR 0066), as the CLI's
+   * `--harness-config` `decisions.<name>` supplies it: `baseUrl`, `apiKeyEnv` and `defaultModel`,
+   * each replacing the provider factory's own value. Validated strictly when the run starts. A
+   * `defaultModel` here is the requested model of calls that name none, so it enters their
+   * identity.
+   */
+  readonly decisionConfigurations?: Readonly<Record<string, DecisionProviderConfiguration>>;
   /** Explicitly accept replaying outputs recorded under a different harness kind, including forks. */
   readonly allowHarnessChange?: boolean;
   /**
@@ -842,6 +859,9 @@ export async function runWorkflow<
     throw new Error('Workflow name and version must be nonempty.');
   if (options.launch) workflowLaunchOptionsSchema.parse(options.launch);
   const registry = new HarnessRegistry(options);
+  const decisionProviders = new DecisionProviders(
+    checkedDecisionConfigurations(options.decisionConfigurations),
+  );
   registry.definitions(definition);
   let harnessKind = registry.kind(checkedDefinition(definition));
   if (typeof harnessKind !== 'string' || !harnessKind.trim() || harnessKind.length > 100)
@@ -2471,6 +2491,16 @@ export async function runWorkflow<
               const evidence = harnessEvidence(cause);
               if (agent && cause instanceof z.ZodError)
                 attemptRecord.validationIssues = jsonValue(cause.issues) as JsonValue[];
+              // A decision provider's rejected response (ADR 0066 section 4); local attempts take
+              // only the body and issues, never harness evidence such as a session ID.
+              if (!agent && cause instanceof DecisionError) {
+                if (cause.rawText !== null) {
+                  attemptRecord.response = cause.rawText;
+                  attemptRecord.responseTruncated = cause.responseTruncated;
+                }
+                if (cause.issues !== undefined)
+                  attemptRecord.validationIssues = jsonValue(cause.issues) as JsonValue[];
+              }
               if (evidence) {
                 if (evidence.usage !== null)
                   attemptRecord.usage = normalizeUsage(
@@ -3918,6 +3948,24 @@ export async function runWorkflow<
           schema: z.number().int().nonnegative(),
           run: () => clockNow(clock),
         }),
+      // One version-identified step per call (ADR 0066 section 3). Validation, provider resolution
+      // and the capability check fail before any record, attributed to the call's step ID.
+      decide: ((leaf: string, settings: unknown) => {
+        let prepared: PreparedDecision;
+        try {
+          prepared = prepareDecision(decisionProviders, children.definition, settings);
+        } catch (error) {
+          return launch<never>(names.qualify(leaf), 'step', () => {
+            throw error;
+          });
+        }
+        const result = context.step<DecisionResult, ErrorMode>(leaf, prepared.step);
+        return prepared.settled
+          ? (result as Promise<Settled<DecisionResult>>).then((outcome) =>
+              outcome.ok ? { ok: true, value: outcome.value.answers } : outcome,
+            )
+          : (result as Promise<DecisionResult>).then((outcome) => outcome.answers);
+      }) as WorkflowContext['decide'],
       // Cast: WaitSources<N> types previous.note for the author from noteSchema; the runtime passes
       // stored JSON, validated with noteSchema when the poll has one.
       wait: <const S extends WaitSources<N>, N extends JsonInput = JsonValue>(

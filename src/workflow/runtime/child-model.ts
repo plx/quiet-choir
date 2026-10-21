@@ -1,5 +1,6 @@
 import type { HarnessCapabilities } from './harness-model.js';
 import type { HarnessDeclaration } from './harness-model.js';
+import type { DecisionProviderDeclaration } from './decision-model.js';
 import type { z } from 'zod';
 import type { AnyPromptSet, ErrorMode, JsonValue, Settled } from './model.js';
 import type { MapStepError } from './fan-out.js';
@@ -9,6 +10,8 @@ import type { AgentDefaults, AgentProfile, CapabilityManifest } from './profiles
 export interface WorkflowDeclaration {
   /** Explicit typed agent registrations available in this child. */
   readonly harnesses?: readonly HarnessDeclaration[];
+  /** Decision providers available to `ctx.decide` in this workflow. */
+  readonly decisions?: readonly DecisionProviderDeclaration[];
   /** Stable dispatch name. */
   readonly name: string;
   /** Explicit compatibility version. */
