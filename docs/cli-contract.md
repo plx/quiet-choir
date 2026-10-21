@@ -857,7 +857,9 @@ A fork is `execute ENTRYPOINT --fork-from RUN --run-id <NEW_RUN_ID> --state-dir 
 directory it is launched from as the new run's cwd. Placeholders are `<ANSWER_JSON>` (serialized
 answer data), `<NAME>` in `--by human:<NAME>` (the name of the human who answered, asked first; a
 human question's entry carries the flag, others do not), `<NEW_RUN_ID>`, `<ENTRYPOINT>` (the
-workflow file's new path) and `<LIMIT>` (a higher value for the stopping cap's flag, or `off`).
+workflow file's new path; a package run's `entrypoint_missing` entry has
+`<PACKAGE_DIR> --workflow NAME` instead, NAME being the recorded workflow, and `<PACKAGE_DIR>` the
+package's new directory) and `<LIMIT>` (a higher value for the stopping cap's flag, or `off`).
 `answer` refuses the unreplaced `human:<NAME>`, and the budget flags refuse an unreplaced `<LIMIT>`.
 A run without stored launch paths (an embedded run) gets no entries, since it cannot be resumed by
 ID.

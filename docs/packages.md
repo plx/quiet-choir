@@ -161,7 +161,8 @@ run, or a different package root. A selection that resolves to a different modul
 `launch.entrypoint` (a renamed workflow file, or `--workflow` naming another workflow) is refused
 the same way after import. A refused package request also carries `requestedPackage` and
 `requestedWorkflow`, so its fork entry stays a package run. A deleted manifest or module is the
-`entrypoint_missing` refusal.
+`entrypoint_missing` refusal, whose fork hint is `<PACKAGE_DIR> --workflow NAME` for you to fill in
+with the package's new directory.
 
 ## What comes next
 

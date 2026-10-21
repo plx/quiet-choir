@@ -310,15 +310,27 @@ function incompatibleNext(
 ): NextCommand[] {
   const { launcher, run } = context;
   const forkable = canFork(run);
-  if (details['reason'] === 'entrypoint_missing')
-    return forkable
-      ? [
-          {
+  if (details['reason'] === 'entrypoint_missing') {
+    if (!forkable) return [];
+    // A package run keeps its recorded workflow selection; only the directory is unknown.
+    const pkg = run?.launch?.package;
+    return [
+      pkg === undefined || run === null
+        ? {
             why: 'The stored entrypoint is gone (moved checkout or deleted file); fork from its new location, substituting <ENTRYPOINT>.',
             argv: fork(launcher, ['<ENTRYPOINT>'], runId, stateDir),
+          }
+        : {
+            why: "The package's manifest or module is gone (moved or deleted); fork from the package's new directory, substituting <PACKAGE_DIR>.",
+            argv: fork(
+              launcher,
+              ['<PACKAGE_DIR>', '--workflow', run.workflow.name],
+              runId,
+              stateDir,
+            ),
           },
-        ]
-      : [];
+    ];
+  }
   // A divergence refusal already carries its fork command, built with the same launcher.
   const divergence = Array.isArray(details['next']) ? strings(details['next'][0]) : undefined;
   if (divergence)

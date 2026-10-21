@@ -980,6 +980,16 @@ describe('package runs (#584)', () => {
     ).toEqual([resume(), packageFork('/elsewhere/x.quiet-choir', 'main')]);
   });
 
+  it('keeps the recorded workflow in the moved-package fork hint', () => {
+    expect(
+      failure({
+        code: 'run.incompatible',
+        details: { storedEntrypoint: `${root}/workflows/other.ts`, reason: 'entrypoint_missing' },
+        run: packageRun(),
+      }),
+    ).toEqual([packageFork('<PACKAGE_DIR>', 'other')]);
+  });
+
   it('spells a package fork target in a divergence refusal', () => {
     const change = new StepIdentityChangedError('changed', {
       stepId: 'review',
