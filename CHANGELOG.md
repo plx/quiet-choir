@@ -26,13 +26,13 @@
   unused schema key. `WorkflowDescription` (and so `validate --json` and `list-defs --json`) gains
   `prompts` (`[]` when none). Validate and execute log each warning at `warn`. Every failure throws
   `PromptError`, a branded fatal authoring error that a settled map never journals. The `list-defs`
-  cache is now version 6: entries carry `prompts` and list every file under each prompt root as a
-  source, so a template edit revalidates; version-5 entries are revalidated once. `minijinja-js`
-  3.0.1 is a new exact runtime dependency, loaded only on the first render or check. New public API:
-  `definePrompts`, `PromptError`, `Prompt`, `PromptSet`, `PromptEntry`, `PromptEntries`,
-  `PromptFunction`, `AnyPromptSet`, `CheckedPromptEntries`, `PromptErrorDetails`, `PromptText`,
-  `StoredRosterEntry` and `WorkflowPromptSet`. Templates are not yet fingerprinted as execution
-  dependencies (#582).
+  cache is now version 7: entries carry `prompts` and list every file under each prompt root as a
+  source, fingerprinted by real path and bytes, so a template edit or link retarget revalidates;
+  older entries are revalidated once. `minijinja-js` 3.0.1 is a new exact runtime dependency, loaded
+  only on the first render or check. New public API: `definePrompts`, `PromptError`, `Prompt`,
+  `PromptSet`, `PromptEntry`, `PromptEntries`, `PromptFunction`, `AnyPromptSet`,
+  `CheckedPromptEntries`, `PromptErrorDetails`, `PromptText`, `StoredRosterEntry` and
+  `WorkflowPromptSet`. Templates are not yet fingerprinted as execution dependencies (#582).
 
 - The Workflow Lab Batch 02 ports, the pattern recipes and both skill copies now use rosters instead
   of profiles (#580, [ADR 0063](docs/decisions/0063-bound-agents-and-typed-rosters.md)). Batch 02

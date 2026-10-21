@@ -104,25 +104,26 @@ describe('trusted definition registry', { timeout: 30_000 }, () => {
     });
     expect(await readFile(marker, 'utf8')).toBe('xx');
     const cache = join(root, 'cache', 'quiet-choir', 'definitions');
-    // A version-5 entry has no prompts section or prompt-root sources (#581), a version-4 entry is
-    // keyed on the version string alone (#345), and a version-3 entry may hold plaintext registered
-    // harness options (#247): none is served, all are rewritten.
-    for (const [index, stale] of [5, 4, 3].entries()) {
+    // A version-6 entry hashed prompt-root files by bytes alone and a version-5 entry has no prompts
+    // section or prompt-root sources (#581), a version-4 entry is keyed on the version string alone
+    // (#345), and a version-3 entry may hold plaintext registered harness options (#247): none is
+    // served, all are rewritten.
+    for (const [index, stale] of [6, 5, 4, 3].entries()) {
       for (const file of await readdir(cache)) {
         const entry = JSON.parse(await readFile(join(cache, file), 'utf8')) as { version: number };
-        expect(entry.version).toBe(6);
+        expect(entry.version).toBe(7);
         await writeFile(join(cache, file), JSON.stringify({ ...entry, version: stale }));
       }
       expect(await engine.execute(plan)).toMatchObject({ ok: true });
       expect(await readFile(marker, 'utf8')).toBe('x'.repeat(3 + index));
       for (const file of await readdir(cache))
-        expect(JSON.parse(await readFile(join(cache, file), 'utf8'))).toMatchObject({ version: 6 });
+        expect(JSON.parse(await readFile(join(cache, file), 'utf8'))).toMatchObject({ version: 7 });
     }
     for (const file of await readdir(cache)) await writeFile(join(cache, file), 'invalid JSON');
     expect(await engine.execute(plan)).toMatchObject({ ok: true });
-    expect(await readFile(marker, 'utf8')).toBe('xxxxxx');
+    expect(await readFile(marker, 'utf8')).toBe('x'.repeat(7));
     expect(await engine.execute({ ...plan, refresh: true })).toMatchObject({ ok: true });
-    expect(await readFile(marker, 'utf8')).toBe('xxxxxxx');
+    expect(await readFile(marker, 'utf8')).toBe('x'.repeat(8));
   });
 
   it('revalidates when the validation key changes and serves the new key afterwards (#345)', async () => {
