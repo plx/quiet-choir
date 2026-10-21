@@ -34,7 +34,7 @@ export type TeamOf<T> = T extends {
  * its one-line description, readable without running a workflow body) and `from`, the one
  * convenience for filling a team.
  *
- * `from(record)` picks exactly the slot keys from any record that has them, so
+ * `from(record)` picks exactly the slot keys from any record that has them as own properties, so
  * `ReviewTeam.from(ctx.roster)` fills a team whose roster entries use the slot names and
  * `ReviewTeam.from({ ...ctx.roster, critic: ctx.roster.Skeptic })` overrides one slot. A record
  * missing a slot, or holding a non-agent there, fails typecheck; an untyped caller that omits a slot
@@ -54,8 +54,10 @@ export function defineTeam<const K extends string>(
   /** The slot descriptions: a frozen, null-prototype copy that later edits to the input cannot change. */
   readonly slots: Readonly<Record<K, string>>;
   /**
-   * Fill the team by picking the slot keys from `record`; extra keys are dropped. The result is a
-   * frozen, null-prototype record of own properties, so a slot named `__proto__` is an ordinary slot.
+   * Fill the team by picking the slot keys from `record`; extra keys are dropped. A slot counts as
+   * filled only when it is an own property of `record` (inherited members such as `toString` do
+   * not), and its value is neither `undefined` nor `null`. The result is a frozen, null-prototype
+   * record of own properties, so a slot named `__proto__` is an ordinary slot.
    */
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- `R` admits records with extra keys (a whole roster) without an excess-property error.
   from<R extends Team<K>>(record: R): Team<K>;
@@ -86,7 +88,9 @@ export function defineTeam<const K extends string>(
     from<R extends Team<K>>(record: R): Team<K> {
       const team = Object.create(null) as Record<K, Agent>;
       for (const name of names) {
-        const agent: unknown = (record as Partial<Record<K, Agent>>)[name];
+        const agent: unknown = Object.hasOwn(record, name)
+          ? (record as Partial<Record<K, Agent>>)[name]
+          : undefined;
         if (agent === undefined || agent === null) {
           throw new TypeError(`Team slot ${name} is not filled.`);
         }

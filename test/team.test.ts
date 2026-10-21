@@ -174,3 +174,17 @@ it('from keeps a __proto__ slot as an own property and returns the agent by iden
   expect(team.actor).toBe(actorAgent);
   expect(Object.isFrozen(team)).toBe(true);
 });
+
+it('from treats inherited Object.prototype members as unfilled slots', () => {
+  const Inherited = defineTeam({ toString: 'Inherited.', constructor: 'Inherited too.' });
+  expect(() => Inherited.from({} as never)).toThrow('Team slot toString is not filled.');
+  expect(() => Inherited.from({ toString: {} } as never)).toThrow(
+    'Team slot constructor is not filled.',
+  );
+  const filled = Inherited.from({ toString: { name: 'a' }, constructor: { name: 'b' } } as never);
+  expect(Object.keys(filled)).toEqual(['toString', 'constructor']);
+
+  const Odd = defineTeam({ ['__proto__']: 'Odd slot.' });
+  expect(() => Odd.from({} as never)).toThrow('Team slot __proto__ is not filled.');
+  expect(() => Odd.from(Object.create({ actor: {} }) as never)).toThrow(TypeError);
+});
