@@ -524,7 +524,9 @@ const situation =
 The ticket's branch ${T.branch} is checked out in the dedicated git worktree ${W}, based on origin/${DEF}. Work only there: use absolute paths with file tools and \`cd ${sh(W)} && …\` or \`git -C ${sh(W)} …\` in shell commands. Never touch other checkouts or branches, and never push.
 Files: ${DIR}/issue.md (the ticket and its comments), ${DIR}/epic.md (the epic and a table of every ticket with its status — use it to see what neighbouring tickets own)${T.planFile ? `, ${T.planFile} (the implementation plan)` : ''}.`;
 
-const guidance = `Before editing, read ${W}/AGENTS.md, ${W}/CONTRIBUTING.md, and any AGENTS.md/CLAUDE.md in directories you touch, and follow them. In particular: behavior changes need tests; public exports need TypeDoc comments; guides, both physical skill copies (plugins/agents/… and plugins/claude/…), examples/patterns and the matching Workflow Lab Batch 02 port must stay consistent with code changes; observable changes get a CHANGELOG.md entry under "Unreleased"; cross-cutting design choices get an ADR in docs/decisions/.`;
+// A function: W is the worktree of the ticket being worked, unknown until it starts.
+const guidance = () =>
+  `Before editing, read ${W}/AGENTS.md, ${W}/CONTRIBUTING.md, and any AGENTS.md/CLAUDE.md in directories you touch, and follow them. In particular: behavior changes need tests; public exports need TypeDoc comments; guides, both physical skill copies (plugins/agents/… and plugins/claude/…), examples/patterns and the matching Workflow Lab Batch 02 port must stay consistent with code changes; observable changes get a CHANGELOG.md entry under "Unreleased"; cross-cutting design choices get an ADR in docs/decisions/.`;
 
 // ── Handle one candidate; returns a finished record, or null to try the next candidate ────────
 
@@ -747,7 +749,7 @@ async function implement(plan, tier, extra = '') {
     `You implement one ticket of an epic, following a reviewed plan. A separate landing workflow will review your PR against the ticket, gate it on CI and automated review, and merge it.
 
 ${situation()}
-${guidance}
+${guidance()}
 ${standing()}
 The plan (also in ${T.planFile}; you own the implementation — if a step is wrong in detail, do the right thing and record it in deviations):
 ${JSON.stringify(plan, null, 1)}

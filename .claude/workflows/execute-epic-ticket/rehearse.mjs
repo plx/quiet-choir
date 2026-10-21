@@ -568,6 +568,13 @@ const published = (world) =>
 const SCENARIOS = {
   'lands the first ready ticket': {
     world: { issues: { 101: { checked: true, state: 'CLOSED' }, 102: {}, 103: {} } },
+    agents: {
+      impl: ({ prompt }) => {
+        // The guidance names files in the ticket's worktree, which is known only once it starts.
+        assert.match(prompt, /read \/wt\/AGENTS\.md, \/wt\/CONTRIBUTING\.md/);
+        return IMPL_DONE();
+      },
+    },
     check({ result, world, calls }) {
       assert.equal(result.status, 'landed', JSON.stringify(result));
       assert.equal(result.ticket.number, 102);
