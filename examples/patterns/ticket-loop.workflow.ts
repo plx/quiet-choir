@@ -1,11 +1,11 @@
 import { defineWorkflow, z } from '../../src/index.js';
 import { github, nextTicket } from '../../src/integrations/github.js';
-import { roster } from './roster.js';
+import { editorRoster } from './roster.js';
 
 export default defineWorkflow({
   name: 'ticket-loop',
   version: '1',
-  roster,
+  roster: editorRoster,
   input: z.object({ repo: z.string(), epic: z.int().positive(), ticket: z.int().positive() }),
   output: z.object({ status: z.enum(['closed', 'skipped']), next: z.int().nullable() }),
   async run(ctx, { repo, epic, ticket }) {

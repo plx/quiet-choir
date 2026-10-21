@@ -44,11 +44,13 @@ tests' fake responses prove replay behavior, not the quality of a model's review
 as `ctx.roster.Name`. An entry is one concrete configuration pinned to one harness
 (`harness: 'claude'` or `'codex'`), so a role that serves both harnesses becomes two entries, and a
 misspelled name fails typecheck. The recipes below import this module, which mirrors the old
-`readonly` and `edit` presets with explicit values; copy it next to your workflow and change the
-values. Under `--require-grants`, a write-capable entry is granted by its name (`--grant Editor`).
-When one call site needs a configuration no entry names, `ctx.claude.bind(options)` returns an
-`Agent` with the model, effort and tools fixed once; pass it to a helper typed `Agent` and give each
-call only its placement (`cwd`, `addDirs`, `worktree`). Calls through an entry or a bound agent
+`readonly` and `edit` presets with explicit values, one single-entry roster per recipe; copy it next
+to your workflow and change the values. Give each workflow only the entries it calls: under
+`--require-grants`, every write-capable entry in a workflow's roster needs a grant by its name
+(`--grant Editor`), used or not, and a child delegates only entries its parent also declares. When
+one call site needs a configuration no entry names, `ctx.claude.bind(options)` returns an `Agent`
+with the model, effort and tools fixed once; pass it to a helper typed `Agent` and give each call
+only its placement (`cwd`, `addDirs`, `worktree`). Calls through an entry or a bound agent
 fingerprint like a raw call that spells the same options. See [agent calls](agent-calls.md#roster).
 
 <!-- skills-check: example pattern-roster -->
@@ -56,8 +58,9 @@ fingerprint like a raw call that spells the same options. See [agent calls](agen
 ```ts
 import { defineRoster } from '../../src/index.js';
 
-// Data only: the agents these recipes call, one entry per harness.
-export const roster = defineRoster({
+// Data only: the agents these recipes call. Each recipe takes the one-entry roster it needs, so
+// `--require-grants` asks for no grant on an entry the recipe never calls.
+export const readerRoster = defineRoster({
   Reader: {
     harness: 'claude',
     description: 'Reads files and answers; never edits.',
@@ -66,6 +69,9 @@ export const roster = defineRoster({
     maxBudgetUsd: 2,
     timeoutMs: 900_000,
   },
+});
+
+export const editorRoster = defineRoster({
   Editor: {
     harness: 'claude',
     description: 'Edits files in the working tree.',
@@ -74,12 +80,18 @@ export const roster = defineRoster({
     maxBudgetUsd: 5,
     timeoutMs: 1_800_000,
   },
+});
+
+export const codexReaderRoster = defineRoster({
   CodexReader: {
     harness: 'codex',
     description: 'Reads through a read-only sandbox.',
     sandbox: 'read-only',
     timeoutMs: 900_000,
   },
+});
+
+export const codexEditorRoster = defineRoster({
   CodexEditor: {
     harness: 'codex',
     description: 'Edits files in a workspace-write sandbox.',
@@ -316,12 +328,12 @@ makes a stable legal item segment, not a filesystem security boundary.
 
 ```ts
 import { defineWorkflow, z } from '../../src/index.js';
-import { roster } from './roster.js';
+import { readerRoster } from './roster.js';
 
 const reviewFile = defineWorkflow({
   name: 'review-file',
   version: '1',
-  roster,
+  roster: readerRoster,
   input: z.object({ path: z.string().describe('File to review') }),
   output: z.string(),
   async run(ctx, input) {
@@ -333,6 +345,7 @@ const reviewFile = defineWorkflow({
 export default defineWorkflow({
   name: 'reusable-helper',
   version: '2',
+  roster: readerRoster,
   children: [reviewFile],
   input: z.object({ paths: z.array(z.string()).max(8) }),
   output: z.array(z.string()),
@@ -360,14 +373,14 @@ disjoint writers. Launch from the target repository; under `--require-grants`, a
 
 ```ts
 import { defineWorkflow, z } from '../../src/index.js';
-import { roster } from './roster.js';
+import { codexEditorRoster } from './roster.js';
 
 export default defineWorkflow({
   name: 'worktrees',
   version: '2',
   input: z.object({ items: z.array(z.string()).max(8) }),
   output: z.object({ commit: z.string(), conflicts: z.array(z.string()) }),
-  roster,
+  roster: codexEditorRoster,
   async run(ctx, input) {
     const changes = await ctx.map(
       'items',
@@ -540,12 +553,12 @@ Keep the schema small and put semantic constraints in the extraction prompt too.
 
 ```ts
 import { defineWorkflow, z } from '../../src/index.js';
-import { roster } from './roster.js';
+import { codexReaderRoster } from './roster.js';
 
 export default defineWorkflow({
   name: 'work-then-extract',
   version: '1',
-  roster,
+  roster: codexReaderRoster,
   input: z.object({ task: z.string() }),
   output: z.object({ summary: z.string(), ready: z.boolean() }),
   async run(ctx, input) {
@@ -818,7 +831,7 @@ opened); `failure` once the rounds are spent; and `stuck`.
 ```ts
 import { defineWorkflow, z } from '../../src/index.js';
 import { github } from '../../src/integrations/github.js';
-import { roster } from './roster.js';
+import { editorRoster } from './roster.js';
 
 const verdict = z.enum(['success', 'failure', 'no-checks', 'head-moved', 'closed', 'timeout']);
 const push =
@@ -826,7 +839,7 @@ const push =
 export default defineWorkflow({
   name: 'ci-gate',
   version: '1',
-  roster,
+  roster: editorRoster,
   input: z.object({ repo: z.string(), pr: z.int().positive(), rounds: z.int().min(0).max(5) }),
   output: z.object({ status: verdict.or(z.literal('stuck')), sha: z.string(), fixes: z.int() }),
   async run(ctx, { repo, pr, rounds }) {
@@ -882,12 +895,12 @@ reads those states first.
 ```ts
 import { defineWorkflow, z } from '../../src/index.js';
 import { github, nextTicket } from '../../src/integrations/github.js';
-import { roster } from './roster.js';
+import { editorRoster } from './roster.js';
 
 export default defineWorkflow({
   name: 'ticket-loop',
   version: '1',
-  roster,
+  roster: editorRoster,
   input: z.object({ repo: z.string(), epic: z.int().positive(), ticket: z.int().positive() }),
   output: z.object({ status: z.enum(['closed', 'skipped']), next: z.int().nullable() }),
   async run(ctx, { repo, epic, ticket }) {

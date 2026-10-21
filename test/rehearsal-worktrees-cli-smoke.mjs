@@ -53,6 +53,7 @@ try {
     join(project, 'examples/patterns/worktrees.workflow.ts'),
     '--input',
     '{"items":["a","b"]}',
+    '--require-grants',
     '--grant',
     'CodexEditor',
   );

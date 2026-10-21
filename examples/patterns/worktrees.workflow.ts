@@ -1,12 +1,12 @@
 import { defineWorkflow, z } from '../../src/index.js';
-import { roster } from './roster.js';
+import { codexEditorRoster } from './roster.js';
 
 export default defineWorkflow({
   name: 'worktrees',
   version: '2',
   input: z.object({ items: z.array(z.string()).max(8) }),
   output: z.object({ commit: z.string(), conflicts: z.array(z.string()) }),
-  roster,
+  roster: codexEditorRoster,
   async run(ctx, input) {
     const changes = await ctx.map(
       'items',

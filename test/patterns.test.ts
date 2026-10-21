@@ -13,6 +13,7 @@ import {
   FixtureHarness,
   HarnessError,
   NodeProcessRunner,
+  capabilityManifest,
   parseHarnessFixtures,
   readRun,
   RunInterruptedError,
@@ -42,6 +43,8 @@ import extraction from '../examples/patterns/work-then-extract.workflow.js';
 import rehearse from '../examples/patterns/rehearse.workflow.js';
 import humanReview from '../examples/patterns/human-review.workflow.js';
 import bound from '../examples/patterns/bound-agent.workflow.js';
+import ciGate from '../examples/patterns/ci-gate.workflow.js';
+import ticketLoop from '../examples/patterns/ticket-loop.workflow.js';
 
 it('replays a human-reviewed plan and its answer after a tail failure', async () => {
   const harness = new Fake(() => 'The saved plan');
@@ -259,6 +262,30 @@ it('reusable helper gives repeated leaf IDs distinct stable file scopes', async 
   const ids = harness.calls.map((request) => request.call.stepId);
   expect(new Set(ids).size).toBe(2);
   expect(ids.every((id) => id.endsWith('/review/verdict'))).toBe(true);
+});
+
+it('reusable helper runs its read-only child under launch grants with no grant', async () => {
+  const harness = new Fake((request) => request.options.prompt);
+  const result = await runWorkflow(helper, {
+    ...options(),
+    harness,
+    requireGrants: true,
+    input: { paths: ['src/a.ts', 'src/b.ts'] },
+  });
+  assertCompleted(result);
+  expect(result.output).toHaveLength(2);
+  expect(harness.calls).toHaveLength(2);
+  expect(harness.calls[0]?.options).toMatchObject({ tools: ['Read', 'Grep', 'Glob'] });
+});
+
+it('each roster recipe asks for grants only on the write entries it calls', () => {
+  const required = (workflow: object) =>
+    capabilityManifest(workflow, { requireGrants: true }).requiredGrants;
+  expect(required(worktrees)).toEqual(['CodexEditor']);
+  expect(required(ciGate)).toEqual(['Editor']);
+  expect(required(ticketLoop)).toEqual(['Editor']);
+  expect(required(extraction)).toEqual([]);
+  expect(required(helper)).toEqual([]);
 });
 
 it('bound agent applies one set of options to every call and places each item itself', async () => {

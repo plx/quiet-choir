@@ -1,10 +1,10 @@
 import { defineWorkflow, z } from '../../src/index.js';
-import { roster } from './roster.js';
+import { readerRoster } from './roster.js';
 
 const reviewFile = defineWorkflow({
   name: 'review-file',
   version: '1',
-  roster,
+  roster: readerRoster,
   input: z.object({ path: z.string().describe('File to review') }),
   output: z.string(),
   async run(ctx, input) {
@@ -16,6 +16,7 @@ const reviewFile = defineWorkflow({
 export default defineWorkflow({
   name: 'reusable-helper',
   version: '2',
+  roster: readerRoster,
   children: [reviewFile],
   input: z.object({ paths: z.array(z.string()).max(8) }),
   output: z.array(z.string()),

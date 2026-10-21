@@ -1,10 +1,10 @@
 import { defineWorkflow, z } from '../../src/index.js';
-import { roster } from './roster.js';
+import { codexReaderRoster } from './roster.js';
 
 export default defineWorkflow({
   name: 'work-then-extract',
   version: '1',
-  roster,
+  roster: codexReaderRoster,
   input: z.object({ task: z.string() }),
   output: z.object({ summary: z.string(), ready: z.boolean() }),
   async run(ctx, input) {

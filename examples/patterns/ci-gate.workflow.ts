@@ -1,6 +1,6 @@
 import { defineWorkflow, z } from '../../src/index.js';
 import { github } from '../../src/integrations/github.js';
-import { roster } from './roster.js';
+import { editorRoster } from './roster.js';
 
 const verdict = z.enum(['success', 'failure', 'no-checks', 'head-moved', 'closed', 'timeout']);
 const push =
@@ -8,7 +8,7 @@ const push =
 export default defineWorkflow({
   name: 'ci-gate',
   version: '1',
-  roster,
+  roster: editorRoster,
   input: z.object({ repo: z.string(), pr: z.int().positive(), rounds: z.int().min(0).max(5) }),
   output: z.object({ status: verdict.or(z.literal('stuck')), sha: z.string(), fixes: z.int() }),
   async run(ctx, { repo, pr, rounds }) {
