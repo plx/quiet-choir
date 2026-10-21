@@ -35,8 +35,7 @@ attempt's `requested`, with `"inherited"` for omissions.
 
 Declare shared roles on `defineWorkflow`, for example `defaults: { codex: { effort: 'medium' } }`
 and `profiles: { skeptic: { extends: 'readonly', codex: { effort: 'high' } } }`. See
-[profiles](agent-calls.md#select-a-role-and-its-capabilities) and
-[grants](agent-calls.md#requiregrants-launch-grants).
+[profiles](agent-calls.md#legacy-profiles) and [grants](agent-calls.md#requiregrants-launch-grants).
 
 Inside a workflow whose input includes `topic`:
 

@@ -34,28 +34,33 @@ In a consumer project, import from `quiet-choir` after installing the runtime. I
 adjust the relative path to `src/index.js` for the workflow's actual location; keep the `.js`
 suffix.
 
+Declare the agents the workflow calls in an optional `roster` field, a `defineRoster` result kept in
+its own module, and call them as `ctx.roster.Name`; see [the roster](agent-calls.md#roster).
+
 `name` and `version` must be nonempty. Version is an explicit compatibility string, not necessarily
 semver. Change it when semantics change, including external dependencies/configuration; a changed
 version requires a new run ID (a fork can reuse compatible steps). See [durability](durability.md).
 
 ## Durable operations
 
-| Operation                                                                          | Return and composition                                                                              |
-| ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `ctx.step(id, { input, schema, run, retry?, version?, onError? })`                 | Validated result; stores that result and hashes of input, schema, callback source, version, and cwd |
-| `ctx.claude.value(id, { schema?, ...options })` / Codex equivalent                 | Schema-inferred output; plain string without a schema                                               |
-| `ctx.claude.text(id, options)` / `ctx.codex.text(id, options)`                     | `{ output: string, sessionId, usage }`                                                              |
-| `ctx.claude.object(id, { schema, ...options })` / Codex equivalent                 | Same wrapper with schema-inferred `output`                                                          |
-| `ctx.map(id, items, { concurrency, key?, onError?, cancelSiblings? }, mapper)`     | Ordered fan-out with per-item prefixes and optional outcome journal                                 |
-| `ctx.ask(id, { prompt, schema, details?, choices?, audience?, subject?, title? })` | Durable schema-validated external answer; a quiescent run suspends                                  |
-| `ctx.approve(id, options)`                                                         | `{ approved: boolean, comment?: string }`; fixed-schema question                                    |
-| `ctx.now(id)`                                                                      | Recorded clock anchor                                                                               |
-| `ctx.wait(id, sources)`                                                            | One replayed signal/poll/deadline outcome                                                           |
-| `ctx.sleepUntil(id, epochMs)`                                                      | Absolute deadline from input or recorded time                                                       |
-| `ctx.poll(id, options)`                                                            | Read-only observations with a finite bound                                                          |
-| `ctx.sleep(id, milliseconds)`                                                      | `null`; pins a relative deadline, with long waits suspending                                        |
-| `ctx.runId`                                                                        | Stable run identifier                                                                               |
-| `ctx.signal`                                                                       | Current scope signal; inherits run and parent-map cancellation                                      |
+| Operation                                                                                              | Return and composition                                                                                                |
+| ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| `ctx.step(id, { input, schema, run, retry?, version?, onError? })`                                     | Validated result; stores that result and hashes of input, schema, callback source, version, and cwd                   |
+| `ctx.roster.Name.value` / `.text` / `.object(id, { prompt, schema?, cwd?, addDirs?, worktree?, ... })` | The named entry's agent: same results as `ctx.claude`/`ctx.codex`, with the entry's options fixed                     |
+| `ctx.claude.bind(options)` (also `ctx.codex`, `ctx.agent(name)`) / type `Agent`                        | A reusable agent with options fixed; calls take placement and policy; see [bound agents](agent-calls.md#bound-agents) |
+| `ctx.claude.value(id, { schema?, ...options })` / Codex equivalent                                     | Schema-inferred output; plain string without a schema                                                                 |
+| `ctx.claude.text(id, options)` / `ctx.codex.text(id, options)`                                         | `{ output: string, sessionId, usage }`                                                                                |
+| `ctx.claude.object(id, { schema, ...options })` / Codex equivalent                                     | Same wrapper with schema-inferred `output`                                                                            |
+| `ctx.map(id, items, { concurrency, key?, onError?, cancelSiblings? }, mapper)`                         | Ordered fan-out with per-item prefixes and optional outcome journal                                                   |
+| `ctx.ask(id, { prompt, schema, details?, choices?, audience?, subject?, title? })`                     | Durable schema-validated external answer; a quiescent run suspends                                                    |
+| `ctx.approve(id, options)`                                                                             | `{ approved: boolean, comment?: string }`; fixed-schema question                                                      |
+| `ctx.now(id)`                                                                                          | Recorded clock anchor                                                                                                 |
+| `ctx.wait(id, sources)`                                                                                | One replayed signal/poll/deadline outcome                                                                             |
+| `ctx.sleepUntil(id, epochMs)`                                                                          | Absolute deadline from input or recorded time                                                                         |
+| `ctx.poll(id, options)`                                                                                | Read-only observations with a finite bound                                                                            |
+| `ctx.sleep(id, milliseconds)`                                                                          | `null`; pins a relative deadline, with long waits suspending                                                          |
+| `ctx.runId`                                                                                            | Stable run identifier                                                                                                 |
+| `ctx.signal`                                                                                           | Current scope signal; inherits run and parent-map cancellation                                                        |
 
 Call-site task prompts and identity options are stored as component hashes. Resolved execution
 policy and requested model/effort are stored in plaintext per attempt. Profile declarations are

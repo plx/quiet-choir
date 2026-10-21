@@ -19,9 +19,9 @@ wait a durable named effect, checkpointed in a state directory you choose. Read
 | `phase(title)`, `log(message)`               | `ctx.phase(title)` (or `ctx.phase(title, body)` for concurrent work) and `ctx.log(message, data?)`; neither affects replay identity                                                                                                                                                          |
 | `args`                                       | The workflow's `input` Zod schema, passed with `--input JSON` and validated before any effect                                                                                                                                                                                                |
 | `budget`                                     | A loop bounded in code (a `maxRounds` input), plus the run caps `--max-run-cost-usd` and `--max-run-agent-attempts`; see [a bounded loop under run caps](#a-bounded-loop-under-run-caps)                                                                                                     |
-| `model`, `effort`                            | Per call, or in `defaults` and declared `profiles` (`claude: { model, effort }`, `codex: { model, effort }`), so roles carry their tier                                                                                                                                                      |
+| `model`, `effort`                            | Per call, or on a roster entry (`{ harness: 'claude', model, effort }`), so roles carry their tier                                                                                                                                                                                           |
 | `isolation: 'worktree'`                      | `worktree: true` on the call: a fresh checkout per attempt, captured and integrated with `ctx.merge` ([worktrees](worktrees.md))                                                                                                                                                             |
-| `agentType`                                  | A declared profile with the role's tools, limits and prompt; see [an exec role](#an-exec-role-and-its-grant)                                                                                                                                                                                 |
+| `agentType`                                  | A roster entry with the role's tools, limits and standing prompt; see [an exec role](#an-exec-role-and-its-grant)                                                                                                                                                                            |
 | `workflow(name, args)`                       | `ctx.workflow(id, definition, input)`, a typed child with validated input and output, nested through `children` to any depth up to `--max-child-depth` ([typed child workflows](workflow-authoring.md#typed-child-workflows))                                                                |
 | `resumeFromRunId`                            | Resume the same run ID (`workflow resume RUN`) from the launch directory, in any shell or session. After an edit, accept it with `--resume --accept-code-change` or fork with `--fork-from RUN --reuse matching` ([recovery paths](durability.md#choose-a-recovery-path))                    |
 | A clerk agent relaying a command's output    | `ctx.exec(id, argv)` or `ctx.exec.json(id, argv, { schema })`: no model, the output is checkpointed, and `quiet-choir/github` wraps `gh` reads, waits and writes                                                                                                                             |
@@ -33,9 +33,9 @@ wait a durable named effect, checkpointed in a state directory you choose. Read
 - **Null on failure needs `onError: 'return'`.** A native `agent()`, `parallel` thunk or `pipeline`
   stage turns a terminal failure into `null`. A quiet-choir call or map throws unless it is settled.
   A caught throw is not a durable decision: the call can heal on resume and take the other branch.
-- **The implicit `text` profile is far narrower than a native agent.** It has no Claude tools, 10
-  turns, $0.50 and 5 minutes. A call that reads, edits or runs commands needs `readonly`, `edit` or
-  a declared profile, and under `requireGrants` every write or exec role needs `--grant` at launch.
+- **The text baseline is far narrower than a native agent.** A raw call has no Claude tools, 10
+  turns, $0.50 and 5 minutes. A call that reads, edits or runs commands needs a roster entry or a
+  bound agent, and under `requireGrants` every write or exec entry needs `--grant` at launch.
 - **Context is restricted.** quiet-choir calls run Claude restricted by default, without CLAUDE.md
   and project instructions, discovered MCP servers, user plugins and skills, or auto-memory. Native
   agents get CLAUDE.md and the session's MCP tools. Put the rules a call needs in its prompt, or opt
@@ -54,39 +54,39 @@ wait a durable named effect, checkpointed in a state directory you choose. Read
 
 ## An exec role and its grant
 
-A native agent can run any shell command it is permitted to. In quiet-choir, declare the role, name
-`Bash` in its tools, and narrow the allowed rules. `access: 'exec'` states the class the tools
-imply. By default the role runs as declared; an operator who wants a launch-time grant opts in with
-`--require-grants` (or `requireGrants: true`). The same role is in the repository's agent profiles
-guide.
+A native agent can run any shell command it is permitted to. In quiet-choir, declare a roster entry,
+name `Bash` in its tools, and narrow the allowed rules. Access is derived from those tools, so the
+entry does not declare it. By default the entry runs as declared; an operator who wants a
+launch-time grant opts in with `--require-grants` (or `requireGrants: true`). The same entry is in
+the repository's roster guide.
 
-<!-- skills-check: example porting-exec-profile -->
+<!-- skills-check: example porting-exec-roster -->
 
 ```ts
-import { defineWorkflow, z } from 'quiet-choir';
+import { defineRoster, defineWorkflow, z } from 'quiet-choir';
+
+const roster = defineRoster({
+  Fixer: {
+    harness: 'claude',
+    tools: ['Read', 'Grep', 'Glob', 'Edit', 'Bash'],
+    allowedTools: ['Read', 'Grep', 'Glob', 'Edit', 'Bash(npm test:*)', 'Bash(gh pr checks:*)'],
+    maxTurns: 40,
+  },
+});
 
 export default defineWorkflow({
   name: 'fix-tests',
   version: '1',
+  roster,
   input: z.object({ task: z.string() }),
   output: z.string(),
-  profiles: {
-    fixer: {
-      extends: 'edit',
-      access: 'exec',
-      claude: {
-        tools: ['Read', 'Grep', 'Glob', 'Edit', 'Bash'],
-        allowedTools: ['Read', 'Grep', 'Glob', 'Edit', 'Bash(npm test:*)', 'Bash(gh pr checks:*)'],
-      },
-    },
-  },
   async run(ctx, { task }) {
-    return ctx.claude.value('fix', { profile: 'fixer', prompt: task });
+    return ctx.roster.Fixer.value('fix', { prompt: task });
   },
 });
 ```
 
-Rehearse it under `--require-grants` with its grant; there, without `--grant fixer` (or
+Rehearse it under `--require-grants` with its grant; there, without `--grant Fixer` (or
 `--grant exec`, or `--grant all`) the launch is refused before any effect. Drop `--dry-run` to run
 it.
 
@@ -95,7 +95,7 @@ it.
 ```sh
 cd "$QC_TARGET" || exit 1
 node "$QC_CHECKOUT/bin/run.js" workflow execute "$QC_WORKFLOW" --run-id fix-1 \
-  --state-dir "$QC_RUNS" --input '{"task":"Make npm test pass."}' --require-grants --grant fixer \
+  --state-dir "$QC_RUNS" --input '{"task":"Make npm test pass."}' --require-grants --grant Fixer \
   --dry-run --json
 ```
 
@@ -107,19 +107,22 @@ the command line. This is [loop until dry](patterns.md#loop-until-dry) with a ro
 <!-- skills-check: example porting-budget-loop -->
 
 ```ts
-import { defineWorkflow, z } from 'quiet-choir';
+import { defineRoster, defineWorkflow, z } from 'quiet-choir';
 
 const findings = z.object({ findings: z.array(z.string()) });
+const roster = defineRoster({
+  Hunter: { harness: 'claude', tools: ['Read', 'Grep', 'Glob'], maxTurns: 25 },
+});
 export default defineWorkflow({
   name: 'bounded-hunt',
   version: '1',
+  roster,
   input: z.object({ target: z.string(), maxRounds: z.int().min(1).max(20) }),
   output: z.array(z.string()),
   async run(ctx, { target, maxRounds }) {
     const known: string[] = [];
     for (let round = 1; round <= maxRounds; round++) {
-      const { findings: found } = await ctx.claude.value(ctx.id('find', round), {
-        profile: 'readonly',
+      const { findings: found } = await ctx.roster.Hunter.value(ctx.id('find', round), {
         prompt: `Find bugs in ${target}. Already known: ${JSON.stringify(known)}.`,
         schema: findings,
       });
@@ -167,7 +170,7 @@ them with typed effects.
 | A `needs-decision` result and a rerun with the maintainer's answer            | `ctx.ask`: the run suspends, and `workflow answer --resume` continues it in place                                                                                            |
 | The landing child run with `workflow('merge-down-pr', ...)`                   | `ctx.workflow` with typed input and output, sharing the parent's journal                                                                                                     |
 | Local checks in parallel with a reviewer                                      | `Promise.all` over `ctx.exec('check', ...)` and `ctx.claude.object('review', ...)`                                                                                           |
-| Implementers that edit in a dedicated worktree                                | An `edit` or exec role with `worktree: true`, or a shared `ctx.worktree` handle for write, test and fix                                                                      |
+| Implementers that edit in a dedicated worktree                                | An editor or exec roster entry with `worktree: true`, or a shared `ctx.worktree` handle for write, test and fix                                                              |
 
 Ticking an epic's checklist edits the issue body, which `quiet-choir/github` does not provide
 because GitHub has no conditional body update; keep that in a step of your own, which is at least

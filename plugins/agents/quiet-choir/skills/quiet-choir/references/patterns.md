@@ -15,6 +15,7 @@ tests' fake responses prove replay behavior, not the quality of a model's review
 
 | Need                                                      | Recipe                                                              |
 | --------------------------------------------------------- | ------------------------------------------------------------------- |
+| Declare agents once and bind options for a helper         | [Roster and bound agents](#roster-and-bound-agents)                 |
 | Combine Claude and Codex reviews; retry failed reviewers  | [Cross-harness fan-out/fan-in](#cross-harness-fan-outfan-in)        |
 | Preserve a quorum decision despite failed reviewers       | [Failure-tolerant panel](#failure-tolerant-panel)                   |
 | Discover until no new findings appear                     | [Loop until dry](#loop-until-dry)                                   |
@@ -36,6 +37,92 @@ tests' fake responses prove replay behavior, not the quality of a model's review
 | Burn down an epic one ticket per run                      | [Ticket loop](#ticket-loop)                                         |
 | Recognize tempting but unsafe code                        | [Traps](#traps)                                                     |
 | See the recipes expanded into strict ports                | [Workflow Lab acceptance recipes](#workflow-lab-acceptance-recipes) |
+
+## Roster and bound agents
+
+**Rule:** declare the agents a workflow calls once, in a data-only `roster.ts` module, and call them
+as `ctx.roster.Name`. An entry is one concrete configuration pinned to one harness
+(`harness: 'claude'` or `'codex'`), so a role that serves both harnesses becomes two entries, and a
+misspelled name fails typecheck. The recipes below import this module, which mirrors the old
+`readonly` and `edit` presets with explicit values; copy it next to your workflow and change the
+values. Under `--require-grants`, a write-capable entry is granted by its name (`--grant Editor`).
+When one call site needs a configuration no entry names, `ctx.claude.bind(options)` returns an
+`Agent` with the model, effort and tools fixed once; pass it to a helper typed `Agent` and give each
+call only its placement (`cwd`, `addDirs`, `worktree`). Calls through an entry or a bound agent
+fingerprint like a raw call that spells the same options. See [agent calls](agent-calls.md#roster).
+
+<!-- skills-check: example pattern-roster -->
+
+```ts
+import { defineRoster } from '../../src/index.js';
+
+// Data only: the agents these recipes call, one entry per harness.
+export const roster = defineRoster({
+  Reader: {
+    harness: 'claude',
+    description: 'Reads files and answers; never edits.',
+    tools: ['Read', 'Grep', 'Glob'],
+    maxTurns: 25,
+    maxBudgetUsd: 2,
+    timeoutMs: 900_000,
+  },
+  Editor: {
+    harness: 'claude',
+    description: 'Edits files in the working tree.',
+    tools: ['Read', 'Grep', 'Glob', 'Edit', 'Write'],
+    maxTurns: 40,
+    maxBudgetUsd: 5,
+    timeoutMs: 1_800_000,
+  },
+  CodexReader: {
+    harness: 'codex',
+    description: 'Reads through a read-only sandbox.',
+    sandbox: 'read-only',
+    timeoutMs: 900_000,
+  },
+  CodexEditor: {
+    harness: 'codex',
+    description: 'Edits files in a workspace-write sandbox.',
+    sandbox: 'workspace-write',
+    timeoutMs: 1_800_000,
+  },
+});
+```
+
+The bound-agent recipe binds the reviewer once, maps over repositories with stable keys and gives
+each call its own working directory. Step IDs sit under the map's item prefixes, and a resume reuses
+every completed call.
+
+<!-- skills-check: example pattern-bound-agent -->
+
+```ts
+import { defineWorkflow, z, type Agent } from '../../src/index.js';
+
+const Finding = z.object({ summary: z.string(), severe: z.boolean() });
+const triage = (agent: Agent, repo: string) =>
+  agent.value('triage', { schema: Finding, cwd: repo, prompt: `Triage open risks in ${repo}.` });
+
+export default defineWorkflow({
+  name: 'bound-agent',
+  version: '1',
+  input: z.object({ repos: z.array(z.string()).max(8) }),
+  output: z.array(Finding),
+  async run(ctx, input) {
+    // Bound once: the model, effort and tools are fixed for every call below.
+    const reviewer = ctx.claude.bind({
+      model: 'sonnet',
+      effort: 'low',
+      tools: ['Read', 'Grep', 'Glob'],
+    });
+    return ctx.map('repos', input.repos, { concurrency: 2, key: (repo) => ctx.id(repo) }, (repo) =>
+      triage(reviewer, repo),
+    );
+  },
+});
+```
+
+**Cost:** one call per repository. **Supersession:** an entry replaces a `profile: 'edit'` string
+and its `profiles` declaration; `bind` replaces repeating the same raw options at every call site.
 
 ## Cross-harness fan-out/fan-in
 
@@ -229,15 +316,16 @@ makes a stable legal item segment, not a filesystem security boundary.
 
 ```ts
 import { defineWorkflow, z } from '../../src/index.js';
+import { roster } from './roster.js';
 
 const reviewFile = defineWorkflow({
   name: 'review-file',
   version: '1',
+  roster,
   input: z.object({ path: z.string().describe('File to review') }),
   output: z.string(),
   async run(ctx, input) {
-    return ctx.claude.value('verdict', {
-      profile: 'readonly',
+    return ctx.roster.Reader.value('verdict', {
       prompt: `Read and review this file: ${input.path}`,
     });
   },
@@ -257,36 +345,36 @@ export default defineWorkflow({
 ```
 
 **Cost:** one call per file; child frames add no inference. **Supersession:** child workflows add
-child identity, validated I/O and profile delegation to the scoped-helper recipe. Plain function
+child identity, validated I/O and their own roster to the scoped-helper recipe. Plain function
 helpers can still use `within` or `scope`; see [child workflows and discovery](child-workflows.md).
 
 ## Worktree per item
 
 **Rule:** use runtime isolation when targets may overlap, commands observe concurrent edits, or a
 failed writer's partial state is unsafe to reuse. Structural file sharding remains valid for
-disjoint writers. Launch from the target repository; under `--require-grants`, add `--grant editor`
-when edits are authorized. Git 2.38+ is required; embedded callers also supply `NodeProcessRunner`
-and may configure cache policy.
+disjoint writers. Launch from the target repository; under `--require-grants`, add
+`--grant CodexEditor` when edits are authorized. Git 2.38+ is required; embedded callers also supply
+`NodeProcessRunner` and may configure cache policy.
 
 <!-- skills-check: example pattern-worktrees -->
 
 ```ts
 import { defineWorkflow, z } from '../../src/index.js';
+import { roster } from './roster.js';
 
 export default defineWorkflow({
   name: 'worktrees',
   version: '2',
   input: z.object({ items: z.array(z.string()).max(8) }),
   output: z.object({ commit: z.string(), conflicts: z.array(z.string()) }),
-  profiles: { editor: { extends: 'edit' } },
+  roster,
   async run(ctx, input) {
     const changes = await ctx.map(
       'items',
       input.items,
       { concurrency: 2, key: (item) => ctx.id(item) },
       async (item) => {
-        const result = await ctx.codex.text('edit', {
-          profile: 'editor',
+        const result = await ctx.roster.CodexEditor.text('edit', {
           worktree: true,
           prompt: `Implement: ${item}`,
         });
@@ -445,21 +533,23 @@ failure outcomes replace a manual "call then record a latch" step; retry policy 
 
 **Rule:** checkpoint the expensive investigation before requesting a small structured result. A
 schema failure can then retry extraction alone. Choose an approved lower-cost extraction model in a
-profile when appropriate; omitted models use native defaults under the chosen isolation mode. Keep
-the schema small and put semantic constraints in the extraction prompt too.
+roster entry when appropriate; omitted models use native defaults under the chosen isolation mode.
+Keep the schema small and put semantic constraints in the extraction prompt too.
 
 <!-- skills-check: example pattern-work-then-extract -->
 
 ```ts
 import { defineWorkflow, z } from '../../src/index.js';
+import { roster } from './roster.js';
 
 export default defineWorkflow({
   name: 'work-then-extract',
   version: '1',
+  roster,
   input: z.object({ task: z.string() }),
   output: z.object({ summary: z.string(), ready: z.boolean() }),
   async run(ctx, input) {
-    const report = await ctx.codex.value('work', { profile: 'readonly', prompt: input.task });
+    const report = await ctx.roster.CodexReader.value('work', { prompt: input.task });
     return ctx.claude.value('extract', {
       prompt: `Extract a concise summary and readiness decision from this report: ${report}`,
       schema: z.object({ summary: z.string(), ready: z.boolean() }),
@@ -708,13 +798,13 @@ rehearsal.
 a model. `gh.waitChecks` from `quiet-choir/github` is one `ctx.poll` pinned to `sha`: it reads the
 pull request's head and check rollup on every check and never reports `success` for another commit.
 Under `ctx.id('ci', sha)` a resume replays that head's verdict without reading GitHub, and a pushed
-fix waits under a new ID. The fix agent only edits, with the built-in `edit` profile; one durable
-`ctx.exec` commits the tracked changes and pushes, with their output (hooks included) sent to
-stderr, and prints `git rev-parse HEAD`, so stdout holds only the next SHA and it is checkpointed
-command output. When the agent changed nothing, the head does not move and the recipe returns
-`stuck`: waiting again would reuse the wait's ID, which fails the run as a duplicate. `staleGraceMs`
-covers GitHub reporting the previous head for a while after a push. Within that window, a head that
-`sha` descends from keeps the wait waiting instead of ending it as `head-moved`.
+fix waits under a new ID. The fix agent only edits, with the `Editor` entry; one durable `ctx.exec`
+commits the tracked changes and pushes, with their output (hooks included) sent to stderr, and
+prints `git rev-parse HEAD`, so stdout holds only the next SHA and it is checkpointed command
+output. When the agent changed nothing, the head does not move and the recipe returns `stuck`:
+waiting again would reuse the wait's ID, which fails the run as a duplicate. `staleGraceMs` covers
+GitHub reporting the previous head for a while after a push. Within that window, a head that `sha`
+descends from keeps the wait waiting instead of ending it as `head-moved`.
 
 Launch it from a checkout of the pull request's head branch with an upstream (under
 `--require-grants`, with `--grant write`). `git diff --quiet` sees tracked files only, so a fix that
@@ -728,6 +818,7 @@ opened); `failure` once the rounds are spent; and `stuck`.
 ```ts
 import { defineWorkflow, z } from '../../src/index.js';
 import { github } from '../../src/integrations/github.js';
+import { roster } from './roster.js';
 
 const verdict = z.enum(['success', 'failure', 'no-checks', 'head-moved', 'closed', 'timeout']);
 const push =
@@ -735,6 +826,7 @@ const push =
 export default defineWorkflow({
   name: 'ci-gate',
   version: '1',
+  roster,
   input: z.object({ repo: z.string(), pr: z.int().positive(), rounds: z.int().min(0).max(5) }),
   output: z.object({ status: verdict.or(z.literal('stuck')), sha: z.string(), fixes: z.int() }),
   async run(ctx, { repo, pr, rounds }) {
@@ -747,10 +839,8 @@ export default defineWorkflow({
       if (ci.status !== 'failure' || fixes === rounds) return { status: ci.status, sha, fixes };
       const failed = ci.failed.map((check) => check.name).join(', ');
       const prompt = `CI failed on ${sha}: ${failed}. Fix the cause. Do not commit.`;
-      await ctx.claude.text(ctx.id('fix', sha), { profile: 'edit', prompt });
-      // The new head comes from git, never from the model.
+      await ctx.roster.Editor.text(ctx.id('fix', sha), { prompt });
       const next = (await ctx.exec(ctx.id('push', sha), { shell: push })).stdout.trim();
-      // An unchanged head would reuse this wait's ID; return instead of waiting again.
       if (next === sha) return { status: 'stuck', sha, fixes: fixes + 1 };
       sha = next;
     }
@@ -774,9 +864,9 @@ show them in full.
 outside. The run reads the epic snapshot under `before` and checks that `nextTicket` still picks
 this ticket. If not, it returns `skipped` with the current pick and makes no agent call: someone
 else moved the epic. A `skipped` return still completes the run and saves it under `ticket-N`, so
-resuming it replays the same skip. Otherwise it reads the issue with every comment, makes one `edit`
-call, closes the issue and returns the next pick from an `after` snapshot. `gh.issue.close` is
-check-then-act: a resume after a crash finds the issue closed and does not write again. Each ID
+resuming it replays the same skip. Otherwise it reads the issue with every comment, makes one
+`Editor` call, closes the issue and returns the next pick from an `after` snapshot. `gh.issue.close`
+is check-then-act: a resume after a crash finds the issue closed and does not write again. Each ID
 occurs once per run, so literal IDs are safe. The recipe keeps only the loop's shape. A real ticket
 opens and lands a pull request between the implement call and the close, with the
 [CI-gated fix loop](#ci-gated-fix-loop) and `gh.pr.create` and `gh.pr.merge`; when GitHub closes the
@@ -792,10 +882,12 @@ reads those states first.
 ```ts
 import { defineWorkflow, z } from '../../src/index.js';
 import { github, nextTicket } from '../../src/integrations/github.js';
+import { roster } from './roster.js';
 
 export default defineWorkflow({
   name: 'ticket-loop',
   version: '1',
+  roster,
   input: z.object({ repo: z.string(), epic: z.int().positive(), ticket: z.int().positive() }),
   output: z.object({ status: z.enum(['closed', 'skipped']), next: z.int().nullable() }),
   async run(ctx, { repo, epic, ticket }) {
@@ -808,8 +900,7 @@ export default defineWorkflow({
     if (before !== ticket) return { status: 'skipped', next: before };
     const issue = await gh.issue.view('issue', { number: ticket, comments: true });
     const thread = issue.comments.map((comment) => comment.body).join('\n\n---\n\n');
-    await ctx.claude.text('implement', {
-      profile: 'edit',
+    await ctx.roster.Editor.text('implement', {
       prompt: `Implement #${String(ticket)}: ${issue.title}\n\n${issue.body}\n\n${thread}`,
     });
     // A real loop opens and lands a pull request here; close is check-then-act.
@@ -884,16 +975,20 @@ The alternative is one long run that loops inside the workflow, with a round-key
 typed child per ticket:
 
 ```ts
-import { defineWorkflow, z } from 'quiet-choir';
+import { defineRoster, defineWorkflow, z } from 'quiet-choir';
 import { github, nextTicket } from 'quiet-choir/github';
 
+const roster = defineRoster({
+  Editor: { harness: 'claude', tools: ['Read', 'Grep', 'Glob', 'Edit', 'Write'], maxTurns: 40 },
+});
 const ticket = defineWorkflow({
   name: 'ticket',
   version: '1',
+  roster,
   input: z.object({ number: z.int().positive() }),
   output: z.string(),
   run: (ctx, { number }) =>
-    ctx.claude.value('implement', { profile: 'edit', prompt: `Implement #${String(number)}.` }),
+    ctx.roster.Editor.value('implement', { prompt: `Implement #${String(number)}.` }),
 });
 
 export default defineWorkflow({
@@ -1048,7 +1143,7 @@ It measures replay and filesystem contracts, not agent quality or real billing s
 | `release-notes`          | Pin a Git manifest, constrain per-slice vocabularies, compute coverage and write exact bytes | Manifest equals Git; all calls are read-only; interrupted publication reuses completed calls         |
 | `project-bootstrap`      | Approve a canonical saved plan, isolate writers, verify with command exits                   | Setter prompts match the approved plan; digests match; exit 7 prevents checkout publication          |
 | `test-gap-filler`        | Keep a durable pristine snapshot and reconcile an interrupted mutation before retry          | Actual SIGKILL during a test, identity-checked orphan cleanup, byte-identical restoration            |
-| `incident-investigation` | Use a Codex reader profile and independently check repository status                         | A deliberately dirty collector fails the run                                                         |
+| `incident-investigation` | Use a Codex reader roster entry and independently check repository status                    | A deliberately dirty collector fails the run                                                         |
 | `sdlc-orchestrator`      | Compose typed children and bind human redo answers to one stage                              | One run ID, saved child frames, stage-local answer, CLI exit 75 and inbox resume                     |
 | `bug-hunt`               | Settle panels, retain missing votes and apply sticky admission gates                         | Failed skeptics stay undecided without another call; failed finders are never dry; higher-cap resume |
 
