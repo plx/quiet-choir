@@ -103,6 +103,7 @@ section and revalidates when a template changes. Fragments are not held to the s
 their includer's loop variables), so a misspelling there fails at render.
 
 Every parameter, template or engine failure throws `PromptError` (`prompt`, `file`, `kind`, `line`),
-a fatal authoring error: it fails the run even inside an `onError: 'return'` map and is never
-journaled as a settled item. A template edit is not yet refused on resume the way a code edit is; a
-completed step whose rendered prompt changed still fails its own fingerprint check.
+a fatal authoring error: it fails the run even inside an `onError: 'return'` map or step, is never
+retried, and is never journaled as a settled item. A template edit is not yet refused on resume the
+way a code edit is; a completed step whose rendered prompt changed still fails its own fingerprint
+check.

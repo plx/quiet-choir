@@ -8,12 +8,23 @@ import {
 import { CheckpointError } from '../src/workflow/runtime/checkpoint.js';
 import { ConfigurationError } from '../src/workflow/runtime/configuration-error.js';
 import { CancelledError } from '../src/workflow/runtime/fan-out.js';
+import { PromptError } from '../src/workflow/prompts/error.js';
 import { stepError } from '../src/workflow/runtime/step-error.js';
 
 // A second module instance, as `workflow execute` gives workflow and custom-adapter code (ADR 0028).
 vi.resetModules();
 const secondConfiguration = await import('../src/workflow/runtime/configuration-error.js');
 const secondHarness = await import('../src/workflow/runtime/harness-error.js');
+const secondPrompt = await import('../src/workflow/prompts/error.js');
+
+function promptFailure(error: typeof PromptError = PromptError): PromptError {
+  return new error('Prompt Review (Review.md): undefined value', {
+    prompt: 'Review',
+    file: 'Review.md',
+    kind: 'UndefinedError',
+    line: 3,
+  });
+}
 
 // ADR 0007 outcomes as a pure table: no state directory, store or workflow run.
 const defaults: AttemptFailureInput = {
@@ -156,6 +167,20 @@ const rows: Row[] = [
       markFatal: true,
       errorKind: 'unknown',
     },
+  },
+  {
+    name: 'PromptError is fatal and marked, not infrastructure, with retries left and onError return',
+    input: { cause: promptFailure(), attempt: 1, maxAttempts: 3, onError: 'return' },
+    expected: { ...fatalFailure, markFatal: true, errorKind: 'unknown' },
+  },
+  {
+    name: "another module instance's PromptError is fatal even with retry.on unknown",
+    input: {
+      cause: promptFailure(secondPrompt.PromptError),
+      retryOn: ['unknown'],
+      onError: 'return',
+    },
+    expected: { ...fatalFailure, markFatal: true, errorKind: 'unknown' },
   },
   {
     name: "another module instance's HarnessError 429 retries under retry.on rate-limit",

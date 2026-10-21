@@ -7,6 +7,7 @@
  * backoff) from the result. ESLint keeps this module free of runtime imports.
  */
 import type { ErrorKind, ErrorMode } from './model.js';
+import { PromptError } from '../prompts/error.js';
 import { ConfigurationError } from './configuration-error.js';
 import { errorKind, isTransientErrorKind } from './step-error.js';
 
@@ -41,7 +42,10 @@ export interface AttemptFailure {
   readonly errorKind: ErrorKind;
   /** The failure is this run's own storage failure or a configuration failure. */
   readonly infrastructure: boolean;
-  /** The error must never become settled map data (configuration failures). */
+  /**
+   * The error must never become settled map data: a configuration failure or a prompt authoring
+   * error (ADR 0064).
+   */
   readonly markFatal: boolean;
   /** The failure is never retried and never settled. */
   readonly fatal: boolean;
@@ -59,6 +63,8 @@ export interface AttemptFailure {
  *   is still fatal: never retried or settled.
  * - Cancellation, this run's checkpoint failures and `ConfigurationError` are fatal. A domain
  *   error that merely reuses `CheckpointError` is not infrastructure.
+ * - A `PromptError` (ADR 0064) is a fatal authoring error, marked like a configuration failure
+ *   but not infrastructure: a step callback that renders a bad prompt is never retried or settled.
  * - `retry.on` omitted retries every kind except `invalid-request`, and `[]` retries none, bounded
  *   by `maxAttempts`. The `'transient'` filter expands to `rate-limit`, `overloaded`, `timeout`
  *   and `idle-timeout`; an explicit `invalid-request` entry still retries that kind.
@@ -70,10 +76,12 @@ export function classifyAttemptFailure(input: AttemptFailureInput): AttemptFailu
   const { cause, aborted, checkpointProblem, retryOn, attempt, maxAttempts, onError } = input;
   const scoped = aborted && !checkpointProblem;
   const kind = scoped ? 'cancelled' : errorKind(cause);
-  const markFatal = cause instanceof ConfigurationError;
-  const infrastructure = checkpointProblem || markFatal;
+  const configuration = cause instanceof ConfigurationError;
+  const authoring = cause instanceof PromptError;
+  const markFatal = configuration || authoring;
+  const infrastructure = checkpointProblem || configuration;
   // fatal deliberately reads errorKind(cause), not the scope-adjusted kind.
-  const fatal = scoped || errorKind(cause) === 'cancelled' || infrastructure;
+  const fatal = scoped || errorKind(cause) === 'cancelled' || infrastructure || authoring;
   const retry = !fatal && attempt < maxAttempts && retries(retryOn, kind);
   const settle = !fatal && !retry && onError === 'return';
   return {

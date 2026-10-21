@@ -173,7 +173,6 @@ export default defineConfig(
     // Pure decision modules: no I/O, clock or store. Values come only from the two allowlisted
     // siblings; everything else must be `import type`.
     files: [
-      'src/workflow/runtime/attempt-failure.ts',
       'src/workflow/runtime/replay-decision.ts',
       'src/workflow/runtime/recovery-hint.ts',
       'src/workflow/runtime/harness-config-decision.ts',
@@ -198,7 +197,40 @@ export default defineConfig(
               ],
               allowTypeImports: true,
               message:
-                'Pure decision modules (ADR 0007 attempt failures, replay decisions, recovery decisions, recovery hints, harness configuration decisions, removal decisions, leftover launch directories, start readiness, prune selection, project-root selection) must stay free of I/O: import values only from ./step-error.js and ./configuration-error.js; everything else must be import type.',
+                'Pure decision modules (replay decisions, recovery decisions, recovery hints, harness configuration decisions, removal decisions, leftover launch directories, start readiness, prune selection, project-root selection) must stay free of I/O: import values only from ./step-error.js and ./configuration-error.js; everything else must be import type.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // The ADR 0007 attempt classifier is pure too, but it recognizes a prompt authoring error
+    // (ADR 0064) as fatal, so it may also import the PromptError class from ../prompts/error.js,
+    // which reads no I/O, clock or store.
+    files: ['src/workflow/runtime/attempt-failure.ts'],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: [
+                'node:*',
+                ...builtinModules,
+                './**',
+                '../**',
+                '!./step-error.js',
+                '!./configuration-error.js',
+                // Re-include the directory first: an ignore pattern cannot re-include a file whose
+                // parent directory is excluded.
+                '!../prompts/',
+                '../prompts/*',
+                '!../prompts/error.js',
+              ],
+              allowTypeImports: true,
+              message:
+                'The ADR 0007 attempt classifier must stay free of I/O: import values only from ./step-error.js, ./configuration-error.js and ../prompts/error.js; everything else must be import type.',
             },
           ],
         },

@@ -183,6 +183,37 @@ it('fails the run on a render error in a settled map instead of journaling the i
   expect(fake.requests).toEqual([]);
 });
 
+it('fails the run on a render error in a retried, settled step without retrying or settling it', async ({
+  runs,
+  stateDir,
+}) => {
+  let calls = 0;
+  const definition = defineWorkflow({
+    ...base,
+    name: 'fatal-step',
+    run: (ctx) =>
+      ctx.step('render', {
+        input: null,
+        schema: z.string(),
+        retry: { maxAttempts: 3, delayMs: 0 },
+        onError: 'return',
+        run: () => {
+          calls += 1;
+          // Strict undefined: the omitted optional greeting fails the render.
+          return prompts.Optional({ name: 'Ada' }).text;
+        },
+      }),
+  });
+  await expect(
+    runs.run(definition, { stateDir, runId: 'fatal', input: null, harness: capture().harness }),
+  ).rejects.toThrow('Prompt Optional (Optional.md)');
+  expect(calls).toBe(1);
+  const record = await readRun({ stateDir, runId: 'fatal' });
+  expect(record.status).toBe('failed');
+  expect(record.steps['render']).toMatchObject({ status: 'failed', attempts: 1 });
+  expect(Object.values(record.steps).map((step) => step.status)).not.toContain('settled-failed');
+});
+
 it.for([
   ['an unknown parameter key', () => prompts.Optional({ name: 'Ada', extra: 1 } as never)],
   ['a missing include', () => broken.Missing({})],

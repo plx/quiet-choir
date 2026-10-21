@@ -197,5 +197,6 @@ outside the root.
 A render is not an effect. A `PromptError` is a fatal authoring error, recognized across module
 instances like the other public errors
 ([ADR 0028](decisions/0028-brand-public-errors-across-module-instances.md)). Thrown in a workflow
-body, a mapper of an `onError: 'return'` map, or a settled child, it fails the run. It is never
-journaled as a settled item or retried.
+body, a mapper of an `onError: 'return'` map, a settled child, or a `ctx.step` callback with `retry`
+or `onError: 'return'`, it fails the run. It is never journaled as a settled item or step, and never
+retried.
