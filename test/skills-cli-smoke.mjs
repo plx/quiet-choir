@@ -282,6 +282,14 @@ async function portingRecipes(skillRoot) {
       name,
       sourceExample(await example(skillRoot, file, id), join(repository, 'dist/index.js')),
     );
+  // The pattern recipes import ./roster.js, so the documented support module sits beside them.
+  await write(
+    'roster.ts',
+    sourceExample(
+      await example(skillRoot, 'references/patterns.md', 'pattern-roster'),
+      join(repository, 'dist/index.js'),
+    ),
+  );
   const env = { ...process.env, QC_CHECKOUT: repository, QC_TARGET: target, QC_RUNS: state };
   const cli = (args) =>
     shell(`node "$QC_CHECKOUT/bin/run.js" workflow ${args}`, { cwd: target, env });
