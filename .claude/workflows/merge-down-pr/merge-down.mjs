@@ -211,14 +211,20 @@ function prDir(P, pr) {
 // run that a concurrency group cancelled when a duplicate run started for the same commit. In the
 // #643 landing a cancelled duplicate CI run read as nine failures beside the passing run, and the
 // gate spent its repair rounds on nothing. A cancelled run counts only when no sibling ran; of the
-// rest, the newest is the check's state.
+// rest, the newest is the check's state. Only Actions checks (those with a workflow name) and
+// status contexts are grouped: a check from another GitHub App carries no workflow or app identity
+// in the rollup, so two apps' same-named checks are kept apart and each counts as it stands.
 function latestChecks(rollup) {
   const groups = new Map();
+  let i = 0;
   for (const c of rollup ?? []) {
+    i++;
     const key =
       c.__typename === 'StatusContext'
         ? `status:${c.context}`
-        : `check:${c.workflowName ?? ''}:${c.name}`;
+        : c.workflowName
+          ? `check:${c.workflowName}:${c.name}`
+          : `app-check:${i}`;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(c);
   }
