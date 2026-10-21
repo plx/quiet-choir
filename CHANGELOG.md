@@ -27,9 +27,9 @@
   `validate --json` on a package describes every declared workflow (a broken template in an
   unselected workflow now fails it as `load.definition`) and its `package` section gains
   `description`, `whenToUse`, `entry`, `workflows` (module, input schema and roster summary each),
-  `prompts` (with params keys and variables) and `files: {count, bytes, sha256}`, a
-  location-independent digest. Single-module runs, the run record (revision 21) and `model.ts` are
-  unchanged.
+  `prompts` (with params keys and variables; differing declarations of one name on a root are each
+  listed) and `files: {count, bytes, sha256}`, a location-independent digest, hashed at most 16
+  files at a time. Single-module runs, the run record (revision 21) and `model.ts` are unchanged.
 - Workflow packages (#584, [ADR 0065](docs/decisions/0065-workflow-packages.md) §1–2; see
   [docs/packages.md](docs/packages.md)). The root entry point exports `definePackage`,
   `PackageOptions`, `WorkflowPackage` and `WorkflowLaunchPackage`. A `<name>.quiet-choir` directory

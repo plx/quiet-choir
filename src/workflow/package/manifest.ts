@@ -139,6 +139,22 @@ export interface DescribedPackageWorkflow {
   readonly description: WorkflowDescription;
 }
 
+type PromptInventoryEntry = PackagePromptSet['entries'][number];
+
+function sameList(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((item, index) => item === b[index]);
+}
+
+/** Whether two inventory entries declare the same prompt: name, file, params and variables. */
+function sameDeclaration(a: PromptInventoryEntry, b: PromptInventoryEntry): boolean {
+  return (
+    a.name === b.name &&
+    a.file === b.file &&
+    sameList(a.params, b.params) &&
+    sameList(a.variables, b.variables)
+  );
+}
+
 /**
  * Build the validate package section (ADR 0065 section 5) from the imported package, each declared
  * workflow's definition and description (in declaration order, `entrypoint` set to its module), the
@@ -150,10 +166,7 @@ export function packageManifestSection(
   packagePrompts: readonly PromptSetCheck[],
   files: readonly HashedPackageFile[],
 ): PackageManifestSection {
-  const inventory = new Map<
-    string,
-    { readonly root: string; entries: PackagePromptSet['entries'][number][] }
-  >();
+  const inventory = new Map<string, { readonly root: string; entries: PromptInventoryEntry[] }>();
   const add = (
     descriptor: PromptSetDescriptor | undefined,
     checked: PromptSetCheck | undefined,
@@ -165,15 +178,18 @@ export function packageManifestSection(
       inventory.set(checked.root, set);
     }
     for (const entry of checked.entries) {
-      if (set.entries.some((known) => known.name === entry.name)) continue;
       const params = descriptor.entries[entry.name]?.params;
-      set.entries.push({
+      const listed = {
         name: entry.name,
         file: entry.file,
         description: entry.description,
         params: params === undefined ? [] : Object.keys(params.shape).sort(),
         variables: entry.variables,
-      });
+      };
+      // Two sets on one root can map a name to different files or params: list each declaration
+      // once and keep the differing ones side by side.
+      if (set.entries.some((known) => sameDeclaration(known, listed))) continue;
+      set.entries.push(listed);
     }
   };
   pkg.prompts.forEach((set, index) => {
