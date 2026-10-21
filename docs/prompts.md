@@ -182,8 +182,8 @@ field is `[]` when a node declares no prompt sets:
 ```
 
 `validate` and `execute` also log each warning at `warn` level on stderr. The `list-defs` cache
-treats every file under a declared prompt root as a source, so editing a template revalidates the
-entry without `--refresh`.
+treats every file under a declared prompt root as a source, including a file symlink (hashed through
+its target), so editing a template or retargeting a link revalidates the entry without `--refresh`.
 
 ## Errors
 

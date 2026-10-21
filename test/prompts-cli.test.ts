@@ -163,6 +163,29 @@ describe('prompt checks in the CLI loader', { timeout: 30_000 }, () => {
     });
   });
 
+  it('revalidates list-defs when an in-root template symlink is retargeted', async () => {
+    const { root } = await project();
+    const prompts = join(root, 'prompts');
+    await writeFile(join(prompts, 'A.md'), goodTemplate);
+    await writeFile(join(prompts, 'B.md'), '{{ nope }}');
+    // A dangling link is no template a render can read, so it does not block the cache.
+    await symlink('Missing.md', join(prompts, 'Dangling.md'));
+    await rm(join(prompts, 'Review.md'));
+    await symlink('A.md', join(prompts, 'Review.md'));
+    const engine = executor();
+    const plan = { kind: 'workflow.list-defs' as const, directories: [root] };
+    const listed = await engine.execute(plan);
+    if (listed.kind !== 'workflow.list-defs.result') throw new Error(JSON.stringify(listed));
+    expect(await engine.execute(plan)).toEqual(listed);
+    await rm(join(prompts, 'Review.md'));
+    await symlink('B.md', join(prompts, 'Review.md'));
+    expect(await engine.execute(plan)).toMatchObject({
+      ok: false,
+      code: 'load.definition',
+      message: expect.stringContaining('Prompt Review (Review.md): reads variable nope') as unknown,
+    });
+  });
+
   it('fails the execute preflight before any effect', async () => {
     const { root, typecheck } = await project('{{ title }} {% include "../escape.md" %}');
     const stateDir = join(root, 'state');

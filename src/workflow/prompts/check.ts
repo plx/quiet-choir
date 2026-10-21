@@ -1,4 +1,4 @@
-import { readdirSync } from 'node:fs';
+import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { createPromptEnvironment, engineFailure, type PromptEnvironment } from './engine.js';
@@ -274,9 +274,11 @@ export function checkPromptSets(descriptors: readonly PromptSetDescriptor[]): Pr
 }
 
 /**
- * Every regular file under a prompt root, as sorted absolute paths: the superset of what a render
- * can read, since dependency targets are literal and confined. Directory symlinks are not
- * followed; a missing root has no files. @internal
+ * Every regular file or file symlink under a prompt root, as sorted absolute paths: the superset of
+ * what a render can read, since dependency targets are literal and confined. A file symlink is
+ * listed at its own path, so hashing it reads its target and a retarget or a target edit changes
+ * the hash. Directory symlinks are not followed, a dangling symlink is skipped (no render can read
+ * it), and a missing root has no files. @internal
  */
 export function promptRootFiles(root: string): string[] {
   const files: string[] = [];
@@ -297,9 +299,24 @@ export function promptRootFiles(root: string): string[] {
     for (const entry of entries) {
       const path = join(directory, entry.name);
       if (entry.isDirectory()) visit(path);
-      else if (entry.isFile()) files.push(path);
+      else if (entry.isFile() || (entry.isSymbolicLink() && linksToFile(path))) files.push(path);
     }
   };
   visit(root);
   return files.sort();
+}
+
+/** Whether a symlink resolves to a regular file; a dangling or looping link does not. */
+function linksToFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      'code' in error &&
+      ['ENOENT', 'ENOTDIR', 'ELOOP'].includes(String(error.code))
+    )
+      return false;
+    throw error;
+  }
 }
