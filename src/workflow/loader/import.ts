@@ -91,6 +91,18 @@ function defaultExport(module: unknown): unknown {
   return module !== null && typeof module === 'object' ? Reflect.get(module, 'default') : undefined;
 }
 
+/**
+ * Whether a loaded module default-exports `selected`. A CommonJS module imported through an ESM
+ * manifest arrives by default interop, so its `exports.default` is one level further down.
+ */
+function exportsWorkflow(module: unknown, selected: unknown): boolean {
+  const value = defaultExport(module);
+  return (
+    value === selected ||
+    (value !== null && typeof value === 'object' && defaultExport(value) === selected)
+  );
+}
+
 /** Import already type-checked, trusted workflow code, preserving the CommonJS loader until disposed. @internal */
 export async function importWorkflow(
   plan: TypecheckPlan,
@@ -221,7 +233,7 @@ export async function importPackage(
       modulePath = candidates.find((candidate) => exporting.has(candidate));
     } else
       for (const candidate of [...new Set(candidates)])
-        if (defaultExport(await loader.load(candidate)) === selected) {
+        if (exportsWorkflow(await loader.load(candidate), selected)) {
           modulePath = candidate;
           break;
         }

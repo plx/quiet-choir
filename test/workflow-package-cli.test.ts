@@ -31,6 +31,7 @@ const typecheckCache = new TypecheckProgramCache();
 const roots: string[] = [];
 afterEach(async () => {
   vi.unstubAllEnvs();
+  Reflect.deleteProperty(globalThis, 'choirEngine');
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -43,6 +44,8 @@ interface ProjectOptions {
   readonly commonjs?: boolean;
   /** Body of `workflows/other.ts`, replacing the default. */
   readonly other?: string;
+  /** Put `other` in `workflows/other.cts`, which the manifest imports by default interop. */
+  readonly otherCts?: boolean;
   /** A package-level prompt set over `prompts/Review.md` with this template. */
   readonly template?: string;
 }
@@ -112,7 +115,21 @@ async function project(options: ProjectOptions = {}) {
     `import { z } from ${engine};\nexport const MainInput = z.object({ log: z.string(), marker: z.string().nullable() });\n`,
   );
   await writeFile(join(dir, 'workflows', 'main.ts'), mainSource);
-  await writeFile(join(dir, 'workflows', 'other.ts'), options.other ?? otherSource);
+  const otherFile = options.otherCts === true ? 'other.cts' : 'other.ts';
+  // A .cts module that an ESM manifest imports is required without tsx's .js to .ts mapping, so
+  // it takes the engine from the test process instead of importing it.
+  if (options.otherCts === true)
+    Object.assign(globalThis, { choirEngine: await import('../src/index.js') });
+  await writeFile(
+    join(dir, 'workflows', otherFile),
+    options.other ??
+      (options.otherCts === true
+        ? otherSource.replace(
+            `import { defineWorkflow, z } from ${engine};`,
+            `const { defineWorkflow, z } = (globalThis as unknown as { choirEngine: typeof import(${engine}, { with: { 'resolution-mode': 'import' } }) }).choirEngine;`,
+          )
+        : otherSource),
+  );
   const prompts = options.template !== undefined;
   if (prompts) {
     await mkdir(join(dir, 'prompts'));
@@ -131,8 +148,8 @@ export const prompts = definePrompts(join(${options.commonjs === true ? '__dirna
     join(dir, 'package.ts'),
     `import { definePackage } from ${engine};
 import main from './workflows/main.js';
-import other from './workflows/other.js';
-${prompts ? "import { prompts } from './prompts.js';\n" : ''}
+${options.otherCts === true ? "import otherModule from './workflows/other.cjs';" : "import other from './workflows/other.js';"}
+${prompts ? "import { prompts } from './prompts.js';\n" : ''}${options.otherCts === true ? 'const other = otherModule.default;\n' : ''}
 export default definePackage({
   root: ${options.root ?? (options.commonjs === true ? '__dirname' : 'import.meta.dirname')},
   name: 'demo',
@@ -467,6 +484,20 @@ describe('packages through the executor', { timeout: 60_000 }, () => {
     }
   });
 
+  it('selects a CommonJS workflow an ESM manifest imports by default interop', async ({
+    stateDir,
+  }) => {
+    const fixture = await project({ otherCts: true });
+    const result = await execute(fixture, stateDir, 'esm-cts', 'other');
+    expect(result, JSON.stringify(result).slice(0, 2000)).toMatchObject({
+      ok: true,
+      run: { status: 'completed', output: 'other:reviewed' },
+    });
+    expect((await readRun({ stateDir, runId: 'esm-cts' })).launch?.entrypoint).toBe(
+      join(fixture.dir, 'workflows', 'other.cts'),
+    );
+  });
+
   it('resumes a suspended package run from tick through the manifest', async ({ stateDir }) => {
     const fixture = await project({
       other: `import { defineWorkflow, z } from ${engine};
@@ -586,6 +617,27 @@ describe('packages through the CLI', { timeout: 120_000 }, () => {
     const listed = json((await cli.run(WorkflowList, ['--state-dir', stateDir, '--json'])).stdout);
     expect(listed['runs']).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: 'cli-other', package: pkg })]),
+    );
+  });
+
+  it('runs an ESM package whose manifest imports a .cts workflow', async ({ cli, stateDir }) => {
+    const fixture = await project({ otherCts: true });
+    const ran = await cli.run(WorkflowExecute, [
+      fixture.dir,
+      '--workflow',
+      'other',
+      '--harness',
+      `fixture:${fixture.fixtures}`,
+      '--state-dir',
+      stateDir,
+      '--run-id',
+      'cli-cts',
+      '--json',
+    ]);
+    expect(ran.error, ran.stderr).toBeUndefined();
+    expect(json(ran.stdout)).toMatchObject({ ok: true, run: { output: 'other:reviewed' } });
+    expect((await readRun({ stateDir, runId: 'cli-cts' })).launch?.entrypoint).toBe(
+      join(fixture.dir, 'workflows', 'other.cts'),
     );
   });
 
