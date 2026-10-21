@@ -5,7 +5,7 @@ export const meta = {
   whenToUse:
     'Burning down an epic one ticket per run, in the order its checklist gives. Args: {epic, ticket?, decision?, until?, followupEpic?, standingNotes?}.',
   phases: [
-    { title: 'Survey', detail: 'snapshot the epic and pick the next ticket (haiku)' },
+    { title: 'Survey', detail: 'snapshot the epic and pick the next ticket (sonnet copyist)' },
     { title: 'Plan', detail: 'readiness check and implementation plan (opus high)' },
     {
       title: 'Implement',
@@ -17,7 +17,7 @@ export const meta = {
         'PR description ∥ follow-ups (sonnet), open the PR (GitHub Codex mode: await its review)',
     },
     { title: 'Land', detail: 'merge-down-pr as an inline child workflow' },
-    { title: 'Report', detail: 'tick the epic, append the ledger, re-survey (haiku)' },
+    { title: 'Report', detail: 'tick the epic, append the ledger, re-survey (sonnet copyist)' },
   ],
 };
 
@@ -100,6 +100,7 @@ export const meta = {
  *
  * MODEL TIERS (spend judgment only where judgment is needed)
  *   clerk     haiku  / low     run epic.mjs / merge-down.mjs subcommands and relay their JSON
+ *   copyist   sonnet / low     relay the long survey output, and re-read a clerk's failed relay
  *   scribe    sonnet / medium  PR descriptions, follow-up and slice write-ups
  *   mechanic  sonnet / high    mechanical implementation
  *   planner   opus   / high    readiness and the implementation plan (reads the ticket and code once)
@@ -124,6 +125,9 @@ const TIER = {
   // Re-reads after a failed relay: a model's copying mistakes repeat exactly (haiku once dropped the
   // same '}' from a nested object three times in a row), so a retry uses a different, stronger model.
   copyist: { model: 'sonnet', effort: 'low' },
+  // Re-reads after a failed copyist relay (the survey and report go to the copyist first), so a
+  // retry still changes model.
+  recopyist: { model: 'opus', effort: 'low' },
   scribe: { model: 'sonnet', effort: 'medium' },
   mechanic: { model: 'sonnet', effort: 'high' },
   planner: { model: 'opus', effort: 'high' },
@@ -420,7 +424,7 @@ async function clerk(label, phaseName, steps, render = RUN_STEPS, tier = TIER.cl
       phaseName,
       rereads,
       RUN_STEPS,
-      TIER.copyist,
+      tier === TIER.copyist ? TIER.recopyist : TIER.copyist,
     );
     Object.assign(out, again.verified);
     missing = again.missing;
@@ -958,6 +962,18 @@ Return title (default: ${JSON.stringify(plan.title)}; keep it under 72 character
   return text;
 }
 
+// The writer runs beside the filing, so the filed follow-ups are linked here, before the footer.
+function withFollowups(body, filed) {
+  const links = filed.map((f) => `- #${f.number}${f.title ? ` ${f.title}` : ''}`);
+  if (!links.length) return body;
+  const section = `Follow-ups filed under #${record.followupEpic}:\n\n${links.join('\n')}`;
+  const footer = A.prFooter.trim();
+  const at = footer ? body.lastIndexOf(footer) : -1;
+  return at >= 0
+    ? `${body.slice(0, at).trimEnd()}\n\n${section}\n\n${body.slice(at)}`
+    : `${body.trimEnd()}\n\n${section}`;
+}
+
 const AWAIT_LOOP = (
   listing,
 ) => `Run this command with the Bash tool (timeout 600000 ms). It waits up to about 8 minutes and prints one line of JSON.
@@ -1132,15 +1148,25 @@ for (const number of candidates) {
       impl.result.followups.length ? fileFollowups(impl.result.followups) : Promise.resolve([]),
   ]);
   if (!prText) return blocked('publish', 'could not write the PR description');
-  if (impl.result.followups.length && !filed)
-    record.notes.push('follow-up filing failed; see the implementer notes');
+  // Implementers are told that the follow-ups they list are filed for them, and a criterion that
+  // asks for issues counts as done once they are listed, so every one must be filed (or matched to
+  // an open issue) before the PR opens.
+  const wanted = impl.result.followups.length;
+  const settled = (filed ?? []).filter((f) => f.number);
+  if (settled.length < wanted) {
+    const failed = (filed ?? []).filter((f) => f.error).map((f) => `${f.key}: ${f.error}`);
+    return blocked(
+      'publish',
+      `filed ${settled.length} of ${wanted} follow-up(s)${failed.length ? ` (${failed.join('; ')})` : ''}; re-running is safe, since filing matches existing issues by title`,
+    );
+  }
   const opened = await one(
     `open PR #${number}`,
     'Publish',
     cmd('open', 'open-pr', {
       issue: number,
       flags: `--title=${sh(prText.title)}`,
-      stdin: prText.body,
+      stdin: withFollowups(prText.body, settled),
     }),
   );
   if (opened.error) return blocked('publish', opened.error);
