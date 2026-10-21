@@ -765,7 +765,9 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
           'info',
           `Agent limits: total=${String(agentLimits.total)}; per-harness=${JSON.stringify(agentLimits.perProvider ?? {})}`,
         );
-      if (plan.kind === 'workflow.execute' && saved) {
+      if (plan.kind === 'workflow.check-resume')
+        saved = await readRequiredRun({ runId: plan.runId, stateDir: plan.stateDir });
+      if (saved && (plan.kind === 'workflow.execute' || plan.kind === 'workflow.check-resume')) {
         if (saved.launch) {
           // A missing stored file is the entrypoint_missing refusal, whatever FILE was requested.
           await storedEntrypointExists(saved.id, saved.launch.entrypoint);
@@ -938,7 +940,8 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         };
       }
       if (plan.kind === 'workflow.check-resume') {
-        const run = await readRequiredRun({ runId: plan.runId, stateDir: plan.stateDir });
+        const run =
+          saved ?? (await readRequiredRun({ runId: plan.runId, stateDir: plan.stateDir }));
         const check = compareResume(
           definition,
           {

@@ -154,13 +154,14 @@ run re-enters through the manifest:
   resume or check the run's own workflow, not the package's entry.
 - After import the selected module must equal `launch.entrypoint`.
 
-A mismatched launch mode is refused as `run.incompatible` before import, with `storedEntrypoint` and
-`requestedEntrypoint` in `details` and resume and fork entries in `next`: a single-module FILE given
-for a package run, a package given for a single-module run, or a different package root. A selection
-that resolves to a different module than `launch.entrypoint` (a renamed workflow file, or
-`--workflow` naming another workflow) is refused the same way after import. A refused package
-request also carries `requestedPackage` and `requestedWorkflow`, so its fork entry stays a package
-run. A deleted manifest or module is the `entrypoint_missing` refusal.
+On `execute --resume` and `check-resume`, a mismatched launch mode is refused as `run.incompatible`
+before import, with `storedEntrypoint` and `requestedEntrypoint` in `details` and resume and fork
+entries in `next`: a single-module FILE given for a package run, a package given for a single-module
+run, or a different package root. A selection that resolves to a different module than
+`launch.entrypoint` (a renamed workflow file, or `--workflow` naming another workflow) is refused
+the same way after import. A refused package request also carries `requestedPackage` and
+`requestedWorkflow`, so its fork entry stays a package run. A deleted manifest or module is the
+`entrypoint_missing` refusal.
 
 ## What comes next
 

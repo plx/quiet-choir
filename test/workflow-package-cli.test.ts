@@ -22,6 +22,7 @@ import { TickWorkflowExecutor } from '../src/workflow/loader/tick.js';
 import { readHarnessSelection } from '../src/workflow/loader/harness-selection.js';
 import type { PackageSelection } from '../src/workflow/loader/model.js';
 import { analyzePackagePath } from '../src/workflow/package/plan.js';
+import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
 import { TypecheckProgramCache } from '../src/workflow/typecheck/program-cache.js';
 import { it } from './setup/cli-capture.js';
 
@@ -496,6 +497,36 @@ describe('packages through the executor', { timeout: 60_000 }, () => {
     expect((await readRun({ stateDir, runId: 'esm-cts' })).launch?.entrypoint).toBe(
       join(fixture.dir, 'workflows', 'other.cts'),
     );
+  });
+
+  it('refuses check-resume of a package run from a module or another package', async ({
+    stateDir,
+  }) => {
+    const fixture = await project();
+    const other = await project();
+    await writeFile(fixture.marker, '');
+    await execute(fixture, stateDir, 'pkg-check-refuse', 'other');
+    const analysis = analyzeTypecheckEntrypoint(
+      join(fixture.dir, 'workflows', 'other.ts'),
+      fixture.root,
+    );
+    if (!analysis.ok) throw new Error('Expected a TypeScript source.');
+    const module = analysis.plan;
+    for (const [typecheck, selection] of [
+      [module, undefined],
+      [other.typecheck, other.selection('other')],
+    ] as const) {
+      const result = await executor().execute({
+        kind: 'workflow.check-resume',
+        typecheck,
+        ...(selection === undefined ? {} : { package: selection }),
+        runId: 'pkg-check-refuse',
+        stateDir,
+        cwd: fixture.root,
+        acceptCodeChange: true,
+      });
+      expect(result).toMatchObject({ ok: false, code: 'run.incompatible' });
+    }
   });
 
   it('resumes a suspended package run from tick through the manifest', async ({ stateDir }) => {
