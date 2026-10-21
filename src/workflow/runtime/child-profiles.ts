@@ -149,7 +149,12 @@ function subset(
     );
   };
   const rank = { none: 0, read: 1, write: 2, exec: 3 };
+  // A roster entry runs only on its pinned harness, so another harness's block neither grants it
+  // anything nor binds it: its blocks there stay at the text baseline.
+  const runs = (harness: string): boolean =>
+    child.harness === undefined || child.harness === harness;
   for (const [name, access] of Object.entries(child.harnessAccess ?? {})) {
+    if (!runs(name)) continue;
     if (rank[access] > rank[parent.harnessAccess?.[name] ?? 'none']) reject(`${name}.access`);
     const wanted = child.harnessCapabilities?.[name] ?? {};
     const allowed = parent.harnessCapabilities?.[name] ?? {};
@@ -202,17 +207,45 @@ function subset(
   )
     reject('claude.addDirRoots');
   if (
+    runs('claude') &&
     !(parent.claude.disallowedTools ?? []).every((rule) =>
       child.claude.disallowedTools?.includes(rule),
     )
   )
     reject('disallowedTools');
-  if (parent.claude.strictMcpConfig === true && child.claude.strictMcpConfig !== true)
+  if (
+    runs('claude') &&
+    parent.claude.strictMcpConfig === true &&
+    child.claude.strictMcpConfig !== true
+  )
     reject('strictMcpConfig');
   // Failing on reported denials is a parent guarantee; a child may only keep it.
   for (const provider of ['claude', 'codex'] as const)
-    if (denialPolicy(parent, provider) === 'fail' && denialPolicy(child, provider) !== 'fail')
+    if (
+      runs(provider) &&
+      denialPolicy(parent, provider) === 'fail' &&
+      denialPolicy(child, provider) !== 'fail'
+    )
       reject('onPermissionDenied');
+}
+
+/**
+ * Hold a child to a pinned ceiling's harness and access: a roster entry delegates authority on its
+ * own harness only, so a child role on another harness, or above the entry's access, is refused.
+ */
+function pinned(child: ResolvedProfile, parent: ResolvedProfile, label: string): void {
+  if (parent.harness === undefined) return;
+  const rank = { none: 0, read: 1, write: 2, exec: 3 };
+  const reject = (field: string): never => {
+    throw new Error(
+      `Child profile ${label} exceeds parent profile ${parent.name}: ${field}. Delegate a sufficient parent role explicitly.`,
+    );
+  };
+  if (child.harness !== parent.harness)
+    reject(
+      `harness (${child.harness ?? 'unpinned'}; the parent role is pinned to ${parent.harness})`,
+    );
+  if (rank[child.access] > rank[parent.access]) reject('access');
 }
 
 /**
@@ -326,6 +359,7 @@ export function delegateCapabilities(
     const ceiling = bound(name);
     const inherited = inheritDenials(name, role, ceiling);
     const label = `${definition.name}.${name}`;
+    pinned(inherited, ceiling, label);
     subset(inherited, ceiling, label, rootCwd);
     withinAncestors(inherited, ancestorsOf(parentNameOf(name)), label, rootCwd);
     requireGrant(ceiling, parentGrants, parentPins);

@@ -288,8 +288,12 @@ describe('capability manifest', () => {
       maxTurns: 12,
       expectsToolUse: true,
       codex: { model: 'gpt-5-codex', effort: 'high', sandbox: 'workspace-write' },
-      claude: { tools: [], model: 'sonnet' },
+      // The unpinned block stays at the text baseline: defaults.claude does not reach it.
+      claude: { tools: [], allowedTools: [] },
     });
+    expect(Mechanic?.claude).not.toHaveProperty('model');
+    expect(Reviewer?.claude).toMatchObject({ model: 'opus' });
+    expect(Clerk?.harnesses).toEqual({ third: {} });
     // A tool-less Claude entry is labelled by Claude alone, not raised to Codex's read baseline.
     expect(Clerk).toMatchObject({
       harness: 'claude',
@@ -660,5 +664,104 @@ describe('launch overrides and grants', () => {
         grants: ['Mechanic'],
       }),
     ).rejects.toThrow('Child profile wider-child.Mechanic exceeds parent profile Mechanic');
+  });
+
+  it('keeps defaults off unpinned blocks and holds a child to the parent entry pin', async ({
+    stateDir,
+    runs,
+  }) => {
+    const fake = capture('ok');
+    const defaults = { codex: { sandbox: 'workspace-write' } } as const;
+    const child = defineWorkflow({
+      ...base,
+      name: 'writer-child',
+      defaults,
+      roster: defineRoster({ Reviewer: { harness: 'codex', sandbox: 'workspace-write' } }),
+      async run(ctx) {
+        return (await ctx.roster.Reviewer.text('fix', { prompt })).output;
+      },
+    });
+    const parent = defineWorkflow({
+      ...base,
+      name: 'reader-parent',
+      requireGrants: true,
+      defaults,
+      roster: defineRoster({ Reviewer: { harness: 'claude', tools: ['Read'] } }),
+      run: (ctx) => ctx.workflow('child', child, null),
+    });
+    // The Claude reader's Codex block stays read-only despite defaults.codex, so its pinned
+    // access needs no grant and carries no Codex sandbox to a child.
+    const manifest = capabilityManifest(parent, { requireGrants: true });
+    expect(manifest.profiles['Reviewer']).toMatchObject({
+      harness: 'claude',
+      access: 'read',
+      codexAccess: 'read',
+      codex: { sandbox: 'read-only' },
+    });
+    expect(manifest.requiredGrants).toEqual(['text']);
+    await expect(
+      runs.run(parent, {
+        stateDir,
+        runId: 'repinned',
+        input: null,
+        harness: fake.harness,
+        grants: ['text'],
+      }),
+    ).rejects.toThrow(
+      'Child profile writer-child.Reviewer exceeds parent profile Reviewer: harness (codex; the parent role is pinned to claude)',
+    );
+    expect(fake.requests).toEqual([]);
+  });
+
+  it('refuses a child above a pinned parent entry, and ignores restrictions it cannot run under', async ({
+    stateDir,
+    runs,
+  }) => {
+    const fake = capture('ok');
+    const reader = defineRoster({ Reviewer: { harness: 'claude', tools: ['Read'] } });
+    const editor = defineWorkflow({
+      ...base,
+      name: 'editor-child',
+      roster: defineRoster({ Reviewer: { harness: 'claude', tools: ['Read', 'Edit'] } }),
+      async run(ctx) {
+        return (await ctx.roster.Reviewer.text('edit', { prompt })).output;
+      },
+    });
+    const parent = defineWorkflow({
+      ...base,
+      name: 'reader-parent',
+      requireGrants: true,
+      roster: reader,
+      run: (ctx) => ctx.workflow('child', editor, null),
+    });
+    await expect(
+      runs.run(parent, { stateDir, runId: 'editor', input: null, harness: fake.harness }),
+    ).rejects.toThrow('Child profile editor-child.Reviewer exceeds parent profile Reviewer');
+    // A Codex entry under an unpinned parent role need not repeat Claude-only restrictions.
+    const restricted = { claude: { disallowedTools: ['Bash'], strictMcpConfig: true } } as const;
+    const codexChild = defineWorkflow({
+      ...base,
+      name: 'codex-child',
+      defaults: restricted,
+      roster: defineRoster({ Fixer: { harness: 'codex' } }),
+      async run(ctx) {
+        return (await ctx.roster.Fixer.text('fix', { prompt })).output;
+      },
+    });
+    const unpinned = defineWorkflow({
+      ...base,
+      name: 'profile-parent',
+      requireGrants: true,
+      defaults: restricted,
+      profiles: { Fixer: {} },
+      run: (ctx) => ctx.workflow('child', codexChild, null),
+    });
+    const result = await runs.run(unpinned, {
+      stateDir,
+      runId: 'unpinned',
+      input: null,
+      harness: fake.harness,
+    });
+    expect(result.output).toBe('ok');
   });
 });

@@ -89,7 +89,10 @@ declared profile without `extends` does: an entry that sets nothing gets no Clau
 workflow-wide (limits, and per-harness model and effort under `defaults.claude` and
 `defaults.codex`). The entry's own `timeoutMs`, `idleTimeoutMs`, `maxTurns` and `maxBudgetUsd` are
 its limits; every other key is an option of its harness. Nested objects merge field by field over
-the baseline and arrays replace, as for profiles. A roster call resolves, in order:
+the baseline and arrays replace, as for profiles. Only the pinned harness's block takes `defaults`:
+the entry's other blocks stay at the text baseline (no Claude tools, a read-only Codex sandbox, no
+registered harness options), so `defaults.codex.sandbox: 'workspace-write'` gives a Claude entry no
+Codex authority to carry into a grant pin or a child. A roster call resolves, in order:
 
 1. the text baseline,
 2. workflow `defaults`,
@@ -139,12 +142,12 @@ merge rules and errors.
 resolved role with its `harness`, model, tools or sandbox, limits, `description`, `expectsToolUse`
 and derived access label. The label is the pinned harness's access alone: a tool-less Claude entry
 is `none`, where the cross-harness maximum of a profile would be `read`. The unused harness blocks
-stay at the baseline, since grant pins and child delegation compare both. Free-form controls
-(settings, MCP servers, subagents, system prompts such as `appendSystemPrompt`, Codex config and a
-registered harness's `sensitiveOptions`) appear only as digests under `redacted`, as for any
-profile. The top-level `workflow.profiles` list names declared profiles only. A run record's
-`capabilities` holds the same public manifest (record schema revision 19 added the `harness` field;
-see [storage](storage.md#record-schema-revision)).
+stay at the text baseline whatever `defaults` sets, since grant pins and child delegation compare
+both. Free-form controls (settings, MCP servers, subagents, system prompts such as
+`appendSystemPrompt`, Codex config and a registered harness's `sensitiveOptions`) appear only as
+digests under `redacted`, as for any profile. The top-level `workflow.profiles` list names declared
+profiles only. A run record's `capabilities` holds the same public manifest (record schema revision
+19 added the `harness` field; see [storage](storage.md#record-schema-revision)).
 
 ```json
 "Reviewer": {

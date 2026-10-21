@@ -15,14 +15,16 @@
   as a role that needs `--grant`, and `workflow validate --json` lists each entry in
   `capabilities.profiles` with its new `harness` field and an access label for that harness alone. A
   call that selects an entry on another harness is refused, and a roster call's `addDirs` are
-  appended to the entry's. An entry name equal to a `profiles` name, a built-in preset or a reserved
-  word, and a `defaults.profile` naming an entry, fail validation. New public API: `defineRoster`,
-  `RosterEntry`, `Roster`, `RosterAgents`, `RosterAgentOf` and their helper types. `WorkflowContext`
-  and `WorkflowDefinition` gain a last type parameter `TRoster`, so an exact
-  `toEqualTypeOf<WorkflowDefinition<…>>` of a `defineWorkflow` result needs `EmptyRoster` there, and
-  a hand-written `WorkflowContext` object needs a `roster` member. Record schema revision 19 adds
-  the optional nested `harness` to resolved profiles; revision-18 records read and resume unchanged.
-  `docs/agent-profiles.md` is now [docs/roster.md](docs/roster.md), with profiles in its
+  appended to the entry's. `defaults` reach only an entry's pinned harness block; its other blocks
+  stay at the text baseline, and under `requireGrants` a parent entry delegates only to a child
+  entry pinned to the same harness at no higher access. An entry name equal to a `profiles` name, a
+  built-in preset or a reserved word, and a `defaults.profile` naming an entry, fail validation. New
+  public API: `defineRoster`, `RosterEntry`, `Roster`, `RosterAgents`, `RosterAgentOf` and their
+  helper types. `WorkflowContext` and `WorkflowDefinition` gain a last type parameter `TRoster`, so
+  an exact `toEqualTypeOf<WorkflowDefinition<…>>` of a `defineWorkflow` result needs `EmptyRoster`
+  there, and a hand-written `WorkflowContext` object needs a `roster` member. Record schema revision
+  19 adds the optional nested `harness` to resolved profiles; revision-18 records read and resume
+  unchanged. `docs/agent-profiles.md` is now [docs/roster.md](docs/roster.md), with profiles in its
   "requireGrants and legacy profiles" appendix.
 
 - `ctx.claude`, `ctx.codex` and `ctx.agent(name)` gain `bind(options)`, which returns an `Agent`: a

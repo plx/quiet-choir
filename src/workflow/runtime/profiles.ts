@@ -304,6 +304,17 @@ export function resolveCapabilities(
     const data = { ...combined };
     delete data.extends;
     delete data.access;
+    const pin = Object.hasOwn(compiled.pins, name) ? compiled.pins[name] : undefined;
+    // A roster entry runs only on its pinned harness, so its other blocks stay at the text
+    // baseline: `defaults` cannot lend it authority on a harness it cannot run on, which a grant
+    // pin or a child delegation ceiling would otherwise carry.
+    if (pin !== undefined) {
+      if (pin !== 'claude') data.claude = { tools: [] };
+      if (pin !== 'codex') data.codex = { sandbox: 'read-only' };
+      const own = pin === 'claude' || pin === 'codex' ? undefined : data.harnesses?.[pin];
+      if (own === undefined) delete data.harnesses;
+      else data.harnesses = { [pin]: own };
+    }
     data.claude = resolveIsolation(data.claude ?? {});
     data.codex = resolveIsolation(data.codex ?? {});
     const tools = data.claude.tools ?? [];
@@ -351,7 +362,6 @@ export function resolveCapabilities(
       if (rank[contract.access] > rank[access]) access = contract.access;
     }
     // A roster entry's access is its pinned harness's alone, not the cross-harness maximum.
-    const pin = Object.hasOwn(compiled.pins, name) ? compiled.pins[name] : undefined;
     if (pin !== undefined)
       access =
         pin === 'claude'
