@@ -252,7 +252,9 @@ export interface AnyPromptSet {
 export type PromptText<O> = O extends unknown
   ? {
       [K in keyof O]: K extends 'prompt' | 'systemPrompt' | 'appendSystemPrompt'
-        ? Exclude<O[K], Prompt>
+        ? [Extract<O[K], Prompt>] extends [never]
+          ? O[K]
+          : Exclude<O[K], Prompt> | string
         : O[K];
     }
   : never;

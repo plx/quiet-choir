@@ -11,9 +11,11 @@ import {
   defineWorkflow,
   z,
   type AgentRequest,
+  type ClaudeOptions,
   type AnyPromptSet,
   type Prompt,
   type PromptSet,
+  type PromptText,
   type WorkflowContext,
 } from '../src/index.js';
 
@@ -119,6 +121,16 @@ it('types a roster entry Prompt as the text the roster stores', () => {
 
 it('gives adapters string prompts', () => {
   expectTypeOf<AgentRequest['options']['prompt']>().toEqualTypeOf<string>();
+});
+
+it('maps Prompt to string in PromptText, keeping optionality and other fields', () => {
+  expectTypeOf<PromptText<{ prompt: Prompt }>['prompt']>().toEqualTypeOf<string>();
+  expectTypeOf<PromptText<{ prompt: string | Prompt }>['prompt']>().toEqualTypeOf<string>();
+  expectTypeOf<PromptText<ClaudeOptions>['systemPrompt']>().toEqualTypeOf<string | undefined>();
+  expectTypeOf<PromptText<{ prompt: string; other: number }>>().toEqualTypeOf<{
+    prompt: string;
+    other: number;
+  }>();
 });
 
 it('accepts only definePrompts results as WorkflowDefinition.prompts', () => {
