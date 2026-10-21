@@ -535,6 +535,52 @@ it('keeps own __proto__ keys in bound options, as the raw spelling does', async 
   expect(Object.getOwnPropertyDescriptor(nested, '__proto__')?.value).toEqual({ A: '1' });
 });
 
+it('refuses at bind a nested value the raw call boundary would reject, never copying it away', async ({
+  runs,
+  stateDir,
+}) => {
+  const untyped = (value: unknown) => value as never;
+  let reads = 0;
+  const hidden = Object.defineProperty({ A: '1' }, 'B', { value: '2', enumerable: false });
+  const symbolic = { A: '1', [Symbol('s')]: '2' };
+  const getter = Object.defineProperty({ A: '1' }, 'B', {
+    get: () => ++reads,
+    enumerable: true,
+  });
+  // A hole: index 1 is absent while the length counts it.
+  const holey = ['a'];
+  holey[2] = 'c';
+  const arrayGetter = Object.defineProperty(['a'], 0, { get: () => ++reads, enumerable: true });
+  const arrayHidden = Object.defineProperty(['a', 'b'], 1, { value: 'b', enumerable: false });
+  const augmented = Object.assign(['a'], { extra: 'x' });
+  const cases = [
+    [hidden, 'objects cannot contain symbols or non-enumerable properties'],
+    [symbolic, 'objects cannot contain symbols or non-enumerable properties'],
+    [getter, 'it cannot contain getters'],
+    [{ nested: getter }, 'it cannot contain getters'],
+    [holey, 'arrays cannot have holes'],
+    [arrayGetter, 'it cannot contain getters'],
+    [arrayHidden, 'it cannot contain non-enumerable properties'],
+    [augmented, 'arrays cannot have extra keys'],
+  ] as const;
+  const fake = capture();
+  const definition = workflow('not-json', async (ctx) => {
+    for (const [settings, reason] of cases)
+      expect(() => ctx.claude.bind(untyped({ settings }))).toThrow(
+        new TypeError(`bind settings must be plain JSON: ${reason}.`),
+      );
+    // The raw spelling of the first case is refused too, at the call's JSON boundary.
+    await expect(ctx.claude.value('raw', untyped({ prompt, settings: hidden }))).rejects.toThrow(
+      'non-enumerable',
+    );
+    return null;
+  });
+  await runs.run(definition, { stateDir, runId: 'not-json', input: null, harness: fake.harness });
+  // No getter was evaluated, and nothing reached the adapter.
+  expect(reads).toBe(0);
+  expect(fake.requests).toEqual([]);
+});
+
 it('reuses a completed bound step on resume without invoking the adapter', async ({
   runs,
   stateDir,

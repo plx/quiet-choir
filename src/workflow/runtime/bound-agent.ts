@@ -59,20 +59,51 @@ function directories(value: unknown, where: string): readonly unknown[] {
   return value;
 }
 
+/** Throw the bind error for a bound value that a raw call's JSON boundary would also reject. */
+function notJson(key: string, reason: string): never {
+  throw new TypeError(`bind ${key} must be plain JSON: ${reason}.`);
+}
+
+/**
+ * The data value of `value`'s own property `name`, refusing what `jsonValue` refuses: a missing
+ * property (an array hole), a getter, or a non-enumerable property.
+ */
+function dataValue(value: object, name: string, key: string): unknown {
+  const descriptor = Object.getOwnPropertyDescriptor(value, name);
+  if (descriptor === undefined) return notJson(key, 'arrays cannot have holes');
+  if (!('value' in descriptor)) return notJson(key, 'it cannot contain getters');
+  if (descriptor.enumerable !== true)
+    return notJson(key, 'it cannot contain non-enumerable properties');
+  return descriptor.value;
+}
+
 /**
  * A frozen deep copy of a bound value. Bound options are JSON by contract (the runner passes them
- * through `jsonValue`), so plain arrays and objects are copied and anything else is kept as is.
+ * through `jsonValue`), so plain arrays and objects are copied and anything else is kept as is, for
+ * that boundary to judge. A copy must not change what it copies, so a getter, a symbol key, a
+ * non-enumerable property, an array hole or an extra array key throws here instead of being
+ * evaluated or dropped: the raw call would reject the same value. A subclassed array, like a class
+ * instance, is kept as is.
  */
 function frozen(value: unknown, key: string, ancestors: readonly unknown[] = []): unknown {
   if (typeof value !== 'object' || value === null) return value;
   if (ancestors.includes(value)) throw new TypeError(`bind ${key} must not be circular.`);
   const within = [...ancestors, value];
-  if (Array.isArray(value))
-    return Object.freeze(value.map((entry: unknown) => frozen(entry, key, within)));
   const prototype: unknown = Object.getPrototypeOf(value);
+  if (Array.isArray(value) && prototype === Array.prototype) {
+    const entries: unknown[] = [];
+    for (let index = 0; index < value.length; index++)
+      entries.push(frozen(dataValue(value, String(index), key), key, within));
+    if (Reflect.ownKeys(value).length !== value.length + 1)
+      return notJson(key, 'arrays cannot have extra keys');
+    return Object.freeze(entries);
+  }
   if (prototype !== Object.prototype && prototype !== null) return value;
+  if (Reflect.ownKeys(value).length !== Object.keys(value).length)
+    return notJson(key, 'objects cannot contain symbols or non-enumerable properties');
   const copy: Record<string, unknown> = {};
-  for (const [name, entry] of Object.entries(value)) define(copy, name, frozen(entry, key, within));
+  for (const name of Object.keys(value))
+    define(copy, name, frozen(dataValue(value, name, key), key, within));
   return Object.freeze(copy);
 }
 
