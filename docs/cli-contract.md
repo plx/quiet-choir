@@ -110,6 +110,32 @@ schema cannot be used), `answer_author` (`--by` is missing or wrong for a human 
 invalid, including an unreplaced `human:<NAME>` placeholder) and `answer_too_large` (the envelope
 exceeds 1 MiB). Re-ask from `issues`; nothing was written.
 
+## Packages
+
+Every FILE argument of `execute`, `start`, `validate`, `check-resume` and `typecheck` may be a
+`*.quiet-choir` package directory instead of a module ([packages](packages.md)); a path whose last
+segment ends in `.quiet-choir` (a trailing separator is ignored) is a package, and the typecheck
+entrypoint is its `package.ts`. `--workflow <name>` on `execute`, `start` and `validate` selects a
+declared workflow other than the package's `entry`; on `check-resume`, and on
+`execute <dir> --resume`, an omitted `--workflow` selects the run's recorded workflow. A package
+without `entry` and without `--workflow` fails `usage.entrypoint` (exit 2) with
+`details.reason: "package_workflow_required"`, and an unknown name with
+`"package_workflow_unknown"`; both carry `details.workflows`, the declared names in order.
+`--workflow` with a module FILE, with a registered name, or on a resume without FILE is
+`usage.flag`. A missing package directory or `package.ts` is `usage.file_not_found`; a path that is
+not a directory, or a directory with only `package.js`, `package.mjs`, `package.cjs`, `package.mts`
+or `package.cts`, is `usage.entrypoint` with `details.reason` `PACKAGE_NOT_DIRECTORY` or
+`JAVASCRIPT_PACKAGE_MANIFEST`. The validate document's `entrypoint` is the selected workflow's own
+module and it gains `package: {root, name, version}`. `inspect --json --summary`, `list --json` rows
+and `list --full` summaries carry the same `package` for a run launched from a package, and omit it
+otherwise. Resuming a package run with a module FILE, a single-module run with a package, or a
+package run with a different package root is `run.incompatible` before import, with
+`details.storedEntrypoint` and `details.requestedEntrypoint` (a refused package request adds
+`requestedPackage` and `requestedWorkflow`) and the resume and fork entries of
+[next commands](#next-commands); a package selection that resolves to a module other than
+`launch.entrypoint` is refused the same way after import. Fork entries of a package run read
+`workflow execute <root> --workflow <name> --fork-from RUN ...`.
+
 ## Run results of execute, resume and answer --resume
 
 These three commands print a compact, constant-shape result by default, so an agent session reads

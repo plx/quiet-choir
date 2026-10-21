@@ -2,6 +2,31 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Workflow packages (#584, [ADR 0065](docs/decisions/0065-workflow-packages.md) §1–2; see
+  [docs/packages.md](docs/packages.md)). The root entry point exports `definePackage`,
+  `PackageOptions`, `WorkflowPackage` and `WorkflowLaunchPackage`. A `<name>.quiet-choir` directory
+  whose `package.ts` default-exports
+  `definePackage({ root: import.meta.dirname, name, version, workflows, entry?, prompts?, description?, whenToUse? })`
+  is accepted wherever a workflow FILE is: `workflow execute`, `start`, `validate`, `check-resume`,
+  `typecheck` and `execute --dry-run`. `--workflow <name>` (execute, start, validate, check-resume)
+  selects a declared workflow other than `entry`. `definePackage` rejects a bad name, version, root
+  or key, a duplicate workflow name, an `entry` not in `workflows` and a non-`definePrompts` element
+  with a `TypeError` naming the field; the loader refuses a manifest whose root is not its own
+  directory (`load.definition`) and a JavaScript manifest (`usage.entrypoint`), and a missing entry
+  or unknown `--workflow` is `usage.entrypoint` with `details.reason` `package_workflow_required` or
+  `package_workflow_unknown` and the declared `details.workflows`. The manifest is the typecheck and
+  fingerprint entrypoint, and package-level prompt sets get the load-time checks and join the
+  fingerprint. The validate document's `entrypoint` is the selected workflow's module, and it gains
+  `package: {root, name, version}`. A package run records that module as `launch.entrypoint` and
+  adds `launch.package` (record schema revision 21, nested-only; revision-20 records read
+  unchanged). `workflow resume`, `execute --resume` without FILE and `tick` re-enter through the
+  manifest and select the run's recorded workflow; a module FILE for a package run, a package for a
+  single-module run, or another package root is refused as `run.incompatible` with resume and fork
+  entries, and package fork entries read `execute <root> --workflow <name> --fork-from ...`.
+  `inspect` shows `<package>/<workflow>@<version>` and a `Package:` line, `list` rows show
+  `<package>/<workflow>@<version>`, and summary and list JSON rows carry `package`. The validate
+  `--json` `package` section beyond `{root, name, version}`, registry discovery and whole-directory
+  fingerprinting follow in #585. `model.ts` and the Workflow Lab `apiSnapshot` are unchanged.
 - Teams are typed slots (#583, [ADR 0067](docs/decisions/0067-teams-as-typed-slots.md); see
   [docs/roster.md](docs/roster.md#teams)). The root entry point exports `defineTeam`, `TeamOf` and
   `Team<K>`, a pure module with no runtime registration, capability check, grant or manifest entry.

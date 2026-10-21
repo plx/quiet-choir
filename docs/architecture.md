@@ -35,6 +35,13 @@ definitions to a particular agent harness.
   the template name of a call's `prompt` in the request summary, and treats a `PromptError` as
   fatal. `describeWorkflow` runs the checks, and the CLI loader adds every file under each prompt
   root to the source fingerprint.
+- `src/workflow/package/` declares workflow packages
+  ([ADR 0065](decisions/0065-workflow-packages.md)): `definePackage`, a pure manifest module that
+  validates its fields without touching the disk and brands its result with
+  `Symbol.for('quiet-choir.package')`, and the plain-data analysis of a `*.quiet-choir` path
+  (`plan.ts`). The loader (`loader/import.ts`) imports the manifest, checks its root, selects a
+  workflow and resolves that workflow's module by identity; no core runtime module imports the
+  package area. See [packages](packages.md).
 - `src/processes/` provides shared OS process identity and synchronous live ownership helpers.
 - `src/cli/` adapts oclif concerns such as inherited flags, logging, and presentation.
 - `src/commands/` contains thin, filesystem-discovered oclif command adapters.
