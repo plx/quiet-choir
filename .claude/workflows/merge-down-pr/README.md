@@ -143,6 +143,9 @@ directory path, and another couldn't escape a multi-line test log inside a JSON 
   rest), and the workflow recomputes both before trusting a copy;
 - clerks return a plain JSON object keyed by command id, so outputs are never re-escaped as strings,
   and large text (logs, diffs, threads) stays in files that only their paths point to;
+- a copy that verifies is accepted however the clerk wrapped it (keyed by its nonce instead of its
+  id, copied as an escaped string, or unwrapped when it relays one command), since the nonce and
+  hash, not the wrapping, prove it;
 - every output is also saved under `state/pr-N/last/`, and a failed verification re-reads it
   (`merge-down.mjs last`) instead of repeating the effect, so a retry never double-posts or
   double-merges;
