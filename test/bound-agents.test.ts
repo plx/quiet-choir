@@ -581,6 +581,62 @@ it('refuses at bind a nested value the raw call boundary would reject, never cop
   expect(fake.requests).toEqual([]);
 });
 
+it('reads top-level bind and call options by descriptor, never evaluating or dropping a key', async ({
+  runs,
+  stateDir,
+}) => {
+  const untyped = (value: unknown) => value as never;
+  let reads = 0;
+  const getter = <T extends object>(target: T, key: string) =>
+    Object.defineProperty(target, key, { get: () => ++reads, enumerable: true });
+  const hidden = <T extends object>(target: T, key: string, value: unknown) =>
+    Object.defineProperty(target, key, { value, enumerable: false });
+  const fake = capture();
+  const definition = workflow('top-level', async (ctx) => {
+    const hiddenOption = 'bind cannot set a symbol or non-enumerable option.';
+    expect(() => ctx.claude.bind(untyped(getter({}, 'model')))).toThrow(
+      new TypeError('bind model must be a data property, not a getter.'),
+    );
+    expect(() => ctx.claude.bind(untyped(hidden({}, 'model', 'opus')))).toThrow(
+      new TypeError(hiddenOption),
+    );
+    expect(() => ctx.claude.bind(untyped({ model: 'opus', [Symbol('s')]: 'x' }))).toThrow(
+      new TypeError(hiddenOption),
+    );
+    expect(() => ctx.claude.bind(untyped({ addDirs: getter(['a'], '0') }))).toThrow(
+      new TypeError('bind addDirs must be plain JSON: it cannot contain getters.'),
+    );
+    const agent = ctx.claude.bind({ model: 'opus', addDirs: ['a'] });
+    expect(() => agent.bind(untyped(getter({}, 'timeoutMs')))).toThrow(
+      new TypeError('bind timeoutMs must be a data property, not a getter.'),
+    );
+    const call = 'A bound agent call';
+    const calls = [
+      [getter({ prompt }, 'timeoutMs'), `${call} timeoutMs must be a data property, not a getter.`],
+      [hidden({}, 'prompt', prompt), `${call} cannot set a symbol or non-enumerable option.`],
+      [{ prompt, [Symbol('s')]: 'x' }, `${call} cannot set a symbol or non-enumerable option.`],
+      [
+        { prompt, addDirs: Object.assign(['b'], { extra: 'x' }) },
+        `${call} addDirs must be plain JSON: arrays cannot have extra keys.`,
+      ],
+      [
+        { prompt, addDirs: getter(['b'], '0') },
+        `${call} addDirs must be plain JSON: it cannot contain getters.`,
+      ],
+    ] as const;
+    for (const [index, [options, message]] of calls.entries())
+      await expect(agent.value(`call-${String(index)}`, untyped(options))).rejects.toThrow(
+        new TypeError(message),
+      );
+    return null;
+  });
+  await runs.run(definition, { stateDir, runId: 'top-level', input: null, harness: fake.harness });
+  // No getter was evaluated, nothing reached the adapter and no step was claimed.
+  expect(reads).toBe(0);
+  expect(fake.requests).toEqual([]);
+  expect(Object.keys((await readRun({ stateDir, runId: 'top-level' })).steps)).toEqual([]);
+});
+
 it('reuses a completed bound step on resume without invoking the adapter', async ({
   runs,
   stateDir,

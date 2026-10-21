@@ -61,27 +61,57 @@ function define(target: Record<string, unknown>, key: string, value: unknown): v
   });
 }
 
-function directories(value: unknown, where: string): readonly unknown[] {
-  if (!Array.isArray(value)) throw new TypeError(`${where} addDirs must be an array.`);
-  return value;
-}
+/** Who is validating: `bind` or a bound call, which prefix the errors they throw. */
+type Where = 'bind' | 'A bound agent call';
 
-/** Throw the bind error for a bound value that a raw call's JSON boundary would also reject. */
-function notJson(key: string, reason: string): never {
-  throw new TypeError(`bind ${key} must be plain JSON: ${reason}.`);
+/** Throw the error for a value that a raw call's JSON boundary would also reject. */
+function notJson(where: Where, key: string, reason: string): never {
+  throw new TypeError(`${where} ${key} must be plain JSON: ${reason}.`);
 }
 
 /**
  * The data value of `value`'s own property `name`, refusing what `jsonValue` refuses: a missing
  * property (an array hole), a getter, or a non-enumerable property.
  */
-function dataValue(value: object, name: string, key: string): unknown {
+function dataValue(value: object, name: string, where: Where, key: string): unknown {
   const descriptor = Object.getOwnPropertyDescriptor(value, name);
-  if (descriptor === undefined) return notJson(key, 'arrays cannot have holes');
-  if (!('value' in descriptor)) return notJson(key, 'it cannot contain getters');
+  if (descriptor === undefined) return notJson(where, key, 'arrays cannot have holes');
+  if (!('value' in descriptor)) return notJson(where, key, 'it cannot contain getters');
   if (descriptor.enumerable !== true)
-    return notJson(key, 'it cannot contain non-enumerable properties');
+    return notJson(where, key, 'it cannot contain non-enumerable properties');
   return descriptor.value;
+}
+
+/**
+ * The entries of bind or call options, read through their descriptors so that reading them never
+ * evaluates a getter and never drops a symbol or non-enumerable key: each throws instead.
+ */
+function entries(options: Options, where: Where): (readonly [string, unknown])[] {
+  if (Reflect.ownKeys(options).length !== Object.keys(options).length)
+    throw new TypeError(`${where} cannot set a symbol or non-enumerable option.`);
+  return Object.keys(options).map((key) => {
+    const descriptor = Object.getOwnPropertyDescriptor(options, key);
+    if (descriptor === undefined || !('value' in descriptor))
+      throw new TypeError(`${where} ${key} must be a data property, not a getter.`);
+    return [key, descriptor.value] as const;
+  });
+}
+
+/**
+ * A fresh copy of an `addDirs` list, refusing what `frozen` refuses in a bound array (a hole, a
+ * getter, a non-enumerable entry or an extra key) and an array that is not a plain `Array`, so
+ * appending never runs a custom iterator or evaluates a getter.
+ */
+function directories(value: unknown, where: Where): unknown[] {
+  if (!Array.isArray(value)) throw new TypeError(`${where} addDirs must be an array.`);
+  if (Object.getPrototypeOf(value) !== Array.prototype)
+    return notJson(where, 'addDirs', 'it must be a plain array');
+  const copy: unknown[] = [];
+  for (let index = 0; index < value.length; index++)
+    copy.push(dataValue(value, String(index), where, 'addDirs'));
+  if (Reflect.ownKeys(value).length !== value.length + 1)
+    return notJson(where, 'addDirs', 'arrays cannot have extra keys');
+  return copy;
 }
 
 /**
@@ -98,19 +128,19 @@ function frozen(value: unknown, key: string, ancestors: readonly unknown[] = [])
   const within = [...ancestors, value];
   const prototype: unknown = Object.getPrototypeOf(value);
   if (Array.isArray(value) && prototype === Array.prototype) {
-    const entries: unknown[] = [];
+    const items: unknown[] = [];
     for (let index = 0; index < value.length; index++)
-      entries.push(frozen(dataValue(value, String(index), key), key, within));
+      items.push(frozen(dataValue(value, String(index), 'bind', key), key, within));
     if (Reflect.ownKeys(value).length !== value.length + 1)
-      return notJson(key, 'arrays cannot have extra keys');
-    return Object.freeze(entries);
+      return notJson('bind', key, 'arrays cannot have extra keys');
+    return Object.freeze(items);
   }
   if (prototype !== Object.prototype && prototype !== null) return value;
   if (Reflect.ownKeys(value).length !== Object.keys(value).length)
-    return notJson(key, 'objects cannot contain symbols or non-enumerable properties');
+    return notJson('bind', key, 'objects cannot contain symbols or non-enumerable properties');
   const copy: Record<string, unknown> = {};
   for (const name of Object.keys(value))
-    define(copy, name, frozen(dataValue(value, name, key), key, within));
+    define(copy, name, frozen(dataValue(value, name, 'bind', key), key, within));
   return Object.freeze(copy);
 }
 
@@ -121,7 +151,7 @@ function frozen(value: unknown, key: string, ancestors: readonly unknown[] = [])
 function snapshot(bound: unknown, again: boolean): Options {
   if (!isOptions(bound)) throw new TypeError('bind options must be an object.');
   const copy: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(bound)) {
+  for (const [key, value] of entries(bound, 'bind')) {
     if (value === undefined) continue;
     if (perCallOnly.has(key))
       throw new TypeError(`bind cannot set ${key}; it is a per-call option (ADR 0063).`);
@@ -129,30 +159,36 @@ function snapshot(bound: unknown, again: boolean): Options {
       throw new TypeError(
         `A bound agent cannot bind ${key} again; the first bind fixed it (ADR 0063).`,
       );
-    if (key === 'addDirs') directories(value, 'bind');
-    define(copy, key, frozen(value, key));
+    define(copy, key, frozen(key === 'addDirs' ? directories(value, 'bind') : value, key));
   }
   return Object.freeze(copy);
 }
 
-/** The options a raw call would spell: defined call values replace bound ones, addDirs append. */
+/**
+ * The options a raw call would spell: defined call values replace bound ones, addDirs append. The
+ * top-level call options are read as `snapshot` reads bound ones, and `addDirs` is copied; other
+ * call values (the schema, retry, onError) pass through as the caller gave them.
+ */
 function merge(bound: Options, call: unknown): Options {
   if (!isOptions(call)) throw new TypeError('Bound agent call options must be an object.');
   const merged: Record<string, unknown> = { ...bound };
-  for (const [key, value] of Object.entries(call)) {
+  for (const [key, value] of entries(call, 'A bound agent call')) {
     if (value === undefined) continue;
     if (!perCallOnly.has(key) && !bothSides.has(key))
       throw new TypeError(
         `A bound agent call cannot set ${key}; bind it instead, or call the harness client directly (ADR 0063).`,
       );
-    define(merged, key, value);
+    define(
+      merged,
+      key,
+      key === 'addDirs'
+        ? [
+            ...((bound['addDirs'] as readonly unknown[] | undefined) ?? []),
+            ...directories(value, 'A bound agent call'),
+          ]
+        : value,
+    );
   }
-  const callDirs = call['addDirs'];
-  if (callDirs !== undefined)
-    define(merged, 'addDirs', [
-      ...((bound['addDirs'] as readonly unknown[] | undefined) ?? []),
-      ...directories(callDirs, 'A bound agent call'),
-    ]);
   return merged;
 }
 

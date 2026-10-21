@@ -136,12 +136,14 @@ agent, an accepted code change still reuses its completed step.
 Binding is pure. It takes a deep, frozen copy of the options, so later changes to the object passed
 to `bind` do not reach the agent. The copy changes nothing: a nested getter, symbol key,
 non-enumerable property or array hole, which a raw call's JSON boundary would reject, makes `bind`
-throw a `TypeError` instead of being evaluated or dropped. Binding performs no effect, claims no
-step ID and reads no run state, so one agent can be created early and reused. A call takes its step
-ID prefix where it is invoked: an agent bound before `ctx.scope` or `ctx.map` and called inside gets
-the same qualified IDs as a raw call there, and an agent bound from `ctx.within('w').claude` keeps
-the `w/` prefix. `bind` needs a harness client, so it is called inside the body; declaring agents at
-module load is the roster's job.
+throw a `TypeError` instead of being evaluated or dropped. The top-level options of `bind` and of
+each bound call are read the same way: a getter, symbol key or non-enumerable option throws at
+`bind`, or rejects the call before a step is claimed, and a call's `addDirs` is copied under the
+same rules. Binding performs no effect, claims no step ID and reads no run state, so one agent can
+be created early and reused. A call takes its step ID prefix where it is invoked: an agent bound
+before `ctx.scope` or `ctx.map` and called inside gets the same qualified IDs as a raw call there,
+and an agent bound from `ctx.within('w').claude` keeps the `w/` prefix. `bind` needs a harness
+client, so it is called inside the body; declaring agents at module load is the roster's job.
 
 `Agent<C>` is generic over the harness's capabilities, like `RegisteredAgentClient`. The default is
 `NativeHarnessCapabilities`, the built-in harnesses' capabilities (the ADR's `BuiltInCapabilities`).
