@@ -594,6 +594,24 @@ export default defineWorkflow({
       run: { status: 'completed', output: 'other:reviewed' },
     });
   });
+
+  it('re-evaluates a CommonJS package workflow edited between runs in one process', async ({
+    stateDir,
+  }) => {
+    const fixture = await project({ commonjs: true });
+    const before = await execute(fixture, stateDir, 'cjs-before', 'other');
+    expect(before).toMatchObject({ ok: true, run: { output: 'other:reviewed' } });
+    const otherFile = join(fixture.dir, 'workflows', 'other.ts');
+    await writeFile(
+      otherFile,
+      (await readFile(otherFile, 'utf8')).replace(
+        '`other:${reply.output}`',
+        '`edited:${reply.output}`',
+      ),
+    );
+    const after = await execute(fixture, stateDir, 'cjs-after', 'other');
+    expect(after).toMatchObject({ ok: true, run: { output: 'edited:reviewed' } });
+  });
 });
 
 // measured: 15.5 s alone for the slowest CLI case, which runs seven commands that each compile the

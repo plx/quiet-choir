@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
+import { realpathSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
 import { dirname, extname, relative, sep } from 'node:path';
 import ts from 'typescript';
@@ -51,9 +52,11 @@ export class PackageSelectionError extends Error {
  * loads through it share one module cache, so a module the entrypoint already evaluated is
  * returned, not run again. CommonJS modules a required entrypoint reaches are cached by file
  * outside the namespace, so a later `require` in it may evaluate a module again; `exporters`
- * instead finds the cached modules whose default export is a given value. `dispose` unregisters
- * the CommonJS loader; the ESM hooks stay registered, as with `tsImport`, because trusted code may
- * still import lazily.
+ * instead finds the cached modules whose default export is a given value. Each CommonJS load first
+ * drops the cached modules under the entrypoint's directory (outside `node_modules`), so it
+ * re-evaluates the package's or workflow's own modules rather than reusing ones an earlier load in
+ * this process evaluated before an edit. `dispose` unregisters the CommonJS loader; the ESM hooks
+ * stay registered, as with `tsImport`, because trusted code may still import lazily.
  */
 function namespacedLoader(plan: TypecheckPlan): {
   readonly load: (path: string) => Promise<unknown>;
@@ -68,14 +71,16 @@ function namespacedLoader(plan: TypecheckPlan): {
   if (format === ts.ModuleKind.CommonJS) {
     const registered = registerCommonJs({ namespace });
     return {
-      load: (path) => Promise.resolve(registered.require(path, import.meta.url) as unknown),
+      load: (path) => {
+        evictCommonJsModules(dirname(realpathSync(plan.entrypoint)));
+        return Promise.resolve(registered.require(path, import.meta.url) as unknown);
+      },
       exporters: (value) =>
-        Object.values(createRequire(import.meta.url).cache).flatMap((module) => {
-          if (module === undefined || defaultExport(module.exports) !== value) return [];
-          // tsx keys a namespaced module as `<file>?namespace=<id>`.
-          const query = module.filename.indexOf('?', module.filename.lastIndexOf(sep) + 1);
-          return [query === -1 ? module.filename : module.filename.slice(0, query)];
-        }),
+        Object.values(createRequire(import.meta.url).cache).flatMap((module) =>
+          module === undefined || defaultExport(module.exports) !== value
+            ? []
+            : [withoutNamespace(module.filename)],
+        ),
       dispose: registered.unregister,
     };
   }
@@ -85,6 +90,32 @@ function namespacedLoader(plan: TypecheckPlan): {
     ...(plan.configuration.kind === 'tsconfig' ? { tsconfig: plan.configuration.path } : {}),
   });
   return { load: (path) => registered.import(path, import.meta.url) as Promise<unknown> };
+}
+
+/** A CommonJS cache key without the `?namespace=<id>` query tsx adds to a namespaced module. */
+function withoutNamespace(filename: string): string {
+  const query = filename.indexOf('?', filename.lastIndexOf(sep) + 1);
+  return query === -1 ? filename : filename.slice(0, query);
+}
+
+/**
+ * Drop from `require`'s cache every module whose real path lies under `directory` and outside a
+ * `node_modules` directory there, so the next `require` evaluates the current source. It runs
+ * synchronously, right before the synchronous `require` that loads the entrypoint.
+ */
+function evictCommonJsModules(directory: string): void {
+  const cache = createRequire(import.meta.url).cache;
+  for (const key of Object.keys(cache)) {
+    const file = withoutNamespace(key);
+    let real: string;
+    try {
+      real = realpathSync(file);
+    } catch {
+      real = file;
+    }
+    if (isInside(directory, real) && !relative(directory, real).split(sep).includes('node_modules'))
+      Reflect.deleteProperty(cache, key);
+  }
 }
 
 function defaultExport(module: unknown): unknown {
