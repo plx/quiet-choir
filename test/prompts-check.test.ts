@@ -322,7 +322,7 @@ describe('scanTemplate', () => {
 });
 
 describe('promptRootFiles', () => {
-  it('lists every regular file sorted, without following directory symlinks', async () => {
+  it('lists every regular file sorted, walking in-root directory symlinks at their own path', async () => {
     const directory = await root({
       'B.md': 'b',
       'A.md': 'a',
@@ -330,8 +330,16 @@ describe('promptRootFiles', () => {
       'notes.txt': 'n',
     });
     await symlink(join(directory, '_fragments'), join(directory, 'linked'));
+    // A link back to a directory being walked, one leaving the root, and a dangling one are skipped.
+    await symlink('..', join(directory, '_fragments', 'up'));
+    await mkdir(join(dirname(directory), 'elsewhere'));
+    await writeFile(join(dirname(directory), 'elsewhere', 'x.md'), 'x');
+    await symlink(join(dirname(directory), 'elsewhere'), join(directory, 'escape'));
+    await symlink('gone', join(directory, 'dangling'));
     expect(promptRootFiles(directory)).toEqual(
-      ['A.md', 'B.md', 'notes.txt', '_fragments/c.md'].map((name) => join(directory, name)).sort(),
+      ['A.md', 'B.md', 'notes.txt', '_fragments/c.md', 'linked/c.md']
+        .map((name) => join(directory, name))
+        .sort(),
     );
     expect(promptRootFiles(join(directory, 'missing'))).toEqual([]);
   });

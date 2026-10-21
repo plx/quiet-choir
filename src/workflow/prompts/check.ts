@@ -1,5 +1,5 @@
-import { readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { readdirSync, realpathSync, statSync } from 'node:fs';
+import { join, sep } from 'node:path';
 
 import { createPromptEnvironment, engineFailure, type PromptEnvironment } from './engine.js';
 import { promptLabel } from './error.js';
@@ -254,48 +254,55 @@ export function checkPromptSets(descriptors: readonly PromptSetDescriptor[]): Pr
 
 /**
  * Every regular file or file symlink under a prompt root, as sorted absolute paths: the superset of
- * what a render can read, since dependency targets are literal and confined. A file symlink is
- * listed at its own path, so hashing it reads its target and a retarget or a target edit changes
- * the hash. Directory symlinks are not followed, a dangling symlink is skipped (no render can read
- * it), and a missing root has no files. @internal
+ * what a render can read, since dependency targets are literal and confined. Paths are the logical
+ * names a render reads: a file symlink is listed at its own path, and a directory symlink whose
+ * target lies inside the root's real path is walked at its own path, so hashing reads through the
+ * current links and a retarget or a target edit changes the hash. A directory symlink that leaves
+ * the root (which the renderer refuses) or leads back to a directory being walked is skipped, as
+ * is a dangling symlink (no render can read it), and a missing root has no files. @internal
  */
 export function promptRootFiles(root: string): string[] {
+  let realRoot: string;
+  try {
+    realRoot = realpathSync(root);
+  } catch (error) {
+    if (errorCode(error) === 'ENOENT') return [];
+    throw error;
+  }
+  const inside = realRoot.endsWith(sep) ? realRoot : realRoot + sep;
   const files: string[] = [];
-  const visit = (directory: string): void => {
-    let entries;
-    try {
-      entries = readdirSync(directory, { withFileTypes: true });
-    } catch (error) {
-      if (
-        directory === root &&
-        error instanceof Error &&
-        'code' in error &&
-        error.code === 'ENOENT'
-      )
-        return;
-      throw error;
-    }
-    for (const entry of entries) {
+  const visit = (directory: string, real: string, walking: ReadonlySet<string>): void => {
+    const ancestors = new Set(walking).add(real);
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name);
-      if (entry.isDirectory()) visit(path);
-      else if (entry.isFile() || (entry.isSymbolicLink() && linksToFile(path))) files.push(path);
+      if (entry.isDirectory()) visit(path, join(real, entry.name), ancestors);
+      else if (entry.isFile()) files.push(path);
+      else if (entry.isSymbolicLink()) {
+        const target = linkTarget(path);
+        if (target === 'file') files.push(path);
+        else if (target === 'directory') {
+          const resolved = realpathSync(path);
+          if (resolved.startsWith(inside) && !ancestors.has(resolved))
+            visit(path, resolved, ancestors);
+        }
+      }
     }
   };
-  visit(root);
+  visit(root, realRoot, new Set());
   return files.sort();
 }
 
-/** Whether a symlink resolves to a regular file; a dangling or looping link does not. */
-function linksToFile(path: string): boolean {
+function errorCode(error: unknown): string | undefined {
+  return error instanceof Error && 'code' in error ? String(error.code) : undefined;
+}
+
+/** What a symlink resolves to; a dangling or looping link resolves to nothing. */
+function linkTarget(path: string): 'file' | 'directory' | 'other' | null {
   try {
-    return statSync(path).isFile();
+    const stats = statSync(path);
+    return stats.isFile() ? 'file' : stats.isDirectory() ? 'directory' : 'other';
   } catch (error) {
-    if (
-      error instanceof Error &&
-      'code' in error &&
-      ['ENOENT', 'ENOTDIR', 'ELOOP'].includes(String(error.code))
-    )
-      return false;
+    if (['ENOENT', 'ENOTDIR', 'ELOOP'].includes(errorCode(error) ?? '')) return null;
     throw error;
   }
 }

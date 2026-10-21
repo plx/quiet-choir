@@ -1,7 +1,7 @@
 // Prompt checks through the CLI loader (ADR 0064 section 3, #581): workflow validate, list-defs and
 // the execute preflight import the workflow through tsx, so the prompt set is built by the
 // workflow's own copy of quiet-choir and read here by its brand.
-import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -183,6 +183,34 @@ describe('prompt checks in the CLI loader', { timeout: 30_000 }, () => {
       ok: false,
       code: 'load.definition',
       message: expect.stringContaining('Prompt Review (Review.md): reads variable nope') as unknown,
+    });
+  });
+
+  it('revalidates list-defs when an in-root directory symlink is retargeted', async () => {
+    const { root, file } = await project();
+    const prompts = join(root, 'prompts');
+    await mkdir(join(prompts, 'A'));
+    await mkdir(join(prompts, 'B'));
+    await writeFile(join(prompts, 'A', 'Review.md'), goodTemplate);
+    await writeFile(join(prompts, 'B', 'Review.md'), '{{ nope }}');
+    await symlink('A', join(prompts, 'current'));
+    await writeFile(
+      file,
+      (await readFile(file, 'utf8')).replace("file: 'Review.md'", "file: 'current/Review.md'"),
+    );
+    const engine = executor();
+    const plan = { kind: 'workflow.list-defs' as const, directories: [root] };
+    const listed = await engine.execute(plan);
+    if (listed.kind !== 'workflow.list-defs.result') throw new Error(JSON.stringify(listed));
+    expect(await engine.execute(plan)).toEqual(listed);
+    await rm(join(prompts, 'current'));
+    await symlink('B', join(prompts, 'current'));
+    expect(await engine.execute(plan)).toMatchObject({
+      ok: false,
+      code: 'load.definition',
+      message: expect.stringContaining(
+        'Prompt Review (current/Review.md): reads variable nope',
+      ) as unknown,
     });
   });
 
