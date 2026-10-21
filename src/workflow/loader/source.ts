@@ -4,6 +4,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import type { WorkflowLaunch } from '../runtime/question-model.js';
 import { fileURLToPath } from 'node:url';
 
+import { promptRootFiles } from '../prompts/check.js';
 import { digest } from '../runtime/json.js';
 import type { SourceFingerprint } from '../runtime/replay-model.js';
 import type { TypecheckPlan } from '../typecheck/model.js';
@@ -54,6 +55,55 @@ export async function fingerprintSources(
       enumerable: true,
     });
   }
+  return { hash: digest(files), files };
+}
+
+/**
+ * Add every file under the declared prompt roots to a source fingerprint (ADR 0064 section 4), so a
+ * template edit is a code change like a TypeScript edit. Each file that {@link promptRootFiles}
+ * lists, whether or not a template references it, is keyed by the real path of its root joined
+ * with its logical path inside the root, relative to the same project root as the TypeScript
+ * sources and with `/` separators, and hashed as the SHA-256 of the bytes a render reads (links
+ * followed). Only the root is resolved: an in-root file or directory symlink keeps its own path, so
+ * retargeting it changes the hash under the path a render reads, and the key still resolves back to
+ * those bytes from the project root. No path is excluded, not even one under `node_modules`. The
+ * entries are merged into `files`, keys sorted, and `hash` recomputed over the merged map; with no
+ * roots the fingerprint is returned unchanged, so a workflow without prompts keeps its identity.
+ * @internal
+ */
+export async function withPromptSources(
+  plan: TypecheckPlan,
+  source: SourceFingerprint,
+  roots: readonly string[],
+): Promise<SourceFingerprint> {
+  if (roots.length === 0) return source;
+  const entrypoint = await realpath(plan.entrypoint);
+  const config = plan.configuration.kind === 'tsconfig' ? plan.configuration.path : undefined;
+  const project = await projectRoot(entrypoint, config);
+  const merged = new Map(Object.entries(source.files));
+  for (const root of roots) {
+    let realRoot: string;
+    try {
+      realRoot = await realpath(root);
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') continue;
+      throw error;
+    }
+    for (const file of promptRootFiles(root)) {
+      const key = relative(project, join(realRoot, relative(root, file)))
+        .split(sep)
+        .join('/');
+      merged.set(
+        key,
+        createHash('sha256')
+          .update(await readFile(file))
+          .digest('hex'),
+      );
+    }
+  }
+  const files: Record<string, string> = {};
+  for (const key of [...merged.keys()].sort())
+    Object.defineProperty(files, key, { value: merged.get(key), enumerable: true });
   return { hash: digest(files), files };
 }
 

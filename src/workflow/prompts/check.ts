@@ -5,6 +5,7 @@ import { createPromptEnvironment, engineFailure, type PromptEnvironment } from '
 import { promptLabel } from './error.js';
 import { joinTemplateName, templateNameProblem } from './paths.js';
 import type { PromptSetDescriptor } from './prompt.js';
+import type { WorkflowDescription } from '../runtime/child-model.js';
 import { scanTemplate } from './scan.js';
 
 // ADR 0064 section 3: the static checks that `workflow validate`, the execute preflight,
@@ -254,6 +255,19 @@ export function checkPromptSets(descriptors: readonly PromptSetDescriptor[]): Pr
     }
   });
   return { sets, errors };
+}
+
+/**
+ * The prompt roots a description's static tree declares: the workflow's own prompt sets, then
+ * each declared child's, depth first, deduplicated in that order. A child invoked only at runtime
+ * by definition is not in the description, so its roots are not listed. @internal
+ */
+export function promptRoots(description: WorkflowDescription): string[] {
+  const visit = (workflow: WorkflowDescription): string[] => [
+    ...workflow.prompts.map((set) => set.root),
+    ...workflow.children.flatMap(visit),
+  ];
+  return [...new Set(visit(description))];
 }
 
 /**

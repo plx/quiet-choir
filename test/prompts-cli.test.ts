@@ -1,16 +1,29 @@
 // Prompt checks through the CLI loader (ADR 0064 section 3, #581): workflow validate, list-defs and
 // the execute preflight import the workflow through tsx, so the prompt set is built by the
 // workflow's own copy of quiet-choir and read here by its brand.
-import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, vi } from 'vitest';
 
 import { ThresholdLogger } from '../src/application/execution.js';
+import { readRun } from '../src/index.js';
 import WorkflowValidate from '../src/commands/workflow/validate.js';
 import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import { readHarnessSelection } from '../src/workflow/loader/harness-selection.js';
+import { withPromptSources } from '../src/workflow/loader/source.js';
+import { digest } from '../src/workflow/runtime/json.js';
 import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
 import { TypecheckProgramCache } from '../src/workflow/typecheck/program-cache.js';
 import { it } from './setup/cli-capture.js';
@@ -272,5 +285,218 @@ describe('prompt checks in the CLI loader', { timeout: 30_000 }, () => {
     });
     expect(result).toMatchObject({ ok: true, run: { status: 'completed', output: 'reviewed' } });
     expect(lines).toContain(`[warn] ${warning}`);
+  });
+});
+
+/**
+ * A project whose workflow renders `Review` in step `review` and then calls `second`, which has no
+ * fixture, so a first execute fails after `review` completes. `prompts/_fragments/unused.md` is
+ * under the root but no template includes it.
+ */
+async function resumable() {
+  const made = await project('Review {{ title }}.\n');
+  await mkdir(join(made.root, 'prompts', '_fragments'));
+  await writeFile(join(made.root, 'prompts', '_fragments', 'unused.md'), 'Unused fragment.\n');
+  await writeFile(
+    made.file,
+    `import { definePrompts, defineWorkflow, z } from ${JSON.stringify(join(repository, 'src/index.js'))};
+const prompts = definePrompts(${JSON.stringify(join(made.root, 'prompts'))}, {
+  Review: { file: 'Review.md', params: z.object({ title: z.string() }) },
+});
+export default defineWorkflow({
+  name: 'review',
+  version: '1',
+  input: z.null(),
+  output: z.string(),
+  prompts: [prompts],
+  async run(ctx) {
+    const reply = await ctx.claude.text('review', { prompt: prompts.Review({ title: 'T' }) });
+    const next = await ctx.claude.text('second', { prompt: 'Second.' });
+    return reply.output + next.output;
+  },
+});
+`,
+  );
+  const stateDir = join(made.root, 'state');
+  const execute = async (resume: boolean, acceptCodeChange?: boolean) =>
+    executor().execute({
+      kind: 'workflow.execute',
+      typecheck: made.typecheck,
+      runId: 'templated',
+      stateDir,
+      cwd: made.root,
+      input: null,
+      resume,
+      ...(acceptCodeChange === undefined ? {} : { acceptCodeChange }),
+      harness: await readHarnessSelection('fixture:fixtures.json', undefined, made.root),
+    });
+  const checkResume = (acceptCodeChange?: boolean) =>
+    executor().execute({
+      kind: 'workflow.check-resume',
+      typecheck: made.typecheck,
+      runId: 'templated',
+      stateDir,
+      cwd: made.root,
+      ...(acceptCodeChange === undefined ? {} : { acceptCodeChange }),
+    });
+  const addSecondFixture = () =>
+    writeFile(
+      join(made.root, 'fixtures.json'),
+      JSON.stringify({
+        version: 1,
+        calls: [
+          { step: 'review', text: 'reviewed' },
+          { step: 'second', text: ' twice' },
+        ],
+      }),
+    );
+  return { ...made, stateDir, execute, checkResume, addSecondFixture };
+}
+
+// measured: 2.5 s for the first case alone (its full engine compile), 1.2-1.7 s for later ones
+// in a whole-file run without coverage (three or four imports each; coverage slows compiles 2.5x).
+describe('prompt templates as execution dependencies (#582)', { timeout: 30_000 }, () => {
+  it('lists every prompt-root file in validate --json identity, matching the executed run', async ({
+    cli,
+  }) => {
+    const made = await resumable();
+    const validated = await cli.run(WorkflowValidate, [made.file, '--json']);
+    expect(validated.error).toBeUndefined();
+    const identity = (
+      JSON.parse(validated.stdout) as {
+        workflow: { identity: { code: string; files: Record<string, string> } };
+      }
+    ).workflow.identity;
+    expect(Object.keys(identity.files)).toEqual(
+      expect.arrayContaining(['prompts/Review.md', 'prompts/_fragments/unused.md']),
+    );
+    expect(identity.files['prompts/Review.md']).toBe(sha256('Review {{ title }}.\n'));
+    expect(await made.execute(false)).toMatchObject({ ok: false });
+    const run = await readRun({ stateDir: made.stateDir, runId: 'templated' });
+    expect(run.status).toBe('failed');
+    expect(run.workflow.identity?.code).toBe(identity.code);
+    expect(run.workflow.identity?.files).toEqual(identity.files);
+    expect(run.launch?.sources?.[join(await realpath(made.root), 'prompts', 'Review.md')]).toBe(
+      identity.files['prompts/Review.md'],
+    );
+    expect(run.steps['review']).toMatchObject({
+      status: 'completed',
+      request: { promptTemplate: 'Review' },
+    });
+  });
+
+  it('refuses a template edit on resume, and under --accept-code-change refuses the changed step', async () => {
+    const made = await resumable();
+    expect(await made.execute(false)).toMatchObject({ ok: false });
+    await writeFile(join(made.root, 'prompts', 'Review.md'), 'Review {{ title }} carefully.\n');
+    await made.addSecondFixture();
+    const before = await readRun({ stateDir: made.stateDir, runId: 'templated' });
+    for (const result of [await made.execute(true), await made.checkResume()]) {
+      expect(result).toMatchObject({ ok: false, code: 'run.incompatible' });
+      if (result.ok) throw new Error('Expected a refusal.');
+      expect(result.message).toContain('code (prompts/Review.md)');
+      expect(result.details).toMatchObject({ files: ['prompts/Review.md'], changed: ['code'] });
+    }
+    // Accepting the change reaches the step's own identity check: the rendered prompt changed.
+    expect(await made.checkResume(true)).toMatchObject({ ok: true });
+    const accepted = await made.execute(true, true);
+    expect(accepted).toMatchObject({
+      ok: false,
+      code: 'run.incompatible',
+      details: { divergent: [{ stepId: 'review', components: ['prompt'] }] },
+    });
+    if (accepted.ok) throw new Error('Expected a divergence refusal.');
+    expect(accepted.message).toContain('Step review: prompt changed on a completed step.');
+    expect(accepted.message).toContain('--fork-from templated');
+    expect(await readRun({ stateDir: made.stateDir, runId: 'templated' })).toEqual(before);
+  });
+
+  it('refuses an edit to a fragment no template includes, and accepts it with the flag', async () => {
+    const made = await resumable();
+    expect(await made.execute(false)).toMatchObject({ ok: false });
+    await writeFile(join(made.root, 'prompts', '_fragments', 'unused.md'), 'Edited.\n');
+    await made.addSecondFixture();
+    const refused = await made.execute(true);
+    expect(refused).toMatchObject({ ok: false, code: 'run.incompatible' });
+    if (refused.ok) throw new Error('Expected a refusal.');
+    expect(refused.message).toContain('code (prompts/_fragments/unused.md)');
+    const accepted = await made.execute(true, true);
+    expect(accepted).toMatchObject({
+      ok: true,
+      run: { status: 'completed', output: 'reviewed twice' },
+    });
+    const run = await readRun({ stateDir: made.stateDir, runId: 'templated' });
+    expect(run.codeChanges).toEqual([
+      expect.objectContaining({ files: ['prompts/_fragments/unused.md'], components: ['code'] }),
+    ]);
+  });
+});
+
+const sha256 = (value: string | Uint8Array): string =>
+  createHash('sha256').update(value).digest('hex');
+
+// measured: 5 ms for the unit case and 0.4 s for the validate case in a whole-file run without
+// coverage; alone, the validate case pays the 2.5 s first engine compile (2.5x under coverage).
+describe('withPromptSources', { timeout: 30_000 }, () => {
+  it('keys files by the real root and their in-root path, and follows in-root links', async () => {
+    const { root, typecheck } = await project();
+    const prompts = join(root, 'prompts');
+    await writeFile(join(prompts, 'A.md'), 'A\n');
+    await writeFile(join(prompts, 'B.md'), 'B\n');
+    await rm(join(prompts, 'Review.md'));
+    await symlink('A.md', join(prompts, 'Review.md'));
+    await mkdir(join(prompts, 'dir'));
+    await writeFile(join(prompts, 'dir', 'Inner.md'), 'Inner\n');
+    await symlink('dir', join(prompts, 'current'));
+    // The root is named through a link; keys still use its real path.
+    await symlink('prompts', join(root, 'linked'));
+    const base = {
+      hash: digest({ 'review.workflow.ts': 'x' }),
+      files: { 'review.workflow.ts': 'x' },
+    };
+    const first = await withPromptSources(typecheck, base, [join(root, 'linked')]);
+    expect(first.files).toEqual({
+      'prompts/A.md': sha256('A\n'),
+      'prompts/B.md': sha256('B\n'),
+      'prompts/Review.md': sha256('A\n'),
+      'prompts/current/Inner.md': sha256('Inner\n'),
+      'prompts/dir/Inner.md': sha256('Inner\n'),
+      'review.workflow.ts': 'x',
+    });
+    expect(Object.keys(first.files)).toEqual(Object.keys(first.files).sort());
+    expect(first.hash).toBe(digest(first.files));
+    // Each key resolves from the project root to the bytes it hashes.
+    const real = await realpath(root);
+    for (const [key, value] of Object.entries(first.files))
+      if (key !== 'review.workflow.ts') expect(sha256(await readFile(join(real, key)))).toBe(value);
+    // Moving a link between two existing in-root files changes the map under the link's path.
+    await rm(join(prompts, 'Review.md'));
+    await symlink('B.md', join(prompts, 'Review.md'));
+    const second = await withPromptSources(typecheck, base, [prompts]);
+    expect(second.files['prompts/Review.md']).toBe(sha256('B\n'));
+    expect(second.hash).not.toBe(first.hash);
+    // No roots, or only a missing root, keeps the fingerprint as it was.
+    expect(await withPromptSources(typecheck, base, [])).toBe(base);
+    expect(await withPromptSources(typecheck, base, [join(root, 'missing')])).toEqual(base);
+  });
+
+  it('leaves a workflow without prompts with only its TypeScript sources', async () => {
+    const { file, typecheck } = await project();
+    await writeFile(
+      file,
+      `import { defineWorkflow, z } from ${JSON.stringify(join(repository, 'src/index.js'))};
+export default defineWorkflow({
+  name: 'plain',
+  version: '1',
+  input: z.null(),
+  output: z.null(),
+  run: () => Promise.resolve(null),
+});
+`,
+    );
+    const result = await executor().execute({ kind: 'workflow.validate', typecheck });
+    if (result.kind !== 'workflow.validate.result') throw new Error(JSON.stringify(result));
+    expect(Object.keys(result.workflow.identity?.files ?? {})).toEqual(['review.workflow.ts']);
+    expect(result.workflow.identity?.code).toBe(digest(result.workflow.identity?.files));
   });
 });

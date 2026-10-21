@@ -14,7 +14,7 @@ import { analyzeTypecheckEntrypoint } from '../typecheck/plan.js';
 import type { TypecheckPlan } from '../typecheck/model.js';
 import type { ValidatedWorkflow, WorkflowCommandResult } from './model.js';
 import { workflowLaunch } from './source.js';
-import { promptRootFiles } from '../prompts/check.js';
+import { promptRootFiles, promptRoots } from '../prompts/check.js';
 
 const metadata: z.ZodType<WorkflowDescription> = z.lazy(() =>
   z.object({
@@ -174,12 +174,8 @@ async function cacheSources(
   }
   // Templates are read at validation, not compiled, so every file under a declared prompt root
   // is a source too (ADR 0064 section 4 makes the same set an execution dependency).
-  const roots = (workflow: WorkflowDescription): string[] => [
-    ...workflow.prompts.map((set) => set.root),
-    ...workflow.children.flatMap(roots),
-  ];
   const promptSources: Record<string, string> = {};
-  for (const root of new Set(roots(result.workflow)))
+  for (const root of promptRoots(result.workflow))
     for (const file of promptRootFiles(root)) promptSources[file] = await promptSourceHash(file);
   const lockfiles = ['package-lock.json', 'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'yarn.lock'];
   let directory = dirname(plan.entrypoint);
