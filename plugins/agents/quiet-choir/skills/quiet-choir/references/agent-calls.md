@@ -33,9 +33,12 @@ must honor the resolved request itself. Native binaries/configuration still dete
 | `retry`                  | Safe-to-repeat calls only                | Same                             | One attempt; opted-in delay starts at 100 ms | Core owns retry, removes it from adapter request               |
 | `onError`                | throw/return                             | Same                             | throw                                        | Core journals final outcomes                                   |
 
-See [Claude controls/protocol](claude.md) and [Codex controls/protocol](codex.md) for
-native-specific fields. Keep rotating secrets in the inherited environment; explicit `env` values
-affect replay. Escape-argument paths fingerprint their strings, not file contents.
+`prompt`, and Claude's `systemPrompt` and `appendSystemPrompt`, also accept a `Prompt` rendered by
+`definePrompts`; the runtime sends and fingerprints its text exactly as the equal string (see
+[prompt templates](prompts.md)). See [Claude controls/protocol](claude.md) and
+[Codex controls/protocol](codex.md) for native-specific fields. Keep rotating secrets in the
+inherited environment; explicit `env` values affect replay. Escape-argument paths fingerprint their
+strings, not file contents.
 
 ## Roster
 
@@ -78,8 +81,8 @@ export default defineWorkflow({
   becomes one entry per harness (`Reader`, `CodexReader`).
 - There is no `extends`: spread a shared entry (`{ ...Reviewer, model: 'sonnet' }`). An entry sets
   no per-call keys (`prompt`, `schema`, `cwd`, `worktree`, `onError`, `retry`); a standing prompt is
-  a plain string such as `appendSystemPrompt`. Names are PascalCase identifiers; `text`, `readonly`
-  and `edit` are refused.
+  a string or a rendered [`Prompt`](prompts.md) in `appendSystemPrompt`. Names are PascalCase
+  identifiers; `text`, `readonly` and `edit` are refused.
 - `ctx.roster.Name` is the entry's harness client bound to it, so a call takes the prompt, the
   schema, placement (`cwd`, `addDirs`, `worktree`) and policy (`onError`, `retry`, deadlines), and
   `ctx.roster.Reviwer` fails typecheck. A call's `addDirs` append to the entry's. Pass an agent to a
