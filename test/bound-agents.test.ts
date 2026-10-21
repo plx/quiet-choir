@@ -528,10 +528,10 @@ it('keeps own __proto__ keys in bound options, as the raw spelling does', async 
     async (ctx) => ctx.claude.value('proto', { prompt, settings: settings() }),
     async (ctx) => ctx.claude.bind({ settings: settings() }).value('proto', { prompt }),
   );
-  const sent = left.requests[0]?.options.settings as Record<string, unknown> | undefined;
-  expect(Object.keys(sent ?? {})).toEqual(['__proto__', 'nested']);
+  const sent = Reflect.get(left.requests[0]?.options ?? {}, 'settings') as Record<string, unknown>;
+  expect(Object.keys(sent)).toEqual(['__proto__', 'nested']);
   expect(Object.getOwnPropertyDescriptor(sent, '__proto__')?.value).toBe('x');
-  const nested = sent?.['nested'] as Record<string, unknown> | undefined;
+  const nested = sent['nested'] as Record<string, unknown>;
   expect(Object.getOwnPropertyDescriptor(nested, '__proto__')?.value).toEqual({ A: '1' });
 });
 
