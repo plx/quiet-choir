@@ -177,6 +177,7 @@ export type {
   RosterEntryCommon,
   RosterEntryOptions,
   RosterOptions,
+  StoredRosterEntry,
   DeepReadonlyOption,
 } from './workflow/runtime/roster-model.js';
 export { definePrompts, PromptError } from './workflow/prompts/index.js';

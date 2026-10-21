@@ -97,6 +97,26 @@ it('accepts a Prompt wherever a prompt or Claude system prompt is a string', () 
   expect(typeof helper).toBe('function');
 });
 
+it('types a roster entry Prompt as the text the roster stores', () => {
+  const shared: { readonly harness: 'claude'; readonly systemPrompt?: string | Prompt } = {
+    harness: 'claude',
+  };
+  const roster = defineRoster({
+    Reviewer: {
+      harness: 'claude',
+      appendSystemPrompt: prompts.Standing({ name: 'r', greeting: 'g' }),
+      model: 'opus',
+    },
+    Shared: shared,
+  });
+  expectTypeOf(roster.Reviewer.appendSystemPrompt).toEqualTypeOf<string>();
+  expectTypeOf(roster.Reviewer.model).toEqualTypeOf<'opus'>();
+  expectTypeOf(roster.Shared.systemPrompt).toEqualTypeOf<string | undefined>();
+  // @ts-expect-error -- the roster stores the rendered text, which has no `.text`.
+  expect(roster.Reviewer.appendSystemPrompt.text).toBeUndefined();
+  expect(typeof roster.Reviewer.appendSystemPrompt).toBe('string');
+});
+
 it('gives adapters string prompts', () => {
   expectTypeOf<AgentRequest['options']['prompt']>().toEqualTypeOf<string>();
 });

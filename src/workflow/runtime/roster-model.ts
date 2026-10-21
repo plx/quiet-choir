@@ -12,6 +12,7 @@ import type {
   BoundOptionsOf,
   ClaudeOptions,
   CodexOptions,
+  Prompt,
   SelectBranch,
 } from './model.js';
 import type { NoExtraKeys } from './profiles-model.js';
@@ -101,14 +102,30 @@ export interface RosterOptions<H extends readonly HarnessDeclaration[]> {
 }
 
 /**
- * A frozen, validated roster returned by `defineRoster`: the entries `E` by name, plus a
- * type-only brand that carries the registered harnesses `H`. `WorkflowDefinition.roster` accepts
- * only this type, so an inline object literal cannot bypass the per-harness entry typing.
+ * Roster entry `E` as `defineRoster` stores it: a {@link Prompt} in `systemPrompt` or
+ * `appendSystemPrompt` reads as `string`, since the roster keeps its rendered text. Every other
+ * field keeps its type.
+ */
+export type StoredRosterEntry<E> = {
+  readonly [K in keyof E]: K extends 'systemPrompt' | 'appendSystemPrompt'
+    ? E[K] extends infer V
+      ? V extends Prompt
+        ? string
+        : V
+      : never
+    : E[K];
+};
+
+/**
+ * A frozen, validated roster returned by `defineRoster`: the entries `E` by name, as stored
+ * ({@link StoredRosterEntry}), plus a type-only brand that carries the declared entries and the
+ * registered harnesses `H`. `WorkflowDefinition.roster` accepts only this type, so an inline
+ * object literal cannot bypass the per-harness entry typing.
  */
 export type Roster<
   E extends object = RosterEntries<readonly HarnessDeclaration[]>,
   H extends readonly HarnessDeclaration[] = readonly HarnessDeclaration[],
-> = { readonly [K in keyof E]: E[K] } & {
+> = { readonly [K in keyof E]: StoredRosterEntry<E[K]> } & {
   /** Type-only brand; absent at runtime. */
   readonly [rosterBrand]: {
     /** The entries, by name. */

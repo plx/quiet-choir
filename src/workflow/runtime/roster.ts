@@ -118,7 +118,8 @@ function checkedEntries(
  * built-in preset (`text`, `readonly`, `edit`) or reserved word.
  *
  * It validates the names, harnesses and forbidden keys when the module loads and returns a
- * deep-frozen JSON copy. Option values are checked against the harness when a workflow using the
+ * deep-frozen JSON copy. A `Prompt` in `systemPrompt` or `appendSystemPrompt` is stored as its
+ * text, and the result's entries type it as `string`. Option values are checked against the harness when a workflow using the
  * roster is validated or run.
  */
 export function defineRoster<

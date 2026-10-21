@@ -17,7 +17,8 @@
   The runtime replaces a `Prompt` with its text before identity, so it fingerprints, records and
   replays exactly like the equal string. Adapters still receive strings: request options are typed
   `PromptText<O>`, so a test that builds a request from a `ClaudeOptions` or `CodexOptions` value
-  now annotates it `PromptText<ClaudeOptions>`. Profiles keep string-only system prompts.
+  now annotates it `PromptText<ClaudeOptions>`. A roster stores a `Prompt` entry option as its text,
+  and `Roster` types it `string` (`StoredRosterEntry`). Profiles keep string-only system prompts.
   `WorkflowDefinition.prompts` lists the sets a workflow uses. `workflow validate`, the execute
   preflight, `list-defs` and `runWorkflow` check them before any effect. A check fails on a missing
   or unparsable template, a computed, list or `ignore missing` dependency, one outside the root, a
@@ -29,8 +30,9 @@
   source, so a template edit revalidates; version-5 entries are revalidated once. `minijinja-js`
   3.0.1 is a new exact runtime dependency, loaded only on the first render or check. New public API:
   `definePrompts`, `PromptError`, `Prompt`, `PromptSet`, `PromptEntry`, `PromptEntries`,
-  `PromptFunction`, `AnyPromptSet`, `CheckedPromptEntries`, `PromptErrorDetails`, `PromptText` and
-  `WorkflowPromptSet`. Templates are not yet fingerprinted as execution dependencies (#582).
+  `PromptFunction`, `AnyPromptSet`, `CheckedPromptEntries`, `PromptErrorDetails`, `PromptText`,
+  `StoredRosterEntry` and `WorkflowPromptSet`. Templates are not yet fingerprinted as execution
+  dependencies (#582).
 
 - The Workflow Lab Batch 02 ports, the pattern recipes and both skill copies now use rosters instead
   of profiles (#580, [ADR 0063](docs/decisions/0063-bound-agents-and-typed-rosters.md)). Batch 02
