@@ -88,6 +88,8 @@ const revisionDigests: Readonly<Record<string, string>> = {
   '19': '76e465c736a943b3ea1b9383259e31640509d566ce15046a1a9387fdd579846c',
   // Revision 20 (#582) changed only the nested request summary shape (promptTemplate), so it repeats 19.
   '20': '76e465c736a943b3ea1b9383259e31640509d566ce15046a1a9387fdd579846c',
+  // Revision 21 (#584) changed only the nested launch shape (package), so it repeats 20.
+  '21': '76e465c736a943b3ea1b9383259e31640509d566ce15046a1a9387fdd579846c',
 };
 // digest(readRun(...)) of the installed pre-revision fixture, computed on unmodified main 91a6d2f.
 const preRevisionReadDigest = '714b6cb068de5c933b7ba04a26d1f931f589f7c9910f76f0e5c8cc493eb13016';
@@ -136,6 +138,8 @@ const revisionEighteenReadDigest =
 // digest(readRun(...)) of the installed revision-nineteen fixture, computed on unmodified main 85eb381.
 const revisionNineteenReadDigest =
   '3ab6aab1a745e9812f9959ab091ddc77ad06df748ff5b9245da03990de25fa30';
+// digest(readRun(...)) of the installed revision-twenty fixture, computed on unmodified main a3a9d6b.
+const revisionTwentyReadDigest = '5bab275ae089d60b51d48e2dda40fce519589c8c94ab479ff51d10125dc6efa3';
 
 // Digests of the run-level (without steps) and step JSON Schemas (recordShapeSchemas) per revision,
 // with the zod version that produced them. They start at revision 17: older revisions cannot be
@@ -160,6 +164,11 @@ const shapeDigests: Readonly<Record<string, { zod: string; run: string; steps: s
   '20': {
     zod: '4.5.4',
     run: 'd28a13d7dfecf511cfbaf0bb483caef8e3f6fc65890a6873468eb0736b9e475c',
+    steps: '37b78a978b4ed153dc6e76715de70e397b4db12812e6e7f794ff8b5ce5ff17cb',
+  },
+  '21': {
+    zod: '4.5.4',
+    run: 'fa3e766e6462e7e909803a11dade69afc3f72408cc7178e8cfa986244a4929f2',
     steps: '37b78a978b4ed153dc6e76715de70e397b4db12812e6e7f794ff8b5ce5ff17cb',
   },
 };
@@ -1791,7 +1800,7 @@ describe('revision-nine records (a grant failure before recoveryCause, #284)', (
     expect(saved.recoveryCause).toBeUndefined();
     expect(recordSchemaDrift(saved)).toBeUndefined();
     expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
-    expect(SUPPORTED_SCHEMA_REVISION).toBe(20);
+    expect(SUPPORTED_SCHEMA_REVISION).toBe(21);
   });
 
   it('round-trip every recovery cause through the record parser', async () => {
@@ -2607,6 +2616,78 @@ describe('revision-nineteen records (an agent request summary before promptTempl
       const request = steps['review']?.['request'];
       if (request === undefined) throw new Error('fixture has no review request');
       request['promptTemplate'] = 'not a name';
+    });
+    await expect(readRun({ stateDir, runId })).rejects.toThrow();
+  });
+});
+
+describe('revision-twenty records (a launch before launch.package, #584)', () => {
+  const runId = 'revision-twenty';
+  async function install(): Promise<void> {
+    const fixture = await readFile(
+      new URL('./fixtures/schema-revision/revision-twenty-checkpoint.json', import.meta.url),
+      'utf8',
+    );
+    await mkdir(join(stateDir, runId));
+    await writeFile(paths(runId).snapshot, fixture);
+    await writeFile(paths(runId).journal, '');
+  }
+  const definition = defineWorkflow({
+    name: 'schema-revision',
+    version: '1',
+    input: z.null(),
+    output: z.null(),
+    async run(ctx) {
+      await ctx.now('prepare');
+      return null;
+    },
+  });
+  const launch = {
+    entrypoint: '/fixture/schema.quiet-choir/workflows/main.ts',
+    tsconfig: null,
+    sources: { '/fixture/schema.quiet-choir/package.ts': 'b'.repeat(64) },
+    package: { root: '/fixture/schema.quiet-choir', name: 'schema', version: '1' },
+  };
+
+  it('read exactly as on main, with a launch and no package', async () => {
+    await install();
+    const record = await readRun({ stateDir, runId });
+    expect(record.schemaRevision).toBe(20);
+    expect(recordSchemaDrift(record)).toBeUndefined();
+    expect(digest(record)).toBe(revisionTwentyReadDigest);
+    expect(record.launch?.entrypoint).toBe('/fixture/workflows/main.ts');
+    expect(record.launch).not.toHaveProperty('package');
+    expect(record.status).toBe('failed');
+  });
+
+  it('resume with a package launch, replay the effect and save the current revision', async () => {
+    await install();
+    const original = await readRun({ stateDir, runId });
+    const result = await runWorkflow(definition, {
+      ...options,
+      stateDir,
+      runId,
+      resume: true,
+      launch,
+    });
+    expect(result.status).toBe('completed');
+    const saved = await readRun({ stateDir, runId });
+    expect(saved.steps['prepare']).toEqual(original.steps['prepare']);
+    expect(saved.launch?.package).toEqual(launch.package);
+    expect(saved.launch?.policy).toEqual(original.launch?.policy);
+    expect(recordSchemaDrift(saved)).toBeUndefined();
+    expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
+  });
+
+  it.each([
+    ['a relative package root', { root: 'schema.quiet-choir', name: 'schema', version: '1' }],
+    ['an unknown package key', { ...launch.package, workflows: [] }],
+    ['a package without a version', { root: '/fixture/schema.quiet-choir', name: 'schema' }],
+  ])('refuse %s', async (_label, value) => {
+    await install();
+    await editSnapshot(runId, (raw) => {
+      raw['schemaRevision'] = 21;
+      (raw['launch'] as Record<string, unknown>)['package'] = value;
     });
     await expect(readRun({ stateDir, runId })).rejects.toThrow();
   });

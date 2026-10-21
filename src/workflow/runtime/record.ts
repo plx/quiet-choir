@@ -1376,9 +1376,10 @@ export function withProjectInstructions(
  * resolved profile in `capabilities`.
  * Revision 20 (#582) changed only a nested shape: the optional `promptTemplate` of a request
  * summary in `steps` (step and attempt `request`).
+ * Revision 21 (#584) changed only a nested shape: the optional `package` of `launch`.
  * @internal
  */
-export const SUPPORTED_SCHEMA_REVISION = 20;
+export const SUPPORTED_SCHEMA_REVISION = 21;
 
 /**
  * The identity a run's answer deliveries and `workflow rm` bind to: its random `generation`, or

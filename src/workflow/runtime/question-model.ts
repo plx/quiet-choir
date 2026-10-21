@@ -146,6 +146,22 @@ export interface WorkflowLaunch {
    * checkpoints, in runs no CLI execution recorded one for, and after a selection built from data.
    */
   readonly policy?: LaunchPolicy;
+  /**
+   * The `*.quiet-choir` package the run was launched from (ADR 0065 section 2), absent for a
+   * single-module run. `entrypoint` stays the selected workflow's own module; resume re-enters
+   * through `<root>/package.ts` and selects the run's workflow by name.
+   */
+  readonly package?: WorkflowLaunchPackage;
+}
+
+/** The package of a run launched from a `*.quiet-choir` directory (ADR 0065 section 2). */
+export interface WorkflowLaunchPackage {
+  /** Real absolute path of the package directory. */
+  readonly root: string;
+  /** Package name from its manifest. */
+  readonly name: string;
+  /** Package version from its manifest. */
+  readonly version: string;
 }
 
 /**
