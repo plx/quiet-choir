@@ -52,10 +52,11 @@ export class PackageSelectionError extends Error {
  * loads through it share one module cache, so a module the entrypoint already evaluated is
  * returned, not run again. CommonJS modules a required entrypoint reaches are cached by file
  * outside the namespace, so a later `require` in it may evaluate a module again; `exporters`
- * instead finds the cached modules whose default export is a given value. Each CommonJS load first
- * drops the cached modules under the entrypoint's directory (outside `node_modules`), so it
- * re-evaluates the package's or workflow's own modules rather than reusing ones an earlier load in
- * this process evaluated before an edit. `dispose` unregisters the CommonJS loader; the ESM hooks
+ * instead finds the cached modules whose default export is a given value. Every load, ESM or
+ * CommonJS, first drops the cached CommonJS modules under the entrypoint's directory (outside
+ * `node_modules`), so it re-evaluates the package's or workflow's own modules rather than reusing
+ * ones an earlier load in this process evaluated before an edit; an ESM manifest can import
+ * `.cts` workflows that live in that cache. `dispose` unregisters the CommonJS loader; the ESM hooks
  * stay registered, as with `tsImport`, because trusted code may still import lazily.
  */
 function namespacedLoader(plan: TypecheckPlan): {
@@ -89,7 +90,12 @@ function namespacedLoader(plan: TypecheckPlan): {
     namespace,
     ...(plan.configuration.kind === 'tsconfig' ? { tsconfig: plan.configuration.path } : {}),
   });
-  return { load: (path) => registered.import(path, import.meta.url) as Promise<unknown> };
+  return {
+    load: (path) => {
+      evictCommonJsModules(dirname(realpathSync(plan.entrypoint)));
+      return registered.import(path, import.meta.url) as Promise<unknown>;
+    },
+  };
 }
 
 /** A CommonJS cache key without the `?namespace=<id>` query tsx adds to a namespaced module. */
