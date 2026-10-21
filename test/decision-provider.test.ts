@@ -317,6 +317,44 @@ describe('ctx.decide', () => {
     expect(b.requests).toHaveLength(1);
   });
 
+  it("resolves a child's own decisions inside the child", async () => {
+    const a = recording('a');
+    const b = recording('b');
+    const child = defineWorkflow({
+      name: 'child',
+      version: '1',
+      input: z.null(),
+      output: z.unknown(),
+      decisions: [b.provider],
+      run: (ctx) => ctx.decide('ask', { state: null, questions: { refund } }),
+    });
+    await runWorkflow(
+      workflow([a.provider], (ctx) => ctx.workflow('child', child, null)),
+      options(),
+    );
+    expect(b.requests).toHaveLength(1);
+    expect(a.requests).toHaveLength(0);
+  });
+
+  it("never falls back to the parent's providers inside a child", async () => {
+    const a = recording('a');
+    const child = defineWorkflow({
+      name: 'child',
+      version: '1',
+      input: z.null(),
+      output: z.unknown(),
+      run: (ctx) => ctx.decide('ask', { provider: 'a', state: null, questions: { refund } }),
+    });
+    const error: unknown = await runWorkflow(
+      workflow([a.provider], (ctx) => ctx.workflow('child', child, null)),
+      options(),
+    ).catch((caught: unknown) => caught);
+    expect((error as Error).cause).toBeInstanceOf(ConfigurationError);
+    expect((error as Error).message).toMatch(/Workflow child declares no decision provider a/u);
+    expect(a.requests).toHaveLength(0);
+    expect(a.factory).not.toHaveBeenCalled();
+  });
+
   const unsupported: [string, Partial<DecisionCapabilities>, unknown, RegExp][] = [
     [
       'an unsupported kind',
