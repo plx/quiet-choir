@@ -117,8 +117,11 @@ async function compare(runs: { run: typeof runWorkflow }, raw: Body, bound: Body
     });
   }
   const [left, right] = sides as [(typeof sides)[0], (typeof sides)[0]];
-  expect(right.requests).toEqual(left.requests);
-  expect(Object.keys(right.record.steps)).toEqual(Object.keys(left.record.steps));
+  // Concurrent map items may launch in either order; identity, not order, is compared.
+  const byStep = (requests: readonly AgentRequest[]) =>
+    [...requests].sort((a, b) => a.stepId.localeCompare(b.stepId));
+  expect(byStep(right.requests)).toEqual(byStep(left.requests));
+  expect(Object.keys(right.record.steps).sort()).toEqual(Object.keys(left.record.steps).sort());
   for (const id of Object.keys(left.record.steps))
     expect(view(right.record.steps[id])).toEqual(view(left.record.steps[id]));
   expect(right.result.output).toEqual(left.result.output);
@@ -323,6 +326,17 @@ it('refuses per-call-only keys at bind and unbound keys before a bound call laun
     await expect(agent.text('tools', untyped({ prompt, tools: ['Bash'] }))).rejects.toThrow(
       TypeError,
     );
+    // Malformed untyped options are refused the same way, before any launch.
+    expect(() => ctx.claude.bind(untyped(null))).toThrow('bind options must be an object.');
+    expect(() => ctx.claude.bind(untyped({ addDirs: 'a' }))).toThrow(
+      'bind addDirs must be an array.',
+    );
+    await expect(agent.value('null', untyped(null))).rejects.toThrow(
+      'Bound agent call options must be an object.',
+    );
+    await expect(agent.value('dirs', untyped({ prompt, addDirs: 'b' }))).rejects.toThrow(
+      'A bound agent call addDirs must be an array.',
+    );
     // An undefined non-bound key is absent, as optionData treats it.
     return agent.value('fine', untyped({ prompt, model: undefined }));
   });
@@ -344,7 +358,8 @@ it('snapshots bound options so later mutation cannot change the agent', async ({
 }) => {
   const fake = capture();
   const definition = workflow('snapshot', async (ctx) => {
-    const options = { model: 'opus', addDirs: ['a'] };
+    // An undefined bound value is absent too, so it never reaches the request.
+    const options = { model: 'opus', addDirs: ['a'], effort: undefined };
     const agent = ctx.claude.bind(options);
     options.model = 'haiku';
     options.addDirs.push('b');
@@ -352,6 +367,7 @@ it('snapshots bound options so later mutation cannot change the agent', async ({
   });
   await runs.run(definition, { stateDir, runId: 'snapshot', input: null, harness: fake.harness });
   expect(fake.requests[0]?.options).toMatchObject({ model: 'opus', addDirs: ['a'] });
+  expect(fake.requests[0]?.options).not.toHaveProperty('effort');
 });
 
 it('reuses a completed bound step on resume without invoking the adapter', async ({
