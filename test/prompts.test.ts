@@ -189,6 +189,30 @@ describe('authoring errors (ADR 0064 section 2)', () => {
     }
   });
 
+  it('reports a schema Zod cannot parse synchronously as invalid parameters', () => {
+    const prompts = definePrompts(fixtures, {
+      Optional: {
+        file: 'Optional.md',
+        params: z.object({
+          // eslint-disable-next-line @typescript-eslint/require-await -- the refinement must be async
+          name: z.string().refine(async () => true),
+          greeting: z.string().optional(),
+        }),
+      },
+    });
+    try {
+      prompts.Optional({ name: 'Ada', greeting: 'Hi' });
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(PromptError);
+      expect(error).toMatchObject({ kind: 'InvalidParams', prompt: 'Optional', line: null });
+      expect((error as Error).message).toMatch(
+        /^Prompt Optional \(Optional\.md\): invalid parameters: /u,
+      );
+      expect((error as Error).cause).toBeInstanceOf(Error);
+    }
+  });
+
   it('fails a missing variable under strict undefined, naming the template and line', () => {
     try {
       definePrompts(fixtures, entries).Optional({ name: 'Ada' });

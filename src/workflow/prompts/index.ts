@@ -153,7 +153,17 @@ export function definePrompts<const E extends PromptEntries>(
   for (const [name, entry] of Object.entries(checked)) {
     const strict = entry.params.strict();
     const render = (params: unknown): Prompt => {
-      const parsed = strict.safeParse(params);
+      let parsed: ReturnType<typeof strict.safeParse>;
+      try {
+        parsed = strict.safeParse(params);
+      } catch (error) {
+        // A schema Zod cannot run synchronously (an async refinement or transform) throws here.
+        throw new PromptError(
+          `${promptLabel(name, entry.file)}: invalid parameters: ${error instanceof Error ? error.message : String(error)}`,
+          { prompt: name, file: entry.file, kind: 'InvalidParams', line: null },
+          { cause: error },
+        );
+      }
       if (!parsed.success)
         throw new PromptError(
           `${promptLabel(name, entry.file)}: invalid parameters: ${parsed.error.issues
