@@ -1,5 +1,13 @@
 import type { WorkflowDeclaration } from '../runtime/child-model.js';
-import { importWorkflow, WorkflowDefinitionError } from './import.js';
+import {
+  importPackage,
+  importWorkflow,
+  PackageSelectionError,
+  WorkflowDefinitionError,
+} from './import.js';
+import { PACKAGE_MANIFEST } from '../package/plan.js';
+import type { WorkflowPackage } from '../package/model.js';
+import { promptSetDescriptor } from '../prompts/prompt.js';
 import { cleanWorktrees } from '../runtime/worktree-clean.js';
 import { removeRun } from '../runtime/run-removal.js';
 import { pruneRuns } from './prune.js';
@@ -13,6 +21,7 @@ import type {
   ExecuteNamedWorkflowPlan,
   UnlockWorkflowPlan,
   UnlockWorktreeAdminPlan,
+  PackageSelection,
 } from './model.js';
 import { NodeProcessRunner } from '../../processes/runner.js';
 import type { ProcessRunner } from '../runtime/exec-model.js';
@@ -77,7 +86,7 @@ import { listDefinitions } from './registry.js';
 import { analyzeTypecheckEntrypoint } from '../typecheck/plan.js';
 
 import type { ExecutionLogger, Executor, LogLevel } from '../../application/execution.js';
-import type { Harness } from '../runtime/model.js';
+import type { Harness, WorkflowDefinition } from '../runtime/model.js';
 import { runWorkflow } from '../runtime/runner.js';
 import { legacyRunPath, resolveStateDir, runDirectory } from '../runtime/paths.js';
 import { CheckpointError, errorCode } from '../runtime/checkpoint.js';
@@ -88,7 +97,7 @@ import { TypeScriptExecutor } from '../typecheck/typescript-executor.js';
 import type { TypecheckProgramCache } from '../typecheck/program-cache.js';
 import { formatDurabilityDiagnostic } from '../typecheck/model.js';
 import { fingerprintSources, withPromptSources, workflowLaunch } from './source.js';
-import { promptRoots } from '../prompts/check.js';
+import { checkPromptSets, promptRoots } from '../prompts/check.js';
 import { formatRateLimitWindows, readRateLimit } from '../runtime/rate-limit.js';
 import type { WorkflowEvent } from '../runtime/runner.js';
 import {
@@ -282,6 +291,9 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
     // Answers ctx.exec from fixture exec rules under a non-dry-run fixture harness.
     let execRunner: ProcessRunner | undefined;
     let stage: CliErrorCode = 'load.typecheck';
+    // The package to load (ADR 0065 section 2); on a resume, its workflow defaults to the run's.
+    let packageSelection: PackageSelection | undefined =
+      'package' in plan ? plan.package : undefined;
     // A live execution's run signal: the caller's, wrapped so a matching `workflow cancel` request
     // turns its interruption into a cancellation (ADR 0039).
     let cancellable: CancellableRunSignal | undefined;
@@ -340,14 +352,29 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
             'This run has no stored entrypoint. Resume with workflow execute FILE --resume --run-id RUN, or the original embedding application.',
           );
         await storedEntrypointExists(run.id, run.launch.entrypoint);
+        // A package run re-enters through its manifest, so it typechecks and fingerprints the same
+        // files as its launch, and selects its own workflow by name (ADR 0065 section 2).
+        const stored = run.launch.package;
+        const manifest = stored === undefined ? undefined : join(stored.root, PACKAGE_MANIFEST);
+        if (manifest !== undefined) await storedEntrypointExists(run.id, manifest);
         return await this.execute({
           ...plan,
           kind: 'workflow.execute',
           cwd: run.cwd,
           resume: true,
+          ...(stored === undefined || manifest === undefined
+            ? {}
+            : {
+                package: {
+                  kind: 'workflow.package',
+                  root: stored.root,
+                  manifest,
+                  workflow: run.workflow.name,
+                },
+              }),
           typecheck: {
             kind: 'workflow.typecheck',
-            entrypoint: run.launch.entrypoint,
+            entrypoint: manifest ?? run.launch.entrypoint,
             configuration:
               run.launch.tsconfig === null
                 ? { kind: 'defaults', profile: 'node22-es2023-strict' }
@@ -738,19 +765,59 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
           'info',
           `Agent limits: total=${String(agentLimits.total)}; per-harness=${JSON.stringify(agentLimits.perProvider ?? {})}`,
         );
-      if (plan.kind === 'workflow.execute' && saved) {
+      if (plan.kind === 'workflow.check-resume')
+        saved = await readRequiredRun({ runId: plan.runId, stateDir: plan.stateDir });
+      if (saved && (plan.kind === 'workflow.execute' || plan.kind === 'workflow.check-resume')) {
         if (saved.launch) {
           // A missing stored file is the entrypoint_missing refusal, whatever FILE was requested.
           await storedEntrypointExists(saved.id, saved.launch.entrypoint);
-          const requested = await realpath(plan.typecheck.entrypoint);
-          if (requested !== saved.launch.entrypoint)
-            throw new RunRefusedError(
-              'run.incompatible',
-              saved.id,
-              `Run ${saved.id} was launched from ${saved.launch.entrypoint}; requested ${requested}. Use its stored entrypoint or fork a new run.`,
-              { storedEntrypoint: saved.launch.entrypoint, requestedEntrypoint: requested },
-            );
+          const storedPackage = saved.launch.package;
+          if (packageSelection) {
+            // The launch modes and package roots must match; the selected module is compared with
+            // the stored entrypoint after the import resolves it.
+            const requestedRoot = await realpath(packageSelection.root);
+            const workflow = packageSelection.workflow ?? saved.workflow.name;
+            if (storedPackage?.root !== requestedRoot)
+              throw new RunRefusedError(
+                'run.incompatible',
+                saved.id,
+                storedPackage === undefined
+                  ? `Run ${saved.id} was launched from ${saved.launch.entrypoint}, not from a package; requested package ${requestedRoot}. Use its stored entrypoint or fork a new run.`
+                  : `Run ${saved.id} was launched from package ${storedPackage.root}; requested package ${requestedRoot}. Use its stored package or fork a new run.`,
+                {
+                  storedEntrypoint: saved.launch.entrypoint,
+                  requestedEntrypoint: requestedRoot,
+                  requestedPackage: requestedRoot,
+                  requestedWorkflow: workflow,
+                },
+              );
+          } else {
+            const requested = await realpath(plan.typecheck.entrypoint);
+            if (storedPackage !== undefined)
+              throw new RunRefusedError(
+                'run.incompatible',
+                saved.id,
+                `Run ${saved.id} was launched from package ${storedPackage.root} (workflow ${saved.workflow.name}); requested module ${requested}. Resume it by its run ID or with its package directory, or fork a new run.`,
+                { storedEntrypoint: saved.launch.entrypoint, requestedEntrypoint: requested },
+              );
+            if (requested !== saved.launch.entrypoint)
+              throw new RunRefusedError(
+                'run.incompatible',
+                saved.id,
+                `Run ${saved.id} was launched from ${saved.launch.entrypoint}; requested ${requested}. Use its stored entrypoint or fork a new run.`,
+                { storedEntrypoint: saved.launch.entrypoint, requestedEntrypoint: requested },
+              );
+          }
         }
+      }
+      // A resume or check-resume given only the package resumes the run's own workflow.
+      if (
+        packageSelection?.workflow === null &&
+        (plan.kind === 'workflow.check-resume' || (plan.kind === 'workflow.execute' && plan.resume))
+      ) {
+        const run =
+          saved ?? (await readRequiredRun({ runId: plan.runId, stateDir: plan.stateDir }));
+        packageSelection = { ...packageSelection, workflow: run.workflow.name };
       }
       stage = 'load.typecheck';
       const checked = await new TypeScriptExecutor(this.#options.logger, {
@@ -790,11 +857,39 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         'debug',
         `Importing trusted workflow module ${plan.typecheck.entrypoint}`,
       );
-      const imported = await importWorkflow(plan.typecheck);
-      unregister = imported.dispose;
+      let loadedPackage: WorkflowPackage | undefined;
+      let modulePath = plan.typecheck.entrypoint;
+      let definition: WorkflowDefinition<unknown, unknown>;
+      if (packageSelection) {
+        const imported = await importPackage(
+          plan.typecheck,
+          checked.sourceFiles,
+          packageSelection.workflow,
+        );
+        unregister = imported.dispose;
+        loadedPackage = imported.package;
+        modulePath = imported.modulePath;
+        definition = imported.definition;
+        const storedEntrypoint = saved?.launch?.entrypoint;
+        if (saved && storedEntrypoint !== undefined && storedEntrypoint !== modulePath)
+          throw new RunRefusedError(
+            'run.incompatible',
+            saved.id,
+            `Run ${saved.id} was launched from ${storedEntrypoint}; package ${loadedPackage.name} now resolves workflow ${definition.name} to ${modulePath}. Fork a new run.`,
+            {
+              storedEntrypoint,
+              requestedEntrypoint: modulePath,
+              requestedPackage: await realpath(packageSelection.root),
+              requestedWorkflow: definition.name,
+            },
+          );
+      } else {
+        const imported = await importWorkflow(plan.typecheck);
+        unregister = imported.dispose;
+        definition = imported.definition;
+      }
       stopIfAborted();
       stage = 'load.definition';
-      const definition = imported.definition;
       if (
         plan.kind === 'workflow.execute' &&
         plan.registryName !== undefined &&
@@ -803,22 +898,40 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         throw new Error(
           `Registry name ${plan.registryName} now resolves to workflow ${definition.name}; refresh workflow list-defs before executing by name.`,
         );
-      const description = describeWorkflow(definition, plan.typecheck.entrypoint);
+      const description = describeWorkflow(definition, modulePath);
+      // A package's own prompt sets get the load-time checks of a workflow's (ADR 0064 section 3).
+      const packagePrompts = checkPromptSets(
+        (loadedPackage?.prompts ?? []).flatMap((set) => promptSetDescriptor(set) ?? []),
+      );
+      if (loadedPackage && packagePrompts.errors.length > 0)
+        throw new Error(
+          `Package ${loadedPackage.name} prompt templates failed their load-time checks:\n${packagePrompts.errors.map((error) => `- ${error}`).join('\n')}`,
+        );
       // Prompt roots are known only after import. Every file under them joins the launch sources
       // (ADR 0064 section 4), and validate, check-resume and execute all use this one fingerprint.
-      const source = await withPromptSources(
-        plan.typecheck,
-        typescriptSource,
-        promptRoots(description),
-      );
+      const source = await withPromptSources(plan.typecheck, typescriptSource, [
+        ...new Set([...promptRoots(description), ...packagePrompts.sets.map((set) => set.root)]),
+      ]);
       if (plan.kind === 'workflow.validate' || plan.kind === 'workflow.execute')
-        for (const warning of promptWarnings(description))
+        for (const warning of new Set([
+          ...promptWarnings(description),
+          ...packagePrompts.sets.flatMap((set) => set.entries.flatMap((entry) => entry.warnings)),
+        ]))
           this.#options.logger.log('warn', warning);
+      const packageLaunch =
+        loadedPackage === undefined
+          ? undefined
+          : {
+              root: loadedPackage.root,
+              name: loadedPackage.name,
+              version: loadedPackage.version,
+            };
       if (plan.kind === 'workflow.validate') {
         return {
           kind: 'workflow.validate.result',
           ok: true,
-          entrypoint: plan.typecheck.entrypoint,
+          entrypoint: modulePath,
+          ...(packageLaunch === undefined ? {} : { package: packageLaunch }),
           diagnostics: [],
           workflow: {
             ...description,
@@ -827,7 +940,8 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         };
       }
       if (plan.kind === 'workflow.check-resume') {
-        const run = await readRequiredRun({ runId: plan.runId, stateDir: plan.stateDir });
+        const run =
+          saved ?? (await readRequiredRun({ runId: plan.runId, stateDir: plan.stateDir }));
         const check = compareResume(
           definition,
           {
@@ -894,7 +1008,13 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
       // sources) has no policy a later resume could reproduce. State that explicitly: a launch
       // without a policy keeps the recorded one, which that resume would then silently inherit.
       const launch: WorkflowLaunchOptions = {
-        ...(await workflowLaunch(plan.typecheck, source)),
+        ...(await workflowLaunch(
+          plan.typecheck,
+          source,
+          packageLaunch === undefined
+            ? undefined
+            : { entrypoint: modulePath, package: packageLaunch },
+        )),
         policy: policy ?? null,
       };
       if (plan.resume && plan.acceptCodeChange && !plan.dryRun)
@@ -1030,13 +1150,20 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         divergence && plan.kind === 'workflow.execute'
           ? divergenceRefusal(
               divergence,
-              {
-                runId: plan.runId,
-                stateDir: resolveStateDir({ stateDir: plan.stateDir }),
-                entrypoint: await realpath(plan.typecheck.entrypoint).catch(
-                  () => plan.typecheck.entrypoint,
-                ),
-              },
+              packageSelection?.workflow === undefined || packageSelection.workflow === null
+                ? {
+                    runId: plan.runId,
+                    stateDir: resolveStateDir({ stateDir: plan.stateDir }),
+                    entrypoint: await realpath(plan.typecheck.entrypoint).catch(
+                      () => plan.typecheck.entrypoint,
+                    ),
+                  }
+                : {
+                    runId: plan.runId,
+                    stateDir: resolveStateDir({ stateDir: plan.stateDir }),
+                    entrypoint: packageSelection.root,
+                    workflow: packageSelection.workflow,
+                  },
               this.#options.commandLauncher,
             )
           : thrown;
@@ -1071,9 +1198,11 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
                   error instanceof WorkflowInputError ||
                   error instanceof WatchBoundError
                 ? error.code
-                : error instanceof WorkflowDefinitionError
-                  ? 'load.definition'
-                  : stage;
+                : error instanceof PackageSelectionError
+                  ? 'usage.entrypoint'
+                  : error instanceof WorkflowDefinitionError
+                    ? 'load.definition'
+                    : stage;
       return workflowFailure(
         code,
         // Only this invocation's saved failure carries its hint, never a dry-run, and a divergence
@@ -1103,7 +1232,9 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
                 ? error.details
                 : error instanceof AnswerError && error.reason === 'invalid'
                   ? { issues: jsonValue(error.issues) }
-                  : null,
+                  : error instanceof PackageSelectionError
+                    ? { reason: error.reason, workflows: [...error.workflows] }
+                    : null,
         },
       );
     } finally {

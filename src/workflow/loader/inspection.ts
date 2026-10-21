@@ -1,3 +1,4 @@
+import type { WorkflowLaunchPackage } from '../runtime/question-model.js';
 import { existsSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { runBytes } from '../runtime/run-size.js';
@@ -128,6 +129,11 @@ export interface RunSummary {
   readonly harnesses: NonNullable<RunRecord['harnesses']>;
   readonly id: string;
   readonly workflow: { readonly name: string; readonly version: string };
+  /**
+   * The package a `*.quiet-choir` run was launched from (`launch.package`, ADR 0065 section 2);
+   * absent for every other run.
+   */
+  readonly package?: WorkflowLaunchPackage;
   readonly status: InspectionStatus;
   readonly recordedStatus: RunRecord['status'];
   readonly nextWakeAt: number | null;
@@ -221,6 +227,8 @@ export interface RunSummary {
 export interface RunListRow {
   readonly id: string;
   readonly workflow: RunSummary['workflow'];
+  /** As on {@link RunSummary.package}: present only for a package run. */
+  readonly package?: WorkflowLaunchPackage;
   readonly status: InspectionStatus;
   readonly recordedStatus: RunRecord['status'];
   /**
@@ -271,6 +279,7 @@ export function toRunListRow(summary: RunSummary): RunListRow {
   return {
     id: summary.id,
     workflow: summary.workflow,
+    ...(summary.package === undefined ? {} : { package: summary.package }),
     status: summary.status,
     recordedStatus: summary.recordedStatus,
     ...runFailureKind(summary),
@@ -530,6 +539,7 @@ export function summarizeRun(
     harnesses: run.harnesses ?? {},
     id: run.id,
     workflow: { name: run.workflow.name, version: run.workflow.version },
+    ...(run.launch?.package === undefined ? {} : { package: { ...run.launch.package } }),
     status: stale(run, ownership) ? 'stale' : run.status,
     recordedStatus: run.status,
     nextWakeAt: run.nextWakeAt ?? null,

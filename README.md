@@ -132,6 +132,12 @@ API key is required. See [harness isolation](docs/harness-isolation.md). The sou
 `../src/index.js` so they work directly in this private repository. An installed consumer imports
 `quiet-choir` as above.
 
+Several related workflows can share contracts, a roster and prompts as one package: a
+`<name>.quiet-choir` directory whose `package.ts` default-exports
+`definePackage({ root, name, version, workflows, entry })`. `workflow execute <dir>.quiet-choir`
+runs its entry, `--workflow <name>` another declared workflow, and `validate`, `--dry-run`,
+`check-resume` and resume by run ID take the same forms. See [workflow packages](docs/packages.md).
+
 ## Operations
 
 | API                                                                            | Behavior                                                                      |

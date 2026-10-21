@@ -158,6 +158,12 @@ describe('buildStartChildArgv', () => {
     expect(
       buildStartChildArgv(['wf.ts', '--require-grants', '--grant', 'fixer'], flags, ids).args,
     ).toEqual(['wf.ts', '--require-grants', '--grant', 'fixer', ...tail]);
+    // A package's --workflow takes a value, so a name that looks like a flag stays its value (#584).
+    expect(flags['workflow']?.type).toBe('option');
+    expect(
+      buildStartChildArgv(['demo.quiet-choir', '--workflow', 'other', '--progress'], flags, ids)
+        .args,
+    ).toEqual(['demo.quiet-choir', '--workflow', 'other', '--progress', ...tail]);
   });
 });
 

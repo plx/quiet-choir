@@ -108,6 +108,10 @@ export const workflowLaunchSchema = z.object({
   tsconfig: z.string().refine(isAbsolute).nullable(),
   sources: z.record(z.string().refine(isAbsolute), z.string().regex(/^[a-f0-9]{64}$/u)).optional(),
   policy: launchPolicySchema.optional(),
+  package: z
+    .object({ root: z.string().refine(isAbsolute), name: z.string(), version: z.string() })
+    .strict()
+    .optional(),
 });
 
 /**

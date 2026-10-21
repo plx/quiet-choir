@@ -12,13 +12,14 @@ interface CheckFlags {
   readonly 'state-dir': string | undefined;
   readonly 'accept-code-change': boolean | undefined;
   readonly json: boolean | undefined;
+  readonly workflow: string | undefined;
 }
 
 /** CLI adapter for read-only run compatibility inspection. */
 export default class WorkflowCheckResume extends WorkflowCommand {
   public static override readonly args: Interfaces.ArgInput<CheckArgs> = {
     file: Args.string({
-      description: 'Trusted workflow module to check',
+      description: 'Trusted TypeScript workflow module or *.quiet-choir package directory to check',
       required: true,
     }),
   };
@@ -35,6 +36,10 @@ export default class WorkflowCheckResume extends WorkflowCommand {
       description: 'Print compatibility and component differences as JSON',
       default: false,
     }),
+    workflow: Flags.string({
+      description:
+        "Workflow of a .quiet-choir package to check; defaults to the run's recorded workflow",
+    }),
   };
   public static override readonly summary =
     'Check run compatibility without a writer lock or workflow-body execution';
@@ -44,7 +49,7 @@ export default class WorkflowCheckResume extends WorkflowCommand {
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(WorkflowCheckResume);
     const stateDir = this.runContext(flags['run-id'], flags['state-dir']);
-    const typecheck = await this.entrypoint(args.file);
+    const source = await this.sourcePlan(args.file, flags.workflow);
     const executor = new WorkflowExecutor({
       logger: this.createExecutionLogger(flags),
       commandLauncher: this.commandLauncher,
@@ -52,7 +57,7 @@ export default class WorkflowCheckResume extends WorkflowCommand {
     });
     const result = await executor.execute({
       kind: 'workflow.check-resume',
-      typecheck,
+      ...source,
       runId: flags['run-id'],
       stateDir: stateDir,
       cwd: process.cwd(),

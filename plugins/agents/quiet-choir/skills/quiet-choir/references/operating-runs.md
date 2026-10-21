@@ -66,18 +66,19 @@ under `requireGrants`, which the run keeps, so the entry does not repeat `--requ
 `--grant <access>` when call-site capability overrides make profile grants ineffective), a replay
 divergence a fork, a settled map change a fork (after a `--accept-code-change` resume when only the
 mapper changed), and a run-budget stop `resume` with the cap's flag and `<LIMIT>`; a failed run that
-recorded no step or map gets no entry. Substitute `<ANSWER_JSON>`, `<NEW_RUN_ID>`, `<ENTRYPOINT>` or
-`<LIMIT>` (a higher cap or `off`) first, then run the argv without a shell. A run records its
-harness selection (fixture paths with digests) and wait mode: `resume`, `answer --resume` and `tick`
-without `--harness` or `--wait-mode` reuse them, explicit flags replace them (`--harness` is
-repeatable on each of these commands), and resume argv already carry them. `--harness-config` is
-never recorded: repeat it on every resume and tick of a run started with one, which are otherwise
-refused. Tick always suspends waits, without changing the recorded mode. A recorded fixture file
-that is gone fails with `usage.flag`; pass `--harness`. `run.not_found` lists `details.candidates`
-(`{stateDir, cwd}`): other runs containers that hold the ID, such as the project root when you are
-in a subdirectory, with `next` inspecting it there; the missing ID is `details.runId`, which is the
-`--fork-from` source when that is what is missing. A moved or deleted stored entrypoint is
-`run.incompatible` with `details.reason:"entrypoint_missing"`; fork from the new location.
+recorded no step or map gets no entry. Substitute `<ANSWER_JSON>`, `<NEW_RUN_ID>`, `<ENTRYPOINT>`,
+`<PACKAGE_DIR>` or `<LIMIT>` (a higher cap or `off`) first, then run the argv without a shell. A run
+records its harness selection (fixture paths with digests) and wait mode: `resume`,
+`answer --resume` and `tick` without `--harness` or `--wait-mode` reuse them, explicit flags replace
+them (`--harness` is repeatable on each of these commands), and resume argv already carry them.
+`--harness-config` is never recorded: repeat it on every resume and tick of a run started with one,
+which are otherwise refused. Tick always suspends waits, without changing the recorded mode. A
+recorded fixture file that is gone fails with `usage.flag`; pass `--harness`. `run.not_found` lists
+`details.candidates` (`{stateDir, cwd}`): other runs containers that hold the ID, such as the
+project root when you are in a subdirectory, with `next` inspecting it there; the missing ID is
+`details.runId`, which is the `--fork-from` source when that is what is missing. A moved or deleted
+stored entrypoint is `run.incompatible` with `details.reason:"entrypoint_missing"`; fork from the
+new location (`<PACKAGE_DIR>` for a package run).
 
 ## Poll the saved state
 

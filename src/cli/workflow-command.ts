@@ -18,6 +18,8 @@ import { isValidRunId, runIdMessage, type CliErrorCode } from '../workflow/runti
 import type { JsonValue } from '../workflow/runtime/model.js';
 import { analyzeTypecheckEntrypoint } from '../workflow/typecheck/plan.js';
 import type { TypecheckPlan } from '../workflow/typecheck/model.js';
+import { analyzePackagePath, isPackagePath } from '../workflow/package/plan.js';
+import type { PackageSelection } from '../workflow/loader/model.js';
 import { tolerateClosedTerminal, executionSignals, writeAllSync } from './signals.js';
 import { ProcessSupervisor } from '../processes/supervisor.js';
 import { readRunSync, readRun, type RunRecord } from '../workflow/runtime/store.js';
@@ -234,14 +236,66 @@ export abstract class WorkflowCommand extends BaseCommand {
     if (!isValidRunId(runId)) this.fail('usage.run_id', runIdMessage);
   }
 
-  protected async entrypoint(file: string): Promise<TypecheckPlan> {
+  /**
+   * The typecheck plan of a FILE argument: a TypeScript module, or a `*.quiet-choir` package
+   * directory, whose plan is its `package.ts` manifest's and which also returns the package
+   * selection without a workflow (ADR 0065 section 2). A missing module, package or manifest is
+   * `usage.file_not_found`; a package that is not a directory or has only a JavaScript manifest is
+   * `usage.entrypoint`. @internal
+   */
+  protected async entrypoint(file: string): Promise<{
+    readonly typecheck: TypecheckPlan;
+    readonly package?: Omit<PackageSelection, 'workflow'>;
+  }> {
+    if (isPackagePath(file)) {
+      const analysis = analyzePackagePath(file, process.cwd());
+      if (!analysis.ok)
+        this.fail(
+          analysis.error.code === 'PACKAGE_NOT_FOUND' ||
+            analysis.error.code === 'PACKAGE_MANIFEST_MISSING'
+            ? 'usage.file_not_found'
+            : 'usage.entrypoint',
+          analysis.error.message,
+          { file: analysis.error.path, reason: analysis.error.code },
+        );
+      return { typecheck: analysis.typecheck, package: analysis.package };
+    }
     const found = await stat(file).catch(() => null);
     if (!found?.isFile())
       this.fail('usage.file_not_found', `No file found at ${file}`, { file: resolve(file) });
     const analysis = analyzeTypecheckEntrypoint(file, process.cwd());
     if (!analysis.ok)
       this.fail('usage.entrypoint', analysis.error.message, { reason: analysis.error.code });
-    return analysis.plan;
+    return { typecheck: analysis.plan };
+  }
+
+  /**
+   * The plan's `package` field for a FILE argument and `--workflow` value: the package selection
+   * with the workflow (null when omitted), or nothing for a module. `--workflow` with a module FILE
+   * is `usage.flag`. @internal
+   */
+  protected packagePlan(
+    source: { readonly package?: Omit<PackageSelection, 'workflow'> },
+    workflow: string | undefined,
+  ): { readonly package?: PackageSelection } {
+    if (source.package === undefined) {
+      if (workflow !== undefined)
+        this.fail(
+          'usage.flag',
+          '--workflow selects a workflow of a .quiet-choir package; the FILE argument is a single workflow module.',
+        );
+      return {};
+    }
+    return { package: { ...source.package, workflow: workflow ?? null } };
+  }
+
+  /** The `typecheck` and `package` fields of a FILE argument and `--workflow` value. @internal */
+  protected async sourcePlan(
+    file: string,
+    workflow: string | undefined,
+  ): Promise<{ readonly typecheck: TypecheckPlan; readonly package?: PackageSelection }> {
+    const source = await this.entrypoint(file);
+    return { typecheck: source.typecheck, ...this.packagePlan(source, workflow) };
   }
 
   /** Success output. A first signal replaces Node's default termination, so report it instead. */

@@ -560,6 +560,28 @@ harness. The journal was empty and the empty attempt transcript is not checked i
 with Prettier; its read-view digest in `test/record-schema-revision.test.ts` was computed on the
 same unmodified main from this file. No inference was used.
 
+`revision-twenty-checkpoint.json` was generated the same way at origin/main `a3a9d6b`, before
+package-aware loading (#584) added the optional nested `package` to `launch` in revision 21. Its run
+ID is `revision-twenty`, and it ran the pre-revision definition above (`ctx.now('prepare')`, then
+`throw new Error('fixture tail')`) once with this `RunOptions.launch`, so the record carries a
+launch (no fixture before it did):
+
+```ts
+{
+  entrypoint: '/fixture/workflows/main.ts',
+  tsconfig: null,
+  sources: { '/fixture/workflows/main.ts': 'a'.repeat(64) },
+  policy: { harness: { kind: 'cli' }, waitMode: 'suspend' },
+}
+```
+
+It carries `schemaRevision: 20`, a `launch` without `package`, the completed `ctx.now` effect
+`prepare` and a workflow-body failure after it, so a resume with a body that no longer throws
+completes without invoking anything. The journal was empty, so only `run.json` is checked in. Stack
+paths are scrubbed to `/fixture/...` and the file was formatted with Prettier; its read-view digest
+in `test/record-schema-revision.test.ts` was computed on the same unmodified main from this file. No
+harness was invoked.
+
 `record-keys.json` lists the top-level run-record keys of each schema revision. Adding or changing a
 persisted run-level field adds a revision there and bumps `SUPPORTED_SCHEMA_REVISION`; a revision
 that only changes a nested shape repeats the previous key list. See `docs/storage.md`.

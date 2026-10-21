@@ -42,9 +42,12 @@ quiet-choir workflow resume my-run --state-dir /absolute/runs
 ```
 
 The two resume forms use stored launch paths when no file is supplied. A supplied different file is
-refused before import and the error names both paths. Old or embedded runs with no launch metadata
-still need `execute FILE --resume --run-id RUN` or their original embedding application. Resume
-retains typechecking, code/schema checks, grants, and step identity validation.
+refused before import and the error names both paths. A run launched from a `*.quiet-choir` package
+records `launch.package` beside `launch.entrypoint` (the selected workflow's module), and both forms
+re-enter through the package's `package.ts` ([packages](packages.md#records-and-resume)). Old or
+embedded runs with no launch metadata still need `execute FILE --resume --run-id RUN` or their
+original embedding application. Resume retains typechecking, code/schema checks, grants, and step
+identity validation.
 
 ## Layout
 
@@ -513,6 +516,12 @@ each attempt's `request`) gains the optional `promptTemplate`, the prompt name o
 `prompt` was a rendered `Prompt` ([prompt records](prompts.md#records)). Revision-19 records read,
 inspect and resume unchanged without it. A revision-19 build reads a revision-20 record and drops
 the field from its view (its request summary parse strips unknown keys), and refuses to rewrite it.
+Revision 21 (#584) is nested-only: `launch` gains the optional `package`, `{root, name, version}`
+with the real path of the `*.quiet-choir` directory a run was launched from
+([packages](packages.md#records-and-resume)); `launch.entrypoint` stays the selected workflow's
+module. Revision-20 records read and resume unchanged without it. A revision-20 build reads a
+revision-21 record and drops `package` from its view (its launch parse strips unknown keys), and
+refuses to rewrite it.
 
 **Refusals.** A build must not rewrite a record it cannot fully read: its parse strips unknown
 top-level fields, and the next compaction would write the record back without them. When a record

@@ -204,6 +204,11 @@ function worktreeAdminLines(
   return lines;
 }
 
+/** `<workflow>@<version>`, or `<package>/<workflow>@<version>` for a package run (ADR 0065). */
+function workflowLabel(run: Pick<RunSummary, 'workflow' | 'package'>): string {
+  return `${run.package === undefined ? '' : `${run.package.name}/`}${run.workflow.name}@${run.workflow.version}`;
+}
+
 /**
  * Render only known values: a running workflow never ends in a bare null. `worktreeAdminLock`, the
  * held administration lock of the run's repository, adds its line and any unlock hint. @internal
@@ -216,7 +221,10 @@ export function formatRunSummary(
   now = Date.now(),
 ): string {
   const lines = [
-    `Run ${run.id}: ${run.status}  ${run.workflow.name}@${run.workflow.version}`,
+    `Run ${run.id}: ${run.status}  ${workflowLabel(run)}`,
+    ...(run.package === undefined
+      ? []
+      : [`Package: ${run.package.name}@${run.package.version} at ${run.package.root}`]),
     `Owner: ${owner(run)}  started ${run.startedAt} (${duration(run.elapsedMs)})  last activity ${duration(run.lastActivityAgeMs)} ago`,
     ...(run.phase
       ? [
@@ -419,7 +427,7 @@ export function formatRunList(
     `ID  WORKFLOW  STATUS  STEPS  USAGE  SIZE  UPDATED  OWNER${showProject ? '  PROJECT  STATE' : ''}`,
     ...runs.map(
       (run) =>
-        `${run.id}  ${run.workflow.name}@${run.workflow.version}  ${statusCell(run)}  ${String(run.counts.completed)}/${String(run.counts.total)} completed, ${String(run.counts.running)} running, ${String(run.counts.failed)} failed, ${String(run.counts.cancelled)} cancelled, ${String(run.counts['settled-failed'])} settled-failed, ${String(run.counts.superseded)} superseded, ${String(run.counts.waiting)} waiting, ${String(run.counts.withdrawn)} withdrawn  ${cost(run)}  ${typeof run.bytes === 'number' ? formatBytes(run.bytes) : 'unknown'}  ${run.updatedAt}  ${owner(run)}${showProject ? `  ${run.cwd}  ${run.stateDir ?? 'unknown'}` : ''}`,
+        `${run.id}  ${workflowLabel(run)}  ${statusCell(run)}  ${String(run.counts.completed)}/${String(run.counts.total)} completed, ${String(run.counts.running)} running, ${String(run.counts.failed)} failed, ${String(run.counts.cancelled)} cancelled, ${String(run.counts['settled-failed'])} settled-failed, ${String(run.counts.superseded)} superseded, ${String(run.counts.waiting)} waiting, ${String(run.counts.withdrawn)} withdrawn  ${cost(run)}  ${typeof run.bytes === 'number' ? formatBytes(run.bytes) : 'unknown'}  ${run.updatedAt}  ${owner(run)}${showProject ? `  ${run.cwd}  ${run.stateDir ?? 'unknown'}` : ''}`,
     ),
     ...leftovers,
   ].join('\n');
