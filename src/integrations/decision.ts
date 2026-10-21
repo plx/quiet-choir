@@ -1,4 +1,194 @@
-import { z, type WorkflowContext, type JsonValue, type AgentUsage } from '../index.js';
+/**
+ * Decision providers over the shared Jev-style protocol (ADR 0066): typed `noul`, `choice` and
+ * `score` questions for `ctx.decide`, provider declarations, and the `jevCompatible` HTTP
+ * provider. The older transport-injected `decision(ctx, transport).choose(...)` helper stays
+ * available below.
+ *
+ * @packageDocumentation
+ */
+import {
+  ConfigurationError,
+  z,
+  type WorkflowContext,
+  type JsonValue,
+  type AgentUsage,
+} from '../index.js';
+import { DecisionError } from '../workflow/runtime/decision-error.js';
+import {
+  decisionWire,
+  defineDecisionProvider,
+  type DecisionCapabilities,
+  type DecisionProviderDeclaration,
+  type ProviderTransport,
+} from '../workflow/runtime/decision-protocol.js';
+
+export { DecisionError } from '../workflow/runtime/decision-error.js';
+export type { DecisionErrorDetails } from '../workflow/runtime/decision-error.js';
+export {
+  noul,
+  choice,
+  score,
+  defineDecisionProvider,
+} from '../workflow/runtime/decision-protocol.js';
+export type {
+  ChoiceAnswer,
+  ChoiceQuestion,
+  DecideOptions,
+  AnswerOf,
+  DecisionAnswers,
+  DecisionCapabilities,
+  DecisionKind,
+  DecisionProviderConfiguration,
+  DecisionProviderDeclaration,
+  DecisionProviderDefinition,
+  ProtocolQuestion,
+  DecisionQuestions,
+  ProviderTransport,
+  ProviderTransportContext,
+  ProviderTransportFactory,
+  ProviderTransportRequest,
+  ProviderTransportResponse,
+  NoulAnswer,
+  NoulCriteria,
+  NoulQuestion,
+  ScoreAnswer,
+  ScoreQuestion,
+} from '../workflow/runtime/decision-protocol.js';
+
+/** Options of {@link jevCompatible}. */
+export interface JevCompatibleOptions {
+  /** Provider name, unique within a workflow: lowercase letters, digits and dashes. */
+  readonly name: string;
+  /** Host base URL, such as `https://api.example.com`; `decisions.<name>.baseUrl` replaces it. */
+  readonly baseUrl?: string;
+  /** Request path; defaults to `/v1/systemone`. */
+  readonly path?: string;
+  /**
+   * Environment variable holding the bearer token, read at request time and never recorded;
+   * `decisions.<name>.apiKeyEnv` replaces it.
+   */
+  readonly apiKeyEnv?: string;
+  /** Model requested when a call names none; `decisions.<name>.defaultModel` replaces it. */
+  readonly defaultModel: string;
+  /** Provider revision, part of every decision's identity; defaults to 1. */
+  readonly revision?: number;
+  /**
+   * Overrides of the default capabilities (all three kinds, 255 options, 2 to 10 levels, no
+   * idempotency key) for hosts that lack a kind, cap options lower or accept an idempotency key.
+   */
+  readonly capabilities?: Partial<DecisionCapabilities>;
+}
+
+/** The `ErrorKind` of an HTTP failure status. */
+function statusKind(status: number): DecisionError['kind'] {
+  if (status === 429) return 'rate-limit';
+  if (status >= 500) return 'overloaded';
+  if (status === 401) return 'authentication';
+  if (status === 403) return 'permission';
+  if (status >= 400) return 'invalid-request';
+  return 'protocol';
+}
+
+function httpUrl(value: string, label: string): string {
+  if (!URL.canParse(value) || !['http:', 'https:'].includes(new URL(value).protocol))
+    throw new ConfigurationError(`${label} must be an http or https URL.`);
+  return value;
+}
+
+/**
+ * A decision provider for any host that speaks the shared protocol: `POST <baseUrl><path>` with a
+ * JSON `{ model, state, questions }` body and an `Authorization: Bearer` token read from
+ * `apiKeyEnv` at request time. The step's idempotency key is sent as an `Idempotency-Key` header
+ * only when `capabilities.idempotencyKey` is true. HTTP 429 fails with kind `rate-limit`, 5xx with
+ * `overloaded` (both transient), 401 with `authentication`, 403 with `permission` and other 4xx
+ * with `invalid-request`. A missing base URL or token variable is a configuration failure: the
+ * step stays unfinished, and resuming after fixing it runs the decision live.
+ */
+export function jevCompatible(options: JevCompatibleOptions): DecisionProviderDeclaration {
+  const name = options.name;
+  const path = options.path ?? decisionWire.path;
+  if (!path.startsWith('/')) throw new Error(`Decision provider ${name} path must start with /.`);
+  if (options.baseUrl !== undefined) httpUrl(options.baseUrl, `Decision provider ${name} baseUrl`);
+  const capabilities: DecisionCapabilities = {
+    kinds: options.capabilities?.kinds ?? ['noul', 'choice', 'score'],
+    maxOptions: options.capabilities?.maxOptions ?? 255,
+    levels: options.capabilities?.levels ?? [2, 10],
+    idempotencyKey: options.capabilities?.idempotencyKey ?? false,
+  };
+  return defineDecisionProvider({
+    name,
+    revision: options.revision ?? 1,
+    capabilities,
+    defaultModel: options.defaultModel,
+    transport: (configuration): ProviderTransport => {
+      const baseUrl = configuration.baseUrl ?? options.baseUrl;
+      if (baseUrl === undefined)
+        throw new ConfigurationError(
+          `Decision provider ${name} has no baseUrl; set it in jevCompatible or --harness-config decisions.${name}.baseUrl.`,
+        );
+      const url = `${httpUrl(baseUrl, `Decision provider ${name} baseUrl`).replace(/\/+$/u, '')}${path}`;
+      const apiKeyEnv = configuration.apiKeyEnv ?? options.apiKeyEnv;
+      if (apiKeyEnv === undefined)
+        throw new ConfigurationError(
+          `Decision provider ${name} has no apiKeyEnv; set it in jevCompatible or --harness-config decisions.${name}.apiKeyEnv.`,
+        );
+      return async (request, context) => {
+        const token = process.env[apiKeyEnv];
+        if (token === undefined || token === '')
+          throw new ConfigurationError(
+            `Decision provider ${name} reads its bearer token from ${apiKeyEnv}, which is unset.`,
+          );
+        let response: Response;
+        let text: string;
+        try {
+          response = await fetch(url, {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${token}`,
+              'content-type': 'application/json',
+              accept: 'application/json',
+              ...(context.idempotencyKey === null
+                ? {}
+                : { 'idempotency-key': context.idempotencyKey }),
+            },
+            body: JSON.stringify(request.body),
+            signal: context.signal,
+          });
+          text = await response.text();
+        } catch (cause) {
+          // Cancellation and the call's own timeout propagate unchanged; the runtime classifies them.
+          if (context.signal.aborted) throw cause;
+          throw new DecisionError({
+            provider: name,
+            kind: 'unknown',
+            message: `request failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+          });
+        }
+        if (!response.ok)
+          throw new DecisionError({
+            provider: name,
+            kind: statusKind(response.status),
+            status: response.status,
+            message: `HTTP ${String(response.status)}${text ? `: ${text.slice(0, 200)}` : ''}`,
+            rawText: text,
+          });
+        let body: unknown;
+        try {
+          body = JSON.parse(text);
+        } catch {
+          throw new DecisionError({
+            provider: name,
+            kind: 'schema',
+            status: response.status,
+            message: 'response is not JSON',
+            rawText: text,
+          });
+        }
+        return { body, rawText: text };
+      };
+    },
+  });
+}
 
 /** Version that identifies a decision step; see `choose` before changing it. */
 const DECISION_STEP_VERSION = 'decision/1';
