@@ -1,5 +1,6 @@
 import { defineWorkflow, z } from '../../src/index.js';
 import { github } from '../../src/integrations/github.js';
+import { roster } from './roster.js';
 
 const verdict = z.enum(['success', 'failure', 'no-checks', 'head-moved', 'closed', 'timeout']);
 const push =
@@ -7,6 +8,7 @@ const push =
 export default defineWorkflow({
   name: 'ci-gate',
   version: '1',
+  roster,
   input: z.object({ repo: z.string(), pr: z.int().positive(), rounds: z.int().min(0).max(5) }),
   output: z.object({ status: verdict.or(z.literal('stuck')), sha: z.string(), fixes: z.int() }),
   async run(ctx, { repo, pr, rounds }) {
@@ -19,10 +21,8 @@ export default defineWorkflow({
       if (ci.status !== 'failure' || fixes === rounds) return { status: ci.status, sha, fixes };
       const failed = ci.failed.map((check) => check.name).join(', ');
       const prompt = `CI failed on ${sha}: ${failed}. Fix the cause. Do not commit.`;
-      await ctx.claude.text(ctx.id('fix', sha), { profile: 'edit', prompt });
-      // The new head comes from git, never from the model.
+      await ctx.roster.Editor.text(ctx.id('fix', sha), { prompt });
       const next = (await ctx.exec(ctx.id('push', sha), { shell: push })).stdout.trim();
-      // An unchanged head would reuse this wait's ID; return instead of waiting again.
       if (next === sha) return { status: 'stuck', sha, fixes: fixes + 1 };
       sha = next;
     }

@@ -1,13 +1,14 @@
 import { defineWorkflow, z } from '../../src/index.js';
+import { roster } from './roster.js';
 
 const reviewFile = defineWorkflow({
   name: 'review-file',
   version: '1',
+  roster,
   input: z.object({ path: z.string().describe('File to review') }),
   output: z.string(),
   async run(ctx, input) {
-    return ctx.claude.value('verdict', {
-      profile: 'readonly',
+    return ctx.roster.Reader.value('verdict', {
       prompt: `Read and review this file: ${input.path}`,
     });
   },

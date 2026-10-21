@@ -1,9 +1,11 @@
 import { defineWorkflow, z } from '../../src/index.js';
 import { github, nextTicket } from '../../src/integrations/github.js';
+import { roster } from './roster.js';
 
 export default defineWorkflow({
   name: 'ticket-loop',
   version: '1',
+  roster,
   input: z.object({ repo: z.string(), epic: z.int().positive(), ticket: z.int().positive() }),
   output: z.object({ status: z.enum(['closed', 'skipped']), next: z.int().nullable() }),
   async run(ctx, { repo, epic, ticket }) {
@@ -16,8 +18,7 @@ export default defineWorkflow({
     if (before !== ticket) return { status: 'skipped', next: before };
     const issue = await gh.issue.view('issue', { number: ticket, comments: true });
     const thread = issue.comments.map((comment) => comment.body).join('\n\n---\n\n');
-    await ctx.claude.text('implement', {
-      profile: 'edit',
+    await ctx.roster.Editor.text('implement', {
       prompt: `Implement #${String(ticket)}: ${issue.title}\n\n${issue.body}\n\n${thread}`,
     });
     // A real loop opens and lands a pull request here; close is check-then-act.

@@ -54,7 +54,7 @@ try {
     '--input',
     '{"items":["a","b"]}',
     '--grant',
-    'editor',
+    'CodexEditor',
   );
   assert.equal(pattern.status, 0, pattern.stderr);
   const report = pattern.value;
