@@ -1151,15 +1151,19 @@ for (const number of candidates) {
   // Implementers are told that the follow-ups they list are filed for them, and a criterion that
   // asks for issues counts as done once they are listed, so every one must be filed (or matched to
   // an open issue) before the PR opens.
-  const wanted = impl.result.followups.length;
-  const settled = (filed ?? []).filter((f) => f.number);
-  if (settled.length < wanted) {
+  // Settled per key, not by count: the scribe can repeat one key and omit another.
+  const keys = impl.result.followups.map((_, i) => `f${i + 1}`);
+  const byKey = new Map();
+  for (const f of filed ?? []) if (f.number && !byKey.has(f.key)) byKey.set(f.key, f);
+  const unfiled = keys.filter((k) => !byKey.has(k));
+  if (unfiled.length) {
     const failed = (filed ?? []).filter((f) => f.error).map((f) => `${f.key}: ${f.error}`);
     return blocked(
       'publish',
-      `filed ${settled.length} of ${wanted} follow-up(s)${failed.length ? ` (${failed.join('; ')})` : ''}; re-running is safe, since filing matches existing issues by title`,
+      `follow-up(s) ${unfiled.join(', ')} not filed${failed.length ? ` (${failed.join('; ')})` : ''}; re-running is safe, since filing matches existing issues by title`,
     );
   }
+  const settled = keys.map((k) => byKey.get(k));
   const opened = await one(
     `open PR #${number}`,
     'Publish',

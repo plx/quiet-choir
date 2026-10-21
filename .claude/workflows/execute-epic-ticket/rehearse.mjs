@@ -234,6 +234,7 @@ function execute(world, scenario, c) {
     case 'epic:open-pr': {
       assert.ok(c.flags.title, 'open-pr needs a title');
       world.prTitle = c.flags.title;
+      world.prBody = c.stdin;
       const pr = { number: 300 + n, url: `pr/${300 + n}`, headSha: 'a'.repeat(40) };
       issue.pr = { ...pr, isDraft: false, createdAt: '2026-09-29T00:00:00Z' };
       return {
@@ -558,7 +559,8 @@ const SCENARIOS = {
       assert.equal(world.ledger.length, 1);
       assert.deepEqual(
         calls.filter((c) => c.model && c.model !== 'haiku').map((c) => `${c.model}/${c.effort}`),
-        ['opus/high', 'sonnet/high', 'sonnet/medium'],
+        // survey (copyist), plan, implement, PR text, report (copyist)
+        ['sonnet/low', 'opus/high', 'sonnet/high', 'sonnet/medium', 'sonnet/low'],
       );
       const child = calls.find((c) => c.label === 'workflow:merge-down-pr');
       assert.equal(child.args.parentEpic, 99);
@@ -930,6 +932,38 @@ const SCENARIOS = {
       const filed = result.followups[0];
       assert.equal(world.issues.get(filed.number).epic, result.followupEpic);
       assert.ok(!world.order.includes(filed.number), 'the burned-down epic did not grow');
+      assert.ok(
+        world.prBody.includes(`- #${filed.number} Follow-up`),
+        'the PR body links the filed follow-up',
+      );
+    },
+  },
+  'opens no PR while a listed follow-up is unfiled': {
+    world: { issues: { 102: {} } },
+    agents: {
+      impl: () =>
+        IMPL_DONE({
+          followups: [
+            { title: 'One', detail: 'x.ts:1' },
+            { title: 'Two', detail: 'y.ts:2' },
+          ],
+        }),
+      // The scribe repeats f1 and omits f2: counting rows would call both filed.
+      followups: () => ({
+        issues: ['One', 'One again'].map((title) => ({
+          key: 'f1',
+          duplicateOf: 0,
+          title,
+          label: 'enhancement',
+          body: '## Summary',
+        })),
+      }),
+    },
+    check({ result, world }) {
+      assert.equal(result.status, 'blocked');
+      assert.equal(result.blocked.stage, 'publish');
+      assert.match(result.blocked.reason, /f2 not filed/);
+      assert.ok(!world.effects.some((e) => e.startsWith('open-pr')), 'no PR opened');
     },
   },
   'passes through a landing that ends blocked': {
@@ -952,6 +986,10 @@ const SCENARIOS = {
       assert.ok(
         rereads.every((c) => c.model !== 'haiku'),
         'a re-read uses a different model than the clerk whose copy failed',
+      );
+      assert.ok(
+        rereads.filter((c) => c.label.startsWith('survey')).every((c) => c.model === 'opus'),
+        'a failed copyist relay (the survey) is re-read by another model again',
       );
       assert.equal(world.effects.filter((e) => e === 'open-pr #102').length, 1, 'PR opened once');
     },
