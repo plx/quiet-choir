@@ -405,6 +405,36 @@ describe('ctx.roster calls', () => {
     ]);
   });
 
+  it('fills a required registered option from the entry', async ({ stateDir, runs }) => {
+    const fake = capture('ok');
+    const moded = defineHarness({
+      name: 'moded',
+      revision: 1,
+      options: z.object({ prompt: z.string(), mode: z.string() }),
+      capabilities: { structuredOutput: 'native' },
+      access: () => 'read',
+    });
+    const definition = defineWorkflow({
+      ...base,
+      name: 'roster-required',
+      harnesses: [moded],
+      roster: defineRoster({ Deep: { harness: 'moded', mode: 'deep' } }, { harnesses: [moded] }),
+      async run(ctx) {
+        return (await ctx.roster.Deep.text('think', { prompt })).output;
+      },
+    });
+    const result = await runs.run(definition, {
+      stateDir,
+      runId: 'required',
+      input: null,
+      adapters: { moded: fake.adapter },
+    });
+    expect(result.output).toBe('ok');
+    expect(fake.requests[0]).toMatchObject({ harness: 'moded', options: { prompt, mode: 'deep' } });
+    const record = await readRun({ stateDir, runId: 'required' });
+    expect(attempt(record.steps['think'])?.profile).toBe('Deep');
+  });
+
   it('refuses a pinned entry on another harness', async ({ stateDir, runs }) => {
     const definition = defineWorkflow({
       ...base,

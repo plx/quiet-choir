@@ -2847,7 +2847,11 @@ export async function runWorkflow<
               options: TOptions & JsonValue;
             };
             if (native) validateAgentOptions(harness, data.options, false);
-            harnessOptions(registration, data.options);
+            // A call naming a profile is only part of the request: resolveProfileCall parses the
+            // profile's options merged with it, so here only the prompt is checked.
+            if (data.options.profile === undefined) harnessOptions(registration, data.options);
+            else if (typeof data.options.prompt !== 'string')
+              throw new Error(`Harness ${harness} prompt must be a string.`);
             const resolvedProfile = resolveProfileCall(
               children.authority?.manifest ?? capabilities,
               harness,
