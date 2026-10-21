@@ -325,8 +325,9 @@ function listed(result: Awaited<ReturnType<WorkflowExecutor['execute']>>): strin
 
 // measured: the cache case (eight list-defs validations) takes 8.6 s and the by-name case 5.7 s
 // in a two-file local run without coverage, the others under 1 s (dominated by tsImport compiles on
-// the shared program cache); coverage slows these compiles about 2.5x, hence 60 s.
-describe('package discovery in the registry (#585)', { timeout: 60_000 }, () => {
+// the shared program cache); coverage slows these compiles about 2.5x, and a loaded Node 24 coverage
+// shard ran the cache case past 60 s, so the cases are split and each gets 120 s.
+describe('package discovery in the registry (#585)', { timeout: 120_000 }, () => {
   it('discovers packages beside loose files without descending into them', async () => {
     const root = await project();
     await writeFile(join(root, 'a.workflow.ts'), source('a'));
@@ -433,18 +434,29 @@ describe('package discovery in the registry (#585)', { timeout: 60_000 }, () => 
       expect(await readFile(marker, 'utf8')).toBe('x'.repeat(2 + index));
       expect((await entries()).map(([, entry]) => entry['version'])).toEqual([8, 8]);
     }
-    // An edited, an added and a removed package file each revalidate the package.
+  });
+
+  it('revalidates a cached package entry after an edited, added or removed package file', async () => {
+    const root = await project();
+    const marker = join(root, 'imported');
+    await writeFile(join(root, 'a.workflow.ts'), source('a'));
+    const dir = await writePackage(root, { name: 'demo', marker });
+    const engine = executor();
+    const plan = { kind: 'workflow.list-defs' as const, directories: [root] };
+    expect(listed(await engine.execute(plan))).toEqual(['a', 'demo/main', 'demo/other']);
+    await engine.execute(plan);
+    expect(await readFile(marker, 'utf8')).toBe('x');
     await writeFile(join(dir, 'resources', 'notes.txt'), 'edited\n');
     expect(listed(await engine.execute(plan))).toEqual(['a', 'demo/main', 'demo/other']);
-    expect(await readFile(marker, 'utf8')).toBe('xxxx');
+    expect(await readFile(marker, 'utf8')).toBe('xx');
     await writeFile(join(dir, 'resources', 'added.txt'), 'added\n');
     await engine.execute(plan);
-    expect(await readFile(marker, 'utf8')).toBe('xxxxx');
+    expect(await readFile(marker, 'utf8')).toBe('xxx');
     await engine.execute(plan);
-    expect(await readFile(marker, 'utf8')).toBe('xxxxx');
+    expect(await readFile(marker, 'utf8')).toBe('xxx');
     await rm(join(dir, 'resources', 'added.txt'));
     await engine.execute(plan);
-    expect(await readFile(marker, 'utf8')).toBe('xxxxxx');
+    expect(await readFile(marker, 'utf8')).toBe('xxxx');
   });
 
   it('fingerprints package-level prompt roots in the cache entry', async () => {
