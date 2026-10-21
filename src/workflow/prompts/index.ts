@@ -37,15 +37,28 @@ function definitionError(message: string, prompt: string | null, file: string | 
   });
 }
 
+function fileRootPath(root: string | URL): string {
+  try {
+    return resolve(fileURLToPath(root));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return definitionError(
+      `root ${JSON.stringify(String(root))} is not a valid file: URL: ${message}`,
+      null,
+      null,
+    );
+  }
+}
+
 function rootPath(root: unknown): string {
   if (root instanceof URL) {
     if (root.protocol !== 'file:')
       return definitionError(`root must be a file: URL, not ${root.protocol}`, null, null);
-    return resolve(fileURLToPath(root));
+    return fileRootPath(root);
   }
   if (typeof root !== 'string')
     return definitionError('root must be an absolute path or a file: URL', null, null);
-  if (root.startsWith('file:')) return resolve(fileURLToPath(root));
+  if (root.startsWith('file:')) return fileRootPath(root);
   if (!isAbsolute(root))
     return definitionError(
       `root ${JSON.stringify(root)} must be absolute, such as import.meta.dirname + '/prompts'; a relative root would resolve against the current directory`,

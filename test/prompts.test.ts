@@ -390,6 +390,21 @@ describe('definePrompts arguments', () => {
       /nonempty string/u,
     ],
     ['a non-object entry', () => definePrompts('/p', { A: 'A.md' as never }), /must be an object/u],
+    [
+      'a malformed percent escape in a file: root',
+      () => definePrompts('file:///tmp/%ZZ', { A: { file: 'A.md', params } }),
+      /is not a valid file: URL/u,
+    ],
+    [
+      'an encoded separator in a file: URL root',
+      () => definePrompts(new URL('file:///tmp/%2F'), { A: { file: 'A.md', params } }),
+      /is not a valid file: URL/u,
+    ],
+    [
+      'a file: root naming a host',
+      () => definePrompts('file://host/x', { A: { file: 'A.md', params } }),
+      /is not a valid file: URL/u,
+    ],
   ] as const)('rejects %s', ([, define, pattern]) => {
     try {
       define();
