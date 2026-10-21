@@ -88,6 +88,11 @@ export interface PromptEnvironment {
    * {@link TemplateFileError} when its path is refused or its front matter is invalid.
    */
   read(name: string): TemplateSource | null;
+  /**
+   * Free the engine's WebAssembly memory now instead of at garbage collection. A later render or
+   * analysis creates a fresh engine; the source cache is kept.
+   */
+  dispose(): void;
 }
 
 const plainDescription = /^[^\s"'[\]{}|>&*!%@`#,?:-].*$/u;
@@ -173,18 +178,14 @@ function configuredEnvironment(
 }
 
 /**
- * A confined environment over the template directory `root` (an absolute path). Template names are
- * root-relative POSIX paths; the loader refuses an absolute, backslashed, NUL-containing or escaping
- * name, and a file whose real path leaves the root's real path, so a symlink cannot escape. Files
- * are read synchronously once and cached, and the engine is created on the first render or
- * analysis. @internal
+ * The confined, caching template reader over `root` (an absolute path). It lives in its own scope,
+ * apart from the engine: the loader closure the engine keeps reaches only this reader, so it never
+ * holds the engine alive and a dropped environment can still be finalized.
  */
-export function createPromptEnvironment(root: string): PromptEnvironment {
+function confinedReader(root: string): (name: string) => TemplateSource | null {
   const sources = new Map<string, TemplateSource | null>();
   let realRoot: string | undefined;
-  let env: InstanceType<typeof Minijinja.Environment> | undefined;
-  const globals = new Map<string, boolean>();
-  const read = (name: string): TemplateSource | null => {
+  return (name) => {
     if (sources.has(name)) return sources.get(name) ?? null;
     const problem = templateNameProblem(name);
     if (problem !== null)
@@ -228,8 +229,29 @@ export function createPromptEnvironment(root: string): PromptEnvironment {
     sources.set(name, source);
     return source;
   };
+}
+
+/** The engine's loader over `read`, built outside any scope that holds the engine. */
+function templateLoader(
+  read: (name: string) => TemplateSource | null,
+): (name: string) => string | null {
+  return (name) => read(name)?.text ?? null;
+}
+
+/**
+ * A confined environment over the template directory `root` (an absolute path). Template names are
+ * root-relative POSIX paths; the loader refuses an absolute, backslashed, NUL-containing or escaping
+ * name, and a file whose real path leaves the root's real path, so a symlink cannot escape. Files
+ * are read synchronously once and cached, and the engine is created on the first render or
+ * analysis. Call `dispose` when done with a short-lived environment. @internal
+ */
+export function createPromptEnvironment(root: string): PromptEnvironment {
+  const read = confinedReader(root);
+  const load = templateLoader(read);
+  let env: InstanceType<typeof Minijinja.Environment> | undefined;
+  const globals = new Map<string, boolean>();
   const engineEnv = (): InstanceType<typeof Minijinja.Environment> => {
-    env ??= configuredEnvironment((name) => read(name)?.text ?? null);
+    env ??= configuredEnvironment(load);
     return env;
   };
   return {
@@ -245,12 +267,21 @@ export function createPromptEnvironment(root: string): PromptEnvironment {
       return known;
     },
     read,
+    dispose: () => {
+      env?.free();
+      env = undefined;
+    },
   };
 }
 
 /** Render a one-off template string in the fixed environment, without a loader. @internal */
 export function renderString(source: string, context: Readonly<Record<string, unknown>>): string {
-  return configuredEnvironment(() => null).renderStr(source, context);
+  const env = configuredEnvironment(() => null);
+  try {
+    return env.renderStr(source, context);
+  } finally {
+    env.free();
+  }
 }
 
 function field(value: unknown, key: string): unknown {

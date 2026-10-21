@@ -3,17 +3,24 @@
 // test/schema-identity.test.ts: an engine bump, settings change or front-matter change that moves
 // them needs an explicit decision, not a refreshed expectation.
 import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import type * as Minijinja from 'minijinja-js';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type * as host from '../src/index.js';
 import { definePrompts, PromptError, z } from '../src/index.js';
 import { FailureOrigins } from '../src/workflow/runtime/fan-out.js';
-import { renderString } from '../src/workflow/prompts/engine.js';
-import { isPrompt, promptOptionsAsText } from '../src/workflow/prompts/prompt.js';
+import { checkPromptSets } from '../src/workflow/prompts/check.js';
+import { createPromptEnvironment, renderString } from '../src/workflow/prompts/engine.js';
+import {
+  isPrompt,
+  promptOptionsAsText,
+  promptSetDescriptor,
+} from '../src/workflow/prompts/prompt.js';
 
 const repository = dirname(dirname(fileURLToPath(import.meta.url)));
 const fixtures = join(repository, 'test/fixtures/prompts');
@@ -430,6 +437,41 @@ describe('Prompt values across module instances (ADR 0028)', () => {
       appendSystemPrompt: 'Hello x.\ny',
       model: 'm',
     });
+  });
+});
+
+describe('engine lifetime', () => {
+  // The engine's WebAssembly memory is freed explicitly; the loader the engine keeps reaches only the
+  // source reader, so it cannot hold a dropped environment alive either.
+  const { Environment } = createRequire(import.meta.url)('minijinja-js') as typeof Minijinja;
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('frees a disposed environment and creates a fresh engine on the next render', () => {
+    const free = vi.spyOn(Environment.prototype, 'free');
+    const environment = createPromptEnvironment(fixtures);
+    environment.dispose();
+    expect(free).not.toHaveBeenCalled();
+    expect(environment.render('Optional.md', { name: 'a', greeting: 'b' })).toBe('Hello a.\nb');
+    environment.dispose();
+    expect(free).toHaveBeenCalledTimes(1);
+    environment.dispose();
+    expect(free).toHaveBeenCalledTimes(1);
+    expect(environment.render('Optional.md', { name: 'c', greeting: 'd' })).toBe('Hello c.\nd');
+    environment.dispose();
+    expect(free).toHaveBeenCalledTimes(2);
+  });
+
+  it('frees every validation environment and the one-off string environment', () => {
+    const free = vi.spyOn(Environment.prototype, 'free');
+    const descriptor = promptSetDescriptor(definePrompts(fixtures, entries));
+    if (!descriptor) throw new Error('Expected a prompt set descriptor.');
+    expect(checkPromptSets([descriptor, descriptor]).errors).toEqual([]);
+    expect(free).toHaveBeenCalledTimes(2);
+    expect(renderString('{{ 1 + 1 }}', {})).toBe('2');
+    expect(() => renderString('{{ missing.key }}', {})).toThrow();
+    expect(free).toHaveBeenCalledTimes(4);
   });
 });
 

@@ -242,12 +242,16 @@ export function checkPromptSets(descriptors: readonly PromptSetDescriptor[]): Pr
   const errors: string[] = [];
   const sets = descriptors.map((descriptor) => {
     const environment = createPromptEnvironment(descriptor.root);
-    return {
-      root: descriptor.root,
-      entries: Object.entries(descriptor.entries).map(([name, entry]) =>
-        checkEntry(environment, descriptor.root, name, entry, errors),
-      ),
-    };
+    try {
+      return {
+        root: descriptor.root,
+        entries: Object.entries(descriptor.entries).map(([name, entry]) =>
+          checkEntry(environment, descriptor.root, name, entry, errors),
+        ),
+      };
+    } finally {
+      environment.dispose();
+    }
   });
   return { sets, errors };
 }
