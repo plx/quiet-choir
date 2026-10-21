@@ -169,13 +169,18 @@ quiet-choir workflow execute reusable-helper --registry-dir ./examples/patterns 
   --input '{"paths":["src/index.ts"]}' --max-child-depth 8
 ```
 
-`execute`'s argument is a file unless it looks like a bare name (no `/` or `\`, no `.ts`/`.tsx`/
-`.mts`/`.cts` extension, and no matching filesystem entry); pass `--registry-dir` to always resolve
-it as a registered name instead, including one that contains `/` or otherwise matches a local path.
-An unrecognized name fails with `Unknown workflow name`.
+`execute`'s argument is a file unless it looks like a registered name: no matching filesystem entry,
+no `.ts`/`.tsx`/`.mts`/`.cts` or `.quiet-choir` suffix, and either no `/` or `\` at all or the
+`<package>/<workflow>` shape of a package workflow. Pass `--registry-dir` to always resolve it as a
+registered name instead, including one that otherwise matches a local path. An exact listing name
+wins, then a bare workflow name that exactly one package declares; a bare name several packages
+declare is refused as ambiguous, naming the qualified names, and an unrecognized name fails with
+`Unknown workflow name`.
 
 `list-defs [DIR…]` defaults to the current directory, recursively discovers `*.workflow.ts`,
-`*.workflow.mts` and `*.workflow.cts` (not `.d.ts` or `.tsx`), and rejects duplicate names. It skips
+`*.workflow.mts` and `*.workflow.cts` (not `.d.ts` or `.tsx`) and `*.quiet-choir` packages, and
+rejects duplicate listing names. Each workflow of a package is listed as `<package>/<workflow>` with
+the package's description and `whenToUse`, and a package is not scanned for loose files. It skips
 generated/state/dependency directories and does not follow directory symlinks. These are trusted
 imports; module top-level code must have no workflow effects. The private metadata cache under
 `$XDG_CACHE_HOME/quiet-choir/definitions` (default `~/.cache/quiet-choir/definitions`) checks

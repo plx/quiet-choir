@@ -4,9 +4,8 @@ A package is a directory named `<name>.quiet-choir` that holds several related w
 shared contracts, roster, prompts and helpers, and a `package.ts` manifest that names them.
 [ADR 0065](decisions/0065-workflow-packages.md) describes the design. A package is not a different
 programming model: each workflow in it is an ordinary `defineWorkflow` definition, and the package
-adds a manifest, a version and an entry point. This page covers what the CLI does today. Registry
-discovery, whole-directory fingerprinting and the full `validate --json` package section come next
-([below](#what-comes-next)).
+adds a manifest, a version, an entry point, registry discovery, whole-directory fingerprinting and a
+`package` section in `validate --json`. This page covers what the CLI does today.
 
 ## Layout
 
@@ -125,13 +124,130 @@ After the type check, the loader imports the manifest, selects the workflow, and
 that default-exports that same definition object among the compiler's TypeScript sources under the
 package root, `workflows/` first. A module the manifest already evaluated is not run again. Only a
 module that the manifest reaches through a type-only import is evaluated for the first time, and
-only when no earlier candidate matched; it is trusted code, as everything validate imports is. The
-module is found after import because the plan stays plain data
+only when no earlier candidate matched; it is trusted code, as everything validate imports is.
+`validate` (and `list-defs`) resolve the module of every declared workflow the same way, while a run
+resolves only the selected one. The module is found after import because the plan stays plain data
 ([ADR 0001](decisions/0001-plan-execute-cli.md)): a command records the package root, its manifest
 and the requested workflow name (or null), and the executor resolves the module path. That module
 path is the validate result's `entrypoint` and the run's `launch.entrypoint`. The validate result
-also carries `package: { root, name, version }`, and the human line reads
+also carries the [package section](#validate-output), and the human line reads
 `Validated merge-down/merge-down-stack@1 (package merge-down@1, <module>).`
+
+## Validate output
+
+`workflow validate <dir> --json` describes every declared workflow, not only the selected one, so a
+workflow whose own checks fail (a broken template in its own prompt set, say) fails `validate` as
+`load.definition` even when another workflow is selected; the message names the package and the
+workflow. The top-level `workflow` is the selected workflow's compact document, as for a single
+module. Beside it, `package` describes the whole package and is not compacted:
+
+```json
+{
+  "root": "/work/merge-down.quiet-choir",
+  "name": "merge-down",
+  "version": "1",
+  "description": "Merge a reviewed PR stack down to main.",
+  "whenToUse": "A stacked PR has approvals and green checks.",
+  "entry": "merge-down-pr",
+  "workflows": [
+    {
+      "name": "merge-down-pr",
+      "version": "1",
+      "description": "Land one PR.",
+      "whenToUse": null,
+      "entrypoint": "/work/merge-down.quiet-choir/workflows/merge-down-pr.ts",
+      "inputSchema": { "type": "object" },
+      "roster": [
+        {
+          "name": "Reviewer",
+          "harness": "codex",
+          "access": "read",
+          "model": "gpt-5.5",
+          "description": "Reviews the diff."
+        }
+      ]
+    }
+  ],
+  "prompts": [
+    {
+      "root": "/work/merge-down.quiet-choir/prompts",
+      "entries": [
+        {
+          "name": "ReviewAgainstIssue",
+          "file": "ReviewAgainstIssue.md",
+          "description": null,
+          "params": ["issue", "pr"],
+          "variables": ["issue", "pr"]
+        }
+      ]
+    }
+  ],
+  "files": { "count": 14, "bytes": 23817, "sha256": "<64 hex digits>" }
+}
+```
+
+- `root`, `name` and `version` are those of `launch.package`; `entry` is the entry workflow's name,
+  or null.
+- `workflows` lists every declared workflow in declaration order, with its own module as
+  `entrypoint`, its input JSON Schema, and `roster`: the workflow's [roster](roster.md) entries (the
+  manifest profiles pinned to a harness) in key order, each with the pinned harness's `access` and
+  the entry's `model` for that harness (null when it sets none).
+- `prompts` lists the package's prompt sets and every set in each workflow's static tree, one per
+  root, first seen first (package sets before workflow sets). `params` are the sorted keys of the
+  entry's params schema, and `variables` the top-level variables the template reads.
+- `files` covers the [fingerprinted files](#fingerprinting) under the root: their count, total bytes
+  and a SHA-256 digest over their root-relative paths and contents, so a copy of the package at
+  another path has the same digest. Files outside the root are not counted.
+
+## Discovery
+
+`workflow list-defs [DIR...]` finds `<stem>.quiet-choir` directories beside `*.workflow.ts`, `.mts`
+and `.cts` files, including a DIR that is itself a package. A package is one artifact: its contents
+are not scanned for loose definition files, and the bare `.quiet-choir` state directory is never a
+package. A package directory without `package.ts`, or with only a JavaScript manifest, fails
+`list-defs` with the message `validate` gives.
+
+Each package is validated once and contributes one entry per declared workflow, in declaration
+order, listed as `<package>/<workflow>`; a package without `entry` still lists. An entry's
+`entrypoint` is the workflow's module, and it carries
+`package: { root, name, version, description, whenToUse }`; a loose definition has no `package`.
+Entries are sorted by file path or package root. Listing names must be unique: two packages with the
+same name, or a loose workflow literally named like a package entry, are duplicates, while two
+packages that both declare `review` list as `demo/review` and `other/review`. Human rows read
+`demo/main@1<TAB><module><TAB><workflow description>`, followed by
+`<TAB>package demo@1: <package description>` when the package has a description.
+
+By-name dispatch (`workflow execute NAME`) takes either spelling. An exact listing name wins, so a
+loose `main` stays runnable beside `demo/main`; otherwise a bare name selects the one package
+workflow of that name, and several are refused as `load.definition`:
+`Workflow name review is ambiguous: demo/review, other/review; use <package>/<workflow>`. A selected
+package workflow runs through its manifest, as `execute <root> --workflow <name>` would, and records
+`launch.package`. Without `--registry-dir`, a missing argument shaped `<package>/<workflow>` (a
+package name, one `/` and no other separator, no TypeScript or `.quiet-choir` suffix) is treated as
+a registered name rather than a missing file.
+
+The private definition cache keeps one entry per package holding all of its workflows. It is served
+only while the package's walked files are exactly the recorded ones and none has changed, so
+editing, adding or removing a file under the package revalidates it.
+
+## Fingerprinting
+
+A package run fingerprints every regular file under the package root, except anything under an entry
+named `node_modules` or `.git` at any depth, in addition to the compiler's dependencies outside the
+root and prompt roots outside it. File symlinks are not listed and directory symlinks are not
+followed: TypeScript reached through a symlink stays fingerprinted through the compiler's closure,
+and templates through their prompt roots. Each file is recorded in `launch.sources` by absolute path
+and SHA-256, so a resource, a template or a helper that nothing imports is an execution dependency
+like the workflow's own code. The [ADR 0006](decisions/0006-code-change-recovery.md) rules apply
+unchanged: a resume refuses the drift as `run.incompatible` with `details.changed: ["code"]` and
+`canAcceptCodeChange: true`, and `--accept-code-change` proceeds, while completed steps keep their
+own fingerprint checks. `validate`, `check-resume` and `execute` all use this one fingerprint. A
+single-module run keeps its compiler closure plus its declared prompt roots.
+
+Every resume hashes all of these files, so `validate` and `execute` log one warning when they total
+more than 10 MiB, naming the total and the five largest files. Keep large or generated artifacts
+outside the package root. That includes a legacy `<cwd>/.quiet-choir/runs` state directory or any
+other file that changes while a run is in flight: inside the root it would be drift on every resume.
 
 ## Records and resume
 
@@ -143,9 +259,9 @@ root ([storage](storage.md#record-schema-revision), revision 21). `inspect` prin
 carry `package`. Fork entries in `next` start the new run from the package:
 `workflow execute <root> --workflow <name> --fork-from RUN ...`.
 
-A package run is fingerprinted from the manifest: its `launch.sources` and source identity cover the
-manifest's compiler closure plus its prompt roots. To keep that identity, every resume of a package
-run re-enters through the manifest:
+A package run's `launch.sources` and source identity cover every [walked file](#fingerprinting)
+under the package root, the manifest's compiler dependencies outside it and its prompt roots. To
+keep that identity, every resume of a package run re-enters through the manifest:
 
 - `workflow resume RUN`, `workflow execute --resume --run-id RUN` without FILE and `workflow tick`
   typecheck `<launch.package.root>/package.ts` with the recorded tsconfig and select the run's
@@ -166,8 +282,4 @@ with the package's new directory.
 
 ## What comes next
 
-- #585 discovers `*.quiet-choir` directories in the registry (`list-defs`, by-name dispatch as
-  `<package>/<workflow>`), fingerprints every file under the package root instead of the manifest's
-  compiler closure plus prompt roots, warns about large packages, and fills the `validate --json`
-  `package` section with the workflows, input schemas, roster summaries and prompt inventory.
 - #591 adds the package authoring reference to the skill copies and a package-aware run command.
