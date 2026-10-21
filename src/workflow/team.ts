@@ -22,6 +22,7 @@ export type Team<K extends string> = Readonly<Record<K, Agent>>;
  * @typeParam T - The value `defineTeam` returned.
  */
 export type TeamOf<T> = T extends {
+  /** The slot descriptions a `defineTeam` result carries. */
   readonly slots: Readonly<Record<infer K extends string, string>>;
 }
   ? Team<K>
