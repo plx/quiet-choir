@@ -490,11 +490,14 @@ import. `workflow resume RUN` uses its stored entrypoint. Embedded callers narro
   settled maps remain unvisited; `--strict-replay` aborts there. The final skipped-step and
   skipped-map checks still apply.
 - The CLI hashes raw bytes of local compiler-discovered dependencies and the nearest tsconfig under
-  real, project-relative paths. Engine `src/`/`dist/` files are excluded (except an explicit
-  entrypoint); package/format versions are recorded separately. Inputs, workflow name/version,
-  schema fingerprint, and working directory must match on resume. **Bump the workflow version when
-  dependency packages, environment/configuration, or other semantics change.** Dynamic imports
-  assembled at runtime, external files, and node_modules are not fully fingerprinted.
+  real, project-relative paths, plus every file under each prompt root the static workflow tree
+  declares, so a template edit is refused on resume like a code edit
+  ([prompt templates](docs/prompts.md#templates-as-execution-dependencies)). Engine `src/`/`dist/`
+  files are excluded (except an explicit entrypoint); package/format versions are recorded
+  separately. Inputs, workflow name/version, schema fingerprint, and working directory must match on
+  resume. **Bump the workflow version when dependency packages, environment/configuration, or other
+  semantics change.** Dynamic imports assembled at runtime, external files, and node_modules are not
+  fully fingerprinted.
 - Results must be lossless JSON. Undefined, NaN, infinities, negative zero, functions, cycles,
   sparse arrays, getters, and class instances are rejected. Checkpoints contain data, never
   callbacks.

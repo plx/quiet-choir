@@ -2,6 +2,27 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Prompt templates are execution dependencies, and agent records name the template a call rendered
+  (#582, [ADR 0064](docs/decisions/0064-prompt-templates-as-execution-dependencies.md) §4–5; see
+  [docs/prompts.md](docs/prompts.md#templates-as-execution-dependencies)). After import, the CLI
+  adds every file under each prompt root of the static workflow tree, referenced or not, to the
+  source fingerprint beside the TypeScript sources: keyed by the root's real path plus the file's
+  in-root path relative to the project root (such as `prompts/Review.md`), hashed by the bytes a
+  render reads, with no exclusions. `workflow validate --json` (`workflow.identity.files`),
+  `check-resume`, `execute` and the run's `launch.sources` report the same identity. A template or
+  fragment edit is refused on resume with `Workflow code (prompts/Review.md) changed; ...`;
+  `--accept-code-change` waives it and records the files in `codeChanges`, while a completed step
+  whose rendered prompt changed still fails its own identity check. Forks follow the code rules. A
+  workflow that declares no prompts keeps a byte-identical fingerprint, but a run launched by an
+  earlier build from a workflow that declares prompts sees its template files as new entries and
+  needs one `--accept-code-change` on its next resume. When a call's `prompt` is a `Prompt`, the
+  step and attempt request summaries gain the observational `promptTemplate` (outside identity); a
+  string prompt, or a `Prompt` only in `systemPrompt` or `appendSystemPrompt`, records nothing.
+  Record schema revision 20 (nested-only) adds the field; revision-19 records read unchanged.
+  `inspect` prints `template <Name>` on agent lines and listed agent steps, its JSON agent rows gain
+  `promptTemplate`, and `WorkflowEvent` gains `promptTemplate` on `agent.finished`. The compact
+  event line is unchanged.
+
 - `definePrompts(root, entries)` declares markdown prompt templates with Zod parameter schemas
   (#581, [ADR 0064](docs/decisions/0064-prompt-templates-as-execution-dependencies.md) §1–3; see
   [docs/prompts.md](docs/prompts.md)). Each entry (`{ file, params, description? }`) becomes a pure,
@@ -32,7 +53,7 @@
   only on the first render or check. New public API: `definePrompts`, `PromptError`, `Prompt`,
   `PromptSet`, `PromptEntry`, `PromptEntries`, `PromptFunction`, `AnyPromptSet`,
   `CheckedPromptEntries`, `PromptErrorDetails`, `PromptText`, `StoredRosterEntry` and
-  `WorkflowPromptSet`. Templates are not yet fingerprinted as execution dependencies (#582).
+  `WorkflowPromptSet`.
 
 - The Workflow Lab Batch 02 ports, the pattern recipes and both skill copies now use rosters instead
   of profiles (#580, [ADR 0063](docs/decisions/0063-bound-agents-and-typed-rosters.md)). Batch 02

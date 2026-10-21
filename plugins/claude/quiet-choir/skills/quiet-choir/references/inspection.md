@@ -110,13 +110,15 @@ checkpoint plus current OS ownership observations, not the live JavaScript stack
 dashboard; `--json --summary` returns the same compact progress, status counts, ordered
 active/problem steps, resolved limits, root cause, reported usage, recent logs, the completed run's
 `output` (null otherwise) and an `agents` roll-up (`total`, `byRequest`, and the last 50 calls with
-harness, requested model, effort, profile, elapsed time and cost, plus `toolUses` and the step's
-`warnings` when recorded, bounded to 3 entries of 200 characters with a `+K more warnings` entry and
-always keeping `no-tool-use`, the full list being in `inspect --full`; the model is never assumed
-effective), and, only when an attempt reported subscription rate-limit windows, a `rateLimits` map
-by harness (see [usage budgets](usage-budgets.md#subscription-rate-limit-windows)), and, only when
-the latest execution was refused by a run cap, its `budgetStop`. Text prints a completed command on
-one line and the last 20 completed agent calls, with `tools N` and any `no-tool-use` warning, then a
+harness, requested model, effort, profile, elapsed time and cost, plus `toolUses`, the prompt
+template name `promptTemplate` and the step's `warnings` when recorded, bounded to 3 entries of 200
+characters with a `+K more warnings` entry and always keeping `no-tool-use`, the full list being in
+`inspect --full`; the model is never assumed effective), and, only when an attempt reported
+subscription rate-limit windows, a `rateLimits` map by harness (see
+[usage budgets](usage-budgets.md#subscription-rate-limit-windows)), and, only when the latest
+execution was refused by a run cap, its `budgetStop`. Text prints a completed command on one line
+and the last 20 completed agent calls, with `template <Name>` for a templated call, `tools N` and
+any `no-tool-use` warning (a listed agent step's line shows `template <Name>` too), then a
 `Rate windows` line per harness after the usage lines when windows were reported and a
 `Budget stop:` line for a saved `budgetStop`; `-v` restores two-line commands with absolute argv and
 cwd, all recent agent rows and saved stacks. For embedding,

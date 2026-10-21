@@ -104,6 +104,31 @@ their includer's loop variables), so a misspelling there fails at render.
 
 Every parameter, template or engine failure throws `PromptError` (`prompt`, `file`, `kind`, `line`),
 a fatal authoring error: it fails the run even inside an `onError: 'return'` map or step, is never
-retried, and is never journaled as a settled item. A template edit is not yet refused on resume the
-way a code edit is; a completed step whose rendered prompt changed still fails its own fingerprint
-check.
+retried, and is never journaled as a settled item.
+
+## Templates are execution dependencies
+
+Every file under each declared prompt root of the static workflow tree (the workflow's `prompts` and
+its declared children's), referenced or not, joins `workflow.identity.files` and `launch.sources`
+beside the TypeScript sources, keyed by its path from the project root such as `prompts/Review.md`.
+Validate, `check-resume` and execute report the same fingerprint.
+
+- Editing, adding or removing any file under a root between runs is a code change: resume and
+  `check-resume` refuse with `Workflow code (prompts/Review.md) changed; ...`, the path also in
+  `files`.
+- `--accept-code-change` waives that and records the files in `codeChanges`, but a completed step
+  whose rendered prompt changed still fails its own fingerprint check: the preflight refuses with
+  `Step <id>: prompt changed on a completed step` and a `--fork-from ... --invalidate <id>` command,
+  and changes nothing. An edit no completed step renders (an unused fragment) resumes under the
+  flag.
+- Forks follow the code rules. A dynamic `ctx.workflow` child outside the static tree is checked at
+  start but not fingerprinted. A run launched by an earlier build from a prompt-declaring workflow
+  needs one `--accept-code-change`.
+- Keep varying text in parameters, not in template edits, when a prompt must change without an
+  acceptance.
+
+When a call's `prompt` is a `Prompt`, the step and attempt request summaries record its name as
+`promptTemplate` (schema revision 20); a string prompt or a `Prompt` only in a system prompt records
+nothing. It is outside identity. `workflow inspect` prints `template <Name>` on agent lines,
+`inspect --json` has `request.promptTemplate` and `agents.recent[].promptTemplate`, and `onEvent`
+sees `promptTemplate` on `agent.finished`.

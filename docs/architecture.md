@@ -28,8 +28,10 @@ definitions to a particular agent harness.
 - `src/workflow/prompts/` renders prompt templates
   ([ADR 0064](decisions/0064-prompt-templates-as-execution-dependencies.md)): `definePrompts`, the
   load-time checks, and the only module that knows the `minijinja-js` engine (`engine.ts`). The core
-  depends on it in two places only: it replaces a `Prompt` with its text before identity, and it
-  treats a `PromptError` as fatal. `describeWorkflow` runs the checks.
+  depends on it in three places only: it replaces a `Prompt` with its text before identity, records
+  the template name of a call's `prompt` in the request summary, and treats a `PromptError` as
+  fatal. `describeWorkflow` runs the checks, and the CLI loader adds every file under each prompt
+  root to the source fingerprint.
 - `src/processes/` provides shared OS process identity and synchronous live ownership helpers.
 - `src/cli/` adapts oclif concerns such as inherited flags, logging, and presentation.
 - `src/commands/` contains thin, filesystem-discovered oclif command adapters.
