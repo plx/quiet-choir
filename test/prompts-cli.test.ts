@@ -87,8 +87,10 @@ const warning =
   'Prompt Review (Review.md): parameter unused is never read by the template or its includes';
 
 // measured: 1.4 s for the first case alone (its full engine compile), 0.2-0.6 s for later ones,
-// 4.9 s worst case in the full coverage run (dominated by the first tsImport compile).
-describe('prompt checks in the CLI loader', { timeout: 30_000 }, () => {
+// 4.9 s worst case in the full coverage run (dominated by the first tsImport compile). The validate
+// command case builds two projects and took 14.4 s on CI's Node 22.13 leg and over 30 s on a loaded
+// Node 24 coverage shard, hence the 60 s budget.
+describe('prompt checks in the CLI loader', { timeout: 60_000 }, () => {
   it('validates, publishes prompts with warnings and logs each warning', async () => {
     const { typecheck } = await project();
     const lines: string[] = [];
@@ -374,7 +376,8 @@ export default defineWorkflow({
 
 // measured: 2.5 s for the first case alone (its full engine compile), 1.2-1.7 s for later ones
 // in a whole-file run without coverage (three or four imports each; coverage slows compiles 2.5x).
-describe('prompt templates as execution dependencies (#582)', { timeout: 30_000 }, () => {
+// The first case took 9.7 s on CI's Node 22.13 leg, so the budget is 60 s.
+describe('prompt templates as execution dependencies (#582)', { timeout: 60_000 }, () => {
   it('lists every prompt-root file in validate --json identity, matching the executed run', async ({
     cli,
   }) => {
