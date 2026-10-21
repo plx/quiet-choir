@@ -8,7 +8,7 @@
 export interface TemplateDependency {
   /** The tag keyword. */
   readonly keyword: 'include' | 'extends' | 'import' | 'from';
-  /** The literal target, as written. */
+  /** The literal target, its escapes decoded as MiniJinja decodes them. */
   readonly target: string;
   /** 1-based line of the tag. */
   readonly line: number;
@@ -38,7 +38,8 @@ interface Tag {
 }
 
 type Token =
-  | { readonly kind: 'string'; readonly value: string }
+  /** `value` is the literal's body as written, between its quotes; `raw` includes the quotes. */
+  | { readonly kind: 'string'; readonly value: string; readonly raw: string }
   | { readonly kind: 'name'; readonly value: string }
   | { readonly kind: 'other'; readonly value: string };
 
@@ -112,7 +113,11 @@ function tokens(body: string): Token[] {
       index++;
     } else if (char === '"' || char === "'") {
       const end = stringEnd(body, index);
-      result.push({ kind: 'string', value: body.slice(index + 1, Math.max(index + 1, end - 1)) });
+      result.push({
+        kind: 'string',
+        value: body.slice(index + 1, Math.max(index + 1, end - 1)),
+        raw: body.slice(index, end),
+      });
       index = end;
     } else if (/[A-Za-z_]/u.test(char)) {
       const match = /^[A-Za-z_][A-Za-z0-9_]*/u.exec(body.slice(index));
@@ -122,6 +127,76 @@ function tokens(body: string): Token[] {
     } else {
       result.push({ kind: 'other', value: char });
       index++;
+    }
+  }
+  return result;
+}
+
+const simpleEscapes: Readonly<Record<string, string>> = {
+  '"': '"',
+  "'": "'",
+  '\\': '\\',
+  '/': '/',
+  b: '\b',
+  f: '\f',
+  n: '\n',
+  r: '\r',
+  t: '\t',
+};
+
+/**
+ * Decode a string literal's body (between its quotes) with MiniJinja's escape rules, or return null
+ * for a malformed escape, which MiniJinja refuses too: `\"`, `\'`, `\\`, `\/`, `\b`, `\f`, `\n`,
+ * `\r` and `\t`; `\x` with exactly two hex digits; one to three octal digits up to `\377`; and
+ * `\u` with exactly four hex digits, a high surrogate paired with a following `\u` low one. A
+ * backslash before any other character is kept as written. @internal
+ */
+export function decodeStringLiteral(body: string): string | null {
+  let result = '';
+  let index = 0;
+  const hex = (start: number, digits: number): number | null => {
+    const text = body.slice(start, start + digits);
+    return text.length === digits && /^[\dA-Fa-f]+$/u.test(text) ? Number.parseInt(text, 16) : null;
+  };
+  while (index < body.length) {
+    const char = body[index] ?? '';
+    if (char !== '\\') {
+      result += char;
+      index++;
+      continue;
+    }
+    const next = body[index + 1];
+    if (next === undefined) return null;
+    const simple = simpleEscapes[next];
+    if (simple !== undefined) {
+      result += simple;
+      index += 2;
+    } else if (next === 'x') {
+      const code = hex(index + 2, 2);
+      if (code === null) return null;
+      result += String.fromCharCode(code);
+      index += 4;
+    } else if (/[0-7]/u.test(next)) {
+      const digits = /^[0-7]{1,3}/u.exec(body.slice(index + 1))?.[0] ?? next;
+      const code = Number.parseInt(digits, 8);
+      if (code > 0xff) return null;
+      result += String.fromCharCode(code);
+      index += 1 + digits.length;
+    } else if (next === 'u') {
+      const code = hex(index + 2, 4);
+      if (code === null || (code >= 0xdc00 && code <= 0xdfff)) return null;
+      if (code >= 0xd800 && code <= 0xdbff) {
+        const low = body.startsWith('\\u', index + 6) ? hex(index + 8, 4) : null;
+        if (low === null || low < 0xdc00 || low > 0xdfff) return null;
+        result += String.fromCharCode(code, low);
+        index += 12;
+      } else {
+        result += String.fromCharCode(code);
+        index += 6;
+      }
+    } else {
+      result += `\\${next}`;
+      index += 2;
     }
   }
   return result;
@@ -217,9 +292,14 @@ export function scanTemplate(source: string): TemplateScan {
       refuse(`must have exactly one string literal target, with nothing computed after it`);
       continue;
     }
+    const decoded = decodeStringLiteral(target.value);
+    if (decoded === null) {
+      refuse(`has a malformed escape in its target literal ${target.raw}`);
+      continue;
+    }
     dependencies.push({
       keyword: keyword as TemplateDependency['keyword'],
-      target: target.value,
+      target: decoded,
       line: tag.line,
     });
   }

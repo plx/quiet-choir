@@ -6,8 +6,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { definePrompts, z } from '../src/index.js';
 import { checkPromptSets, promptRootFiles } from '../src/workflow/prompts/check.js';
+import { renderString } from '../src/workflow/prompts/engine.js';
 import { promptSetDescriptor } from '../src/workflow/prompts/prompt.js';
-import { scanTemplate } from '../src/workflow/prompts/scan.js';
+import { decodeStringLiteral, scanTemplate } from '../src/workflow/prompts/scan.js';
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -146,6 +147,35 @@ describe('checkPromptSets errors', () => {
   ] as const)('reports %s', async ([, files, params, message]) => {
     const { errors } = await check(files, params);
     expect(errors).toEqual(expect.arrayContaining([expect.stringContaining(message)]));
+  });
+
+  it.for([
+    ['a decoded quote', '{% include "it\\\'s.md" %}', { text: 'quote' }],
+    ['a decoded slash', "{% include '_fragments\\/a.md' %}", { text: 'a' }],
+    [
+      'a backslash that survives decoding',
+      '{% include "a\\\\b.md" %}',
+      'include target "a\\\\b.md" contains a backslash',
+    ],
+    [
+      'a malformed escape',
+      '{% include "a\\u12.md" %}',
+      'Main.md:1: {% include "a\\u12.md" %} has a malformed escape in its target literal "a\\u12.md"',
+    ],
+  ] as const)('decodes target escapes before checking paths: %s', async ([, main, expected]) => {
+    const { directory, errors } = await check({
+      'Main.md': main,
+      "it's.md": 'quote',
+      '_fragments/a.md': 'a',
+      'a\\b.md': 'backslash',
+    });
+    if (typeof expected === 'string')
+      expect(errors).toEqual(expect.arrayContaining([expect.stringContaining(expected)]));
+    else {
+      expect(errors).toEqual([]);
+      const set = definePrompts(directory, { Main: { file: 'Main.md', params: z.object({}) } });
+      expect(set.Main({}).text).toBe(expected.text);
+    }
   });
 
   it('refuses a symlinked fragment that leaves the root', async () => {
@@ -307,6 +337,37 @@ describe('scanTemplate', () => {
       ],
       problems: [],
     });
+  });
+
+  // The decoder must agree with the engine, which reads the same literal when it renders.
+  it.for([
+    'plain.md',
+    "it\\'s",
+    '\\"q\\"',
+    'a\\\\b',
+    '\\/\\b\\f\\n\\r\\t',
+    '\\x41\\xff',
+    '\\0\\12\\0123\\377',
+    '\\u0041\\u00e9\\uFFFF',
+    '\\ud83d\\ude00',
+    '\\q\\8\\U0041\\ ',
+    '\\x4',
+    '\\xZZ',
+    '\\400',
+    '\\u12',
+    '\\u{41}',
+    '\\ud83d',
+    '\\ude00',
+    '\\ud83d\\n',
+    '\\ud83d\\u0041',
+  ])('decodes the literal body %s as the engine does', (body) => {
+    let engine: string | null;
+    try {
+      engine = renderString(`{{ "${body}" }}`, {});
+    } catch {
+      engine = null;
+    }
+    expect(decodeStringLiteral(body)).toBe(engine);
   });
 
   it('flags a dependency tag with anything computed after its literal', () => {

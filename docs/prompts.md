@@ -117,7 +117,8 @@ over template directories, because reformatting changes the rendered text.
   `{% include "b.md" %}` names `_fragments/b.md`.
 - Each target must be one string literal. A computed target (`{% include name %}`), a list, a
   concatenation and `ignore missing` are all refused. Literal targets keep a template's dependency
-  set static.
+  set static. The checks decode the literal's escapes as MiniJinja does before checking the path, so
+  `"it\'s.md"` names `it's.md`, and a malformed escape is an error.
 - The loader refuses absolute paths, backslashes, NUL bytes and any path that normalizes outside the
   root. It also refuses a file whose real path is outside the root's real path, so a symlink cannot
   escape the root. A symlink that stays inside the root is followed.
