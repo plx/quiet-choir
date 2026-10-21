@@ -386,7 +386,7 @@ it('snapshots bound options so later mutation cannot change the agent', async ({
     settings: { nested: { A: '1' } },
   });
   expect(fake.requests[0]?.options.env).toEqual({ A: '1' });
-  expect(fake.requests[0]?.options.settings).toEqual({ nested: { A: '1' } });
+  expect(fake.requests[0]?.options).toHaveProperty('settings', { nested: { A: '1' } });
   expect(fake.requests[0]?.options).not.toHaveProperty('effort');
 });
 
