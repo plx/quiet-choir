@@ -279,24 +279,27 @@ interface PackageFixture {
   readonly entry?: boolean;
   /** Appended to on every evaluation of the manifest. */
   readonly marker?: string;
+  /** Workflow module suffix, `.ts` by default; `.workflow.ts` names it like a loose definition. */
+  readonly suffix?: '.ts' | '.workflow.ts';
 }
 
-/** Write `<name>.quiet-choir/` under `root` with one `workflows/<name>.ts` per workflow. */
+/** Write `<name>.quiet-choir/` under `root` with one `workflows/<name><suffix>` per workflow. */
 async function writePackage(root: string, options: PackageFixture): Promise<string> {
   const dir = join(root, `${options.dir ?? options.name}.quiet-choir`);
   const workflows = options.workflows ?? ['main', 'other'];
+  const suffix = options.suffix ?? '.ts';
   await mkdir(join(dir, 'workflows'), { recursive: true });
   await mkdir(join(dir, 'resources'), { recursive: true });
   await writeFile(join(dir, 'resources', 'notes.txt'), 'notes\n');
   for (const workflow of workflows)
     await writeFile(
-      join(dir, 'workflows', `${workflow}.ts`),
+      join(dir, 'workflows', `${workflow}${suffix}`),
       `import { defineWorkflow, z } from ${engineIndex};\nexport default defineWorkflow({ name: ${JSON.stringify(workflow)}, version: '1', description: ${JSON.stringify(`Workflow ${workflow}.`)}, input: z.null(), output: z.null(), run: async () => null });\n`,
     );
   await writeFile(
     join(dir, 'package.ts'),
     `${options.marker === undefined ? '' : `import { appendFileSync } from 'node:fs';\nappendFileSync(${JSON.stringify(options.marker)}, 'x');\n`}import { definePackage } from ${engineIndex};
-${workflows.map((workflow, index) => `import w${String(index)} from './workflows/${workflow}.js';`).join('\n')}
+${workflows.map((workflow, index) => `import w${String(index)} from './workflows/${workflow}${suffix.replace(/\.ts$/u, '.js')}';`).join('\n')}
 export default definePackage({
   root: import.meta.dirname,
   name: ${JSON.stringify(options.name)},
@@ -334,6 +337,43 @@ describe('package discovery in the registry (#585)', { timeout: 60_000 }, () => 
     });
     expect(await discoverDefinitions([dir])).toEqual({ files: [], packages: [dir] });
     expect(await definitionFiles([root])).toEqual([await realpath(join(root, 'a.workflow.ts'))]);
+  });
+
+  it('keeps a package member out of the loose files when a root lies inside the package', async () => {
+    const root = await project();
+    const dir = await writePackage(root, {
+      name: 'demo',
+      workflows: ['main'],
+      suffix: '.workflow.ts',
+    });
+    const inner = join(dir, 'workflows');
+    const stateDir = await mkdtemp(join(tmpdir(), 'choir-registry-state-'));
+    roots.push(stateDir);
+    for (const [index, directories] of [
+      [root, inner],
+      [inner, root],
+    ].entries()) {
+      expect(await discoverDefinitions(directories)).toEqual({ files: [], packages: [dir] });
+      expect(listed(await executor().execute({ kind: 'workflow.list-defs', directories }))).toEqual(
+        ['demo/main'],
+      );
+      const runId = `inner-${String(index)}`;
+      expect(
+        await executor().execute({
+          kind: 'workflow.execute-name',
+          name: 'main',
+          directories,
+          runId,
+          stateDir,
+          cwd: root,
+          resume: false,
+          input: null,
+        }),
+      ).toMatchObject({ ok: true, run: { status: 'completed' } });
+      const record = await readRun({ stateDir, runId });
+      expect(record.launch?.package).toEqual({ root: dir, name: 'demo', version: '1' });
+      expect(record.launch?.entrypoint).toBe(join(dir, 'workflows', 'main.workflow.ts'));
+    }
   });
 
   it('lists a package beside a loose definition and caches the package entry', async () => {

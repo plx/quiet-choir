@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, realpath, rename, writeFile } from 'node:fs/promises';
-import { basename, dirname, extname, join, relative, resolve } from 'node:path';
+import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -160,8 +160,9 @@ export interface DiscoveredDefinitions {
 /**
  * Deterministic discovery of `*.workflow.ts`, `.mts` and `.cts` files (never `.d.ts` or `.tsx`)
  * and of `<stem>.quiet-choir` package directories (ADR 0065 section 3), including a given directory
- * that is itself one. A package is one artifact, so its contents are not scanned for loose files;
- * symlink directories are not followed and overlapping roots deduplicate. @internal
+ * that is itself one. A package is one artifact, so its contents are not scanned for loose files,
+ * and a root inside a discovered package lists none of its files as loose definitions; symlink
+ * directories are not followed and overlapping roots deduplicate. @internal
  */
 export async function discoverDefinitions(
   directories: readonly string[],
@@ -184,7 +185,12 @@ export async function discoverDefinitions(
     }
   };
   for (const directory of directories) await visit(resolve(directory));
-  return { files: [...files].sort(), packages: [...packages].sort() };
+  // A root inside a package another root discovered reaches the package's own files; they belong
+  // to the package, whichever order the roots come in.
+  const loose = [...files].filter(
+    (file) => ![...packages].some((pkg) => file === pkg || file.startsWith(pkg + sep)),
+  );
+  return { files: loose.sort(), packages: [...packages].sort() };
 }
 
 /** The loose definition files {@link discoverDefinitions} finds. @internal */

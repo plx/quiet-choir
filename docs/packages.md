@@ -204,8 +204,9 @@ module. Beside it, `package` describes the whole package and is not compacted:
 `workflow list-defs [DIR...]` finds `<stem>.quiet-choir` directories beside `*.workflow.ts`, `.mts`
 and `.cts` files, including a DIR that is itself a package. A package is one artifact: its contents
 are not scanned for loose definition files, and the bare `.quiet-choir` state directory is never a
-package. A package directory without `package.ts`, or with only a JavaScript manifest, fails
-`list-defs` with the message `validate` gives.
+package. A DIR inside a package that another DIR discovers does not list the package's files as
+loose definitions. A package directory without `package.ts`, or with only a JavaScript manifest,
+fails `list-defs` with the message `validate` gives.
 
 Each package is validated once and contributes one entry per declared workflow, in declaration
 order, listed as `<package>/<workflow>`; a package without `entry` still lists. An entry's
