@@ -34,6 +34,7 @@ import tolerant from '../examples/patterns/tolerant-panel.workflow.js';
 import hunt from '../examples/patterns/loop-until-dry.workflow.js';
 import pipeline from '../examples/patterns/per-item-pipeline.workflow.js';
 import revise from '../examples/patterns/review-revise.workflow.js';
+import { reviewRevise } from '../examples/patterns/review-team.js';
 import helper from '../examples/patterns/reusable-helper.workflow.js';
 import worktrees from '../examples/patterns/worktrees.workflow.js';
 import polling from '../examples/patterns/polling.workflow.js';
@@ -286,6 +287,7 @@ it('each roster recipe asks for grants only on the write entries it calls', () =
   expect(required(ticketLoop)).toEqual(['Editor']);
   expect(required(extraction)).toEqual([]);
   expect(required(helper)).toEqual([]);
+  expect(required(revise)).toEqual([]);
 });
 
 it('bound agent applies one set of options to every call and places each item itself', async () => {
@@ -547,6 +549,48 @@ it('rehearses and resumes actual fixture data with no native harness', async () 
   const result = await runWorkflow(workflow, { ...options(), resume: true, harness });
   expect(result.output).toEqual({ approved: true });
   expect(calls).toBe(2);
+});
+
+it('rehearses the review team with harness-pinned fixtures and resumes every call', async () => {
+  const fixtures = parseHarnessFixtures({
+    version: 1,
+    calls: [
+      { step: 'review/0', harness: 'codex', output: { approved: false, feedback: 'Tighten it.' } },
+      { step: 'revise/0', harness: 'claude', text: 'A tighter draft.' },
+      { step: 'review/1', harness: 'codex', output: { approved: true, feedback: '' } },
+    ],
+  });
+  const fixture = new FixtureHarness(fixtures);
+  const ids: string[] = [];
+  const harness: Harness = {
+    kind: fixture.kind,
+    invoke(request, invocation) {
+      ids.push(request.call.stepId);
+      return fixture.invoke(request, invocation);
+    },
+  };
+  const workflow = tailFailure(revise);
+  const input = { draft: 'A draft.', rounds: 3 };
+  await expect(runWorkflow(workflow, { ...options(), input, harness })).rejects.toThrow(
+    'Injected tail failure',
+  );
+  expect(ids).toEqual(['review/0', 'revise/0', 'review/1']);
+  const result = await runWorkflow(workflow, { ...options(), resume: true, harness });
+  expect(result.output).toEqual({ approved: true, draft: 'A tighter draft.' });
+  expect(ids).toHaveLength(3);
+  // A slot filled with the wrong agent has no matching rule: the critic would run on claude.
+  const swapped = tailFailure({
+    ...revise,
+    run: (ctx, value) =>
+      reviewRevise({
+        team: { actor: ctx.codex.bind({}), critic: ctx.claude.bind({ tools: [] }) },
+        draft: value.draft,
+        rounds: value.rounds,
+      }),
+  });
+  await expect(
+    runWorkflow(swapped, { ...options(), runId: 'swapped', input, harness }),
+  ).rejects.toThrow('No fixture matches step review/0 (claude');
 });
 
 it('polling observes readiness without creating one checkpointed step per poll', async () => {

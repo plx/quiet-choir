@@ -180,6 +180,8 @@ export type {
   StoredRosterEntry,
   DeepReadonlyOption,
 } from './workflow/runtime/roster-model.js';
+export { defineTeam } from './workflow/team.js';
+export type { Team, TeamOf } from './workflow/team.js';
 export { definePrompts, PromptError } from './workflow/prompts/index.js';
 export type { CheckedPromptEntries, PromptErrorDetails } from './workflow/prompts/index.js';
 export type {

@@ -25,6 +25,9 @@ definitions to a particular agent harness.
 - `src/application/` contains framework-independent execution contracts and small executors.
 - `src/workflow/` contains workflow-specific plans, results, analysis, and executors.
 - `src/workflow/runtime/` defines the typed workflow API and local checkpoint/replay engine.
+- `src/workflow/team.ts` is the pure team helper (`defineTeam`, `TeamOf`, `Team`;
+  [ADR 0067](decisions/0067-teams-as-typed-slots.md)). It takes a type-only dependency on
+  `runtime/model.ts` and no core module imports it, so teams register nothing with the runtime.
 - `src/workflow/prompts/` renders prompt templates
   ([ADR 0064](decisions/0064-prompt-templates-as-execution-dependencies.md)): `definePrompts`, the
   load-time checks, and the only module that knows the `minijinja-js` engine (`engine.ts`). The core
