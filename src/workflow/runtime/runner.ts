@@ -1553,6 +1553,12 @@ export async function runWorkflow<
     const scopes = new ExecutionScopes(signal);
     const names = new NameScopes();
     const origins = new FailureOrigins((error) => errorKind(error) === 'cancelled');
+    // A bound agent's bind and call validation errors are authoring errors, as a raw call's are.
+    const bindHooks = {
+      markFatal: (error: unknown) => {
+        origins.markFatal(error);
+      },
+    };
     const visitedMaps = new Set<string>();
     // Per body execution, like visitedMaps: numbers repeated invocations of one map prefix.
     const mapInvocations = new Map<string, number>();
@@ -3390,7 +3396,7 @@ export async function runWorkflow<
           ),
         object,
         value,
-        bind: (bound) => bindAgent(agentClient, bound),
+        bind: (bound) => bindAgent(agentClient, bound, bindHooks),
       };
       return agentClient;
     }
@@ -3936,6 +3942,7 @@ export async function runWorkflow<
           context,
           names,
           scopeEntry(() => names.bind(prefix)),
+          bindHooks,
         ),
       claude: client<ClaudeOptions>('claude'),
       codex: client<CodexOptions>('codex'),

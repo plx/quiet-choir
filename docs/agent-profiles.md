@@ -122,7 +122,9 @@ runtime, where it throws a `TypeError` naming the key. The both-sides keys are `
 `timeoutMs` and `idleTimeoutMs`: `bind` may set a default and a call may set its own. Everything
 else, such as the model, effort, tools, sandbox, environment and `profile`, is fixed by `bind`. A
 call through the agent takes only `BoundCallOptions` (plus `images` for a Codex agent); any other
-key fails typecheck, and an untyped call that passes one rejects before a step ID is claimed.
+key fails typecheck, and an untyped call that passes one rejects before a step ID is claimed. These
+`bind` and bound-call errors are authoring errors, like a raw call's invalid options: inside an
+`onError: 'return'` map they fail the run instead of being saved as the item's result.
 
 Each call merges its options over the bound ones. A call's `addDirs` are appended to the bound list,
 not deduplicated, so a call cannot drop a bound directory. A call's deadline wins over the bound

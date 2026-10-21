@@ -17,6 +17,15 @@ const perCallOnly: ReadonlySet<string> = new Set([
 /** Keys both `bind` and a call may set; the only keys a bound agent binds again. */
 const bothSides: ReadonlySet<string> = new Set(['addDirs', 'timeoutMs', 'idleTimeoutMs']);
 
+/** What the runtime that owns a client passes to the agents bound over it. @internal */
+export interface BindHooks {
+  /**
+   * Mark a bind or bound-call validation error as an authoring error, as the runtime marks a raw
+   * call's, so a settled map fails the run instead of journaling it as item data.
+   */
+  readonly markFatal?: ((error: unknown) => void) | undefined;
+}
+
 type Options = Readonly<Record<string, unknown>>;
 type Call = (id: string, options: Options) => Promise<unknown>;
 interface Methods {
@@ -93,8 +102,14 @@ function merge(bound: Options, call: unknown): Options {
   return merged;
 }
 
-function layer(client: Methods, options: unknown, again: boolean): Methods {
-  const bound = snapshot(options, again);
+function layer(client: Methods, options: unknown, hooks: BindHooks, again: boolean): Methods {
+  let bound: Options;
+  try {
+    bound = snapshot(options, again);
+  } catch (error) {
+    hooks.markFatal?.(error);
+    throw error;
+  }
   const forward =
     (method: keyof Methods): Call =>
     (id, call) => {
@@ -102,7 +117,9 @@ function layer(client: Methods, options: unknown, again: boolean): Methods {
       try {
         merged = merge(bound, call);
       } catch (error) {
-        return Promise.reject(error instanceof Error ? error : new TypeError(String(error)));
+        const failure = error instanceof Error ? error : new TypeError(String(error));
+        hooks.markFatal?.(failure);
+        return Promise.reject(failure);
       }
       return client[method](id, merged);
     };
@@ -110,7 +127,7 @@ function layer(client: Methods, options: unknown, again: boolean): Methods {
     value: forward('value'),
     text: forward('text'),
     object: forward('object'),
-    bind: (more) => layer(agent, more, true),
+    bind: (more) => layer(agent, more, hooks, true),
   };
   return agent;
 }
@@ -119,13 +136,14 @@ function layer(client: Methods, options: unknown, again: boolean): Methods {
  * Bind `options` over `client` (ADR 0063 section 2). Validation and the snapshot are synchronous;
  * binding claims no step ID and reads no run state. A call delegates synchronously, so the step ID
  * prefix is the one in effect where the bound agent is invoked. The returned agent binds again
- * over the both-sides keys only. @internal
+ * over the both-sides keys only, and its calls and re-binds report errors through `hooks`. @internal
  */
 export function bindAgent<TOptions extends AgentOptions>(
   client: AgentClient<TOptions>,
   options: BindOptions<TOptions>,
+  hooks: BindHooks = {},
 ): AgentClient<BoundOptionsOf<TOptions>> {
-  return layer(client as unknown as Methods, options, false) as unknown as AgentClient<
+  return layer(client as unknown as Methods, options, hooks, false) as unknown as AgentClient<
     BoundOptionsOf<TOptions>
   >;
 }

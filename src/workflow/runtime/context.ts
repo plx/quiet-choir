@@ -1,12 +1,16 @@
 import type { AgentClient, AgentOptions, WorkflowContext } from './model.js';
-import { bindAgent } from './bound-agent.js';
+import { bindAgent, type BindHooks } from './bound-agent.js';
 import type { NameFrame, NameScopes } from './names.js';
 
-/** Bind an existing context without dropping overloads or eagerly reading its signal. @internal */
+/**
+ * Bind an existing context without dropping overloads or eagerly reading its signal. `hooks` are
+ * the runtime's, passed to the agents bound from its clients. @internal
+ */
 export function bindContext(
   context: WorkflowContext,
   names: NameScopes,
   frame: NameFrame,
+  hooks: BindHooks = {},
 ): WorkflowContext {
   function bind<T extends (...args: never[]) => unknown>(method: T): T {
     // This transparent wrapper forwards the same arguments/result, including generic overloads.
@@ -20,7 +24,7 @@ export function bindContext(
       value: bind(inner.value.bind(inner)),
       text: bind(inner.text.bind(inner)),
       object: bind(inner.object.bind(inner)),
-      bind: (options) => bindAgent(wrapped, options),
+      bind: (options) => bindAgent(wrapped, options, hooks),
     };
     return wrapped;
   }

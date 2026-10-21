@@ -363,6 +363,65 @@ it('refuses per-call-only keys at bind, fixed keys at a re-bind and unbound keys
   expect(Object.keys((await readRun({ stateDir, runId: 'guards' })).steps)).toEqual(['fine']);
 });
 
+it('fails the run on a bound validation error in a settled map, as on a raw one', async ({
+  runs,
+  stateDir,
+}) => {
+  const untyped = (value: unknown) => value as never;
+  type Mapper = (ctx: Context) => Promise<unknown>;
+  const cases: [string, Mapper, string][] = [
+    ['raw', (ctx) => ctx.claude.value('call', untyped({ prompt, addDirs: 'invalid' })), 'addDirs'],
+    [
+      'call-dirs',
+      (ctx) => ctx.claude.bind({}).value('call', untyped({ prompt, addDirs: 'invalid' })),
+      'A bound agent call addDirs must be an array.',
+    ],
+    [
+      'call-fixed',
+      (ctx) =>
+        ctx.claude.bind({ model: 'opus' }).value('call', untyped({ prompt, model: 'haiku' })),
+      'A bound agent call cannot set model',
+    ],
+    [
+      'bind',
+      (ctx) => ctx.claude.bind(untyped({ prompt })).value('call', { prompt }),
+      'bind cannot set prompt',
+    ],
+    [
+      're-bind',
+      (ctx) =>
+        ctx.claude
+          .bind({ model: 'opus' })
+          .bind(untyped({ model: 'haiku' }))
+          .value('call', { prompt }),
+      'A bound agent cannot bind model again',
+    ],
+    [
+      'within',
+      (ctx) =>
+        ctx
+          .within('w')
+          .claude.bind({ model: 'opus' })
+          .value('call', untyped({ prompt, tools: ['Bash'] })),
+      'A bound agent call cannot set tools',
+    ],
+  ];
+  for (const [runId, mapper, message] of cases) {
+    const fake = capture();
+    const definition = workflow(runId, (ctx) =>
+      ctx.map('items', ['x'], { concurrency: 1, onError: 'return' }, () => mapper(ctx)),
+    );
+    await expect(
+      runs.run(definition, { stateDir, runId, input: null, harness: fake.harness }),
+    ).rejects.toThrow(message);
+    const record = await readRun({ stateDir, runId });
+    // Nothing is journaled for the item, and no step is claimed or invoked.
+    expect(record.maps?.['items']?.items[0]?.status).toBe('running');
+    expect(record.steps).toEqual({});
+    expect(fake.requests).toEqual([]);
+  }
+});
+
 it('snapshots bound options so later mutation cannot change the agent', async ({
   runs,
   stateDir,
