@@ -166,6 +166,7 @@ export type {
   AnyRoster,
   CheckedRosterEntries,
   EmptyRoster,
+  NamedHarness,
   Roster,
   RosterAgentOf,
   RosterAgents,

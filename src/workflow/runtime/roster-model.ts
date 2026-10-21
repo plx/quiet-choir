@@ -139,13 +139,19 @@ export type RosterAgentOf<E, H extends readonly HarnessDeclaration[]> = E extend
     ? Agent
     : N extends 'codex'
       ? AgentClient<BoundOptionsOf<CodexOptions>>
-      : [Extract<H[number], { readonly name: N }>] extends [never]
+      : [Extract<H[number], NamedHarness<N>>] extends [never]
         ? Agent<HarnessCapabilities>
-        : CapabilitiesOf<Extract<H[number], { readonly name: N }>> extends infer C extends
+        : CapabilitiesOf<Extract<H[number], NamedHarness<N>>> extends infer C extends
               HarnessCapabilities
           ? Agent<C>
           : Agent<HarnessCapabilities>
   : never;
+
+/** A harness declaration named `N`: what {@link RosterAgentOf} selects an entry's harness by. */
+export interface NamedHarness<N> {
+  /** The registered harness name. */
+  readonly name: N;
+}
 
 /**
  * The type of `ctx.roster` for a workflow whose roster is `TRoster`: one readonly agent per entry
