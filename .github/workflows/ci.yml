@@ -143,8 +143,10 @@ jobs:
     # measured: unsharded, this leg took 13m57s on 74bf584 (Vitest 819 s, tick.test.ts 527 s).
     # Sharded on #286's CI run the jobs took 2m17s, 4m22s and 2m40s; the slowest, shard 2 (Vitest
     # 247 s), holds tick.test.ts (206 s) and replay-loader (131 s), so 10 minutes leaves over 2x
-    # headroom.
-    timeout-minutes: 10
+    # headroom. With the package tests (#585) shard 1 hit the 10 minutes on a run in which
+    # workflow-package-cli.test.ts alone took 421 s under coverage and prompts-cli.test.ts 122 s;
+    # 15 matches the plain test matrix above.
+    timeout-minutes: 15
 
     strategy:
       fail-fast: false

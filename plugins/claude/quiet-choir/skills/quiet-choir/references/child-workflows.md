@@ -146,9 +146,11 @@ node "$QC_CHECKOUT/bin/run.js" workflow execute reusable-helper --registry-dir .
 ```
 
 `list-defs [DIR…]` defaults to the current directory, recursively discovers `*.workflow.ts`,
-`*.workflow.mts` and `*.workflow.cts`, and rejects duplicate names. It skips
-generated/state/dependency directories and does not follow directory symlinks. These are trusted
-imports; module top-level code must have no workflow effects. The private metadata cache under
+`*.workflow.mts` and `*.workflow.cts` and `*.quiet-choir` packages, and rejects duplicate listing
+names. Each workflow of a package is listed as `<package>/<workflow>` with the package's description
+and `whenToUse`, and a package is not scanned for loose files. It skips generated/state/dependency
+directories and does not follow directory symlinks. These are trusted imports; module top-level code
+must have no workflow effects. The private metadata cache under
 `$XDG_CACHE_HOME/quiet-choir/definitions` (default `~/.cache/quiet-choir/definitions`) checks
 source/dependency/config fingerprints and existing package manifests/locks. The cache key also
 includes a digest of the running engine's code plus its Node major and TypeScript, zod and tsx

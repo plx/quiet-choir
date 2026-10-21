@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, realpath, rename, writeFile } from 'node:fs/promises';
-import { dirname, extname, join, relative, resolve } from 'node:path';
+import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -12,7 +12,9 @@ import { engineInfo, recordedEngine } from '../runtime/engine.js';
 import { digest } from '../runtime/json.js';
 import { analyzeTypecheckEntrypoint } from '../typecheck/plan.js';
 import type { TypecheckPlan } from '../typecheck/model.js';
-import type { ValidatedWorkflow, WorkflowCommandResult } from './model.js';
+import type { PackageSelection, ValidatedWorkflow, WorkflowCommandResult } from './model.js';
+import { PACKAGE_HASH_CONCURRENCY, mapWithLimit, packageFiles } from '../package/files.js';
+import { analyzePackagePath } from '../package/plan.js';
 import { workflowLaunch } from './source.js';
 import { promptRootFiles, promptRoots } from '../prompts/check.js';
 
@@ -65,6 +67,15 @@ const validation = z.object({
   kind: z.literal('workflow.validate.result'),
   ok: z.literal(true),
   entrypoint: z.string(),
+  package: z
+    .object({
+      root: z.string(),
+      name: z.string(),
+      version: z.string(),
+      description: z.string().nullable(),
+      whenToUse: z.string().nullable(),
+    })
+    .exactOptional(),
   workflow: metadata.and(
     z.object({
       fingerprint: z.string(),
@@ -87,16 +98,26 @@ const validation = z.object({
 // a template edit invalidates them; version 5 entries have neither and are revalidated. Version 7
 // (#581): prompt-root files move to `promptSources`, fingerprinted by real path as well as bytes, so
 // a file symlink retargeted to identical contents elsewhere revalidates; version 6 entries hashed
-// bytes alone and are revalidated.
+// bytes alone and are revalidated. Version 8 (#585): an entry is a loose definition file or a whole
+// `*.quiet-choir` package, holding `results` (one per declared workflow, with the package summary)
+// and `packageFiles`, the walked files of the package (null for a loose file); a package entry is
+// served only while the walk lists exactly those files, and its sources include every one of them.
+// `packagePromptRoots` records the roots of the package's own prompt sets (null for a loose file),
+// whose files join `promptSources` like a workflow's prompt roots. Version 7 entries hold a single
+// `result` and are revalidated.
 const cache = z.object({
-  version: z.literal(7),
+  version: z.literal(8),
   engine: z.string(),
   plan: z.json(),
   sources: z.record(z.string(), z.string()),
   promptSources: z.record(z.string(), z.string()),
-  result: validation,
+  packageFiles: z.array(z.string()).nullable(),
+  packagePromptRoots: z.array(z.string()).nullable(),
+  results: z.array(validation),
 });
 const definitionFile = /\.workflow\.(?:ts|mts|cts)$/u;
+/** A package directory name: a nonempty stem, so the bare `.quiet-choir` state directory never matches. */
+const packageDirectory = /^.+\.quiet-choir$/iu;
 const ignored = new Set(['node_modules', '.git', '.quiet-choir', '.context', 'dist', 'coverage']);
 
 function hash(bytes: Uint8Array): string {
@@ -117,28 +138,56 @@ async function promptSourceHash(file: string): Promise<string> {
     .digest('hex');
 }
 
-/** Whether every recorded fingerprint still matches; a missing or unreadable file never does. */
-async function sourcesMatch(
+/**
+ * Whether every recorded fingerprint still matches; a missing or unreadable file never does (the
+ * fingerprint rejects). At most {@link PACKAGE_HASH_CONCURRENCY} files are read at once, as in
+ * hashing a package, and no further file starts after the first mismatch. @internal
+ */
+export async function sourcesMatch(
   recorded: Readonly<Record<string, string>>,
   fingerprint: (path: string) => Promise<string>,
 ): Promise<boolean> {
-  return (
-    await Promise.all(
-      Object.entries(recorded).map(
-        async ([path, expected]) => (await fingerprint(path)) === expected,
-      ),
-    )
-  ).every(Boolean);
+  let mismatch = false;
+  await mapWithLimit(
+    Object.entries(recorded),
+    PACKAGE_HASH_CONCURRENCY,
+    async ([path, expected]) => {
+      if (mismatch) return;
+      if ((await fingerprint(path)) !== expected) mismatch = true;
+    },
+  );
+  return !mismatch;
 }
 
-/** Deterministic discovery of `*.workflow.ts`, `.mts` and `.cts` files (never `.d.ts` or `.tsx`); symlink directories are not followed and overlapping roots deduplicate. @internal */
-export async function definitionFiles(directories: readonly string[]): Promise<string[]> {
+/** What {@link discoverDefinitions} finds: loose definition files and package directories. @internal */
+export interface DiscoveredDefinitions {
+  /** Real paths of `*.workflow.ts`, `.mts` and `.cts` files outside packages, sorted. */
+  readonly files: readonly string[];
+  /** Real paths of `<stem>.quiet-choir` package directories, sorted. */
+  readonly packages: readonly string[];
+}
+
+/**
+ * Deterministic discovery of `*.workflow.ts`, `.mts` and `.cts` files (never `.d.ts` or `.tsx`)
+ * and of `<stem>.quiet-choir` package directories (ADR 0065 section 3), including a given directory
+ * that is itself one. A package is one artifact, so its contents are not scanned for loose files,
+ * and a root inside a discovered package lists none of its files as loose definitions; symlink
+ * directories are not followed and overlapping roots deduplicate. @internal
+ */
+export async function discoverDefinitions(
+  directories: readonly string[],
+): Promise<DiscoveredDefinitions> {
   const files = new Set<string>();
+  const packages = new Set<string>();
   const seen = new Set<string>();
   const visit = async (directory: string): Promise<void> => {
     const canonical = await realpath(directory);
     if (seen.has(canonical)) return;
     seen.add(canonical);
+    if (packageDirectory.test(basename(canonical))) {
+      packages.add(canonical);
+      return;
+    }
     for (const entry of await readdir(canonical, { withFileTypes: true })) {
       if (entry.isDirectory() && !ignored.has(entry.name)) await visit(join(canonical, entry.name));
       else if (entry.isFile() && definitionFile.test(entry.name))
@@ -146,19 +195,73 @@ export async function definitionFiles(directories: readonly string[]): Promise<s
     }
   };
   for (const directory of directories) await visit(resolve(directory));
-  return [...files].sort();
+  // A root inside a package another root discovered reaches the package's own files; they belong
+  // to the package, whichever order the roots come in.
+  const loose = [...files].filter(
+    (file) => ![...packages].some((pkg) => file === pkg || file.startsWith(pkg + sep)),
+  );
+  return { files: loose.sort(), packages: [...packages].sort() };
+}
+
+/** The loose definition files {@link discoverDefinitions} finds. @internal */
+export async function definitionFiles(directories: readonly string[]): Promise<string[]> {
+  return [...(await discoverDefinitions(directories)).files];
 }
 
 /**
- * Whether the files now under the workflow's prompt roots are exactly those the entry recorded, so
- * a file added or removed (or a root that appeared) is a cache miss even when every recorded file
- * is unchanged. Both sides use {@link promptRootFiles}' path form.
+ * The name `list-defs` lists and by-name dispatch matches: `<package>/<workflow>` for a package's
+ * workflow, the workflow name for a loose definition. @internal
+ */
+export function listingName(definition: ValidatedWorkflow): string {
+  return definition.package === undefined
+    ? definition.workflow.name
+    : `${definition.package.name}/${definition.workflow.name}`;
+}
+
+/**
+ * Select a listed definition by name (ADR 0065 section 3): an exact listing name wins, so a loose
+ * `main` stays runnable beside `demo/main`; otherwise a bare name matches the package workflows of
+ * that name and must match exactly one. @internal
+ * @throws Error - `Unknown workflow name` when nothing matches, or an ambiguity error naming every
+ *   qualified match.
+ */
+export function selectDefinition(
+  definitions: readonly ValidatedWorkflow[],
+  name: string,
+): ValidatedWorkflow {
+  const exact = definitions.find((definition) => listingName(definition) === name);
+  if (exact !== undefined) return exact;
+  const bare = definitions.filter(
+    (definition) => definition.package !== undefined && definition.workflow.name === name,
+  );
+  const [only, ...others] = bare;
+  if (only === undefined)
+    throw new Error(
+      `Unknown workflow name ${name}: no listed definition or package workflow has that name (the argument was treated as a registered name); search directories with workflow list-defs or supply --registry-dir DIR.`,
+    );
+  if (others.length > 0)
+    throw new Error(
+      `Workflow name ${name} is ambiguous: ${bare.map(listingName).join(', ')}; use <package>/<workflow>.`,
+    );
+  return only;
+}
+
+/**
+ * Whether the files now under the prompt roots of every cached result and of the package's own
+ * prompt sets are exactly those the entry recorded, so a file added or removed (or a root that
+ * appeared) is a cache miss even when every recorded file is unchanged. Both sides use
+ * {@link promptRootFiles}' path form.
  */
 function promptFilesMatch(
   recorded: Readonly<Record<string, string>>,
-  workflow: ValidatedWorkflow['workflow'],
+  results: readonly ValidatedWorkflow[],
+  packagePromptRoots: readonly string[],
 ): boolean {
-  const current = new Set(promptRoots(workflow).flatMap(promptRootFiles));
+  const current = new Set(
+    [...results.flatMap((result) => promptRoots(result.workflow)), ...packagePromptRoots].flatMap(
+      promptRootFiles,
+    ),
+  );
   const prior = Object.keys(recorded);
   return current.size === prior.length && prior.every((file) => current.has(file));
 }
@@ -166,6 +269,7 @@ function promptFilesMatch(
 async function cacheSources(
   plan: TypecheckPlan,
   result: ValidatedWorkflow,
+  packagePromptRoots: readonly string[],
 ): Promise<{ sources: Record<string, string>; promptSources: Record<string, string> }> {
   const identity = result.workflow.identity;
   if (!identity?.code)
@@ -186,10 +290,11 @@ async function cacheSources(
     for (const extended of sourceFile.extendedSourceFiles ?? [])
       sources[resolve(extended)] = hash(await readFile(extended));
   }
-  // Templates are read at validation, not compiled, so every file under a declared prompt root
-  // is a source too (ADR 0064 section 4 makes the same set an execution dependency).
+  // Templates are read at validation, not compiled, so every file under a declared prompt root,
+  // a package's own included, is a source too (ADR 0064 section 4 makes the same set an execution
+  // dependency).
   const promptSources: Record<string, string> = {};
-  for (const root of promptRoots(result.workflow))
+  for (const root of new Set([...promptRoots(result.workflow), ...packagePromptRoots]))
     for (const file of promptRootFiles(root)) promptSources[file] = await promptSourceHash(file);
   const lockfiles = ['package-lock.json', 'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'yarn.lock'];
   let directory = dirname(plan.entrypoint);
@@ -264,11 +369,24 @@ async function engineKey(): Promise<string | undefined> {
   }
 }
 
-/** Source-validated metadata cache; execution always imports and checks the selected workflow anew. @internal */
+/** Whether two path lists hold the same paths. */
+function samePaths(recorded: readonly string[], current: readonly string[]): boolean {
+  const set = new Set(current);
+  return recorded.length === set.size && recorded.every((path) => set.has(path));
+}
+
+/**
+ * Source-validated metadata cache; execution always imports and checks the selected workflow anew.
+ * Loose definition files and `*.quiet-choir` packages are listed together, sorted by file path or
+ * package root and, inside a package, in declaration order; listing names must be unique. @internal
+ */
 export async function listDefinitions(
   directories: readonly string[],
-  /** Validate one definition; execution passes durabilityLint 'warn', so findings only log. */
-  validate: (plan: TypecheckPlan) => Promise<WorkflowCommandResult>,
+  /**
+   * Validate one definition file, or (with `pkg`) every workflow of a package, which returns a
+   * `workflow.list-defs.result`; execution passes durabilityLint 'warn', so findings only log.
+   */
+  validate: (plan: TypecheckPlan, pkg?: PackageSelection) => Promise<WorkflowCommandResult>,
   options: {
     refresh?: boolean;
     /** Override the computed engine key, so a test can change the validation digest. */
@@ -285,49 +403,101 @@ export async function listDefinitions(
     'quiet-choir',
     'definitions',
   );
-  for (const entrypoint of await definitionFiles(directories)) {
-    const analyzed = analyzeTypecheckEntrypoint(entrypoint, process.cwd());
-    if (!analyzed.ok) throw new Error(analyzed.error.message);
-    const plan = analyzed.plan;
-    const path = join(root, `${digest({ entrypoint, configuration: plan.configuration })}.json`);
-    let result: ValidatedWorkflow | undefined;
+  const discovered = await discoverDefinitions(directories);
+  const entries = [
+    ...discovered.files.map((path) => ({ kind: 'file' as const, path })),
+    ...discovered.packages.map((path) => ({ kind: 'package' as const, path })),
+  ].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  for (const entry of entries) {
+    let plan: TypecheckPlan;
+    let selection: PackageSelection | undefined;
+    let walked: string[] | null = null;
+    if (entry.kind === 'file') {
+      const analyzed = analyzeTypecheckEntrypoint(entry.path, process.cwd());
+      if (!analyzed.ok) throw new Error(analyzed.error.message);
+      plan = analyzed.plan;
+    } else {
+      const analyzed = analyzePackagePath(entry.path, process.cwd());
+      if (!analyzed.ok) throw new Error(analyzed.error.message);
+      plan = analyzed.typecheck;
+      selection = { ...analyzed.package, workflow: null };
+      walked = (await packageFiles(entry.path)).map((file) => file.path);
+    }
+    const path = join(
+      root,
+      `${digest({ entrypoint: plan.entrypoint, configuration: plan.configuration })}.json`,
+    );
+    let results: ValidatedWorkflow[] | undefined;
+    let packagePromptRoots: string[] | null = null;
     if (!refresh && engine !== undefined) {
       try {
         const prior = cache.parse(JSON.parse(await readFile(path, 'utf8')));
         if (
           prior.engine === engine &&
           digest(prior.plan) === digest(plan) &&
-          prior.result.entrypoint === entrypoint &&
+          prior.results.length > 0 &&
+          (walked === null
+            ? prior.packageFiles === null &&
+              prior.packagePromptRoots === null &&
+              prior.results.length === 1 &&
+              prior.results.every((result) => result.entrypoint === entry.path)
+            : prior.packageFiles !== null &&
+              prior.packagePromptRoots !== null &&
+              samePaths(prior.packageFiles, walked)) &&
           Object.keys(prior.sources).length > 0 &&
           (await sourcesMatch(prior.sources, async (path) => hash(await readFile(path)))) &&
-          promptFilesMatch(prior.promptSources, prior.result.workflow) &&
+          promptFilesMatch(prior.promptSources, prior.results, prior.packagePromptRoots ?? []) &&
           (await sourcesMatch(prior.promptSources, promptSourceHash))
         )
-          result = prior.result;
+          results = prior.results;
       } catch {
         /* A missing, stale, unreadable or malformed cache never bypasses validation. */
       }
     }
-    if (!result) {
-      const checked = await validate(plan);
+    if (!results) {
+      const checked = await validate(plan, selection);
       if (!checked.ok) return checked;
-      if (checked.kind !== 'workflow.validate.result')
-        throw new Error('Definition registry expected a validation result.');
-      // Drop the (empty) lint diagnostics, so a fresh entry equals one read from the cache.
-      result = {
-        kind: checked.kind,
-        ok: checked.ok,
-        entrypoint: checked.entrypoint,
-        workflow: checked.workflow,
-      };
+      if (selection === undefined) {
+        if (checked.kind !== 'workflow.validate.result')
+          throw new Error('Definition registry expected a validation result.');
+        // Drop the (empty) lint diagnostics, so a fresh entry equals one read from the cache.
+        results = [
+          {
+            kind: checked.kind,
+            ok: checked.ok,
+            entrypoint: checked.entrypoint,
+            workflow: checked.workflow,
+          },
+        ];
+      } else {
+        if (checked.kind !== 'workflow.list-defs.result')
+          throw new Error('Definition registry expected a package listing.');
+        results = [...checked.definitions];
+        packagePromptRoots = [...(checked.packagePromptRoots ?? [])];
+      }
       if (engine !== undefined)
         try {
-          const { sources, promptSources } = await cacheSources(plan, result);
+          const sources: Record<string, string> = {};
+          const promptSources: Record<string, string> = {};
+          for (const result of results) {
+            const fingerprints = await cacheSources(plan, result, packagePromptRoots ?? []);
+            Object.assign(sources, fingerprints.sources);
+            Object.assign(promptSources, fingerprints.promptSources);
+          }
           await mkdir(root, { recursive: true, mode: 0o700 });
           const temporary = `${path}.${randomUUID()}.tmp`;
           await writeFile(
             temporary,
-            JSON.stringify({ version: 7, engine, plan, sources, promptSources, result }),
+            JSON.stringify({
+              version: 8,
+              engine,
+              plan,
+              sources,
+              promptSources,
+              packageFiles: walked,
+              packagePromptRoots,
+              results,
+            }),
             {
               mode: 0o600,
               flag: 'wx',
@@ -338,13 +508,16 @@ export async function listDefinitions(
           /* Cache availability does not change the validated discovery result. */
         }
     }
-    const previous = names.get(result.workflow.name);
-    if (previous)
-      throw new Error(
-        `Duplicate workflow name ${result.workflow.name}: ${previous} and ${entrypoint}. Choose directories with unique definition names.`,
-      );
-    names.set(result.workflow.name, entrypoint);
-    definitions.push(result);
+    for (const result of results) {
+      const name = listingName(result);
+      const previous = names.get(name);
+      if (previous)
+        throw new Error(
+          `Duplicate workflow name ${name}: ${previous} and ${result.entrypoint}. Choose directories with unique definition names.`,
+        );
+      names.set(name, result.entrypoint);
+      definitions.push(result);
+    }
   }
   return { kind: 'workflow.list-defs.result', ok: true, definitions };
 }

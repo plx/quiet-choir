@@ -108,6 +108,35 @@ export async function withPromptSources(
 }
 
 /**
+ * Add every walked file of a package (ADR 0065 section 4) to a source fingerprint, so an edit to a
+ * resource, a template or a helper the compiler never reaches is a code change like a TypeScript
+ * edit. `files` comes from `packageFiles` (every regular file under the package root's real path,
+ * except under `node_modules/` and `.git/`) with its hashes. Each file is keyed like
+ * {@link fingerprintSources} keys a TypeScript source: its path relative to the same project root,
+ * with `/` separators, so a file both lists carries one entry with one hash. Run it after
+ * {@link withPromptSources}: the compiler's dependencies outside the root and prompt roots outside
+ * it keep their own entries. The entries are merged into `files`, keys sorted, and `hash`
+ * recomputed over the merged map. A single-module run never calls it. @internal
+ */
+export async function withPackageSources(
+  plan: TypecheckPlan,
+  source: SourceFingerprint,
+  files: readonly { readonly path: string; readonly sha256: string }[],
+): Promise<SourceFingerprint> {
+  if (files.length === 0) return source;
+  const entrypoint = await realpath(plan.entrypoint);
+  const config = plan.configuration.kind === 'tsconfig' ? plan.configuration.path : undefined;
+  const project = await projectRoot(entrypoint, config);
+  const merged = new Map(Object.entries(source.files));
+  for (const file of files)
+    merged.set(relative(project, file.path).split(sep).join('/'), file.sha256);
+  const sorted: Record<string, string> = {};
+  for (const key of [...merged.keys()].sort())
+    Object.defineProperty(sorted, key, { value: merged.get(key), enumerable: true });
+  return { hash: digest(sorted), files: sorted };
+}
+
+/**
  * Persist launch paths separately from semantic identity so pending can check bytes without
  * imports. A package run (ADR 0065 section 2) passes `override`: `entrypoint` becomes the real path
  * of the selected workflow's module and `package` records the package's real root, name and

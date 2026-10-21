@@ -136,6 +136,41 @@ package run with a different package root is `run.incompatible` before import, w
 `launch.entrypoint` is refused the same way after import. Fork entries of a package run read
 `workflow execute <root> --workflow <name> --fork-from RUN ...`.
 
+The validate document of a package also carries the whole package, uncompacted, as `package`:
+`{root, name, version, description, whenToUse, entry, workflows, prompts, files}`. `entry` is the
+entry workflow's name or null. `workflows` lists every declared workflow in declaration order as
+`{name, version, description, whenToUse, entrypoint, inputSchema, roster}`, where `entrypoint` is
+its module and `roster` lists its roster entries in key order as
+`{name, harness, access, model, description}` (`model` is the entry's model for its harness, or
+null). `prompts` lists `{root, entries: [{name, file, description, params, variables}]}` once per
+prompt root, package sets first, then each workflow's static tree; `params` are the sorted keys of
+the entry's params schema. `files` is `{count, bytes, sha256}` over every regular file under the
+root except `node_modules/` and `.git/`, with `sha256` a digest of root-relative paths and contents
+that does not depend on where the package sits. `validate` describes every declared workflow, so a
+failure in any one of them (such as a broken template) fails it as `load.definition`. A package
+run's `launch.sources` holds those same files with the compiler's dependencies and prompt roots
+outside the root, so editing any of them between execute and resume is a code change
+(`run.incompatible` with `details.changed: ["code"]`, accepted by `--accept-code-change`).
+`validate` and `execute` log one warning when the files total more than 10 MiB, naming the five
+largest.
+
+`list-defs` lists each workflow of a `*.quiet-choir` package as `<package>/<workflow>` and does not
+scan a package for loose definition files; a package directory without `package.ts`, or with a
+JavaScript manifest, fails it. A package entry's `entrypoint` is the workflow's module, and it
+carries `package: {root, name, version, description, whenToUse}`; a loose entry has no `package`.
+Entries are ordered by file path or package root, then by declaration order. Listing names, not
+workflow names, must be unique: two packages that both declare `review` list fine, while two
+packages with one name, or a loose workflow named `demo/main` beside package `demo`, are duplicates.
+Human rows read `demo/main@1<TAB><module><TAB><description>` followed by
+`<TAB>package demo@1: <package description>` when the package has one. `execute NAME` resolves an
+exact listing name first, then a bare workflow name that exactly one package declares; a bare name
+several packages declare fails `load.definition` with
+`Workflow name review is ambiguous: demo/review, other/review; use <package>/<workflow>`, and an
+unknown name fails `load.definition` with `Unknown workflow name`. Without `--registry-dir`, a FILE
+argument that names no existing path and matches `<package>/<workflow>` (a package name, one `/`, no
+further separator, and no TypeScript or `.quiet-choir` suffix) is treated as a registered name. The
+definition cache envelope is version 8; older entries are revalidated and rewritten.
+
 ## Run results of execute, resume and answer --resume
 
 These three commands print a compact, constant-shape result by default, so an agent session reads

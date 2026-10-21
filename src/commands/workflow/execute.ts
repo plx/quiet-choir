@@ -25,9 +25,23 @@ import {
   type HarnessSelection,
 } from '../../workflow/loader/harness-selection.js';
 import { WorkflowExecutor } from '../../workflow/loader/executor.js';
+import { PACKAGE_NAME_PATTERN } from '../../workflow/package/index.js';
 import type { RehearsalReport } from '../../workflow/loader/rehearsal.js';
 import type { JsonValue } from '../../workflow/runtime/model.js';
 import { validatePolicy, type PolicyOverride } from '../../workflow/runtime/policy.js';
+
+/** Whether `name` has the `<package>/<workflow>` shape of a package workflow's registry name. */
+function packageWorkflowName(name: string): boolean {
+  const [pkg, workflow, ...rest] = name.split('/');
+  return (
+    rest.length === 0 &&
+    pkg !== undefined &&
+    PACKAGE_NAME_PATTERN.test(pkg) &&
+    workflow !== undefined &&
+    workflow.length > 0 &&
+    !workflow.includes('\\')
+  );
+}
 
 interface WorkflowExecuteArgs {
   readonly file: string | undefined;
@@ -108,12 +122,14 @@ export default class WorkflowExecute extends WorkflowCommand {
     if (args.file === undefined && !flags.resume)
       this.fail('usage.flag', 'A workflow file is required unless --resume --run-id is used.');
     // A path, a TypeScript file name or a .quiet-choir package name is a file argument, so a
-    // missing one is a file error rather than a registry lookup.
+    // missing one is a file error rather than a registry lookup. A missing `<package>/<workflow>`
+    // spelling is the registry name of a package workflow (ADR 0065 section 3).
     const useRegistry =
       args.file !== undefined &&
       ((flags['registry-dir']?.length ?? 0) > 0 ||
         (!existsSync(args.file) &&
-          !/[\\/]|\.(?:ts|tsx|mts|cts)$|\.quiet-choir$/iu.test(args.file)));
+          !/\.(?:ts|tsx|mts|cts)$|\.quiet-choir$/iu.test(args.file) &&
+          (!/[\\/]/u.test(args.file) || packageWorkflowName(args.file))));
     if (flags.workflow !== undefined && (args.file === undefined || useRegistry))
       this.fail(
         'usage.flag',

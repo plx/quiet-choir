@@ -27,7 +27,7 @@ import type { NextCommand } from './next-commands.js';
 import type { AnswerDelivery } from '../runtime/inbox.js';
 import type { ForkOptions, ResumeCheck, WorkflowIdentity } from '../runtime/replay-model.js';
 import type { DurabilityDiagnostic, TypecheckPlan } from '../typecheck/model.js';
-import type { WorkflowLaunchPackage } from '../runtime/question-model.js';
+import type { PackageListing, PackageManifestSection } from '../package/manifest.js';
 
 /**
  * A `*.quiet-choir` package to load (ADR 0065 section 2). The plan's `typecheck` is the manifest's;
@@ -58,6 +58,13 @@ export interface ValidateWorkflowPlan extends ExecutionPlan {
    * `load.typecheck` before import; `'warn'` logs them and validates, as `list-defs` does.
    */
   readonly durabilityLint?: 'error' | 'warn';
+  /**
+   * Internal, for the definition registry only (the CLI never sets it): validate every declared
+   * workflow of `package` without selecting one, so a package without `entry` lists too, and return
+   * a `workflow.list-defs.result` with one {@link ValidatedWorkflow} per workflow, in declaration
+   * order. @internal
+   */
+  readonly everyWorkflow?: boolean;
 }
 
 /** Discover trusted workflow modules in directories, validating each before publishing metadata. */
@@ -81,6 +88,8 @@ export interface ExecuteNamedWorkflowPlan extends Omit<
 export interface ExecuteWorkflowPlan extends ExecutionPlan {
   readonly maxChildDepth?: number;
   readonly registryName?: string;
+  /** The package a registry name was listed under; the load refuses a manifest that now has another name. */
+  readonly registryPackage?: string;
   readonly maxRunCostUsd?: number | null;
   readonly maxRunAgentAttempts?: number | null;
   /** Sticky subscription-window utilization gate, 0 to 1; null clears it (ADR 0053). */
@@ -379,6 +388,12 @@ export type WorkflowCommandResult = ExecutionResult &
         readonly kind: 'workflow.list-defs.result';
         readonly ok: true;
         readonly definitions: readonly ValidatedWorkflow[];
+        /**
+         * Internal, set only by an `everyWorkflow` validation for the definition registry: the
+         * roots of the package's own prompt sets, which the registry cache fingerprints like a
+         * workflow's prompt roots. `list-defs` never publishes it. @internal
+         */
+        readonly packagePromptRoots?: readonly string[];
       }
     | (WorktreeCleanResult & { readonly kind: 'workflow.clean.result'; readonly ok: true })
     | (RunRemovalResult & { readonly kind: 'workflow.rm.result'; readonly ok: true })
@@ -486,8 +501,13 @@ export type WorkflowCommandResult = ExecutionResult &
         readonly ok: true;
         /** The workflow's module: for a package, the selected workflow's own module. */
         readonly entrypoint: string;
-        /** The package a `*.quiet-choir` validation loaded; absent for a single module. */
-        readonly package?: WorkflowLaunchPackage;
+        /**
+         * The package section of a `*.quiet-choir` validation (ADR 0065 section 5): the package's
+         * root, name, version, description, `whenToUse` and entry, every declared workflow with
+         * its module, input schema and roster summary, the prompt inventory and the walked files'
+         * count, bytes and digest. Absent for a single module.
+         */
+        readonly package?: PackageManifestSection;
         /** Durability lint diagnostics; always empty on success, since findings fail validation. */
         readonly diagnostics: readonly DurabilityDiagnostic[];
         readonly workflow: WorkflowDescription & {
@@ -516,8 +536,15 @@ export type WorkflowCommandResult = ExecutionResult &
       }
   );
 
-/** One validated definition, as `list-defs` caches and lists it: a validate result without `diagnostics`. */
+/**
+ * One validated definition, as `list-defs` caches and lists it: a validate result without
+ * `diagnostics`, whose `package`, present for a workflow of a `*.quiet-choir` package, is the
+ * package's listing summary rather than the full validate section.
+ */
 export type ValidatedWorkflow = Omit<
   Extract<WorkflowCommandResult, { readonly kind: 'workflow.validate.result' }>,
-  'diagnostics'
->;
+  'diagnostics' | 'package'
+> & {
+  /** The package that declares the workflow; absent for a loose definition file. */
+  readonly package?: PackageListing;
+};

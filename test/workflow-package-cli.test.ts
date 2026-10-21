@@ -2,7 +2,7 @@
 // execute, validate, --dry-run and check-resume with its manifest as the typecheck entrypoint; the
 // launch records the selected workflow's module and `launch.package`, and every resume route
 // re-enters through the manifest.
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +13,7 @@ import WorkflowCheckResume from '../src/commands/workflow/check-resume.js';
 import WorkflowExecute from '../src/commands/workflow/execute.js';
 import WorkflowInspect from '../src/commands/workflow/inspect.js';
 import WorkflowList from '../src/commands/workflow/list.js';
+import WorkflowListDefinitions from '../src/commands/workflow/list-defs.js';
 import WorkflowResume from '../src/commands/workflow/resume.js';
 import WorkflowTypecheck from '../src/commands/workflow/typecheck.js';
 import WorkflowValidate from '../src/commands/workflow/validate.js';
@@ -21,6 +22,7 @@ import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import { TickWorkflowExecutor } from '../src/workflow/loader/tick.js';
 import { readHarnessSelection } from '../src/workflow/loader/harness-selection.js';
 import type { PackageSelection } from '../src/workflow/loader/model.js';
+import { PACKAGE_SIZE_WARNING_BYTES } from '../src/workflow/package/files.js';
 import { analyzePackagePath } from '../src/workflow/package/plan.js';
 import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
 import { TypecheckProgramCache } from '../src/workflow/typecheck/program-cache.js';
@@ -49,6 +51,33 @@ interface ProjectOptions {
   readonly otherCts?: boolean;
   /** A package-level prompt set over `prompts/Review.md` with this template. */
   readonly template?: string;
+}
+
+/**
+ * A `workflows/other.ts` that declares a roster entry pinned to Claude and, with `ownPrompts`, its
+ * own prompt set over `other-prompts/Bad.md`, whose `{}` params the caller's template must match.
+ */
+function rosterOther(ownPrompts = false): string {
+  return `import { join } from 'node:path';
+import { definePrompts, defineRoster, defineWorkflow, z } from ${engine};
+
+const roster = defineRoster({
+  Reviewer: { harness: 'claude', model: 'sonnet', description: 'Reviews the change.' },
+});
+${ownPrompts ? "const own = definePrompts(join(import.meta.dirname, '..', 'other-prompts'), { Bad: { file: 'Bad.md', params: z.object({}) } });" : ''}
+export default defineWorkflow({
+  name: 'other',
+  version: '1',
+  description: 'Review the change.',
+  input: z.object({}),
+  output: z.string(),
+  roster,
+${ownPrompts ? '  prompts: [own],\n' : ''}  async run(ctx) {
+    const reply = await ctx.claude.text('review', { prompt: 'Review the change.' });
+    return \`other:\${reply.output}\`;
+  },
+});
+`;
 }
 
 const mainSource = `import { appendFileSync, existsSync } from 'node:fs';
@@ -116,6 +145,11 @@ async function project(options: ProjectOptions = {}) {
     `import { z } from ${engine};\nexport const MainInput = z.object({ log: z.string(), marker: z.string().nullable() });\n`,
   );
   await writeFile(join(dir, 'workflows', 'main.ts'), mainSource);
+  // A resource and a helper that no module imports: only the whole-directory walk sees them.
+  await mkdir(join(dir, 'resources'));
+  await writeFile(join(dir, 'resources', 'notes.txt'), 'notes\n');
+  await mkdir(join(dir, 'lib'));
+  await writeFile(join(dir, 'lib', 'unused.ts'), 'export const unused = 1;\n');
   const otherFile = options.otherCts === true ? 'other.cts' : 'other.ts';
   // A .cts module that an ESM manifest imports is required without tsx's .js to .ts mapping, so
   // it takes the engine from the test process instead of importing it.
@@ -156,6 +190,7 @@ export default definePackage({
   name: 'demo',
   version: '1',
   description: 'A demo package.',
+  whenToUse: 'Trying packages out.',
   workflows: [main, other],
 ${options.entry === false ? '' : '  entry: main,\n'}${prompts ? '  prompts: [prompts],\n' : ''}});
 `,
@@ -924,5 +959,274 @@ export default defineWorkflow({ name: 'main', version: '1', input: z.object({}),
     expect(failure(manifest.stdout)['message']).toContain(
       'is a package manifest; pass its .quiet-choir directory',
     );
+  });
+});
+
+/** Resume a package run by ID with the project's fixture harness. */
+async function resume(fixture: Project, stateDir: string, runId: string, acceptCodeChange = false) {
+  return executor().execute({
+    kind: 'workflow.resume',
+    runId,
+    stateDir,
+    harness: await readHarnessSelection(`fixture:${fixture.fixtures}`, undefined, fixture.root),
+    ...(acceptCodeChange ? { acceptCodeChange } : {}),
+  });
+}
+
+// Whole-directory fingerprinting and the validate package section (ADR 0065 sections 4-5, #585).
+// measured: 0.4-1.6 s each in a two-file local run without coverage (dominated by the tsImport
+// compiles on the shared program cache); about 2.5x that under coverage.
+describe('package fingerprints and the validate package section', { timeout: 60_000 }, () => {
+  it.for(['resources/notes.txt', 'lib/unused.ts'])(
+    'refuses an edit to %s between execute and resume as a code change',
+    async (file, { stateDir }) => {
+      const fixture = await project();
+      const first = await execute(fixture, stateDir, 'pkg-walk', null);
+      expect(first).toMatchObject({ ok: false, code: 'workflow.failed' });
+      const sources = Object.keys(
+        (await readRun({ stateDir, runId: 'pkg-walk' })).launch?.sources ?? {},
+      );
+      expect(sources).toEqual(
+        expect.arrayContaining([
+          join(fixture.dir, 'resources', 'notes.txt'),
+          join(fixture.dir, 'lib', 'unused.ts'),
+        ]),
+      );
+      await writeFile(join(fixture.dir, ...file.split('/')), 'edited\n');
+      await writeFile(fixture.marker, '');
+      const refused = await resume(fixture, stateDir, 'pkg-walk');
+      expect(refused).toMatchObject({
+        ok: false,
+        code: 'run.incompatible',
+        details: { changed: ['code'], canAcceptCodeChange: true },
+      });
+      const checked = await executor().execute({
+        kind: 'workflow.check-resume',
+        typecheck: fixture.typecheck,
+        package: fixture.selection(null),
+        runId: 'pkg-walk',
+        stateDir,
+        cwd: fixture.root,
+      });
+      expect(checked).toMatchObject({
+        ok: false,
+        code: 'run.incompatible',
+        details: { changed: ['code'], canAcceptCodeChange: true },
+      });
+      const accepted = await resume(fixture, stateDir, 'pkg-walk', true);
+      expect(accepted, JSON.stringify(accepted).slice(0, 2000)).toMatchObject({
+        ok: true,
+        run: { status: 'completed', output: 'main:one' },
+      });
+      expect(await readFile(fixture.log, 'utf8')).toBe('first\n');
+    },
+  );
+
+  it('leaves node_modules, .git and symlinks inside the package out of the fingerprint', async ({
+    stateDir,
+  }) => {
+    const fixture = await project();
+    const ignoredFiles = [
+      join(fixture.dir, 'node_modules', 'dep', 'index.js'),
+      join(fixture.dir, 'resources', 'node_modules', 'nested.txt'),
+      join(fixture.dir, '.git', 'HEAD'),
+    ];
+    for (const file of ignoredFiles) {
+      await mkdir(dirname(file), { recursive: true });
+      await writeFile(file, 'before\n');
+    }
+    await symlink(join(fixture.dir, 'resources', 'notes.txt'), join(fixture.dir, 'link.txt'));
+    await symlink(join(fixture.dir, 'resources'), join(fixture.dir, 'linked-resources'));
+    const first = await execute(fixture, stateDir, 'pkg-ignored', null);
+    expect(first).toMatchObject({ ok: false, code: 'workflow.failed' });
+    const sources = Object.keys(
+      (await readRun({ stateDir, runId: 'pkg-ignored' })).launch?.sources ?? {},
+    );
+    expect(sources).toContain(join(fixture.dir, 'resources', 'notes.txt'));
+    for (const path of [
+      ...ignoredFiles,
+      join(fixture.dir, 'link.txt'),
+      join(fixture.dir, 'linked-resources', 'notes.txt'),
+    ])
+      expect(sources).not.toContain(path);
+    for (const file of ignoredFiles) await writeFile(file, 'after\n');
+    await writeFile(fixture.marker, '');
+    const resumed = await resume(fixture, stateDir, 'pkg-ignored');
+    expect(resumed, JSON.stringify(resumed).slice(0, 2000)).toMatchObject({
+      ok: true,
+      run: { status: 'completed' },
+    });
+  });
+
+  it('warns once about a package above the size threshold, naming its largest files', async () => {
+    const small: string[] = [];
+    const fixture = await project();
+    expect(
+      await executor(small).execute({
+        kind: 'workflow.validate',
+        typecheck: fixture.typecheck,
+        package: fixture.selection(null),
+      }),
+    ).toMatchObject({ ok: true });
+    expect(small.filter((line) => line.includes('warning threshold'))).toEqual([]);
+    await writeFile(
+      join(fixture.dir, 'resources', 'big.bin'),
+      Buffer.alloc(PACKAGE_SIZE_WARNING_BYTES + 1),
+    );
+    const lines: string[] = [];
+    expect(
+      await executor(lines).execute({
+        kind: 'workflow.validate',
+        typecheck: fixture.typecheck,
+        package: fixture.selection(null),
+      }),
+    ).toMatchObject({ ok: true });
+    const warnings = lines.filter((line) => line.includes('warning threshold'));
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(
+      /^\[warn\] Package demo holds 10\.0 MiB in \d+ files, above the 10\.0 MiB warning threshold; every resume hashes all of them\. Largest: resources\/big\.bin \(10\.0 MiB\), /u,
+    );
+  });
+
+  it('fails validate on a broken template in a workflow that is not selected', async () => {
+    const fixture = await project({ other: rosterOther(true) });
+    await mkdir(join(fixture.dir, 'other-prompts'));
+    await writeFile(join(fixture.dir, 'other-prompts', 'Bad.md'), '{{ missing }}\n');
+    const result = await executor().execute({
+      kind: 'workflow.validate',
+      typecheck: fixture.typecheck,
+      package: fixture.selection('main'),
+    });
+    expect(result).toMatchObject({ ok: false, code: 'load.definition' });
+    if (result.ok) throw new Error('Expected a failure.');
+    expect(result.message).toContain('Package demo workflow other');
+    expect(result.message).toContain('reads variable missing');
+  });
+});
+
+// measured: 4.6-4.7 s each in a two-file local run without coverage, since every command compiles
+// the engine from scratch (the CLI passes no program cache); about 2.5x that under coverage.
+describe('package sections and registry names through the CLI', { timeout: 120_000 }, () => {
+  it('pins the package section of validate --json, independent of the package location', async ({
+    cli,
+  }) => {
+    const fixture = await project({ other: rosterOther(), template: 'Review {{ title }}.\n' });
+    const validated = await cli.run(WorkflowValidate, [fixture.dir, '--json']);
+    expect(validated.error, validated.stderr).toBeUndefined();
+    const document = json(validated.stdout);
+    expect(document['package']).toEqual({
+      root: fixture.dir,
+      name: 'demo',
+      version: '1',
+      description: 'A demo package.',
+      whenToUse: 'Trying packages out.',
+      entry: 'main',
+      workflows: [
+        {
+          name: 'main',
+          version: '1',
+          description: null,
+          whenToUse: null,
+          entrypoint: join(fixture.dir, 'workflows', 'main.ts'),
+          inputSchema: expect.any(Object) as unknown,
+          roster: [],
+        },
+        {
+          name: 'other',
+          version: '1',
+          description: 'Review the change.',
+          whenToUse: null,
+          entrypoint: join(fixture.dir, 'workflows', 'other.ts'),
+          inputSchema: expect.any(Object) as unknown,
+          roster: [
+            {
+              name: 'Reviewer',
+              harness: 'claude',
+              access: 'none',
+              model: 'sonnet',
+              description: 'Reviews the change.',
+            },
+          ],
+        },
+      ],
+      prompts: [
+        {
+          root: join(fixture.dir, 'prompts'),
+          entries: [
+            {
+              name: 'Review',
+              file: 'Review.md',
+              description: null,
+              params: ['title'],
+              variables: ['title'],
+            },
+          ],
+        },
+      ],
+      // package.ts, contracts.ts, prompts.ts, prompts/Review.md, both workflows, the resource and
+      // the un-imported helper.
+      files: {
+        count: 8,
+        bytes: expect.any(Number) as unknown,
+        sha256: expect.stringMatching(/^[0-9a-f]{64}$/u) as unknown,
+      },
+    });
+    // The top-level workflow stays compact; the human line is unchanged.
+    expect(document['workflow']).not.toHaveProperty('entrypoint');
+    // The same package elsewhere has the same file digest.
+    const moved = await project();
+    await rm(moved.dir, { recursive: true });
+    await cp(fixture.dir, moved.dir, { recursive: true });
+    const copied = await cli.run(WorkflowValidate, [moved.dir, '--json']);
+    expect(copied.error, copied.stderr).toBeUndefined();
+    const files = (document['package'] as { files: unknown }).files;
+    expect((json(copied.stdout)['package'] as { files: unknown }).files).toEqual(files);
+  });
+
+  it('lists package workflows and runs one by <package>/<workflow> without --registry-dir', async ({
+    cli,
+    stateDir,
+  }) => {
+    const fixture = await project();
+    const listed = await cli.run(WorkflowListDefinitions, [fixture.root]);
+    expect(listed.error, listed.stderr).toBeUndefined();
+    expect(listed.stdout).toContain(
+      `demo/main@1\t${join(fixture.dir, 'workflows', 'main.ts')}\tpackage demo@1: A demo package.`,
+    );
+    expect(listed.stdout).toContain(
+      `demo/other@1\t${join(fixture.dir, 'workflows', 'other.ts')}\t`,
+    );
+    const cwd = vi.spyOn(process, 'cwd').mockReturnValue(fixture.root);
+    try {
+      const ran = await cli.run(WorkflowExecute, [
+        'demo/other',
+        '--harness',
+        `fixture:${fixture.fixtures}`,
+        '--state-dir',
+        stateDir,
+        '--run-id',
+        'by-name',
+        '--json',
+      ]);
+      expect(ran.error, ran.stderr).toBeUndefined();
+      expect(json(ran.stdout)).toMatchObject({ status: 'completed', output: 'other:reviewed' });
+      const missing = await cli.run(WorkflowExecute, [
+        'demo/missing',
+        '--state-dir',
+        stateDir,
+        '--json',
+      ]);
+      expect(failure(missing.stdout)).toMatchObject({
+        code: 'load.definition',
+        message: expect.stringContaining('treated as a registered name') as unknown,
+      });
+    } finally {
+      cwd.mockRestore();
+    }
+    expect((await readRun({ stateDir, runId: 'by-name' })).launch?.package).toEqual({
+      root: fixture.dir,
+      name: 'demo',
+      version: '1',
+    });
   });
 });
