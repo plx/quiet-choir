@@ -24,11 +24,16 @@ claude plugin install quiet-choir@quiet-choir
 ```
 
 Start a new Claude session and use `/quiet-choir:quiet-choir`, or ask about quiet-choir workflows.
-`/quiet-choir:run WORKFLOW [--input JSON] [--run-id ID]` rehearses a workflow, launches it with
-`workflow start` in a background Bash task, follows it with Monitor through
-`workflow events RUN --follow`, answers its questions with AskUserQuestion, and reports the outcome.
-For temporary local development, `claude --plugin-dir ./plugins/claude/quiet-choir` loads the plugin
-without registering a marketplace.
+`/quiet-choir:run WORKFLOW [--workflow NAME] [--input JSON] [--run-id ID] [--fixtures FILE]`
+rehearses a workflow, launches it with `workflow start` in a background Bash task, follows it with
+Monitor through `workflow events RUN --follow`, answers its questions with AskUserQuestion, and
+reports the outcome. WORKFLOW is a workflow file or a `*.quiet-choir` [package](packages.md)
+directory; `--workflow` selects a declared workflow other than the package's entry, `--fixtures`
+answers the rehearsal from a fixture file (a launch never uses it), the rehearsal points locations
+the workflow writes to at a temporary directory, and a package's default run ID is its package name,
+workflow name and a UTC timestamp. For temporary local development,
+`claude --plugin-dir ./plugins/claude/quiet-choir` loads the plugin without registering a
+marketplace.
 
 Codex:
 
@@ -114,11 +119,14 @@ Precede a deliberately incomplete code fence with
 broken complete example as a fragment. Executable recipes use
 `<!-- skills-check: example example-id -->`; the smoke test extracts those actual fences. It runs
 the shell golden path and jq summary in throwaway Git projects outside the checkout, runs every
-shell fence of the Claude package's `commands/run.md` verbatim (against `first.workflow.mts`, and
-the answer loop against a local workflow with a question) and fails if a shell fence goes
-unexecuted, verifies the projects stay clean, and executes logging/resume recipes with a fake
-harness and captured native protocol bytes. No credentials or paid calls are needed. `jq`, Git, and
-a POSIX shell must be on PATH for that smoke test (available on the CI Ubuntu runner).
+shell fence of the Claude package's `commands/run.md` verbatim (against `first.workflow.mts`, a
+throwaway two-workflow package whose non-entry workflow it selects with `--workflow`, validates,
+rehearses, launches and follows, and `packages/merge-down.quiet-choir`, which it validates and
+rehearses from its `clean-land` fixtures; the answer loop runs against a local workflow with a
+question) and fails if a shell fence goes unexecuted, verifies the projects stay clean, and executes
+logging/resume recipes with a fake harness and captured native protocol bytes. No credentials or
+paid calls are needed. `jq`, Git, and a POSIX shell must be on PATH for that smoke test (available
+on the CI Ubuntu runner).
 
 Mutation tests prove rejection of broken TypeScript, both invalid manifests, a bad marketplace path,
 dangling links/anchors, package escapes, links into the `docs/` tree, a drifted bundled GitHub

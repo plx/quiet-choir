@@ -100,6 +100,9 @@ export default defineWorkflow({
   `Roster entry Reviewer is pinned to harness claude; it cannot run on codex.`
 - Inside an inline child, `ctx.roster` is the child's own roster, so read it where you call it
   rather than carrying a parent's agent through shared state.
+- A [package](packages.md#roster) keeps one `roster.ts` at its root, which its workflows import.
+  Each workflow's `roster` field lists only the entries it calls, and `workflow validate --json`
+  reports each workflow's roster in the `package` section.
 
 A decider entry, `{ decider, model?, description? }`, names one of the workflow's `decisions`
 instead of a harness (checked when the workflow loads). `ctx.roster.Name` is then `{ decide }`:
@@ -121,6 +124,16 @@ const route = choice({ instructions: 'Which team?', options: { billing: null, su
 const answers = await ctx.roster.Triage.decide('triage', { state: input, questions: { route } });
 // answers.route.choice is 'billing' | 'support'
 ```
+
+### Teams
+
+A team names the roles a helper needs, independent of which entry fills them. Declare it with
+`defineTeam({ slot: 'description' })` and derive its record type with `TeamOf`; fill it where the
+workflow calls the helper, from `ctx.roster` entries, and pass it in. `Team.from(ctx.roster)` picks
+the slot keys, and `Team.from({ ...ctx.roster, critic: ctx.roster.Skeptic })` overrides one slot. A
+team registers nothing and checks no capability, and a call through a slot is identical to a call
+through the entry that fills it. See [packages](packages.md#teams) for `lib/teams.ts` and
+[bounded review/revise](patterns.md#bounded-reviewrevise) for a loop that takes a team.
 
 ## Bound agents
 

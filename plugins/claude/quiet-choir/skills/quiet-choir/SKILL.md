@@ -163,9 +163,12 @@ The events file is not saved with the run, so pass `--events` again to every `an
 for work that earlier executions already finished. See
 [operating a run](references/operating-runs.md) for the suspended-run loop and recovery.
 
-The plugin's `/quiet-choir:run WORKFLOW [--input JSON] [--run-id ID]` command packages this recipe:
-it rehearses, launches, follows and answers in one flow. To follow a run this session did not
-launch, or one started without `--events`, use
+The plugin's
+`/quiet-choir:run WORKFLOW [--workflow NAME] [--input JSON] [--run-id ID] [--fixtures FILE]` command
+packages this recipe: it rehearses, launches, follows and answers in one flow. WORKFLOW may be a
+workflow file or a `*.quiet-choir` [package](references/packages.md) directory; `--workflow` selects
+a package workflow other than its entry, and `--fixtures` rehearses from a fixture file. To follow a
+run this session did not launch, or one started without `--events`, use
 `node "$QC_CHECKOUT/bin/run.js" workflow events RUN --state-dir "$QC_RUNS" --follow` with the same
 `grep` filter: it prints the same line shape from the run record without importing the workflow,
 starts from the current end (`--from-start` replays the record first), and exits with the watch
@@ -190,6 +193,7 @@ codes above. After `answer --resume`, add `--after-execution N` with the suspend
 | Control native configuration, environment, and checkout trust                          | [Harness isolation](references/harness-isolation.md)           |
 | Declare a roster, bind agents, shared call options, identity, usage, or process limits | [Agent calls](references/agent-calls.md)                       |
 | Keep prompts in markdown templates with typed, load-checked parameters                 | [Prompt templates](references/prompts.md)                      |
+| Package workflows with a shared roster, prompts and teams; run one with `--workflow`   | [Workflow packages](references/packages.md)                    |
 | Route or grade with a decision provider (ctx.decide, roster deciders)                  | [Decision providers](references/decisions.md)                  |
 | Observe native activity, inspect transcripts, retain failed response evidence          | [Agent streaming](references/agent-streaming.md)               |
 | Inspect spend, understand token categories, stop new work at a run cap                 | [Usage and budgets](references/usage-budgets.md)               |
@@ -198,7 +202,7 @@ codes above. After `answer --resume`, add `--after-execution N` with the suspend
 | Resume after failure, accept code edits, fork completed work                           | [Durability and resumption](references/durability.md)          |
 | Read, wait on, or write GitHub through gh; burn down an epic                           | [GitHub](references/github.md)                                 |
 | Embed the engine, log responses, implement a harness                                   | [Embedding and extensions](references/extensions.md)           |
-| Port a native Workflow script: map agent, parallel, pipeline and budget                | [Native ports](references/porting-native-workflows.md)         |
+| Port a native Workflow script to rosters, prompts and a package                        | [Native ports](references/porting-native-workflows.md)         |
 
 For exit 75, use the
 [suspended-run answer loop](references/operating-runs.md#answer-a-suspended-run) or

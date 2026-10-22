@@ -296,6 +296,12 @@ the root is fingerprinted. Its `tsconfig.json` maps `quiet-choir` and its subpat
 the repository's `.prettierignore` keeps formatters off `packages/*/prompts/`, whose rendered text
 is step identity.
 
+## For agents
+
+Both skill copies carry a condensed authoring reference, `references/packages.md`, and the Claude
+plugin's `/quiet-choir:run WORKFLOW [--workflow NAME] [--fixtures FILE]` command accepts a package
+directory ([installing the plugins](plugins.md)).
+
 ## What comes next
 
-- #591 adds the package authoring reference to the skill copies and a package-aware run command.
+- #592 removes profiles and the native scripts.
