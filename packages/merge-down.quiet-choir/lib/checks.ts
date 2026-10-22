@@ -7,8 +7,8 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Settled, StepContext, WorkflowContext } from 'quiet-choir';
 import { Check, type Check as CheckResult } from '../contracts.js';
-import { git, run } from './git.js';
-import { dirtyTreeLog, failedStep, stripAnsi, tail } from './policy.js';
+import { checkedOut, git, run } from './git.js';
+import { dirtyTreeLog, failedStep, foreignWorktree, stripAnsi, tail } from './policy.js';
 
 const STAMP = '.merge-down-lock-hash';
 const MINUTE = 60_000;
@@ -66,15 +66,21 @@ export function dependencyStamp(workdir: string): Promise<string | null> {
 /** The input of {@link runCheck}. */
 export interface CheckInput {
   readonly workdir: string;
+  readonly pr: number;
   readonly dir: string;
   readonly label: string;
   readonly command: string;
 }
 
+/** The failed step of a check that refused a worktree another PR's run took over. */
+export const FOREIGN_WORKTREE = 'foreign worktree';
+
 /**
  * Run the check suite (`command`, default `npm run check`) at the worktree's HEAD, with its output
- * in `<dir>/<label>.log` and the last 40 lines in `<label>.excerpt.txt` when it fails. The suite
- * certifies a clean HEAD only: a worktree with uncommitted or untracked changes fails as `dirty
+ * in `<dir>/<label>.log` and the last 40 lines in `<label>.excerpt.txt` when it fails. A worktree
+ * not on PR `pr`'s local branch belongs to another run, and fails as `foreign worktree` with the
+ * refusal in `error`, running nothing. The suite certifies a clean HEAD only: a worktree with
+ * uncommitted or untracked changes fails as `dirty
  * worktree` without running it (the log and excerpt list the changes), a HEAD that moved while the
  * suite ran fails as `HEAD moved`, and a worktree the install or the suite left dirty fails as `dirty
  * worktree` too (the excerpt lists the changes, then the suite's last 40 lines). Under load (1-minute load above the core count) Vitest is
@@ -88,7 +94,7 @@ export async function runCheck(
 ): Promise<CheckResult> {
   const settled: Settled<CheckResult> = await ctx.step(id, {
     identity: 'version',
-    version: 'merge-down.check/3',
+    version: 'merge-down.check/4',
     input: { ...input },
     schema: Check,
     onError: 'return',
@@ -100,6 +106,20 @@ export async function runCheck(
       const started = performance.now();
       const seconds = (): number => Math.round((performance.now() - started) / 1000);
       const head = await git(context, W, ['rev-parse', 'HEAD']);
+      const foreign = foreignWorktree(await checkedOut(context, W), input.pr);
+      if (foreign !== null)
+        return {
+          passed: false,
+          head,
+          failedStep: FOREIGN_WORKTREE,
+          exitCode: null,
+          seconds: seconds(),
+          installedDependencies: false,
+          maxWorkers: null,
+          log: null,
+          excerptFile: null,
+          error: foreign,
+        };
       // Untrimmed: a porcelain line starts with its status columns, which can be a space.
       const porcelain = ['git', 'status', '--porcelain', '--untracked-files=normal'] as const;
       const dirtyListing = async (): Promise<string | null> => {

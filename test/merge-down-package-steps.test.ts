@@ -35,7 +35,7 @@ const { runCheck } = await lib<{
   runCheck: (
     ctx: WorkflowContext,
     id: string,
-    input: { workdir: string; dir: string; label: string; command: string },
+    input: { workdir: string; pr: number; dir: string; label: string; command: string },
   ) => Promise<unknown>;
 }>('checks');
 const { landMerge } = await lib<{
@@ -93,15 +93,15 @@ const setup = (resume = false) => ({
   ...(resume ? { resume: true } : {}),
 });
 
-/** A repository with one commit at `dir`; returns its HEAD. */
-async function repository(dir: string): Promise<string> {
+/** A repository with one commit on `branch` at `dir`; returns its HEAD. */
+async function repository(dir: string, branch = 'main'): Promise<string> {
   await mkdir(dir, { recursive: true });
   const git = (...args: string[]) =>
     execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], {
       cwd: dir,
       encoding: 'utf8',
     }).trim();
-  git('init', '-q', '-b', 'main');
+  git('init', '-q', '-b', branch);
   await writeFile(join(dir, 'README.md'), 'hello\n');
   git('add', '.');
   git('commit', '-q', '-m', 'init');
@@ -109,14 +109,18 @@ async function repository(dir: string): Promise<string> {
 }
 
 describe('runCheck', () => {
+  // The local branch of PR 1, which its run checks out in the worktree.
+  const own = 'merge-down/package/pr-1';
+
   it('logs every part of a compound command, including one with a trailing comment', async () => {
     const workdir = join(real, 'worktree');
     const dir = join(real, 'state');
-    await repository(workdir);
+    await repository(workdir, own);
     const run = await runWorkflow(
       definition((ctx) =>
         runCheck(ctx, 'check', {
           workdir,
+          pr: 1,
           dir,
           label: 'check-0',
           command: 'echo first part failed; false && echo second part # trailing comment',
@@ -132,11 +136,12 @@ describe('runCheck', () => {
   it('fails a suite that leaves the worktree dirty, listing the changes before the log tail', async () => {
     const workdir = join(real, 'worktree');
     const dir = join(real, 'state');
-    const head = await repository(workdir);
+    const head = await repository(workdir, own);
     const run = await runWorkflow(
       definition((ctx) =>
         runCheck(ctx, 'check', {
           workdir,
+          pr: 1,
           dir,
           label: 'check-0',
           command: 'echo suite output; echo edited >> README.md',
@@ -155,6 +160,33 @@ describe('runCheck', () => {
     const excerpt = await readFile(join(dir, 'check-0.excerpt.txt'), 'utf8');
     expect(excerpt).toContain(' M README.md');
     expect(excerpt.indexOf(' M README.md')).toBeLessThan(excerpt.indexOf('suite output'));
+  });
+
+  it('refuses, without running the suite, a worktree another PR’s run checked out', async () => {
+    const workdir = join(real, 'worktree');
+    const dir = join(real, 'state');
+    const head = await repository(workdir, 'merge-down/package/pr-2');
+    const ran = join(real, 'ran');
+    const run = await runWorkflow(
+      definition((ctx) =>
+        runCheck(ctx, 'check', {
+          workdir,
+          pr: 1,
+          dir,
+          label: 'check-0',
+          command: `echo ran > '${ran}'`,
+        }),
+      ),
+      setup(),
+    );
+    expect(run.output).toMatchObject({
+      passed: false,
+      head,
+      failedStep: 'foreign worktree',
+      error:
+        'worktree belongs to another run (on merge-down/package/pr-2); re-run this PR from the start',
+    });
+    await expect(readFile(ran, 'utf8')).rejects.toThrow();
   });
 });
 

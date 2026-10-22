@@ -148,17 +148,40 @@ export function ensureClosesBody(body: string, issue: number): string | null {
 export type PublishPlan = { readonly action: 'push' | 'skip' } | { readonly refused: string };
 
 /**
+ * Why the shared worktree is not this run's, or null when it is: `ref` is the worktree's
+ * `git symbolic-ref HEAD` (null when detached). Every run on a root checks out its own branch, so
+ * another branch means another PR's run took the worktree over since this run synced.
+ */
+export function foreignWorktree(ref: string | null, pr: number): string | null {
+  if (ref === `refs/heads/${localBranch(pr)}`) return null;
+  const on = ref === null ? 'a detached HEAD' : ref.replace(/^refs\/heads\//, '');
+  return `worktree belongs to another run (on ${on}); re-run this PR from the start`;
+}
+
+/**
  * The publish decision. `sha` is the head that passed the local checks, `head` the worktree's HEAD,
- * `remote` the PR branch on GitHub and `expected` the head this run last saw there. A worktree that
- * moved off the checked head is refused; a remote already at `sha` (pushed before a crash, or
- * nothing changed) is skipped; any remote but `expected` means someone else pushed.
+ * `remote` the PR branch on GitHub and `expected` the head this run last saw there; `ref` is the
+ * worktree's branch and `descends` whether `sha` descends from `synced`, the head this run synced.
+ * A worktree another run took over, or a checked head not built on this run's sync, is refused; so
+ * is a worktree that moved off the checked head. A remote already at `sha` (pushed before a crash,
+ * or nothing changed) is skipped; any remote but `expected` means someone else pushed.
  */
 export function publishPlan(state: {
   readonly sha: string;
   readonly head: string;
   readonly remote: string;
   readonly expected: string;
+  readonly pr: number;
+  readonly ref: string | null;
+  readonly synced: string;
+  readonly descends: boolean;
 }): PublishPlan {
+  const foreign = foreignWorktree(state.ref, state.pr);
+  if (foreign !== null) return { refused: foreign };
+  if (!state.descends)
+    return {
+      refused: `worktree belongs to another run (the checked head ${state.sha} does not descend from this run's synced head ${state.synced}); re-run this PR from the start`,
+    };
   if (state.head !== state.sha)
     return {
       refused: `worktree HEAD drifted from the checked head (HEAD ${state.head}, checked ${state.sha})`,

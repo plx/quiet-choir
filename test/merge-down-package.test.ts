@@ -110,37 +110,75 @@ describe('closing keywords', () => {
 
 describe('publishPlan', () => {
   const [checked, seen, other] = ['c'.repeat(40), 'e'.repeat(40), 'f'.repeat(40)];
+  // The worktree on this run's branch, with the checked head built on the synced one.
+  const owned = {
+    pr: 42,
+    ref: 'refs/heads/merge-down/package/pr-42',
+    synced: seen,
+    descends: true,
+  };
 
   it('pushes the checked head over the head this run last saw', () => {
-    expect(publishPlan({ sha: checked, head: checked, remote: seen, expected: seen })).toEqual({
-      action: 'push',
-    });
+    expect(
+      publishPlan({ ...owned, sha: checked, head: checked, remote: seen, expected: seen }),
+    ).toEqual({ action: 'push' });
   });
 
   it('skips a push that already happened', () => {
-    expect(publishPlan({ sha: checked, head: checked, remote: checked, expected: seen })).toEqual({
-      action: 'skip',
-    });
+    expect(
+      publishPlan({ ...owned, sha: checked, head: checked, remote: checked, expected: seen }),
+    ).toEqual({ action: 'skip' });
   });
 
   it('refuses when the worktree HEAD drifted from the checked head', () => {
-    expect(publishPlan({ sha: checked, head: other, remote: seen, expected: seen })).toHaveProperty(
+    expect(
+      publishPlan({ ...owned, sha: checked, head: other, remote: seen, expected: seen }),
+    ).toHaveProperty(
       'refused',
       `worktree HEAD drifted from the checked head (HEAD ${other}, checked ${checked})`,
     );
     // Even when the remote already holds the drifted HEAD.
     expect(
-      publishPlan({ sha: checked, head: other, remote: other, expected: seen }),
+      publishPlan({ ...owned, sha: checked, head: other, remote: other, expected: seen }),
     ).toHaveProperty('refused');
   });
 
   it('refuses when someone else pushed', () => {
     expect(
-      publishPlan({ sha: checked, head: checked, remote: other, expected: seen }),
+      publishPlan({ ...owned, sha: checked, head: checked, remote: other, expected: seen }),
     ).toHaveProperty(
       'refused',
       `remote head moved to ${other} (expected ${seen}); someone else pushed`,
     );
+  });
+
+  it('refuses a worktree another run took over, even with the push already done', () => {
+    const state = { sha: checked, head: checked, remote: checked, expected: seen };
+    expect(publishPlan({ ...owned, ...state, ref: 'refs/heads/merge-down/package/pr-43' })).toEqual(
+      {
+        refused:
+          'worktree belongs to another run (on merge-down/package/pr-43); re-run this PR from the start',
+      },
+    );
+    expect(publishPlan({ ...owned, ...state, ref: null })).toEqual({
+      refused:
+        'worktree belongs to another run (on a detached HEAD); re-run this PR from the start',
+    });
+  });
+
+  it('refuses a checked head that does not descend from the synced head', () => {
+    expect(
+      publishPlan({
+        ...owned,
+        sha: checked,
+        head: checked,
+        remote: seen,
+        expected: seen,
+        descends: false,
+      }),
+    ).toEqual({
+      refused: `worktree belongs to another run (the checked head ${checked} does not descend from this run's synced head ${seen}); re-run this PR from the start`,
+    });
   });
 });
 

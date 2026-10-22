@@ -67,6 +67,13 @@ the native script's (`-merge-down/`, `merge-down/pr-N`), so falling back to `mer
 collides with a package run. The fork-point refs (`refs/merge-down/fork-point/<pr>`) are
 deliberately shared, so a stack recorded by either tool is honored by both.
 
+One root serves one unfinished run at a time: every run checks out its own PR's branch in the same
+`worktree/`. A run resumed after another PR's run used the root finds that branch checked out, and
+blocks (`worktree belongs to another run`) instead of working there: each fix round and check suite,
+and the push, first checks that the worktree is on `merge-down/package/pr-N`, and the push also
+checks that the head it publishes descends from the head this run synced. Restart such a run with a
+new `--run-id`, or give runs that must interleave distinct `root`s.
+
 ## How it works
 
 | Stage   | Who (model / effort)                                                                  | What                                                                                                                                                                                                                                                                |

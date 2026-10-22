@@ -18,7 +18,7 @@ import {
   type WorkflowContext,
 } from 'quiet-choir';
 import { Sync, type Sync as SyncResult } from '../contracts.js';
-import { forkPointRef, localBranch, publishPlan, stripAnsi } from './policy.js';
+import { foreignWorktree, forkPointRef, localBranch, publishPlan, stripAnsi } from './policy.js';
 
 /** Where a run keeps its worktree and state: `<root>/worktree` and `<root>/state/pr-N`. */
 export interface Paths {
@@ -78,6 +78,12 @@ async function gitOk(context: StepContext, cwd: string, args: readonly string[])
 
 const remoteBranchExists = (context: StepContext, W: string, branch: string): Promise<boolean> =>
   gitOk(context, W, ['show-ref', '--verify', '--quiet', `refs/remotes/origin/${branch}`]);
+
+/** The worktree's `git symbolic-ref HEAD`, or null on a detached HEAD. */
+export async function checkedOut(context: StepContext, W: string): Promise<string | null> {
+  const ref = await run(context, ['git', 'symbolic-ref', '--quiet', 'HEAD'], { cwd: W });
+  return ref.code === 0 ? ref.stdout.trim() : null;
+}
 
 /** Whether a rebase is still in progress in the worktree. */
 export async function rebaseInProgress(context: StepContext, W: string): Promise<boolean> {
@@ -385,6 +391,25 @@ export function verifyFixes(
   });
 }
 
+/**
+ * Check, before an agent edits the worktree, that it is still on this run's branch: another PR's
+ * run on the same root checks out its own branch, and a resumed run must not work on that. Settles
+ * with the refusal, or null when the worktree is this run's.
+ */
+export function ownWorktree(
+  ctx: WorkflowContext,
+  id: string,
+  input: { readonly workdir: string; readonly pr: number },
+): Promise<string | null> {
+  return ctx.step(id, {
+    identity: 'version',
+    version: 'merge-down.owner/1',
+    input: { ...input },
+    schema: z.string().nullable(),
+    run: async (context) => foreignWorktree(await checkedOut(context, input.workdir), input.pr),
+  });
+}
+
 /** What {@link publish} reports. */
 export const Published = z.object({
   head: z.string(),
@@ -395,35 +420,43 @@ export type Published = z.output<typeof Published>;
 
 /**
  * Push `sha`, the head that passed the local checks, to the PR branch with a lease on the head this
- * run last saw. It refuses when the worktree's HEAD has moved off `sha`. It reads the remote head
- * first and accepts either the expected head or `sha`, so a retry after a crash that already pushed
- * finds the remote at `sha` and skips the push instead of failing its lease. Any other remote head
- * means someone else pushed, and the step fails.
+ * run last saw. It refuses when the worktree is no longer on this run's branch, when `sha` does not
+ * descend from `synced` (the head this run synced and reviewed), or when the worktree's HEAD has
+ * moved off `sha`: one root serves one run at a time, and a run resumed after another PR's run
+ * took the worktree over must not push what it finds there. It reads the remote head first and
+ * accepts either the expected head or `sha`, so a retry after a crash that already pushed finds
+ * the remote at `sha` and skips the push instead of failing its lease. Any other remote head means
+ * someone else pushed, and the step fails.
  */
 export function publish(
   ctx: WorkflowContext,
   id: string,
   input: {
     readonly workdir: string;
+    readonly pr: number;
     readonly branch: string;
     readonly expected: string;
+    readonly synced: string;
     readonly sha: string;
   },
 ): Promise<Settled<Published>> {
   return ctx.step(id, {
     identity: 'version',
-    version: 'merge-down.publish/2',
+    version: 'merge-down.publish/3',
     input: { ...input },
     schema: Published,
     onError: 'return',
     async run(context) {
       const W = input.workdir;
-      const { sha, expected } = input;
+      const { sha, expected, synced, pr } = input;
       const ref = `refs/heads/${input.branch}`;
+      const owned = await checkedOut(context, W);
+      const descends =
+        synced === sha || (await gitOk(context, W, ['merge-base', '--is-ancestor', synced, sha]));
       const head = await git(context, W, ['rev-parse', 'HEAD']);
       const listed = await git(context, W, ['ls-remote', 'origin', ref]);
       const remote = listed.split(/\s+/)[0] ?? '';
-      const plan = publishPlan({ sha, head, remote, expected });
+      const plan = publishPlan({ sha, head, remote, expected, pr, ref: owned, synced, descends });
       if ('refused' in plan) throw new Error(plan.refused);
       if (plan.action === 'skip') {
         // Pushed already, by this step before a crash or because nothing changed.

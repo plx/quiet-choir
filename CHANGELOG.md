@@ -13,21 +13,22 @@
   `until` stops, statuses and ledger record match the native script; its `error` status is the input
   schema's refusal. It uses its own default root and local branch, so the native script remains the
   fallback. The check suite certifies a clean HEAD only: a dirty worktree, or a HEAD that moves
-  during the suite, fails the check. Land rereads its guards (state, head, base, CI, unanswered
-  threads, open alerts) and merges in one package step, `land/merge`, so no retry or resume merges
-  on guard reads checkpointed before an earlier attempt failed. `npm run packages:rehearse`
-  validates the package and rehearses seven fixture cases (clean land, fix round, stop at fix, dirty
-  fix, blocked gate, red CI at land, a land retry that finds a new thread) from
-  `packages/rehearsals/merge-down/`; it runs in `npm run check` after the build and in a new Package
-  rehearsals CI job. `npm run typecheck` also checks the package, `durability:check` lints its
-  workflows, and `.prettierignore` keeps formatters off `packages/*/prompts/`. The README records
-  the measurements against the native pair and the API follow-ups filed with this change.
-  `gh.pr.merge` takes an optional `base` and, on every attempt, refuses a pull request retargeted to
-  another base with `reason: 'base-changed'`, so a retry or resume after a failed merge never merges
-  into the wrong branch. The new refusal changes the step's result schema, so its version is now
-  `github.pr.merge/2` and a recorded run whose `pr.merge` step completed under `/1` refuses to
-  resume with "changed on a completed step"; start a new run for it. `model.ts`, the API snapshot
-  and the record schema revision are unchanged.
+  during the suite, fails the check. One root serves one unfinished run: a run resumed after another
+  PR's run took its worktree over blocks before any fix round, check suite or push there. Land
+  rereads its guards (state, head, base, CI, unanswered threads, open alerts) and merges in one
+  package step, `land/merge`, so no retry or resume merges on guard reads checkpointed before an
+  earlier attempt failed. `npm run packages:rehearse` validates the package and rehearses seven
+  fixture cases (clean land, fix round, stop at fix, dirty fix, blocked gate, red CI at land, a land
+  retry that finds a new thread) from `packages/rehearsals/merge-down/`; it runs in `npm run check`
+  after the build and in a new Package rehearsals CI job. `npm run typecheck` also checks the
+  package, `durability:check` lints its workflows, and `.prettierignore` keeps formatters off
+  `packages/*/prompts/`. The README records the measurements against the native pair and the API
+  follow-ups filed with this change. `gh.pr.merge` takes an optional `base` and, on every attempt,
+  refuses a pull request retargeted to another base with `reason: 'base-changed'`, so a retry or
+  resume after a failed merge never merges into the wrong branch. The new refusal changes the step's
+  result schema, so its version is now `github.pr.merge/2` and a recorded run whose `pr.merge` step
+  completed under `/1` refuses to resume with "changed on a completed step"; start a new run for it.
+  `model.ts`, the API snapshot and the record schema revision are unchanged.
 - Seed `quiet-choir/std`, the opt-in standard library (#588, ADR 0063 §3, ADR 0067 §3; see
   [docs/roster.md](docs/roster.md#standard-library-entries)). `std.claude` and `std.codex` hold
   frozen roster entry fragments `Text`, `ReadOnly` and `Edit` with the built-in preset values, to

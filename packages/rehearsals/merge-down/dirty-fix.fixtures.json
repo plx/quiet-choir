@@ -303,6 +303,11 @@
       }
     },
     {
+      "step": "**",
+      "argvPrefix": ["git", "symbolic-ref"],
+      "stdout": "refs/heads/merge-down/package/pr-42\n"
+    },
+    {
       "step": "sync",
       "argvPrefix": ["git", "fetch"],
       "stdout": ""

@@ -18,9 +18,9 @@ import {
   Triage,
   type FixResult,
 } from '../contracts.js';
-import { runCheck } from '../lib/checks.js';
+import { FOREIGN_WORKTREE, runCheck } from '../lib/checks.js';
 import { localCodexReview, type LocalReview } from '../lib/codex.js';
-import { cleanupBranch, publish, snapshot, sync, verifyFixes } from '../lib/git.js';
+import { cleanupBranch, ownWorktree, publish, snapshot, sync, verifyFixes } from '../lib/git.js';
 import { landMerge } from '../lib/land.js';
 import {
   canonicalizeKeys,
@@ -280,6 +280,7 @@ export default defineWorkflow({
     const check = (label: string) =>
       runCheck(ctx, ctx.id('check', label), {
         workdir: W,
+        pr: A.pr,
         dir: DIR,
         label,
         command: A.checkCommand,
@@ -315,6 +316,7 @@ export default defineWorkflow({
       firstLocalHead === null ? Promise.resolve(null) : reviewAt('r0', firstLocalHead),
     ]);
     if (!firstReview) return blocked('review', 'reviewer returned nothing');
+    if (check0.failedStep === FOREIGN_WORKTREE) return blocked('review', String(check0.error));
     const firstLocalOk = firstLocal !== null && firstLocal.error === null;
     // The last head that passed the suite: the only head publish pushes.
     let checkedHead = check0.passed ? check0.head : null;
@@ -681,6 +683,12 @@ export default defineWorkflow({
           prompt: prompts.Implement({ situation, standingNotes, items: listed, retry, repair }),
           schema: Fix(keys),
         });
+      // Another PR's run may have taken the root over since this run synced: no agent edits its
+      // checkout. Checked again before the repair, which can come in a later session.
+      const owner = (id: string) =>
+        ownWorktree(ctx, ctx.id('fix', n, id), { workdir: W, pr: A.pr });
+      const foreign = await owner('owner');
+      if (foreign !== null) return { error: foreign };
       const first = hard ? team.surgeon : team.mechanic;
       let answer = await ask(first, 'implement', false, null);
       if (!answer.ok) {
@@ -696,6 +704,8 @@ export default defineWorkflow({
         ctx.log(
           `fix-${String(n)}: checks fail at ${settled.head.slice(0, 7)}; repairing with the surgeon tier`,
         );
+        const taken = await owner('repair-owner');
+        if (taken !== null) return { error: taken };
         const repaired = await ask(team.surgeon, 'repair', false, {
           notes: JSON.stringify(settled.report.notes),
           head: settled.head,
@@ -839,8 +849,10 @@ export default defineWorkflow({
       }
       const pushed = await publish(ctx, ctx.id('gate', r, 'push'), {
         workdir: W,
+        pr: A.pr,
         branch: PR.headRefName,
         expected: head,
+        synced: reviewHead ?? head,
         sha: checkedHead,
       });
       if (!pushed.ok) return { error: pushed.error.message };

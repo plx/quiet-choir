@@ -344,6 +344,11 @@
       }
     },
     {
+      "step": "**",
+      "argvPrefix": ["git", "symbolic-ref"],
+      "stdout": "refs/heads/merge-down/package/pr-42\n"
+    },
+    {
       "step": "sync",
       "argvPrefix": ["git", "fetch"],
       "stdout": ""
@@ -509,6 +514,11 @@
       "json": {
         "number": 42
       }
+    },
+    {
+      "step": "gate/*/push",
+      "argvPrefix": ["git", "merge-base", "--is-ancestor"],
+      "stdout": ""
     },
     {
       "step": "gate/1/push",
