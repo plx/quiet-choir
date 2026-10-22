@@ -2,6 +2,23 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Port `merge-down-pr` from a native Workflow script to the package
+  [`packages/merge-down.quiet-choir`](packages/merge-down.quiet-choir/README.md) (#589, ADRs
+  0063-0065 and 0067). Control flow lives in `workflows/merge-down-pr.ts`, every prompt in
+  `prompts/*.md` through `prompts.ts`, the tier map in a roster (`Reviewer`, `Judge`, and
+  `std.tiers`' `Mechanic`, `Surgeon` and `Scribe`, with Bash shell patterns and long-run limits),
+  and `FixTeam`/`ResolveTeam` fill the swappable slots. GitHub reads, waits and writes go through
+  `quiet-choir/github`; git, the check suite and the local `codex review` run as versioned durable
+  steps and commands, so the verified relay (clerks, nonces, FNV hashes) is gone. The stages,
+  `until` stops, statuses and ledger record match the native script; its `error` status is the input
+  schema's refusal. It uses its own default root and local branch, so the native script remains the
+  fallback. `npm run packages:rehearse` validates the package and rehearses four fixture cases
+  (clean land, fix round, stop at fix, blocked gate) from `packages/rehearsals/merge-down/`; it runs
+  in `npm run check` after the build and in a new Package rehearsals CI job. `npm run typecheck`
+  also checks the package, `durability:check` lints its workflows, and `.prettierignore` keeps
+  formatters off `packages/*/prompts/`. The README records the measurements against the native pair
+  and the API follow-ups filed with this change. `model.ts`, the API snapshot and the record schema
+  revision are unchanged.
 - Seed `quiet-choir/std`, the opt-in standard library (#588, ADR 0063 §3, ADR 0067 §3; see
   [docs/roster.md](docs/roster.md#standard-library-entries)). `std.claude` and `std.codex` hold
   frozen roster entry fragments `Text`, `ReadOnly` and `Edit` with the built-in preset values, to
