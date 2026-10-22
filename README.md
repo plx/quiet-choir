@@ -633,6 +633,15 @@ reads an epic's sub-issues (or its checklist) in one command, and the pure `next
 next ticket and says why every other open one was skipped; see
 [GitHub reads, waits and writes](docs/github.md).
 
+`quiet-choir/std` is the opt-in standard library, built only on the public entry point. A roster
+entry can spread one of its per-harness entries, `{ ...std.claude.ReadOnly, description: '...' }`:
+`std.claude` and `std.codex` carry the `text`, `readonly` and `edit` preset values as `Text`,
+`ReadOnly` and `Edit`, and `std.tiers` adds model and effort tiers such as `Mechanic`. `std.exec`
+has `json`, `git` (complete stdout or throw) and `committedArtifact` (publish a new file through a
+managed worktree), and `std.patterns` has `reviewRevise` and `tolerantPanel`, which take the context
+and a typed team. It is a seed for the dog-food ports; see
+[standard library entries](docs/roster.md#standard-library-entries).
+
 ## Progress and monitoring
 
 Use `ctx.phase('verify', { total: 27 })` and `ctx.log('Checked inputs', { count: 12 })` for

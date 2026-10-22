@@ -4,7 +4,8 @@
     "src/index.ts",
     "src/harness-kit.ts",
     "src/integrations/decision.ts",
-    "src/integrations/github.ts"
+    "src/integrations/github.ts",
+    "src/std/index.ts"
   ],
   "out": "docs/api",
   "name": "quiet-choir",

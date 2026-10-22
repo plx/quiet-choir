@@ -111,6 +111,48 @@ entry's limits filled in for the limit keys it declares, so a schema that requir
 accepts a call that leaves it to the entry; the limit still reaches the request only as policy, so a
 filled `maxTurns` or `maxBudgetUsd` stays out of the fingerprint.
 
+## Standard library entries
+
+`quiet-choir/std` ships roster entry fragments to spread into an entry, so a common configuration
+has one spelling instead of a copied literal. They carry the values of the built-in presets, per
+harness (ADR 0063 §3), as frozen data with a short `description` the spreading entry usually
+replaces:
+
+```ts
+import * as std from 'quiet-choir/std';
+
+export const roster = defineRoster({
+  Reviewer: { ...std.claude.ReadOnly, description: 'Reviews the diff.' },
+  Checker: { ...std.codex.ReadOnly, effort: 'high' },
+  Mechanic: { ...std.claude.Edit, ...std.tiers.Mechanic },
+});
+```
+
+| Entry                 | Tools or sandbox              | `maxTurns` | `maxBudgetUsd` | `timeoutMs` |
+| --------------------- | ----------------------------- | ---------- | -------------- | ----------- |
+| `std.claude.Text`     | none                          | 10         | 0.5            | 300,000     |
+| `std.claude.ReadOnly` | Read, Grep, Glob              | 25         | 2              | 900,000     |
+| `std.claude.Edit`     | Read, Grep, Glob, Edit, Write | 40         | 5              | 1,800,000   |
+| `std.codex.Text`      | `sandbox: 'read-only'`        | -          | -              | 300,000     |
+| `std.codex.ReadOnly`  | `sandbox: 'read-only'`        | -          | -              | 900,000     |
+| `std.codex.Edit`      | `sandbox: 'workspace-write'`  | -          | -              | 1,800,000   |
+
+The Codex fragments carry no `maxTurns` or `maxBudgetUsd`: those are Claude-only limits that
+`CodexOptions` does not have, so a Codex entry cannot set them (and a spread that adds one, or
+`tools`, fails typecheck like any other Claude key on a Codex entry).
+
+`std.tiers` holds the model tiers of the native epic scripts. Each fixes only a Claude model and
+effort: `Clerk` (haiku, low), `Copyist` (sonnet, low), `Scribe` (sonnet, medium), `Mechanic`
+(sonnet, high), `Planner` (opus, high), `Skeptic` (opus, medium) and `Surgeon` (opus, high).
+Capability comes from the preset fragments, so the two axes compose by spread,
+`{ ...std.claude.Edit, ...std.tiers.Mechanic }`, rather than as one entry per combination; a tier
+spread last also supplies the description. A tier alone is a valid entry at the text baseline.
+
+This is a seed sized for the dog-food ports, not the full library: a later decision record scopes
+what else it holds once the ports show what recurs. `std.exec` (`json`, `git`, `committedArtifact`)
+and `std.patterns` (see [teams](#teams)) sit in the same subpath, which imports only the public
+`quiet-choir` entry point.
+
 ## ctx.roster
 
 `ctx.roster.Name` is the entry's pinned harness client bound to the entry (for a decider entry, see
@@ -342,17 +384,31 @@ and nothing compares a slot's description to the agent that fills it, so expecta
 capability belong in the description.
 
 Filling is explicit at the call site. A team value is a plain object of agents, and a pattern is an
-ordinary function over a context or, when it needs none, over the team alone: a bound agent carries
-its own context and takes its step ID prefix where it is called, so calls through a slot claim the
-same IDs, fingerprints and records as calls through the agent that fills it.
+ordinary function that takes the context and an options object holding the team (ADR 0067 §3). A
+bound agent carries its own context and takes its step ID prefix where it is called, so calls
+through a slot claim the same IDs, fingerprints and records as calls through the agent that fills
+it; the pattern's context is for scoping and fan-out. `quiet-choir/std` ships two such patterns:
 
 ```ts
-await reviewRevise({
+import * as std from 'quiet-choir/std';
+
+const { approved, draft: final } = await std.patterns.reviewRevise(ctx, {
   team: { actor: ctx.roster.Writer, critic: ctx.roster.Reviewer },
   draft,
   rounds,
 });
 ```
+
+`std.patterns.reviewRevise` (team `std.patterns.ReviewTeam`) reviews up to `rounds` times as
+`review/<n>` and revises after each rejection as `revise/<n>`, without an unreviewed revision after
+the last round, and returns `{ approved, draft }`. `id` runs the loop under `ctx.scope(id, ...)`, so
+two loops in one workflow do not collide, and `prompts` replaces the default review and revise
+prompts. `std.patterns.tolerantPanel` (team `std.patterns.PanelTeam`, one `panelist` slot) asks the
+panelist about each item under `ctx.map(id, items, { concurrency, onError: 'return' })` as
+`<id>/<index>/answer`, optionally with a `schema`, and returns `{ quorum, answers, failed }`: a
+failed vote is journaled, so a resume does not retry it into a different quorum. Its optional
+`version` is the map's `version`, a revision for the `prompt` function and `schema`, which the
+settled map's fingerprint does not show.
 
 `ReviewTeam.from(record)` is the one convenience. It picks the slot keys from any record that has
 them, so `ReviewTeam.from(ctx.roster)` fills a team whose roster entries use the slot names, and
@@ -367,7 +423,9 @@ A team is not registered with the runtime, is not part of `defineWorkflow`, and 
 that fill it are what the manifest and `--require-grants` see. Teams serve in-process patterns only.
 Child workflows that take a team are deferred (ADR 0067 §3). The
 [review/revise recipe](../plugins/agents/quiet-choir/skills/quiet-choir/references/patterns.md#bounded-reviewrevise)
-is the reference usage (`examples/patterns/review-team.ts`).
+and the
+[failure-tolerant panel](../plugins/agents/quiet-choir/skills/quiet-choir/references/patterns.md#failure-tolerant-panel)
+are the reference usage.
 
 ## Recovery and diagnostics
 
@@ -417,9 +475,11 @@ spending cap.
 
 `profiles`, the call-site `profile:` option and the built-in presets are the representation roster
 entries compile to. They stay functional during the packaged-workflows epic, so existing workflows
-and the comparison ports keep running while they migrate, but new code should use a roster. This
-appendix also documents the opt-in authorization layer (`requireGrants`), which treats roster
-entries as declared roles.
+and the comparison ports keep running while they migrate, but new code should use a roster. The
+preset values are also available per harness as
+[standard library entries](#standard-library-entries) (`std.claude.ReadOnly` and the rest) to spread
+into roster entries. This appendix also documents the opt-in authorization layer (`requireGrants`),
+which treats roster entries as declared roles.
 
 ### Declaring profiles
 

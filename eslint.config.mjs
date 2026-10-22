@@ -81,6 +81,25 @@ export default defineConfig(
     },
   },
   {
+    // quiet-choir/std is built only on the public entry point: its modules import values and types
+    // from ../index.js, their own siblings and Node built-ins, never runtime internals.
+    files: ['src/std/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              regex: '^(?:\\.\\./(?!index\\.js$)|\\./(?![a-z-]+\\.js$))',
+              message:
+                'quiet-choir/std must use the public quiet-choir entry point (../index.js) and its sibling modules, not runtime internals.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     // The pure parts of quiet-choir/github: queries, schemas and mappers (ADR 0044) and the wait
     // rules (ADR 0045). Values come only from the public entry point; no I/O, clock or process.
     files: ['src/integrations/github-model.ts', 'src/integrations/github-wait-model.ts'],

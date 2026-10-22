@@ -103,7 +103,7 @@ function emitDeclarations(cwd: string, project: string, outDir: string): Promise
 describe('published declarations', () => {
   // 0.8 s alone and 0.9 s in a full coverage run (one native tsc emit and one compile), but a loaded
   // CI runner has taken over the 5 s default, so it gets a generous explicit bound.
-  it('type every runtime export of quiet-choir, its harness kit, decision and github helpers', async () => {
+  it('type every runtime export of quiet-choir, its harness kit, decision, github and std helpers', async () => {
     const temp = await mkdtemp(join(tmpdir(), 'qc-public-types-'));
     try {
       const pkg = join(temp, 'pkg');
@@ -123,6 +123,10 @@ describe('published declarations', () => {
         {
           specifier: 'quiet-choir/github',
           names: Object.keys(await import('../src/integrations/github.js')),
+        },
+        {
+          specifier: 'quiet-choir/std',
+          names: Object.keys(await import('../src/std/index.js')),
         },
       ];
       // Guard against a vacuous pass: the helpers this check exists for must be listed.
@@ -160,6 +164,9 @@ describe('published declarations', () => {
           'codeqlReviewer',
           'alertDismissReason',
         ]),
+      );
+      expect(entries[4]?.names).toEqual(
+        expect.arrayContaining(['claude', 'codex', 'tiers', 'exec', 'patterns']),
       );
       expect(
         await consumerDiagnostics(join(temp, 'consumer'), { 'quiet-choir': pkg }, entries),

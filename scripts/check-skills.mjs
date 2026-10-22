@@ -203,15 +203,24 @@ const decisionSpecifiers = [
   '../../src/integrations/decision.js',
   '/absolute/path/to/quiet-choir/dist/integrations/decision.js',
 ];
+/** Specifiers of the `quiet-choir/std` subpath, which sits beside the root as std/index.js. */
+const stdSpecifiers = [
+  'quiet-choir/std',
+  '../src/std/index.js',
+  '../../src/std/index.js',
+  '/absolute/path/to/quiet-choir/dist/std/index.js',
+];
 /**
  * Replace import specifiers only; prompt strings and executable code stay intact. The root maps to
- * `runtime`, and `quiet-choir/github` and `quiet-choir/decision` to `integrations/github.js` and
- * `integrations/decision.js` in the same directory, so `src/index.js` pairs with
- * `src/integrations/*.js` and `dist/index.js` with their built copies.
+ * `runtime`, `quiet-choir/github` and `quiet-choir/decision` to `integrations/github.js` and
+ * `integrations/decision.js` in the same directory, and `quiet-choir/std` to `std/index.js` there,
+ * so `src/index.js` pairs with `src/integrations/*.js` and `src/std/index.js`, and `dist/index.js`
+ * with their built copies.
  */
 export function sourceExample(code, runtime = join(repository, 'src/index.js')) {
   const github = join(dirname(runtime), 'integrations/github.js');
   const decision = join(dirname(runtime), 'integrations/decision.js');
+  const std = join(dirname(runtime), 'std/index.js');
   const source = ts.createSourceFile(
     'example.mts',
     code,
@@ -233,7 +242,9 @@ export function sourceExample(code, runtime = join(repository, 'src/index.js')) 
             ? github
             : decisionSpecifiers.includes(specifier.text)
               ? decision
-              : undefined
+              : stdSpecifiers.includes(specifier.text)
+                ? std
+                : undefined
         : undefined;
     if (specifier && target !== undefined)
       edits.push({

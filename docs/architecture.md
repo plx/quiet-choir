@@ -6,8 +6,8 @@ definitions to a particular agent harness.
 ## Current layout
 
 - `src/index.ts` is the main public package entry point; `quiet-choir/harness-kit`,
-  `quiet-choir/decision` and `quiet-choir/github` are deliberate adapter/helper subpaths. Public
-  exports need API comments.
+  `quiet-choir/decision`, `quiet-choir/github` and `quiet-choir/std` are deliberate adapter/helper
+  subpaths. Public exports need API comments.
 - `src/integrations/` contains helper subpaths. They import the public entry point, never runtime
   internals; `github.ts` keeps its queries, schemas and mappers in the pure `github-model.ts`, its
   wait rules in the pure `github-wait-model.ts`, and its reconciled writes in `github-writes.ts`
@@ -29,6 +29,13 @@ definitions to a particular agent harness.
   `runtime/decision-error.ts` are shared contracts, like the registries above. Both stay free of
   I/O, the clock, the process and runner state; `jevCompatible` (the `fetch` transport) lives in the
   subpath.
+- `src/std/` is `quiet-choir/std`, the opt-in standard library: per-harness roster entry fragments
+  with the preset values, model tiers, the `json`, `git` and `committedArtifact` exec helpers, and
+  the team-taking `reviewRevise` and `tolerantPanel` patterns. Its modules import only the public
+  entry point (`../index.js`), their siblings and Node built-ins, never runtime internals, which an
+  ESLint rule enforces; `committedArtifact`'s write step is version-identified
+  (`committed-artifact/1`) through the step definition's internal `identity` field, as the built-in
+  helpers are, so its identity does not follow the library's callback text.
 - `src/application/` contains framework-independent execution contracts and small executors.
 - `src/workflow/` contains workflow-specific plans, results, analysis, and executors.
 - `src/workflow/runtime/` defines the typed workflow API and local checkpoint/replay engine.

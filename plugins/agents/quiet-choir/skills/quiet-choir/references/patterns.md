@@ -196,27 +196,33 @@ cancellation rather than catching every mapper.
 `onError: 'return'` saves each whole mapper outcome, including failures. This recipe returns
 `quorum:false` as data when too few reviewers succeed. Cancellation, configuration errors,
 checkpoint failures, and authoring guards still reject instead of becoming votes. Use the preceding
-drain recipe when failed reviewers should be retried on resume.
+drain recipe when failed reviewers should be retried on resume. `std.patterns.tolerantPanel` from
+`quiet-choir/std` is that map: it fills a one-slot `PanelTeam` (`panelist`), names each call
+`<id>/<index>/answer`, takes an optional `schema` for typed answers, and returns
+`{ quorum, answers, failed }`. The settled map fingerprints the items and the mapper source but not
+the `prompt` function or the `schema`, so set the optional `version` string and change it when
+either changes in a way that should not reuse the saved votes.
 
 <!-- skills-check: example pattern-tolerant-panel -->
 
 ```ts
 import { defineWorkflow, z } from '../../src/index.js';
+import * as std from '../../src/std/index.js';
 
 export default defineWorkflow({
   name: 'tolerant-panel',
-  version: '1',
+  version: '2',
   input: z.object({ topic: z.string(), lenses: z.array(z.string()).min(1).max(8) }),
   output: z.object({ quorum: z.boolean(), answers: z.array(z.string()) }),
   async run(ctx, input) {
-    const results = await ctx.map(
-      'panel',
-      input.lenses,
-      { concurrency: 2, onError: 'return' },
-      (lens) => ctx.claude.value('review', { prompt: `${lens}: ${input.topic}` }),
-    );
-    const answers = results.flatMap((result) => (result.ok ? [result.value] : []));
-    return { quorum: answers.length > input.lenses.length / 2, answers };
+    const { quorum, answers } = await std.patterns.tolerantPanel(ctx, {
+      id: 'panel',
+      team: { panelist: ctx.claude.bind({}) },
+      items: input.lenses,
+      prompt: (lens) => `${lens}: ${input.topic}`,
+      concurrency: 2,
+    });
+    return { quorum, answers };
   },
 });
 ```
@@ -303,58 +309,22 @@ pipeline-stage API; explicit async stages are the current form.
 attempt at the same already-rejected draft. The final round reviews without producing an unreviewed
 revision afterward. The loop names the roles it needs as a typed team (ADR 0067): `defineTeam`
 declares the slots (`actor`, `critic`) with one-line descriptions, plain data readable without
-running a body, and `TeamOf` derives the record type. The pattern is an ordinary function over a
-`ReviewTeam`; it takes no context because a bound agent carries its own and takes its step ID prefix
-where it is called. The workflow fills the team explicitly at the call site, from its roster. Where
-roster names equal slot names, `ReviewTeam.from(ctx.roster)` fills it, and
+running a body, and `TeamOf` derives the record type. `quiet-choir/std` ships that team and loop as
+`std.patterns.ReviewTeam` and `std.patterns.reviewRevise(ctx, { team, draft, rounds })`, with step
+IDs `review/<n>` and `revise/<n>`; `id` runs the loop under `ctx.scope(id, ...)` so two loops do not
+collide, and `prompts` replaces the default review and revise prompts. The workflow fills the team
+explicitly at the call site, from its roster. Where roster names equal slot names,
+`ReviewTeam.from(ctx.roster)` fills it, and
 `ReviewTeam.from({ ...ctx.roster, critic: ctx.roster.Skeptic })` overrides one slot: `from` keeps
 only the slot keys and throws if one is missing. A team registers nothing, checks no capability (put
 expectations in the slot description) and is not listed by `workflow validate`; a text-only agent
 does not fill a slot. Teams serve in-process patterns only.
 
-<!-- skills-check: example pattern-review-team -->
-
-```ts
-import { defineTeam, z, type TeamOf } from '../../src/index.js';
-
-// The roles a review/revise loop needs; any structured agents fill them.
-export const ReviewTeam = defineTeam({
-  actor: 'Produces and revises the draft.',
-  critic: 'Judges the draft and returns feedback.',
-});
-export type ReviewTeam = TeamOf<typeof ReviewTeam>;
-
-const Review = z.object({ approved: z.boolean(), feedback: z.string() });
-
-/** Review up to `rounds` times; the final round is not followed by an unreviewed revision. */
-export async function reviewRevise(args: {
-  team: ReviewTeam;
-  draft: string;
-  rounds: number;
-}): Promise<{ approved: boolean; draft: string }> {
-  const { team, rounds } = args;
-  let draft = args.draft;
-  for (let round = 0; round < rounds; round++) {
-    const review = await team.critic.value(`review/${String(round)}`, {
-      prompt: `Review this draft: ${draft}`,
-      schema: Review,
-    });
-    if (review.approved) return { approved: true, draft };
-    if (round + 1 < rounds) {
-      draft = await team.actor.value(`revise/${String(round)}`, {
-        prompt: `Revise ${draft} using this feedback: ${review.feedback}`,
-      });
-    }
-  }
-  return { approved: false, draft };
-}
-```
-
 <!-- skills-check: example pattern-review-revise -->
 
 ```ts
 import { defineWorkflow, z } from '../../src/index.js';
-import { reviewRevise } from './review-team.js';
+import * as std from '../../src/std/index.js';
 import { reviewRoster } from './roster.js';
 
 export default defineWorkflow({
@@ -364,7 +334,7 @@ export default defineWorkflow({
   input: z.object({ draft: z.string(), rounds: z.int().min(1).max(10) }),
   output: z.object({ approved: z.boolean(), draft: z.string() }),
   run: (ctx, { draft, rounds }) =>
-    reviewRevise({
+    std.patterns.reviewRevise(ctx, {
       team: { actor: ctx.roster.Writer, critic: ctx.roster.Reviewer },
       draft,
       rounds,

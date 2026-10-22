@@ -314,8 +314,8 @@ try {
     console.log(`${name}: paired success, F1, F2, F4 and question fixtures passed`);
   }
   {
-    // writeCommittedArtifact's containment check must accept a same-repository parent directory
-    // whose name merely begins with '..' (a segment boundary, not a bare prefix match).
+    // The containment check of committedArtifact (quiet-choir/std) must accept a same-repository
+    // parent directory whose name merely begins with '..' (a segment boundary, not a bare prefix).
     const env = await setup(),
       definition = await load(2, 'release-notes'),
       { harness } = harnessFor(2, 'release-notes', env),

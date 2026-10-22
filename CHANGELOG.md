@@ -2,6 +2,27 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Seed `quiet-choir/std`, the opt-in standard library (#588, ADR 0063 §3, ADR 0067 §3; see
+  [docs/roster.md](docs/roster.md#standard-library-entries)). `std.claude` and `std.codex` hold
+  frozen roster entry fragments `Text`, `ReadOnly` and `Edit` with the built-in preset values, to
+  spread into a `defineRoster` entry (`{ ...std.claude.ReadOnly, description: '...' }`); the Codex
+  fragments carry only the sandbox and `timeoutMs`, since `maxTurns` and `maxBudgetUsd` are
+  Claude-only. `std.tiers` holds the seven native model tiers (`Clerk` to `Surgeon`), each a Claude
+  model and effort that composes by spread (`{ ...std.claude.Edit, ...std.tiers.Mechanic }`).
+  `std.exec` has `json`, `git` (throws `Incomplete Git output: <id>` on truncated output) and
+  `committedArtifact` (publish a new file through the `document` worktree, `write` step and
+  `publish` merge; absolute and drive-letter paths are refused); its `write` step is identified by
+  the version `committed-artifact/1`, not callback text. `json` throws a `TypeError` for a value
+  `JSON.stringify` renders as nothing, such as `undefined`. `std.patterns` has `ReviewTeam` with
+  `reviewRevise(ctx, { team, draft, rounds, id?, prompts? })` and `PanelTeam` with
+  `tolerantPanel(ctx, { id, team, items, prompt, concurrency, schema?, version? })`, which returns
+  `{ quorum, answers, failed }`. The subpath imports only the public entry point (an ESLint rule
+  enforces it). The review/revise and tolerant panel recipes now call `std.patterns`,
+  `examples/patterns/review-team.ts` and its `pattern-review-team` skill block are gone, and the
+  tolerant panel's leaf ID is `answer` (`panel/<n>/answer`, recipe version 2). Batch 02's
+  `support.ts` takes `json`, `git` and `committedArtifact` (formerly `writeCommittedArtifact`) from
+  the subpath. `skills:check` maps `quiet-choir/std` import specifiers to `std/index.js` beside the
+  runtime. `model.ts`, the API snapshot and the record schema revision are unchanged.
 - Deprecate `decision(ctx, transport).choose` and document decision providers (#655,
   [ADR 0066](docs/decisions/0066-decision-providers.md) §6; see
   [docs/decision-providers.md](docs/decision-providers.md)). `decision`, `DecisionTransport`,

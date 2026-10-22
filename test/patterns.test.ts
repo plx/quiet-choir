@@ -14,6 +14,7 @@ import {
   HarnessError,
   NodeProcessRunner,
   capabilityManifest,
+  defineWorkflow,
   parseHarnessFixtures,
   readRun,
   RunInterruptedError,
@@ -34,7 +35,7 @@ import tolerant from '../examples/patterns/tolerant-panel.workflow.js';
 import hunt from '../examples/patterns/loop-until-dry.workflow.js';
 import pipeline from '../examples/patterns/per-item-pipeline.workflow.js';
 import revise from '../examples/patterns/review-revise.workflow.js';
-import { reviewRevise } from '../examples/patterns/review-team.js';
+import * as std from '../src/std/index.js';
 import helper from '../examples/patterns/reusable-helper.workflow.js';
 import worktrees from '../examples/patterns/worktrees.workflow.js';
 import polling from '../examples/patterns/polling.workflow.js';
@@ -181,7 +182,7 @@ it('cross-harness fan-in drains a slow sibling and resumes only the failed revie
 it('tolerant panel freezes a failed vote even if the reviewer would heal on resume', async () => {
   let failedOnce = false;
   const harness = new Fake((request) => {
-    if (request.call.stepId === 'panel/0/review' && !failedOnce) {
+    if (request.call.stepId === 'panel/0/answer' && !failedOnce) {
       failedOnce = true;
       throw new Error('Review failed');
     }
@@ -189,7 +190,7 @@ it('tolerant panel freezes a failed vote even if the reviewer would heal on resu
   });
   const result = await replayAfterTail(tolerant, { topic: 't', lenses: ['a', 'b', 'c'] }, harness);
   expect(result.output).toEqual({ quorum: true, answers: ['saved vote', 'saved vote'] });
-  expect(harness.count('panel/0/review')).toBe(1);
+  expect(harness.count('panel/0/answer')).toBe(1);
   expect(result.maps?.['panel']?.status).toBe('completed');
 });
 
@@ -582,7 +583,7 @@ it('rehearses the review team with harness-pinned fixtures and resumes every cal
   const swapped = tailFailure({
     ...revise,
     run: (ctx, value) =>
-      reviewRevise({
+      std.patterns.reviewRevise(ctx, {
         team: { actor: ctx.codex.bind({}), critic: ctx.claude.bind({ tools: [] }) },
         draft: value.draft,
         rounds: value.rounds,
@@ -591,6 +592,209 @@ it('rehearses the review team with harness-pinned fixtures and resumes every cal
   await expect(
     runWorkflow(swapped, { ...options(), runId: 'swapped', input, harness }),
   ).rejects.toThrow('No fixture matches step review/0 (claude');
+});
+
+it('rehearses the tolerant panel from fixtures and freezes the failed vote on resume', async () => {
+  const fixtures = parseHarnessFixtures({
+    version: 1,
+    calls: [
+      {
+        step: 'panel/0/answer',
+        harness: 'claude',
+        error: 'Panelist failed',
+        kind: 'invalid-request',
+      },
+      { step: 'panel/*/answer', harness: 'claude', text: 'A saved vote.' },
+    ],
+  });
+  const fixture = new FixtureHarness(fixtures);
+  const ids: string[] = [];
+  const harness: Harness = {
+    kind: fixture.kind,
+    invoke(request, invocation) {
+      ids.push(request.call.stepId);
+      return fixture.invoke(request, invocation);
+    },
+  };
+  const workflow = tailFailure(tolerant);
+  const input = { topic: 't', lenses: ['a', 'b', 'c'] };
+  await expect(runWorkflow(workflow, { ...options(), input, harness })).rejects.toThrow(
+    'Injected tail failure',
+  );
+  expect([...ids].sort()).toEqual(['panel/0/answer', 'panel/1/answer', 'panel/2/answer']);
+  const result = await runWorkflow(workflow, { ...options(), resume: true, harness });
+  expect(result.output).toEqual({ quorum: true, answers: ['A saved vote.', 'A saved vote.'] });
+  expect(ids).toHaveLength(3);
+});
+
+it('std reviewRevise scopes its IDs under id and uses custom prompts', async () => {
+  const workflow = defineWorkflow({
+    name: 'scoped-review',
+    version: '1',
+    input: z.null(),
+    output: z.array(z.boolean()),
+    async run(ctx) {
+      const team = { actor: ctx.claude.bind({}), critic: ctx.codex.bind({}) };
+      const prompts = {
+        review: (draft: string) => `Judge: ${draft}`,
+        revise: (draft: string, feedback: string) => `Fix ${draft} (${feedback})`,
+      };
+      const first = await std.patterns.reviewRevise(ctx, {
+        team,
+        draft: 'one',
+        rounds: 2,
+        id: 'first',
+        prompts,
+      });
+      const second = await std.patterns.reviewRevise(ctx, {
+        team,
+        draft: 'two',
+        rounds: 1,
+        id: 'second',
+      });
+      return [first.approved, second.approved];
+    },
+  });
+  const harness = new Fake((request) =>
+    request.harness === 'codex'
+      ? JSON.stringify({ approved: request.options.prompt === 'Judge: fixed', feedback: 'more' })
+      : 'fixed',
+  );
+  const result = await runWorkflow(workflow, { ...options(), input: null, harness });
+  expect(result.output).toEqual([true, false]);
+  expect(harness.calls.map((request) => [request.call.stepId, request.options.prompt])).toEqual([
+    ['first/review/0', 'Judge: one'],
+    ['first/revise/0', 'Fix one (more)'],
+    ['first/review/1', 'Judge: fixed'],
+    ['second/review/0', 'Review this draft: two'],
+  ]);
+});
+
+it('std tolerantPanel parses answers with a schema and counts failed items', async () => {
+  const Vote = z.object({ score: z.number() });
+  const workflow = defineWorkflow({
+    name: 'scored-panel',
+    version: '1',
+    input: z.null(),
+    output: z.object({ quorum: z.boolean(), scores: z.array(z.number()), failed: z.number() }),
+    async run(ctx) {
+      const panel = await std.patterns.tolerantPanel(ctx, {
+        id: 'votes',
+        team: { panelist: ctx.claude.bind({}) },
+        items: ['a', 'b', 'c', 'd'],
+        prompt: (item, index) => `${item}#${String(index)}`,
+        concurrency: 4,
+        schema: Vote,
+      });
+      return {
+        quorum: panel.quorum,
+        scores: panel.answers.map((vote) => vote.score),
+        failed: panel.failed,
+      };
+    },
+  });
+  const harness = new Fake((request) => {
+    if (request.call.stepId === 'votes/1/answer' || request.call.stepId === 'votes/3/answer')
+      throw new Error('No vote');
+    return JSON.stringify({ score: request.options.prompt.length });
+  });
+  const result = await runWorkflow(workflow, { ...options(), input: null, harness });
+  expect(result.output).toEqual({ quorum: false, scores: [3, 3], failed: 2 });
+  expect(harness.calls.map((request) => request.options.prompt).sort()).toEqual([
+    'a#0',
+    'b#1',
+    'c#2',
+    'd#3',
+  ]);
+});
+
+it('std tolerantPanel accepts a value typed as the exported options', async () => {
+  const workflow = defineWorkflow({
+    name: 'typed-options-panel',
+    version: '1',
+    input: z.null(),
+    output: z.object({ quorum: z.boolean(), answers: z.array(z.string()) }),
+    async run(ctx) {
+      const options: std.patterns.TolerantPanelOptions<string> = {
+        id: 'typed',
+        team: { panelist: ctx.claude.bind({}) },
+        items: ['a', 'b'],
+        prompt: (item) => item,
+        concurrency: 2,
+      };
+      const panel: std.patterns.TolerantPanelResult = await std.patterns.tolerantPanel(
+        ctx,
+        options,
+      );
+      return { quorum: panel.quorum, answers: panel.answers };
+    },
+  });
+  const harness = new Fake((request) => `re:${request.options.prompt}`);
+  const result = await runWorkflow(workflow, { ...options(), input: null, harness });
+  expect(result.output).toEqual({ quorum: true, answers: ['re:a', 're:b'] });
+});
+
+it('std tolerantPanel decides the quorum over the settled results, not the live items array', async () => {
+  const items = ['a', 'b', 'c'];
+  const workflow = defineWorkflow({
+    name: 'mutated-items-panel',
+    version: '1',
+    input: z.null(),
+    output: z.object({ quorum: z.boolean(), answers: z.number(), failed: z.number() }),
+    async run(ctx) {
+      const panel = await std.patterns.tolerantPanel(ctx, {
+        id: 'mutated',
+        team: { panelist: ctx.claude.bind({}) },
+        items,
+        prompt: (item) => {
+          items.length = 0;
+          return item;
+        },
+        concurrency: 3,
+      });
+      return { quorum: panel.quorum, answers: panel.answers.length, failed: panel.failed };
+    },
+  });
+  const harness = new Fake(() => 'vote');
+  const result = await runWorkflow(workflow, { ...options(), input: null, harness });
+  expect(result.output).toEqual({ quorum: true, answers: 3, failed: 0 });
+});
+
+it('std tolerantPanel refuses to replay its settled votes after a version change', async () => {
+  let version = '1';
+  const workflow = tailFailure(
+    defineWorkflow({
+      name: 'versioned-panel',
+      version: '1',
+      input: z.null(),
+      output: z.boolean(),
+      async run(ctx) {
+        const panel = await std.patterns.tolerantPanel(ctx, {
+          id: 'versioned',
+          team: { panelist: ctx.claude.bind({}) },
+          items: ['a', 'b'],
+          prompt: (item) => item,
+          concurrency: 2,
+          version,
+        });
+        return panel.quorum;
+      },
+    }),
+  );
+  const harness = new Fake(() => 'vote');
+  await expect(runWorkflow(workflow, { ...options(), input: null, harness })).rejects.toThrow(
+    'Injected tail failure',
+  );
+  expect(harness.calls).toHaveLength(2);
+  version = '2';
+  await expect(runWorkflow(workflow, { ...options(), resume: true, harness })).rejects.toThrow(
+    /changed.*version/su,
+  );
+  expect(harness.calls).toHaveLength(2);
+  version = '1';
+  const result = await runWorkflow(workflow, { ...options(), resume: true, harness });
+  expect(result.output).toBe(true);
+  expect(harness.calls).toHaveLength(2);
 });
 
 it('polling observes readiness without creating one checkpointed step per poll', async () => {

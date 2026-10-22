@@ -158,7 +158,8 @@ Batch 01 preserves its optional `$claude` input (`model`, `tools`, `allowedTools
 allowedTools unless narrowed, and under `--require-grants` elevated raw tools need write/exec/all
 launch grants. Its 68 original per-call effort choices are supported. Use named roles for new
 workflows. The local support files shown in the reader are batch helpers, not additions to the
-runtime API.
+runtime API; Batch 02's `support.ts` re-exports `json`, `git` and `committedArtifact` from
+`quiet-choir/std`.
 
 ## Add a batch
 

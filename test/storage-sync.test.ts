@@ -165,6 +165,7 @@ describe('storage sync boundary', () => {
       await import('../src/harness-kit.js'),
       await import('../src/integrations/decision.js'),
       await import('../src/integrations/github.js'),
+      await import('../src/std/index.js'),
     ];
     for (const entry of entries)
       for (const name of ['setStorageSyncForTesting', 'syncHandle', 'syncDirectory'])
@@ -178,6 +179,7 @@ describe('storage sync boundary', () => {
       './github',
       './harness-kit',
       './package.json',
+      './std',
     ]);
   });
 });

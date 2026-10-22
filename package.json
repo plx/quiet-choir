@@ -43,6 +43,9 @@
       ],
       "github": [
         "./dist/integrations/github.d.ts"
+      ],
+      "std": [
+        "./dist/std/index.d.ts"
       ]
     }
   },
@@ -67,6 +70,11 @@
       "types": "./dist/integrations/github.d.ts",
       "import": "./dist/integrations/github.js",
       "default": "./dist/integrations/github.js"
+    },
+    "./std": {
+      "types": "./dist/std/index.d.ts",
+      "import": "./dist/std/index.js",
+      "default": "./dist/std/index.js"
     }
   },
   "engines": {
