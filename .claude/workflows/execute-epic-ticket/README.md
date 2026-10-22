@@ -1,5 +1,14 @@
 # execute-epic-ticket
 
+> **Replaced by a package.**
+> [`packages/execute-epic-ticket.quiet-choir`](../../../packages/execute-epic-ticket.quiet-choir/README.md)
+> (#590) ports this workflow to quiet-choir and lands each ticket through the
+> [merge-down package](../../../packages/merge-down.quiet-choir/README.md) as a typed child. It
+> keeps the arguments, statuses and result record, and uses its own default root
+> (`<main checkout>-epic-burndown-package`) but the same `epic-E/N-slug` branches, so either tool
+> resumes a ticket the other started. This script, `epic.mjs` and `rehearse.mjs` remain until #592
+> closes.
+
 A Claude Code workflow ([`../execute-epic-ticket.js`](../execute-epic-ticket.js)) that takes **one**
 ticket of an epic from "open issue" to "merged". It finds the next ticket the epic is ready for and
 checks that the ticket still describes real work. Then it plans and implements the ticket in a

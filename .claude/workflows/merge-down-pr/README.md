@@ -189,4 +189,5 @@ That port exists:
 keeps the stages, `until` stops, statuses and ledger record, and drops the verified relay. It uses
 its own default root (`<main checkout>-merge-down-package`) and local branch
 (`merge-down/package/pr-N`), so this script remains a safe fallback, and it shares the fork-point
-refs, so either tool honors a stack the other recorded.
+refs, so either tool honors a stack the other recorded. The package is this script's replacement;
+the script and `merge-down.mjs` remain until #592 closes.
