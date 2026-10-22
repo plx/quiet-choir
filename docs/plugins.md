@@ -29,8 +29,9 @@ rehearses a workflow, launches it with `workflow start` in a background Bash tas
 Monitor through `workflow events RUN --follow`, answers its questions with AskUserQuestion, and
 reports the outcome. WORKFLOW is a workflow file or a `*.quiet-choir` [package](packages.md)
 directory; `--workflow` selects a declared workflow other than the package's entry, `--fixtures`
-answers the rehearsal from a fixture file (a launch never uses it), and a package's default run ID
-is its package name, workflow name and a UTC timestamp. For temporary local development,
+answers the rehearsal from a fixture file (a launch never uses it), the rehearsal points locations
+the workflow writes to at a temporary directory, and a package's default run ID is its package name,
+workflow name and a UTC timestamp. For temporary local development,
 `claude --plugin-dir ./plugins/claude/quiet-choir` loads the plugin without registering a
 marketplace.
 
