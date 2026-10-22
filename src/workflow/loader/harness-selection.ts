@@ -114,6 +114,11 @@ async function readFixtureSelection(
       throw new Error(
         `Named fixture file ${path} for harness ${match[1]} has exec rules or a commands mode; commands are not per-harness, so put them in the global --harness fixture:FILE.`,
       );
+    // Decisions are keyed by step, not by harness, so they belong to the global file too.
+    if (file.decisions !== undefined)
+      throw new Error(
+        `Named fixture file ${path} for harness ${match[1]} has decisions; decisions are keyed by step, not by harness, so put them in the global --harness fixture:FILE.`,
+      );
     Object.defineProperty(named, match[1], { value: file, enumerable: true });
   }
   return {
