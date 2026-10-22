@@ -115,9 +115,10 @@ export async function runCheck(
       }
       const busy = loadavg()[0] ?? 0;
       const maxWorkers = busy > availableParallelism() ? '4' : null;
+      // Grouped so every part of a compound command logs; the newline ends a trailing comment.
       const suite = await run(
         context,
-        ['bash', '-c', `${input.command} > "$1" 2>&1`, 'merge-down-check', log],
+        ['bash', '-c', `{ ${input.command}\n} > "$1" 2>&1`, 'merge-down-check', log],
         {
           cwd: W,
           env: {
