@@ -53,6 +53,7 @@ import {
   followupFooter,
   HOLD_LABELS,
   implementerSlot,
+  isRepoPull,
   itemStatuses,
   landingNotes,
   ledgerLine,
@@ -281,7 +282,19 @@ export default defineWorkflow({
           return finish('stopped', {
             headline: `#${String(n)} already has PR #${String(c.pr)}; would land it.`,
           });
+        // The candidate keeps only the number; the linked PR's URL says which repository it is in.
+        const linked = snap.items
+          .find((i) => i.number === n)
+          ?.pullRequests.find((p) => p.number === c.pr);
+        const foreign = (url: string) =>
+          blocked(
+            'survey',
+            `#${String(n)}'s open PR #${String(c.pr)} is in another repository (${url}); land it there or unlink it`,
+          );
+        if (linked === undefined || !isRepoPull(linked.url, repo))
+          return foreign(linked?.url ?? '?');
         const open = await gh.pr.view(id('pr-view'), { number: c.pr }, read);
+        if (open.url.toLowerCase() !== linked.url.toLowerCase()) return foreign(linked.url);
         if (open.isDraft)
           return blocked(
             'survey',

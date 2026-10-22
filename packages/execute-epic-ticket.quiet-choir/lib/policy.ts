@@ -24,8 +24,20 @@ export interface EpicItem {
   readonly pullRequests: readonly {
     readonly number: number;
     readonly state: string;
+    readonly url?: string;
   }[];
   readonly split: readonly number[] | null;
+}
+
+/**
+ * Whether `url` is a pull request of `repo` (`OWNER/REPO`, or `HOST/OWNER/REPO`): a closing
+ * reference can link an item to another repository's pull request, whose number means nothing here.
+ */
+export function isRepoPull(url: string, repo: string): boolean {
+  const parts = repo.split('/');
+  const host = parts.length > 2 ? parts[0] : 'github.com';
+  const prefix = `https://${String(host)}/${parts.slice(-2).join('/')}/pull/`;
+  return url.toLowerCase().startsWith(prefix.toLowerCase());
 }
 
 /** The pick of `nextTicket`. */

@@ -10,6 +10,7 @@ import {
   firstSentence,
   implementerSlot,
   insertAfter,
+  isRepoPull,
   itemStatuses,
   landingNotes,
   ledgerLine,
@@ -136,6 +137,19 @@ describe('pickFor', () => {
     expect(pickFor(selection, items, 1)).toMatchObject({ number: 1, status: 'closed' });
     expect(pickFor(selection, items, 99)).toBeNull();
     expect(pickFor(selection, items, 8)).toBeNull();
+  });
+});
+
+describe('isRepoPull', () => {
+  it("accepts only the repository's own pull request URLs", () => {
+    expect(isRepoPull('https://github.com/acme/widgets/pull/20', repo)).toBe(true);
+    expect(isRepoPull('https://github.com/Acme/Widgets/pull/20', repo)).toBe(true);
+    expect(isRepoPull('https://github.com/other/widgets/pull/20', repo)).toBe(false);
+    expect(isRepoPull('https://github.com/acme/widgets-old/pull/20', repo)).toBe(false);
+    expect(isRepoPull('https://github.com/acme/widgets/issues/20', repo)).toBe(false);
+    expect(isRepoPull('https://ghe.example/acme/widgets/pull/3', 'ghe.example/acme/widgets')).toBe(
+      true,
+    );
   });
 });
 
