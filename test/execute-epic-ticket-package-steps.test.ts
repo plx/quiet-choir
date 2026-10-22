@@ -259,6 +259,28 @@ describe('start', () => {
     });
   });
 
+  it('refuses a local branch that lacks commits another clone pushed, keeping them', async () => {
+    const { remote, checkout } = await origin();
+    const paths = pathsAt(join(real, 'root'));
+    await inWorkflow(checkout, (ctx) => start(ctx, 'start', startInput(paths)));
+    const own = await commit(paths.workdir, 'widget.ts', 'export {};\n', 'Add the widget');
+    sh(paths.workdir, 'push', '-q', 'origin', BRANCH);
+    const held = await inWorkflow(checkout, (ctx) => start(ctx, 'start', startInput(paths)));
+    expect(held).toMatchObject({ refused: null, source: 'local', remoteSha: own });
+    const other = join(real, 'other-clone');
+    sh(real, 'clone', '-q', '-b', BRANCH, remote, other);
+    const theirs = await commit(other, 'more.ts', 'export {};\n', 'Add more');
+    sh(other, 'push', '-q', 'origin', BRANCH);
+    const started = await inWorkflow(checkout, (ctx) => start(ctx, 'start', startInput(paths)));
+    expect(started.refused).toContain(`origin/${BRANCH} has commits ${BRANCH} lacks`);
+    expect(started.refused).toContain('Add more');
+    expect(started.remoteSha).toBeNull();
+    expect(sh(paths.workdir, 'rev-parse', 'HEAD')).toBe(own);
+    expect(sh(checkout, 'ls-remote', 'origin', `refs/heads/${BRANCH}`).split(/\s+/)[0]).toBe(
+      theirs,
+    );
+  });
+
   it('rebases a reused branch onto a moved origin/main', async () => {
     const { remote, checkout } = await origin();
     const paths = pathsAt(join(real, 'root'));

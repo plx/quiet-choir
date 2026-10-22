@@ -152,13 +152,13 @@ export interface StartInput {
  * a branch either tool pushed is the same ticket. A reused branch is rebased onto the default
  * branch; a conflicting rebase is aborted and reported as `conflict`. It refuses (`refused`, with
  * nothing changed) a rebase or merge in progress, uncommitted changes on another branch, commits on
- * a detached HEAD that no branch holds, and a branch checked out in another worktree (the native
- * script's worktree may hold it).
+ * a detached HEAD that no branch holds, a local branch that lacks commits its remote has, and a
+ * branch checked out in another worktree (the native script's worktree may hold it).
  */
 export function start(ctx: WorkflowContext, id: string, input: StartInput): Promise<StartedResult> {
   return ctx.step(id, {
     identity: 'version',
-    version: 'epic-ticket.start/1',
+    version: 'epic-ticket.start/2',
     input: { ...input, paths: { ...input.paths } },
     schema: Started,
     async run(context) {
@@ -241,6 +241,34 @@ export function start(ctx: WorkflowContext, id: string, input: StartInput): Prom
             refused: `the worktree ${W} is on a detached HEAD with commits no branch holds; put them on a branch before starting #${String(ticket)}: ${orphans.split('\n').slice(0, 5).join('; ')}`,
           });
       }
+      // The remote tip is the push lease only if the branch already holds it: a lease on commits
+      // another checkout pushed would let publish force them away.
+      const remoteRef = `refs/remotes/origin/${branch}`;
+      const remoteSha = (await gitOk(context, W, ['rev-parse', '--verify', '--quiet', remoteRef]))
+        ? await git(context, W, ['rev-parse', remoteRef])
+        : null;
+      if (
+        remoteSha !== null &&
+        source === 'local' &&
+        !(await gitOk(context, W, [
+          'merge-base',
+          '--is-ancestor',
+          remoteSha,
+          `refs/heads/${branch}`,
+        ]))
+      ) {
+        const lacking = await git(context, W, [
+          'log',
+          '--format=%h %s',
+          `refs/heads/${branch}..${remoteSha}`,
+        ]);
+        return result({
+          branch,
+          source,
+          resumed,
+          refused: `origin/${branch} has commits ${branch} lacks (${lacking.split('\n').slice(0, 5).join('; ')}); pull or reconcile them before starting #${String(ticket)}`,
+        });
+      }
       if (current !== branch) {
         const elsewhere = await heldElsewhere(context, W, branch);
         if (elsewhere !== null)
@@ -262,10 +290,6 @@ export function start(ctx: WorkflowContext, id: string, input: StartInput): Prom
           ]);
         else await git(context, W, ['checkout', '--quiet', '--no-track', '-B', branch, target]);
       }
-      const remoteRef = `refs/remotes/origin/${branch}`;
-      const remoteSha = (await gitOk(context, W, ['rev-parse', '--verify', '--quiet', remoteRef]))
-        ? await git(context, W, ['rev-parse', remoteRef])
-        : null;
       let rebase: StartedResult['rebase'] = 'up-to-date';
       if (resumed && (await count(context, W, `HEAD..${target}`)) > 0) {
         if ((await porcelain(context, W)).length) rebase = 'skipped-dirty';

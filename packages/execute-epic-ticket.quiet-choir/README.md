@@ -224,7 +224,9 @@ without a `ticket` or an unknown `until` fails before the run starts.
   an agent is not probed before it edits the worktree (merge-down's `ownedAgent` is keyed by PR).
   Give runs that must interleave distinct `root`s.
 - The start step refuses a ticket branch checked out in another worktree, which is what the native
-  script's worktree does with a branch it started; check something else out there first.
+  script's worktree does with a branch it started; check something else out there first. It also
+  refuses a local ticket branch that lacks commits its `origin` branch has, rather than taking that
+  tip as the push lease; pull or reconcile them first.
 - Claude Code runs headless with the roster's `allowedTools` shell patterns; a command a prompt does
   not anticipate is denied. The Situation fragment lists exactly what the roster allows. The roster
   limits can be raised on resume with `--profile Surgeon.maxTurns=…`.
