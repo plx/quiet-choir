@@ -11,10 +11,11 @@
   model and effort that composes by spread (`{ ...std.claude.Edit, ...std.tiers.Mechanic }`).
   `std.exec` has `json`, `git` (throws `Incomplete Git output: <id>` on truncated output) and
   `committedArtifact` (publish a new file through the `document` worktree, `write` step and
-  `publish` merge); its `write` step is identified by the version `committed-artifact/1`, not
-  callback text. `std.patterns` has `ReviewTeam` with
+  `publish` merge; absolute and drive-letter paths are refused); its `write` step is identified by
+  the version `committed-artifact/1`, not callback text. `json` throws a `TypeError` for a value
+  `JSON.stringify` renders as nothing, such as `undefined`. `std.patterns` has `ReviewTeam` with
   `reviewRevise(ctx, { team, draft, rounds, id?, prompts? })` and `PanelTeam` with
-  `tolerantPanel(ctx, { id, team, items, prompt, concurrency, schema? })`, which returns
+  `tolerantPanel(ctx, { id, team, items, prompt, concurrency, schema?, version? })`, which returns
   `{ quorum, answers, failed }`. The subpath imports only the public entry point (an ESLint rule
   enforces it). The review/revise and tolerant panel recipes now call `std.patterns`,
   `examples/patterns/review-team.ts` and its `pattern-review-team` skill block are gone, and the

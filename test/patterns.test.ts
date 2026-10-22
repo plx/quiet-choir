@@ -708,6 +708,95 @@ it('std tolerantPanel parses answers with a schema and counts failed items', asy
   ]);
 });
 
+it('std tolerantPanel accepts a value typed as the exported options', async () => {
+  const workflow = defineWorkflow({
+    name: 'typed-options-panel',
+    version: '1',
+    input: z.null(),
+    output: z.object({ quorum: z.boolean(), answers: z.array(z.string()) }),
+    async run(ctx) {
+      const options: std.patterns.TolerantPanelOptions<string> = {
+        id: 'typed',
+        team: { panelist: ctx.claude.bind({}) },
+        items: ['a', 'b'],
+        prompt: (item) => item,
+        concurrency: 2,
+      };
+      const panel: std.patterns.TolerantPanelResult = await std.patterns.tolerantPanel(
+        ctx,
+        options,
+      );
+      return { quorum: panel.quorum, answers: panel.answers };
+    },
+  });
+  const harness = new Fake((request) => `re:${request.options.prompt}`);
+  const result = await runWorkflow(workflow, { ...options(), input: null, harness });
+  expect(result.output).toEqual({ quorum: true, answers: ['re:a', 're:b'] });
+});
+
+it('std tolerantPanel decides the quorum over the settled results, not the live items array', async () => {
+  const items = ['a', 'b', 'c'];
+  const workflow = defineWorkflow({
+    name: 'mutated-items-panel',
+    version: '1',
+    input: z.null(),
+    output: z.object({ quorum: z.boolean(), answers: z.number(), failed: z.number() }),
+    async run(ctx) {
+      const panel = await std.patterns.tolerantPanel(ctx, {
+        id: 'mutated',
+        team: { panelist: ctx.claude.bind({}) },
+        items,
+        prompt: (item) => {
+          items.length = 0;
+          return item;
+        },
+        concurrency: 3,
+      });
+      return { quorum: panel.quorum, answers: panel.answers.length, failed: panel.failed };
+    },
+  });
+  const harness = new Fake(() => 'vote');
+  const result = await runWorkflow(workflow, { ...options(), input: null, harness });
+  expect(result.output).toEqual({ quorum: true, answers: 3, failed: 0 });
+});
+
+it('std tolerantPanel refuses to replay its settled votes after a version change', async () => {
+  let version = '1';
+  const workflow = tailFailure(
+    defineWorkflow({
+      name: 'versioned-panel',
+      version: '1',
+      input: z.null(),
+      output: z.boolean(),
+      async run(ctx) {
+        const panel = await std.patterns.tolerantPanel(ctx, {
+          id: 'versioned',
+          team: { panelist: ctx.claude.bind({}) },
+          items: ['a', 'b'],
+          prompt: (item) => item,
+          concurrency: 2,
+          version,
+        });
+        return panel.quorum;
+      },
+    }),
+  );
+  const harness = new Fake(() => 'vote');
+  await expect(runWorkflow(workflow, { ...options(), input: null, harness })).rejects.toThrow(
+    'Injected tail failure',
+  );
+  expect(harness.calls).toHaveLength(2);
+  version = '2';
+  await expect(runWorkflow(workflow, { ...options(), resume: true, harness })).rejects.toThrow(
+    /changed.*version/su,
+  );
+  expect(harness.calls).toHaveLength(2);
+  version = '1';
+  const result = await runWorkflow(workflow, { ...options(), resume: true, harness });
+  expect(result.output).toBe(true);
+  expect(harness.calls).toHaveLength(2);
+});
+
 it('polling observes readiness without creating one checkpointed step per poll', async () => {
   const file = join(root, 'checks.txt');
   await writeFile(file, 'pending');

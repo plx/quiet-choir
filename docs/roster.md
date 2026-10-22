@@ -406,7 +406,9 @@ two loops in one workflow do not collide, and `prompts` replaces the default rev
 prompts. `std.patterns.tolerantPanel` (team `std.patterns.PanelTeam`, one `panelist` slot) asks the
 panelist about each item under `ctx.map(id, items, { concurrency, onError: 'return' })` as
 `<id>/<index>/answer`, optionally with a `schema`, and returns `{ quorum, answers, failed }`: a
-failed vote is journaled, so a resume does not retry it into a different quorum.
+failed vote is journaled, so a resume does not retry it into a different quorum. Its optional
+`version` is the map's `version`, a revision for the `prompt` function and `schema`, which the
+settled map's fingerprint does not show.
 
 `ReviewTeam.from(record)` is the one convenience. It picks the slot keys from any record that has
 them, so `ReviewTeam.from(ctx.roster)` fills a team whose roster entries use the slot names, and

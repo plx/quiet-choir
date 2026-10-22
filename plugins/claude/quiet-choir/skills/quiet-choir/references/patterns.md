@@ -199,7 +199,9 @@ checkpoint failures, and authoring guards still reject instead of becoming votes
 drain recipe when failed reviewers should be retried on resume. `std.patterns.tolerantPanel` from
 `quiet-choir/std` is that map: it fills a one-slot `PanelTeam` (`panelist`), names each call
 `<id>/<index>/answer`, takes an optional `schema` for typed answers, and returns
-`{ quorum, answers, failed }`.
+`{ quorum, answers, failed }`. The settled map fingerprints the items and the mapper source but not
+the `prompt` function or the `schema`, so set the optional `version` string and change it when
+either changes in a way that should not reuse the saved votes.
 
 <!-- skills-check: example pattern-tolerant-panel -->
 

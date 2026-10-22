@@ -117,6 +117,12 @@ export interface TolerantPanelOptions<T, O = string> {
   readonly concurrency: number;
   /** A schema for each answer; omitted, answers are text. */
   readonly schema?: z.ZodType<O>;
+  /**
+   * A revision for dependencies the items and the mapper source do not show, such as the `prompt`
+   * function or the `schema`, as `MapOptions.version` for `ctx.map`. Change it when such a
+   * dependency changes in a way that should not reuse the settled votes.
+   */
+  readonly version?: string | undefined;
 }
 
 /** Result of {@link tolerantPanel}. */
@@ -134,10 +140,12 @@ export interface TolerantPanelResult<O = string> {
  * calls run under `ctx.map(id, items, { concurrency, onError: 'return' })`, so each whole item
  * outcome, failure included, is journaled: a failed vote stays failed on resume instead of being
  * retried into a different quorum. Cancellation, configuration and checkpoint failures still
- * reject rather than becoming votes.
+ * reject rather than becoming votes. The settled map fingerprints the items and the mapper source
+ * but not the `prompt` function or the `schema`; set `version` to refuse replay after changing them.
  *
  * @param ctx - The workflow context.
- * @param options - The map ID, the team, the items, the prompt and the map's concurrency.
+ * @param options - The map ID, the team, the items, the prompt, the map's concurrency and an
+ * optional `version`.
  * @returns The quorum, the text answers in item order and the failed count.
  */
 export function tolerantPanel<T>(
@@ -156,11 +164,25 @@ export function tolerantPanel<T, O>(
   ctx: WorkflowContext,
   options: TolerantPanelOptions<T, O> & { readonly schema: z.ZodType<O> },
 ): Promise<TolerantPanelResult<O>>;
+/**
+ * Ask `team.panelist` about every item with options whose `schema` may or may not be set, such as a
+ * value typed as {@link TolerantPanelOptions}; see the text overload for the journaling. The two
+ * narrower overloads give a precise answer type when the schema is known at the call.
+ *
+ * @param ctx - The workflow context.
+ * @param options - The map ID, the team, the items, the prompt, the concurrency and an optional schema.
+ * @returns The quorum, the answers in item order (parsed when `schema` is set, else text) and the
+ * failed count.
+ */
+export function tolerantPanel<T, O>(
+  ctx: WorkflowContext,
+  options: TolerantPanelOptions<T, O>,
+): Promise<TolerantPanelResult<O | string>>;
 export async function tolerantPanel<T, O>(
   ctx: WorkflowContext,
   options: TolerantPanelOptions<T, O>,
 ): Promise<TolerantPanelResult<O | string>> {
-  const { id, team, items, prompt, concurrency, schema } = options;
+  const { id, team, items, prompt, concurrency, schema, version } = options;
   const answer = (item: T, index: number): Promise<O | string> =>
     schema === undefined
       ? team.panelist.value('answer', { prompt: prompt(item, index) })
@@ -168,13 +190,14 @@ export async function tolerantPanel<T, O>(
   const results: Settled<O | string, MapStepError>[] = await ctx.map(
     id,
     items,
-    { concurrency, onError: 'return' },
+    { concurrency, onError: 'return', version },
     answer,
   );
   const answers = results.flatMap((result) => (result.ok ? [result.value] : []));
   return {
-    quorum: answers.length > items.length / 2,
+    // Count the settled results, not `items`, which the caller may mutate while the map runs.
+    quorum: answers.length > results.length / 2,
     answers,
-    failed: items.length - answers.length,
+    failed: results.length - answers.length,
   };
 }
