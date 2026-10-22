@@ -255,9 +255,12 @@ helpers, environment, and bound/native function implementations are **not** visi
 Put values in `input`, bump the step `version`, or invalidate the step in a fork when they change.
 The run's source guard remains useful; callback hashing alone does not make arbitrary edits safe.
 
-Built-in helper steps such as `ctx.now` and `decision.choose` are identified by an explicit version
-(`now/1`, `decision/1`) instead of callback text, so refactoring quiet-choir or changing the loader
-does not strand them; their versions change only for a deliberate behavior change.
+Built-in steps such as `ctx.now` and `ctx.decide` are identified by an explicit version (`now/1`,
+`decision/2`) instead of callback text, so refactoring quiet-choir or changing the loader does not
+strand them; their versions change only for a deliberate behavior change. A `ctx.decide` step's
+identity also covers its provider name and revision, requested model, state and questions (see
+[decision providers](decisions.md#identity)). The deprecated `decision(ctx, transport).choose`
+helper keeps `decision/1`, so its completed steps still replay.
 
 Embedded equivalents are `forkFrom: { runId, stateDir?, reuse?, invalidate? }`,
 `resume: true, acceptCodeChange: true`, and `strictReplay: true`. Exported
