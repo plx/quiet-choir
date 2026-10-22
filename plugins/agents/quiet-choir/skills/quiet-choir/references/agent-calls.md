@@ -101,6 +101,27 @@ export default defineWorkflow({
 - Inside an inline child, `ctx.roster` is the child's own roster, so read it where you call it
   rather than carrying a parent's agent through shared state.
 
+A decider entry, `{ decider, model?, description? }`, names one of the workflow's `decisions`
+instead of a harness (checked when the workflow loads). `ctx.roster.Name` is then `{ decide }`:
+`ctx.decide` with the entry's provider and model fixed, so a call takes only `state`, `questions`,
+`onError`, `retry` and `timeoutMs`, and passing `provider` or `model` fails typecheck. The step's
+identity and fingerprint equal those of `ctx.decide(id, { provider, model, ... })`, and its
+`meta.roster` names the entry (a label, never identity). A decider takes no agent keys, is not a
+role (no grant, `--profile` override or capability profile) and cannot fill a team slot;
+`workflow validate --json` lists it under `workflow.deciders` with its provider and model.
+
+<!-- skills-check: fragment; reason: A roster module and one call in a body; the workflow declares decisions: [jev] and has ctx, input and choice in scope. -->
+
+```ts
+const roster = defineRoster({
+  Triage: { decider: 'jev', model: 'jev-1.13', description: 'Routes support tickets.' },
+});
+// In the body of a workflow with decisions: [jev] and this roster:
+const route = choice({ instructions: 'Which team?', options: { billing: null, support: null } });
+const answers = await ctx.roster.Triage.decide('triage', { state: input, questions: { route } });
+// answers.route.choice is 'billing' | 'support'
+```
+
 ## Bound agents
 
 `ctx.claude.bind(options)` (also `ctx.codex` and `ctx.agent(name)`) returns an `Agent` that fixes
