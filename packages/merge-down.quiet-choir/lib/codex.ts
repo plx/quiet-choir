@@ -43,12 +43,13 @@ const Setup = z.object({ deps: z.enum(['none', 'cloned', 'installed', 'missing']
 const Teardown = z.object({ moved: z.boolean(), dirty: z.array(z.string()) });
 
 /**
- * Review head `sha` locally. Steps (under `codex/<label>/<sha>/<model>/<effort>/`): `setup` adds the review
- * worktree at `<dir>/review-<sha12>` and gives it dependencies (a copy-on-write clone of the PR
- * worktree's node_modules when package.json and the lockfile match, else `npm ci`); `review` runs
- * codex there with a 54-minute deadline and its stderr in a log; `file` saves the review text; `teardown`, in a
- * finally, notes whether the review moved its worktree and removes it. A failure is returned in
- * `error`, never thrown: the gate proceeds on CI without the review.
+ * Review head `sha` locally. Steps (under `codex/<label>/<sha>/<model>/<effort>/`): `setup` adds
+ * the review worktree at `<dir>/review-<sha12>` and gives it dependencies (a copy-on-write clone of
+ * the PR worktree's node_modules when package.json and the lockfile match, else `npm ci`); `review`
+ * runs codex there with a 54-minute deadline and its stderr in a log; `file` saves the review text;
+ * `teardown`, in a finally that also covers a failed setup, notes whether the review moved its
+ * worktree and removes it. A failure is returned in `error`, never thrown: the gate proceeds on CI
+ * without the review.
  */
 export async function localCodexReview(
   ctx: WorkflowContext,
@@ -80,33 +81,32 @@ export async function localCodexReview(
     await rm(RW, { recursive: true, force: true });
     await run(context, ['git', 'worktree', 'prune'], { cwd: W });
   };
-  const setup = await ctx.step(at('setup'), {
-    identity: 'version',
-    version: 'merge-down.review-setup/1',
-    input: { workdir: W, review: RW, sha },
-    schema: Setup,
-    onError: 'return',
-    async run(context) {
-      await remove(context); // left behind by a review that was killed
-      await git(context, W, ['worktree', 'add', '--detach', RW, sha]);
-      const key = await dependencyKey(context, RW);
-      if (key === null) return { deps: 'none' as const };
-      if ((await dependencyStamp(W))?.trim() === key) {
-        const cloned = await run(
-          context,
-          ['cp', '-c', '-R', join(W, 'node_modules'), join(RW, 'node_modules')],
-          { timeoutMs: 10 * MINUTE },
-        );
-        if (cloned.code === 0) return { deps: 'cloned' as const };
-        await rm(join(RW, 'node_modules'), { recursive: true, force: true });
-      }
-      const deps = await provisionDependencies(context, RW);
-      return { deps: deps.failure === null ? ('installed' as const) : ('missing' as const) };
-    },
-  });
-  if (!setup.ok) return failed(`could not prepare the review worktree: ${setup.error.message}`);
-  const deps = setup.value.deps;
-  const reviewed = async (): Promise<LocalReview> => {
+  const setUp = () =>
+    ctx.step(at('setup'), {
+      identity: 'version',
+      version: 'merge-down.review-setup/1',
+      input: { workdir: W, review: RW, sha },
+      schema: Setup,
+      onError: 'return',
+      async run(context) {
+        await remove(context); // left behind by a review that was killed
+        await git(context, W, ['worktree', 'add', '--detach', RW, sha]);
+        const key = await dependencyKey(context, RW);
+        if (key === null) return { deps: 'none' as const };
+        if ((await dependencyStamp(W))?.trim() === key) {
+          const cloned = await run(
+            context,
+            ['cp', '-c', '-R', join(W, 'node_modules'), join(RW, 'node_modules')],
+            { timeoutMs: 10 * MINUTE },
+          );
+          if (cloned.code === 0) return { deps: 'cloned' as const };
+          await rm(join(RW, 'node_modules'), { recursive: true, force: true });
+        }
+        const deps = await provisionDependencies(context, RW);
+        return { deps: deps.failure === null ? ('installed' as const) : ('missing' as const) };
+      },
+    });
+  const reviewed = async (deps: z.output<typeof Setup>['deps']): Promise<LocalReview> => {
     const config = [
       '-c',
       `model="${model}"`,
@@ -171,7 +171,10 @@ export async function localCodexReview(
   let outcome: LocalReview;
   let teardown: z.output<typeof Teardown>;
   try {
-    outcome = await reviewed();
+    const setup = await setUp();
+    outcome = setup.ok
+      ? await reviewed(setup.value.deps)
+      : failed(`could not prepare the review worktree: ${setup.error.message}`);
   } finally {
     teardown = await ctx.step(at('teardown'), {
       identity: 'version',

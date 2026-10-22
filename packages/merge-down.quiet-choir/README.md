@@ -95,9 +95,10 @@ The local Codex review is a command effect, not an agent call:
 `codex review --base origin/<default>` with the native `-c model`, `review_model`,
 `sandbox_mode="workspace-write"` and effort settings, in a throwaway worktree at the reviewed SHA
 under `state/pr-N/review-<sha12>` (dependencies cloned copy-on-write when package.json and the
-lockfile match, else `npm ci`), with a 54-minute deadline, and removed in a `finally`. Its IDs are
-keyed by round, SHA, model and effort, so a resume reuses a finished review; the runtime's process
-lifecycle replaces the native start, wait, stop and reap subcommands. Tags are counted in pure code.
+lockfile match, else `npm ci`), with a 54-minute deadline, and removed in a `finally`, after a
+failed setup too. Its IDs are keyed by round, SHA, model and effort, so a resume reuses a finished
+review; the runtime's process lifecycle replaces the native start, wait, stop and reap subcommands.
+Tags are counted in pure code.
 
 ## Input
 
