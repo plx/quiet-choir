@@ -119,7 +119,9 @@ export type FixtureDecision =
       readonly model?: string | null;
       /** Token counts reported for the attempt; missing values are unknown. */
       readonly usage?: {
+        /** Input tokens, or null when unknown. */
         readonly inputTokens?: number | null;
+        /** Output tokens, or null when unknown. */
         readonly outputTokens?: number | null;
       };
     }
