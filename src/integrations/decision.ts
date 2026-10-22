@@ -20,6 +20,9 @@ import {
   type DecisionCapabilities,
   type DecisionProviderDeclaration,
   type ProviderTransport,
+  type ProviderTransportContext,
+  type ProviderTransportRequest,
+  type ProviderTransportResponse,
 } from '../workflow/runtime/decision-protocol.js';
 
 export { DecisionError } from '../workflow/runtime/decision-error.js';
@@ -185,17 +188,11 @@ export function jevCompatible(options: JevCompatibleOptions): DecisionProviderDe
         throw new ConfigurationError(
           `Decision provider ${name} has no apiKeyEnv; set it in jevCompatible or --harness-config decisions.${name}.apiKeyEnv.`,
         );
-      return async (request, context) => {
-        const token = process.env[apiKeyEnv];
-        if (token === undefined || token === '')
-          throw new ConfigurationError(
-            `Decision provider ${name} reads its bearer token from ${apiKeyEnv}, which is unset.`,
-          );
-        // fetch would reject such a header value with a message that echoes it.
-        if (!headerValue(token))
-          throw new ConfigurationError(
-            `Decision provider ${name} reads its bearer token from ${apiKeyEnv}, whose value is not a valid HTTP header value (it has control or non-Latin-1 characters, or leading or trailing whitespace).`,
-          );
+      const send = async (
+        request: ProviderTransportRequest,
+        context: ProviderTransportContext,
+        token: string,
+      ): Promise<ProviderTransportResponse> => {
         let response: Response;
         let text: string;
         let exceeded: boolean;
@@ -255,6 +252,20 @@ export function jevCompatible(options: JevCompatibleOptions): DecisionProviderDe
           });
         }
         return { body, rawText: text };
+      };
+      // The token checks throw synchronously, before any request, so the attempt reports no usage.
+      return (request, context) => {
+        const token = process.env[apiKeyEnv];
+        if (token === undefined || token === '')
+          throw new ConfigurationError(
+            `Decision provider ${name} reads its bearer token from ${apiKeyEnv}, which is unset.`,
+          );
+        // fetch would reject such a header value with a message that echoes it.
+        if (!headerValue(token))
+          throw new ConfigurationError(
+            `Decision provider ${name} reads its bearer token from ${apiKeyEnv}, whose value is not a valid HTTP header value (it has control or non-Latin-1 characters, or leading or trailing whitespace).`,
+          );
+        return send(request, context, token);
       };
     },
   });

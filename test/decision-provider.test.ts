@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ConfigurationError,
   defineWorkflow,
+  FileRunStore,
   readRun,
   runWorkflow,
   StepIdentityChangedError,
@@ -701,6 +702,93 @@ describe('ctx.decide', () => {
     });
   });
 
+  it('attributes an attempt in flight at a crash to its provider, interrupted with unknown usage', async () => {
+    let entered: () => void = () => undefined;
+    const inFlight = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let hang = true;
+    const provider = defineDecisionProvider({
+      name: 'slow',
+      revision: 1,
+      capabilities: allCapabilities,
+      transport:
+        () =>
+        (_request, { signal }) => {
+          if (!hang) return Promise.resolve({ body: noulBody() });
+          entered();
+          return new Promise((_resolve, reject) => {
+            signal.addEventListener(
+              'abort',
+              () => {
+                reject(signal.reason as Error);
+              },
+              { once: true },
+            );
+          });
+        },
+    });
+    const definition = workflow([provider], async (ctx) => {
+      const decision = ctx.decide('ask', { state: null, questions: { refund } });
+      // A step settling while the request is in flight saves a checkpoint.
+      await ctx.step('tick', {
+        input: null,
+        schema: z.null(),
+        run: async () => {
+          await inFlight;
+          return null;
+        },
+      });
+      return decision;
+    });
+    const controller = new AbortController();
+    const pending = runWorkflow(definition, options({ signal: controller.signal })).catch(
+      (caught: unknown) => caught,
+    );
+    await vi.waitFor(async () => {
+      const saved = await readRun({ stateDir, runId: 'decide' });
+      expect(saved.steps['tick']?.status).toBe('completed');
+    });
+    // The checkpoint a crash would leave behind, copied before this process stops the run.
+    const crashed = await readRun({ stateDir, runId: 'decide' });
+    controller.abort(new Error('test cleanup'));
+    await pending;
+    const crashDir = await mkdtemp(join(tmpdir(), 'choir-decision-crash-'));
+    try {
+      const owned = await new FileRunStore(crashDir).open('decide');
+      try {
+        await owned.append(crashed, { durable: true });
+      } finally {
+        await owned.release();
+      }
+      hang = false;
+      const resumed = await runWorkflow(definition, {
+        ...options(),
+        stateDir: crashDir,
+        resume: true,
+      });
+      expect(resumed.output).toEqual({ refund: { noul: 0.4 } });
+      expect(resumed.steps['ask']?.attemptHistory?.map(({ status }) => status)).toEqual([
+        'interrupted',
+        'completed',
+      ]);
+      const usage = summarizeUsage(resumed);
+      expect(usage.byProvider['slow']).toMatchObject({
+        attempts: 2,
+        inputTokens: 7,
+        unknownTokenAttempts: 1,
+        outcomes: { interrupted: 1, completed: 1 },
+      });
+      expect(usage.byProvider['slow']?.byModel['(unknown)']).toMatchObject({
+        attempts: 1,
+        inputTokens: null,
+        outcomes: { interrupted: 1 },
+      });
+    } finally {
+      await rm(crashDir, { recursive: true, force: true });
+    }
+  });
+
   it('groups usage without a served model under (unknown), never the requested alias', async () => {
     server.script({
       status: 200,
@@ -745,6 +833,8 @@ describe('ctx.decide', () => {
     let run = await readRun({ stateDir, runId: 'decide' });
     expect(run.steps['ask']).toMatchObject({ status: 'failed', attempts: 1 });
     expect(server.count).toBe(0);
+    // The token check throws before any request, so the attempt reports no usage.
+    expect(summarizeUsage(run).byIntegration['decision']).toBeUndefined();
     vi.stubEnv(TOKEN_ENV, TOKEN);
     const resumed = await runWorkflow(definition, options({ resume: true }));
     expect(resumed.output).toEqual({ ok: true, value: { refund: { noul: 0.4 } } });

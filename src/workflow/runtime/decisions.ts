@@ -205,21 +205,25 @@ export function prepareDecision(
         const transport = providers.transport(declaration);
         const timeout = timeoutMs === undefined ? undefined : AbortSignal.timeout(timeoutMs);
         const requestSignal = timeout === undefined ? signal : AbortSignal.any([signal, timeout]);
+        // A synchronous throw, such as jevCompatible's missing or invalid token, sent no request
+        // and reports no usage.
+        const pending = transport(
+          { model, state, questions, body: decisionRequestBody(model, state, questions) },
+          {
+            signal: requestSignal,
+            idempotencyKey: declaration.capabilities.idempotencyKey ? idempotencyKey : null,
+          },
+        );
+        // Every attempt that may have reached the host counts, with unknown tokens until a response
+        // reports them. Reported before any await, so a checkpoint saved while the request is in
+        // flight keeps the provider and model if the process dies.
+        reportUsage(decisionUsage(provider, model, null));
         let response: Awaited<ReturnType<ProviderTransport>>;
         try {
-          response = await transport(
-            { model, state, questions, body: decisionRequestBody(model, state, questions) },
-            {
-              signal: requestSignal,
-              idempotencyKey: declaration.capabilities.idempotencyKey ? idempotencyKey : null,
-            },
-          );
+          response = await pending;
         } catch (cause) {
-          // A configuration failure is raised before any request and stays fatal even if it
-          // arrives after this call's timer.
+          // A configuration failure stays fatal even if it arrives after this call's timer.
           if (cause instanceof ConfigurationError) throw cause;
-          // Every attempt that may have reached the host counts, with unknown tokens.
-          reportUsage(decisionUsage(provider, model, null));
           // Only this call's own timer is a timeout; the step's signal stays a cancellation.
           if (timeout?.aborted === true && !signal.aborted)
             throw new DecisionError({

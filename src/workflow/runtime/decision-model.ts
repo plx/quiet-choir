@@ -161,7 +161,9 @@ export interface ProviderTransportResponse {
 
 /**
  * Perform one request. Throw a `DecisionError` for a provider failure and a `ConfigurationError`
- * for missing configuration, such as an unset token variable.
+ * for missing configuration, such as an unset token variable. A synchronous throw sends no request
+ * and reports no usage; once the transport returns its promise, the attempt counts under its
+ * provider with unknown tokens until the response reports them.
  */
 export type ProviderTransport = (
   request: ProviderTransportRequest,
