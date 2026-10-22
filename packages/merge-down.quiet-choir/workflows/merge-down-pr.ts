@@ -1191,14 +1191,21 @@ export default defineWorkflow({
         'land',
         `open code-scanning alerts on the PR: ${final.alerts.map((x) => `#${String(x.number)} ${String(x.rule)} ${String(x.path)}:${String(x.line)}`).join('; ')}`,
       );
-    // The REST merge, pinned to the gated head: never auto-merge or a merge queue.
+    // The REST merge, pinned to the gated head: never auto-merge or a merge queue. The checks above
+    // are checkpointed, so a resume after a failed merge reuses them; the merge itself rechecks the
+    // base on every attempt, so a PR retargeted meanwhile is refused rather than merged.
     const merged = await gh.pr.merge(
       ctx.id('land', 'merge', head),
-      { number: A.pr, sha: head },
+      { number: A.pr, sha: head, base: DEF },
       write,
     );
     if (!merged.merged)
-      return blocked('land', `${merged.reason}${merged.message ? `: ${merged.message}` : ''}`);
+      return blocked(
+        'land',
+        merged.reason === 'base-changed'
+          ? `base changed from ${DEF} before the merge`
+          : `${merged.reason}${merged.message ? `: ${merged.message}` : ''}`,
+      );
     const mergeCommit = merged.mergeCommit ?? 'unknown';
     record.mergeCommit = mergeCommit;
     if (kind === 'change' && ISSUE && record.issue) {

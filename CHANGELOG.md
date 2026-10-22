@@ -18,7 +18,10 @@
   rehearsals CI job. `npm run typecheck` also checks the package, `durability:check` lints its
   workflows, and `.prettierignore` keeps formatters off `packages/*/prompts/`. The README records
   the measurements against the native pair and the API follow-ups filed with this change.
-  `model.ts`, the API snapshot and the record schema revision are unchanged.
+  `gh.pr.merge` takes an optional `base` and, on every attempt, refuses a pull request retargeted to
+  another base with `reason: 'base-changed'`, so the package's land never merges into the wrong
+  branch on a resume after a failed merge. `model.ts`, the API snapshot and the record schema
+  revision are unchanged.
 - Seed `quiet-choir/std`, the opt-in standard library (#588, ADR 0063 §3, ADR 0067 §3; see
   [docs/roster.md](docs/roster.md#standard-library-entries)). `std.claude` and `std.codex` hold
   frozen roster entry fragments `Text`, `ReadOnly` and `Edit` with the built-in preset values, to
