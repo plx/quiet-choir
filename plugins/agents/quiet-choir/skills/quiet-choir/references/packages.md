@@ -119,15 +119,16 @@ A real `package.ts` imports its workflows and prompt sets:
 import { definePackage } from 'quiet-choir';
 import { prompts } from './prompts.js';
 import mergeDownPr from './workflows/merge-down-pr.js';
-import mergeDownStack from './workflows/merge-down-stack.js';
 
 export default definePackage({
   root: import.meta.dirname,
   name: 'merge-down',
   version: '1',
-  description: 'Merge a reviewed PR stack down to main.',
-  whenToUse: 'A stacked PR has approvals and green checks.',
-  workflows: [mergeDownPr, mergeDownStack],
+  description:
+    'Land one PR: rebase onto main, review against its issue with a local Codex review, triage threads, fix, gate on CI + Codex, squash-merge, report',
+  whenToUse:
+    'Merging down a stack of agent-authored PRs (or Dependabot PRs) one PR per run, in stack order. Input: {pr, repo?, followupEpic?, parentEpic?, until?}.',
+  workflows: [mergeDownPr],
   entry: mergeDownPr,
   prompts: [prompts],
 });
@@ -418,8 +419,9 @@ merge-down.quiet-choir/
   roster.ts                the tier map as a roster
   prompts.ts, prompts/     every prompt as a markdown template; _fragments/ for shared text
   lib/policy.ts            pure decision rules, unit-tested apart from the workflow
-  lib/prepare.ts           GitHub reads and the state files
-  lib/git.ts, checks.ts, codex.ts   git, check-suite and local-review mechanics as durable steps
+  lib/prepare.ts           GitHub reads, written out as the state files
+  lib/state.ts             pure renderers for the state files agents read
+  lib/git.ts, checks.ts, codex.ts, land.ts   git, check-suite, local-review and landing mechanics as durable steps
   lib/teams.ts             FixTeam and ResolveTeam slots
   tsconfig.json            maps quiet-choir, quiet-choir/github and quiet-choir/std to src/
 ```
