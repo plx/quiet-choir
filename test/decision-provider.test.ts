@@ -889,6 +889,74 @@ describe('ctx.decide', () => {
     }
   });
 
+  it('redacts a token the host echoes JSON-escaped, as \\/ or \\u sequences', async () => {
+    const token = 'dummy/provider/token-0123';
+    const slashed = token.replaceAll('/', '\\/');
+    const unicode = token.replace(
+      /./gu,
+      (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`,
+    );
+    vi.stubEnv(TOKEN_ENV, token);
+    const host = await startFakeDecisionServer(token);
+    try {
+      const provider = jev({ baseUrl: host.url });
+      const answer = '"answers":{"refund":{"type":"noul","noul":0.4}}';
+      for (const [index, escaped] of [slashed, unicode].entries()) {
+        // A success: the echo reaches the reported usage only redacted.
+        host.script({
+          status: 200,
+          text: `{"model":"jev-1.13.0",${answer},"usage":{"input_tokens":7,"output_tokens":3,"echo":"Bearer ${escaped}"}}`,
+        });
+        let runId = `ok${String(index)}`;
+        const completed = await runWorkflow(
+          workflow([provider], (ctx) => ctx.decide('ask', { state: null, questions: { refund } })),
+          options({ runId }),
+        );
+        expect(completed.output).toEqual({ refund: { noul: 0.4 } });
+        let run = await readRun({ stateDir, runId });
+        expect(run.steps['ask']?.attemptHistory?.[0]?.usage).toMatchObject({
+          reported: { echo: 'Bearer [redacted]' },
+        });
+        for (const form of [token, escaped]) expect(JSON.stringify(run)).not.toContain(form);
+        // A 2xx that fails validation, echoing it in a key and a value, and a non-2xx.
+        for (const [kind, reply] of [
+          [
+            'schema',
+            {
+              status: 200,
+              text: `{"model":"m","answers":{"refund":{"type":"noul","noul":"${escaped}"}},"${escaped}":1}`,
+            },
+          ],
+          ['authentication', { status: 401, text: `{"detail":"bad Bearer ${escaped}"}` }],
+        ] as const) {
+          host.script(reply);
+          runId = `${kind}${String(index)}`;
+          const error: unknown = await runWorkflow(
+            workflow([provider], (ctx) =>
+              ctx.decide('ask', { state: null, questions: { refund } }),
+            ),
+            options({ runId }),
+          ).catch((caught: unknown) => caught);
+          const cause = error instanceof Error ? (error.cause as DecisionError) : undefined;
+          expect(cause).toBeInstanceOf(DecisionError);
+          expect(cause?.kind).toBe(kind);
+          expect(cause?.rawText).toContain('[redacted]');
+          for (const form of [token, escaped]) {
+            expect(cause?.rawText).not.toContain(form);
+            expect(cause?.message).not.toContain(form);
+          }
+          // Decoded, the evidence holds no form of the token either.
+          expect(JSON.stringify(JSON.parse(cause?.rawText ?? 'null'))).not.toContain(token);
+          run = await readRun({ stateDir, runId });
+          expect(run.steps['ask']?.attemptHistory?.[0]?.response).toContain('[redacted]');
+          for (const form of [token, escaped]) expect(JSON.stringify(run)).not.toContain(form);
+        }
+      }
+    } finally {
+      await host.close();
+    }
+  });
+
   it('cancels an unending response body at the cap and keeps truncated evidence', async () => {
     for (const [status, kind, message] of [
       [200, 'schema', /jev: response exceeds 1048576 bytes/u],

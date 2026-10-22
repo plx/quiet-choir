@@ -68,8 +68,8 @@ export interface JevCompatibleOptions {
   readonly path?: string;
   /**
    * Environment variable holding the bearer token, read at request time and never recorded: a
-   * response that echoes it is redacted before its text reaches an error message, evidence or
-   * validation. `decisions.<name>.apiKeyEnv` replaces it.
+   * response that echoes it, literally or JSON-escaped, is redacted before its text reaches an error
+   * message, evidence or validation. `decisions.<name>.apiKeyEnv` replaces it.
    */
   readonly apiKeyEnv?: string;
   /** Model requested when a call names none; `decisions.<name>.defaultModel` replaces it. */
@@ -135,6 +135,54 @@ async function boundedText(response: Response): Promise<{ text: string; exceeded
   return { text: new TextDecoder().decode(bytes), exceeded };
 }
 
+const redactionMark = '[redacted]';
+
+/**
+ * The text with the token replaced, literally and in the forms a JSON string carries it in without
+ * a `\u` escape: escaped as `JSON.stringify` writes it, and with `/` written as `\/`.
+ */
+function redactText(text: string, token: string): string {
+  const escaped = JSON.stringify(token).slice(1, -1);
+  let redacted = text;
+  for (const form of new Set([token, escaped, escaped.replaceAll('/', '\\/')]))
+    redacted = redacted.replaceAll(form, redactionMark);
+  return redacted;
+}
+
+/**
+ * A response body with the token redacted from its text and, when the text is JSON, from every
+ * decoded string and key. When a decoded string still held the token (escaped another way, such as
+ * with `\u` sequences), the text becomes the redacted body re-encoded, so no form of it survives.
+ */
+function redactBody(raw: string, token: string): { text: string; decoded?: { value: unknown } } {
+  const text = redactText(raw, token);
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return { text };
+  }
+  const found = { token: false };
+  const redactString = (item: string): string => {
+    if (!item.includes(token)) return item;
+    found.token = true;
+    return item.replaceAll(token, redactionMark);
+  };
+  const visit = (item: unknown): unknown => {
+    if (typeof item === 'string') return redactString(item);
+    if (Array.isArray(item)) return item.map(visit);
+    if (typeof item === 'object' && item !== null)
+      return Object.fromEntries(
+        Object.entries(item).map(([key, entry]) => [redactString(key), visit(entry)]),
+      );
+    return item;
+  };
+  const redacted = visit(value);
+  return found.token
+    ? { text: JSON.stringify(redacted), decoded: { value: redacted } }
+    : { text, decoded: { value } };
+}
+
 /** The value without its trailing slashes, in linear time. */
 function trimTrailingSlashes(value: string): string {
   let end = value.length;
@@ -194,7 +242,7 @@ export function jevCompatible(options: JevCompatibleOptions): DecisionProviderDe
         token: string,
       ): Promise<ProviderTransportResponse> => {
         let response: Response;
-        let text: string;
+        let raw: string;
         let exceeded: boolean;
         try {
           response = await fetch(url, {
@@ -210,7 +258,7 @@ export function jevCompatible(options: JevCompatibleOptions): DecisionProviderDe
             body: JSON.stringify(request.body),
             signal: context.signal,
           });
-          ({ text, exceeded } = await boundedText(response));
+          ({ text: raw, exceeded } = await boundedText(response));
         } catch (cause) {
           // Cancellation and the call's own timeout propagate unchanged; the runtime classifies them.
           if (context.signal.aborted) throw cause;
@@ -218,11 +266,14 @@ export function jevCompatible(options: JevCompatibleOptions): DecisionProviderDe
             provider: name,
             kind: 'unknown',
             // Defense in depth: never let a client error that echoes the token reach the record.
-            message: `request failed: ${(cause instanceof Error ? cause.message : String(cause)).replaceAll(token, '[redacted]')}`,
+            message: `request failed: ${redactText(cause instanceof Error ? cause.message : String(cause), token)}`,
           });
         }
-        // A host may echo the Authorization header; every record below derives from this text.
-        text = text.replaceAll(token, '[redacted]');
+        // A host may echo the Authorization header, also JSON-escaped; every record below derives
+        // from this redacted text and body. A truncated prefix is never parsed.
+        const { text, decoded } = exceeded
+          ? { text: redactText(raw, token) }
+          : redactBody(raw, token);
         if (exceeded)
           throw new DecisionError({
             provider: name,
@@ -239,10 +290,7 @@ export function jevCompatible(options: JevCompatibleOptions): DecisionProviderDe
             message: `HTTP ${String(response.status)}${text ? `: ${text.slice(0, 200)}` : ''}`,
             rawText: text,
           });
-        let body: unknown;
-        try {
-          body = JSON.parse(text);
-        } catch {
+        if (decoded === undefined)
           throw new DecisionError({
             provider: name,
             kind: 'schema',
@@ -250,8 +298,7 @@ export function jevCompatible(options: JevCompatibleOptions): DecisionProviderDe
             message: 'response is not JSON',
             rawText: text,
           });
-        }
-        return { body, rawText: text };
+        return { body: decoded.value, rawText: text };
       };
       // The token checks throw synchronously, before any request, so the attempt reports no usage.
       return (request, context) => {
