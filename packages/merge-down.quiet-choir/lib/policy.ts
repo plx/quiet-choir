@@ -144,6 +144,33 @@ export function ensureClosesBody(body: string, issue: number): string | null {
   return keyword.test(body) ? null : `${body.trimEnd()}\n\nCloses #${String(issue)}.\n`;
 }
 
+/** What the publish step does: push the checked head, skip a push that happened, or refuse. */
+export type PublishPlan = { readonly action: 'push' | 'skip' } | { readonly refused: string };
+
+/**
+ * The publish decision. `sha` is the head that passed the local checks, `head` the worktree's HEAD,
+ * `remote` the PR branch on GitHub and `expected` the head this run last saw there. A worktree that
+ * moved off the checked head is refused; a remote already at `sha` (pushed before a crash, or
+ * nothing changed) is skipped; any remote but `expected` means someone else pushed.
+ */
+export function publishPlan(state: {
+  readonly sha: string;
+  readonly head: string;
+  readonly remote: string;
+  readonly expected: string;
+}): PublishPlan {
+  if (state.head !== state.sha)
+    return {
+      refused: `worktree HEAD drifted from the checked head (HEAD ${state.head}, checked ${state.sha})`,
+    };
+  if (state.remote === state.sha) return { action: 'skip' };
+  if (state.remote !== state.expected)
+    return {
+      refused: `remote head moved to ${state.remote || 'nothing'} (expected ${state.expected}); someone else pushed`,
+    };
+  return { action: 'push' };
+}
+
 /** Counts of Codex's `[P0]`-`[P3]` priority tags in a review. */
 export interface ReviewCounts {
   readonly findings: number;

@@ -18,7 +18,7 @@ import {
   type WorkflowContext,
 } from 'quiet-choir';
 import { Sync, type Sync as SyncResult } from '../contracts.js';
-import { forkPointRef, localBranch, stripAnsi } from './policy.js';
+import { forkPointRef, localBranch, publishPlan, stripAnsi } from './policy.js';
 
 /** Where a run keeps its worktree and state: `<root>/worktree` and `<root>/state/pr-N`. */
 export interface Paths {
@@ -394,48 +394,49 @@ export const Published = z.object({
 export type Published = z.output<typeof Published>;
 
 /**
- * Push the worktree's HEAD to the PR branch with a lease on the head this run last saw. It reads
- * the remote head first and accepts either the expected head or the local one, so a retry after a
- * crash that already pushed finds the remote at HEAD and skips the push instead of failing its
- * lease. Any other remote head means someone else pushed, and the step fails.
+ * Push `sha`, the head that passed the local checks, to the PR branch with a lease on the head this
+ * run last saw. It refuses when the worktree's HEAD has moved off `sha`. It reads the remote head
+ * first and accepts either the expected head or `sha`, so a retry after a crash that already pushed
+ * finds the remote at `sha` and skips the push instead of failing its lease. Any other remote head
+ * means someone else pushed, and the step fails.
  */
 export function publish(
   ctx: WorkflowContext,
   id: string,
-  input: { readonly workdir: string; readonly branch: string; readonly expected: string },
+  input: {
+    readonly workdir: string;
+    readonly branch: string;
+    readonly expected: string;
+    readonly sha: string;
+  },
 ): Promise<Settled<Published>> {
   return ctx.step(id, {
     identity: 'version',
-    version: 'merge-down.publish/1',
+    version: 'merge-down.publish/2',
     input: { ...input },
     schema: Published,
     onError: 'return',
     async run(context) {
       const W = input.workdir;
+      const { sha, expected } = input;
       const ref = `refs/heads/${input.branch}`;
       const head = await git(context, W, ['rev-parse', 'HEAD']);
       const listed = await git(context, W, ['ls-remote', 'origin', ref]);
       const remote = listed.split(/\s+/)[0] ?? '';
-      if (remote !== input.expected && remote !== head)
-        throw new Error(
-          `remote head moved to ${remote || 'nothing'} (expected ${input.expected}); someone else pushed`,
-        );
-      if (remote === head) {
+      const plan = publishPlan({ sha, head, remote, expected });
+      if ('refused' in plan) throw new Error(plan.refused);
+      if (plan.action === 'skip') {
         // Pushed already, by this step before a crash or because nothing changed.
-        return {
-          head,
-          previousHead: input.expected === head ? null : input.expected,
-          pushed: false,
-        };
+        return { head: sha, previousHead: expected === sha ? null : expected, pushed: false };
       }
       await git(context, W, [
         'push',
         '--quiet',
         `--force-with-lease=${ref}:${remote}`,
         'origin',
-        `HEAD:${ref}`,
+        `${sha}:${ref}`,
       ]);
-      return { head, previousHead: remote, pushed: true };
+      return { head: sha, previousHead: remote, pushed: true };
     },
   });
 }

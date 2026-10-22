@@ -18,6 +18,7 @@ import {
   majorBump,
   needsCommit,
   plain,
+  publishPlan,
   replyFor,
   reviewFindings,
   underLimit,
@@ -102,6 +103,42 @@ describe('closing keywords', () => {
     expect(ensureClosesBody('Adds the widget.\n\n', 41)).toBe('Adds the widget.\n\nCloses #41.\n');
     expect(ensureClosesBody('Resolves #41', 41)).toBeNull();
     expect(ensureClosesBody('Closes #410', 41)).toBe('Closes #410\n\nCloses #41.\n');
+  });
+});
+
+describe('publishPlan', () => {
+  const [checked, seen, other] = ['c'.repeat(40), 'e'.repeat(40), 'f'.repeat(40)];
+
+  it('pushes the checked head over the head this run last saw', () => {
+    expect(publishPlan({ sha: checked, head: checked, remote: seen, expected: seen })).toEqual({
+      action: 'push',
+    });
+  });
+
+  it('skips a push that already happened', () => {
+    expect(publishPlan({ sha: checked, head: checked, remote: checked, expected: seen })).toEqual({
+      action: 'skip',
+    });
+  });
+
+  it('refuses when the worktree HEAD drifted from the checked head', () => {
+    expect(publishPlan({ sha: checked, head: other, remote: seen, expected: seen })).toHaveProperty(
+      'refused',
+      `worktree HEAD drifted from the checked head (HEAD ${other}, checked ${checked})`,
+    );
+    // Even when the remote already holds the drifted HEAD.
+    expect(
+      publishPlan({ sha: checked, head: other, remote: other, expected: seen }),
+    ).toHaveProperty('refused');
+  });
+
+  it('refuses when someone else pushed', () => {
+    expect(
+      publishPlan({ sha: checked, head: checked, remote: other, expected: seen }),
+    ).toHaveProperty(
+      'refused',
+      `remote head moved to ${other} (expected ${seen}); someone else pushed`,
+    );
   });
 });
 

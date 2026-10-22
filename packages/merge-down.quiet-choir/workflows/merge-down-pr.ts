@@ -314,6 +314,8 @@ export default defineWorkflow({
     ]);
     if (!firstReview) return blocked('review', 'reviewer returned nothing');
     const firstLocalOk = firstLocal !== null && firstLocal.error === null;
+    // The last head that passed the suite: the only head publish pushes.
+    let checkedHead = check0.passed ? check0.head : null;
     ctx.log(
       `Local checks ${check0.passed ? 'pass' : `fail at ${check0.failedStep ?? String(check0.error)}`}`,
     );
@@ -716,6 +718,7 @@ export default defineWorkflow({
           };
         }
       }
+      checkedHead = settled.head;
       return { fixed: settled.report };
     };
 
@@ -816,10 +819,12 @@ export default defineWorkflow({
 
     // Push, confirm GitHub sees the head, retarget and fix the closing keyword, reply to threads.
     const publishRound = async (r: number): Promise<{ since: number } | { error: string }> => {
+      if (checkedHead === null) return { error: 'no head passed the local checks' };
       const pushed = await publish(ctx, ctx.id('gate', r, 'push'), {
         workdir: W,
         branch: PR.headRefName,
         expected: head,
+        sha: checkedHead,
       });
       if (!pushed.ok) return { error: pushed.error.message };
       head = pushed.value.head;
