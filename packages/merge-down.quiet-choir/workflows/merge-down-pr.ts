@@ -156,6 +156,24 @@ export default defineWorkflow({
       },
     });
     if (PR.state !== 'OPEN') return finish('skipped', { notes: [`PR is ${PR.state}`] });
+    // The sync checks out origin/<head branch> and the gate pushes there, so a head in a fork (or a
+    // deleted one) would publish to a same-named branch of this repository instead.
+    const headRepo = await ctx.exec.json(
+      ctx.id('head-repo', A.pr),
+      [
+        'gh',
+        'api',
+        `repos/${info.nameWithOwner}/pulls/${String(A.pr)}`,
+        '--jq',
+        '{repo: .head.repo.full_name}',
+      ],
+      { schema: z.object({ repo: z.string().nullable() }), ...write },
+    );
+    if (headRepo.repo?.toLowerCase() !== info.nameWithOwner.toLowerCase())
+      return blocked(
+        'prepare',
+        `PR head is in ${headRepo.repo ?? 'a deleted fork'}, not ${info.nameWithOwner}; merge-down only lands same-repository PRs`,
+      );
     const synced = await sync(ctx, 'sync', {
       pr: A.pr,
       repo: info.nameWithOwner,
@@ -190,6 +208,13 @@ export default defineWorkflow({
     if (SYNC.status === 'blocked') return blocked('rebase', SYNC.reason ?? 'sync refused');
     if (SYNC.status === 'error')
       return blocked('rebase', `rebase failed without conflicts; see ${String(SYNC.log)}`);
+    // The branch the sync checked out must hold the head Prepare read, or the push would lease on
+    // and publish over a head nobody reviewed.
+    if (SYNC.origHead !== null && SYNC.origHead !== PR.headRefOid)
+      return blocked(
+        'rebase',
+        `origin/${PR.headRefName} is ${SYNC.origHead}, not the PR head ${PR.headRefOid}; the head moved since Prepare or lives elsewhere; re-run`,
+      );
     if (SYNC.forkSource && SYNC.forkSource !== 'recorded' && PR.baseRefName !== DEF)
       record.notes.push(
         `fork point came from ${SYNC.forkSource}, not a recorded ref; verify the rebase kept only this PR's commits`,

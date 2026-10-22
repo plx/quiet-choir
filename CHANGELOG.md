@@ -12,17 +12,18 @@
   steps and commands, so the verified relay (clerks, nonces, FNV hashes) is gone. The stages,
   `until` stops, statuses and ledger record match the native script; its `error` status is the input
   schema's refusal. It uses its own default root and local branch, so the native script remains the
-  fallback. The check suite certifies a clean HEAD only: a dirty worktree, or a HEAD that moves
-  during the suite, fails the check. One root serves one unfinished run: a run resumed after another
-  PR's run took its worktree over blocks before any fix round, check suite or push there. Land
-  rereads its guards (state, head, base, CI, unanswered threads, open alerts) and merges in one
-  package step, `land/merge`, so no retry or resume merges on guard reads checkpointed before an
-  earlier attempt failed. `npm run packages:rehearse` validates the package and rehearses seven
-  fixture cases (clean land, fix round, stop at fix, dirty fix, blocked gate, red CI at land, a land
-  retry that finds a new thread) from `packages/rehearsals/merge-down/`; it runs in `npm run check`
-  after the build and in a new Package rehearsals CI job. `npm run typecheck` also checks the
-  package, `durability:check` lints its workflows, and `.prettierignore` keeps formatters off
-  `packages/*/prompts/`. The README records the measurements against the native pair and the API
+  fallback. It lands same-repository PRs only: a PR whose head is in a fork blocks at `prepare`,
+  before any git command or push. The check suite certifies a clean HEAD only: a dirty worktree, or
+  a HEAD that moves during the suite, fails the check. One root serves one unfinished run: a run
+  resumed after another PR's run took its worktree over blocks before any fix round, check suite or
+  push there. Land rereads its guards (state, head, base, CI, unanswered threads, open alerts) and
+  merges in one package step, `land/merge`, so no retry or resume merges on guard reads checkpointed
+  before an earlier attempt failed. `npm run packages:rehearse` validates the package and rehearses
+  seven fixture cases (clean land, fix round, stop at fix, dirty fix, blocked gate, red CI at land,
+  a land retry that finds a new thread) from `packages/rehearsals/merge-down/`; it runs in
+  `npm run check` after the build and in a new Package rehearsals CI job. `npm run typecheck` also
+  checks the package, `durability:check` lints its workflows, and `.prettierignore` keeps formatters
+  off `packages/*/prompts/`. The README records the measurements against the native pair and the API
   follow-ups filed with this change. `gh.pr.merge` takes an optional `base` and, on every attempt,
   refuses a pull request retargeted to another base with `reason: 'base-changed'`, so a retry or
   resume after a failed merge never merges into the wrong branch. The new refusal changes the step's

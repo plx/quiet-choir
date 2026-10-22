@@ -58,6 +58,9 @@ node bin/run.js workflow execute packages/merge-down.quiet-choir \
 - A zero-publish rehearsal of a real PR: the same command with `"until":"review"` in the input and a
   different run ID. It reads GitHub and runs the reviewer and the local check suite and Codex
   review, but pushes, comments, files and merges nothing.
+- Only same-repository PRs land: the gate pushes to `origin`, so a PR whose head is in a fork (or a
+  deleted one) is `blocked` at `prepare` before the sync touches the worktree, and a sync that finds
+  `origin/<head branch>` at another head than Prepare read blocks at `rebase`.
 - A `blocked`, `stopped` or `deferred` run is complete. Once the cause is handled, start a new run
   (a new `--run-id`): every step re-reads GitHub and git state, as the native script's re-runs do.
 
@@ -223,9 +226,10 @@ thread that only the gate's refresh read after CI sees triaged, merged in round 
 edits, so its check fails as `dirty worktree` and the surgeon's repair is checked instead),
 `blocked-gate` (red CI, a rerun that fails again, `maxCiRepairs: 0`), `rerun-reconciled` (red CI
 whose failed jobs were already re-run: the gate still waits, records the flake and calls no fixer),
-`land-red-ci` (the gate sees green CI but the land-time wait sees red: blocked at `land`, no merge)
-and `land-retry` (the first merge attempt passes its guards but its PUT fails; the retry rereads
-them, finds a new unanswered thread and blocks at `land` without a second PUT). Every agent call and
+`land-red-ci` (the gate sees green CI but the land-time wait sees red: blocked at `land`, no merge),
+`fork-head` (a PR whose head is in a fork: blocked at `prepare` before any git command or push) and
+`land-retry` (the first merge attempt passes its guards but its PUT fails; the retry rereads them,
+finds a new unanswered thread and blocks at `land` without a second PUT). Every agent call and
 command is answered by its fixtures (`"commands": "fixture"`), no rule may go unused, no command may
 fail except the simulations a case lists in `failures`, and a case's `order` lists steps that must
 start in that order (the retarget before the push). It runs in `npm run check` and in the Package
