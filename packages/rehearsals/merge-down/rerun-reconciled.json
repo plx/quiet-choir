@@ -13,7 +13,6 @@
     },
     "rounds": 1,
     "ciRepairs": 0,
-    "fixes": [],
     "flakyChecks": ["test (22)"],
     "mergeCommit": null,
     "notes": ["CI failed on test (22); found already re-run the failed jobs: passed (flaky)"]
