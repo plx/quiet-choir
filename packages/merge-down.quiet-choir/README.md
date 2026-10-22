@@ -229,8 +229,8 @@ Measured on this branch with the commands below, against the native originals.
 
 | Measure                                                  | Package                                       | Native                                                               |
 | -------------------------------------------------------- | --------------------------------------------- | -------------------------------------------------------------------- |
-| Total lines (package without README; script plus helper) | 4,443 in 28 files                             | 3,377 (merge-down-pr.js 1,552 + merge-down.mjs 1,825)                |
-| Prompt prose                                             | 344 lines, 21.0 KB in prompts/\*\*/\*.md      | 12 multi-line template literals, 139 lines, 19.2 KB in the script    |
+| Total lines (package without README; script plus helper) | 4,450 in 28 files                             | 3,377 (merge-down-pr.js 1,552 + merge-down.mjs 1,825)                |
+| Prompt prose                                             | 351 lines, 21.6 KB in prompts/\*\*/\*.md      | 12 multi-line template literals, 139 lines, 19.2 KB in the script    |
 | Control flow                                             | 1,312 lines in workflows/                     | the whole 1,552-line script                                          |
 | Mechanics                                                | 2,108 lines in lib/ (600 of them pure policy) | 1,825 lines in merge-down.mjs                                        |
 | Agent call sites                                         | 9 roster or team-slot calls                   | 9 judgment `agent(` calls + 13 clerk relay calls (one `agent(` site) |

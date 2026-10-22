@@ -9,3 +9,10 @@ tools. Never touch other checkouts or branches, and never push. Files describing
 commits.txt (the PR's changes against {{ situation.base }}), threads.md (unresolved review threads),
 stack.md (later PRs stacked on this one){% if situation.upstreamDelta %}, upstream-delta.stat /
 upstream-delta.patch (what changed beneath the PR since it was written){% endif %}.
+
+Your shell runs headless with an allowlist and no prompts: `git` subcommands, `gh` reads, `npx tsc`,
+`npx eslint`, `npx prettier`, `npx vitest`, `node --test` and `npm ci`/`npm install`, as your role
+allows. A command chained with `&&` runs only if every part is allowlisted, so use no variable
+assignments, subshells, pipes into other programs, heredocs or interpreters (`python3`, `node -e`,
+`sed`, `awk`): edit files with the Edit and Write tools. A denied command stays denied however it is
+reworded; do what remains with the file tools, or report it in notes.
