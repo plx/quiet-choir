@@ -7,7 +7,7 @@ import { existsSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z, type StepContext, type WorkflowContext } from 'quiet-choir';
-import { dependencyStamp, provisionDependencies } from './checks.js';
+import { dependencyKey, dependencyStamp, provisionDependencies } from './checks.js';
 import { git, run, type Paths } from './git.js';
 import { reviewFindings, stripAnsi, tail } from './policy.js';
 
@@ -45,8 +45,8 @@ const Teardown = z.object({ moved: z.boolean(), dirty: z.array(z.string()) });
 /**
  * Review head `sha` locally. Steps (under `codex/<label>/<sha>/<model>/<effort>/`): `setup` adds the review
  * worktree at `<dir>/review-<sha12>` and gives it dependencies (a copy-on-write clone of the PR
- * worktree's node_modules when the lockfile matches, else `npm ci`); `review` runs codex there with
- * a 54-minute deadline and its stderr in a log; `file` saves the review text; `teardown`, in a
+ * worktree's node_modules when package.json and the lockfile match, else `npm ci`); `review` runs
+ * codex there with a 54-minute deadline and its stderr in a log; `file` saves the review text; `teardown`, in a
  * finally, notes whether the review moved its worktree and removes it. A failure is returned in
  * `error`, never thrown: the gate proceeds on CI without the review.
  */
@@ -89,9 +89,9 @@ export async function localCodexReview(
     async run(context) {
       await remove(context); // left behind by a review that was killed
       await git(context, W, ['worktree', 'add', '--detach', RW, sha]);
-      const lock = await run(context, ['git', 'hash-object', 'package-lock.json'], { cwd: RW });
-      if (lock.code !== 0) return { deps: 'none' as const };
-      if ((await dependencyStamp(W))?.trim() === lock.stdout.trim()) {
+      const key = await dependencyKey(context, RW);
+      if (key === null) return { deps: 'none' as const };
+      if ((await dependencyStamp(W))?.trim() === key) {
         const cloned = await run(
           context,
           ['cp', '-c', '-R', join(W, 'node_modules'), join(RW, 'node_modules')],

@@ -1,7 +1,7 @@
 // The local check suite as one durable step. A workflow step has no shell time limit, so the
 // native check-start/check-wait slices and the fixer-runs-the-suite protocol are gone: the step
-// installs dependencies when the lockfile changed, runs the suite with its output in a log file,
-// and returns a small verdict pinned to the head it ran at.
+// installs dependencies when package.json or the lockfile changed, runs the suite with its output
+// in a log file, and returns a small verdict pinned to the head it ran at.
 import { availableParallelism, loadavg } from 'node:os';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -22,17 +22,29 @@ async function readText(path: string): Promise<string | null> {
 }
 
 /**
+ * The dependency key of `dir`: the blob hashes of package.json and package-lock.json, one per line,
+ * so a manifest edit without a lockfile update invalidates installed dependencies too. Null when
+ * either file is missing.
+ */
+export async function dependencyKey(context: StepContext, dir: string): Promise<string | null> {
+  const hashed = await run(context, ['git', 'hash-object', 'package.json', 'package-lock.json'], {
+    cwd: dir,
+  });
+  if (hashed.code !== 0) return null;
+  return hashed.stdout.trim().split(/\s+/).join('\n');
+}
+
+/**
  * Install the worktree's dependencies with `npm ci` unless node_modules was installed from the same
- * lockfile (a stamp holds the lockfile's blob hash). Returns whether it installed, or the failed
- * install's output; null hash means there is no lockfile.
+ * package.json and lockfile (a stamp holds their {@link dependencyKey}). Returns whether it
+ * installed, or the failed install's output; null hash means there is no lockfile.
  */
 export async function provisionDependencies(
   context: StepContext,
   workdir: string,
 ): Promise<{ hash: string | null; installed: boolean; failure: string | null }> {
-  const hashed = await run(context, ['git', 'hash-object', 'package-lock.json'], { cwd: workdir });
-  if (hashed.code !== 0) return { hash: null, installed: false, failure: null };
-  const hash = hashed.stdout.trim();
+  const hash = await dependencyKey(context, workdir);
+  if (hash === null) return { hash: null, installed: false, failure: null };
   const stamp = join(workdir, 'node_modules', STAMP);
   if ((await readText(stamp))?.trim() === hash) return { hash, installed: false, failure: null };
   const installed = await run(context, ['npm', 'ci', '--no-audit', '--no-fund'], {
@@ -46,7 +58,7 @@ export async function provisionDependencies(
   return { hash, installed: true, failure: null };
 }
 
-/** The lockfile stamp of a provisioned worktree, for a review worktree to compare against. */
+/** The dependency stamp of a provisioned worktree, for a review worktree to compare against. */
 export function dependencyStamp(workdir: string): Promise<string | null> {
   return readText(join(workdir, 'node_modules', STAMP));
 }

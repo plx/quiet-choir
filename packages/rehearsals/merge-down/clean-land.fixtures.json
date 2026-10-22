@@ -324,8 +324,8 @@
     },
     {
       "step": "check/check-0",
-      "argvPrefix": ["git", "hash-object"],
-      "stdout": "f00dcafe\n"
+      "argvPrefix": ["git", "hash-object", "package.json", "package-lock.json"],
+      "stdout": "5eedcafe\nf00dcafe\n"
     },
     {
       "step": "check/check-0",
@@ -356,8 +356,8 @@
     },
     {
       "step": "codex/r0/0a1b2c3d4e5f60718293a4b5c6d7e8f901234567/gpt-6-astra/default/setup",
-      "argvPrefix": ["git", "hash-object"],
-      "stdout": "b0bacafe\n"
+      "argvPrefix": ["git", "hash-object", "package.json", "package-lock.json"],
+      "stdout": "5eedcafe\nb0bacafe\n"
     },
     {
       "step": "codex/r0/0a1b2c3d4e5f60718293a4b5c6d7e8f901234567/gpt-6-astra/default/setup",

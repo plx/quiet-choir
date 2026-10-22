@@ -394,8 +394,8 @@
     },
     {
       "step": "check/check-0",
-      "argvPrefix": ["git", "hash-object"],
-      "stdout": "f00dcafe\n"
+      "argvPrefix": ["git", "hash-object", "package.json", "package-lock.json"],
+      "stdout": "5eedcafe\nf00dcafe\n"
     },
     {
       "step": "check/check-0",
@@ -429,8 +429,8 @@
     },
     {
       "step": "check/fix-1",
-      "argvPrefix": ["git", "hash-object"],
-      "stdout": "f00dcafe\n"
+      "argvPrefix": ["git", "hash-object", "package.json", "package-lock.json"],
+      "stdout": "5eedcafe\nf00dcafe\n"
     },
     {
       "step": "check/fix-1",
