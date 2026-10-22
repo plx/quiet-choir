@@ -13,9 +13,15 @@ I/O unless stubbed. Use the
 [launch-directory and external-state rules](../SKILL.md#run-a-first-workflow-against-a-project). The
 tests' fake responses prove replay behavior, not the quality of a model's review or edits.
 
+Recipes become a [package](packages.md) as they grow. A recipe's roster module becomes the package's
+shared `roster.ts`, its prompt strings become `prompts/*.md` templates, and a loop that takes a team
+(such as the review/revise loop below) takes it from `lib/teams.ts`, filled from the roster where
+the workflow calls it.
+
 | Need                                                                    | Recipe                                                              |
 | ----------------------------------------------------------------------- | ------------------------------------------------------------------- |
 | Declare agents once and bind options for a helper                       | [Roster and bound agents](#roster-and-bound-agents)                 |
+| Package several workflows with a shared roster, prompts and teams       | [Workflow packages](packages.md)                                    |
 | Combine Claude and Codex reviews; retry failed reviewers                | [Cross-harness fan-out/fan-in](#cross-harness-fan-outfan-in)        |
 | Preserve a quorum decision despite failed reviewers                     | [Failure-tolerant panel](#failure-tolerant-panel)                   |
 | Discover until no new findings appear                                   | [Loop until dry](#loop-until-dry)                                   |

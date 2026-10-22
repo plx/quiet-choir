@@ -86,6 +86,7 @@ recover, or inspect a failure.
 | Control native configuration, environment, and checkout trust                          | [Harness isolation](references/harness-isolation.md)           |
 | Declare a roster, bind agents, shared call options, identity, usage, or process limits | [Agent calls](references/agent-calls.md)                       |
 | Keep prompts in markdown templates with typed, load-checked parameters                 | [Prompt templates](references/prompts.md)                      |
+| Package workflows with a shared roster, prompts and teams; run one with `--workflow`   | [Workflow packages](references/packages.md)                    |
 | Route or grade with a decision provider (ctx.decide, roster deciders)                  | [Decision providers](references/decisions.md)                  |
 | Observe native activity, inspect transcripts, retain failed response evidence          | [Agent streaming](references/agent-streaming.md)               |
 | Inspect spend, understand token categories, stop new work at a run cap                 | [Usage and budgets](references/usage-budgets.md)               |
@@ -94,7 +95,7 @@ recover, or inspect a failure.
 | Resume after failure, accept code edits, fork completed work                           | [Durability and resumption](references/durability.md)          |
 | Read, wait on, or write GitHub through gh; burn down an epic                           | [GitHub](references/github.md)                                 |
 | Embed the engine, log responses, implement a harness                                   | [Embedding and extensions](references/extensions.md)           |
-| Port a native Workflow script: map agent, parallel, pipeline and budget                | [Native ports](references/porting-native-workflows.md)         |
+| Port a native Workflow script to rosters, prompts and a package                        | [Native ports](references/porting-native-workflows.md)         |
 
 For exit 75, use the
 [suspended-run answer loop](references/operating-runs.md#answer-a-suspended-run) or

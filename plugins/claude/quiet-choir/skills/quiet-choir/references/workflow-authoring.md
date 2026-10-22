@@ -2,6 +2,11 @@
 
 ## Define a workflow
 
+A workflow that calls several agents, or carries long prompts, is authored as a
+[package](packages.md): one `roster.ts` shared by its workflows, prompts as markdown templates in
+`prompts/`, teams in `lib/teams.ts`, and the control flow in `workflows/`. A single small workflow
+stays one file; the shape below is what each workflow module in a package default-exports.
+
 Default-export `defineWorkflow({ name, version, input, output, run })`. Schemas alone infer
 TypeScript input/output types and validate data at runtime. Callback return types cannot widen a
 workflow or step's schema contract. Never cast the output schema: write the actual shape, or use
@@ -10,16 +15,21 @@ need `as const`, especially async local steps; `ctx.poll` callbacks keep literal
 example can be saved under `examples/` in a checkout:
 
 ```ts
-import { defineWorkflow, z } from '../src/index.js';
+import { defineRoster, defineWorkflow, z } from '../src/index.js';
+
+const roster = defineRoster({
+  Labeler: { harness: 'claude', model: 'haiku', tools: [], maxTurns: 5, timeoutMs: 120_000 },
+});
 
 export default defineWorkflow({
   name: 'labels',
   version: '1',
+  roster,
   input: z.object({ topics: z.array(z.string()).max(10) }),
   output: z.object({ labels: z.array(z.string()) }),
   async run(ctx, input) {
     const labels = await ctx.map('labels', input.topics, { concurrency: 2 }, async (topic) => {
-      const result = await ctx.claude.value('label', {
+      const result = await ctx.roster.Labeler.value('label', {
         prompt: `Suggest a short label for this topic: ${topic}`,
         schema: z.object({ label: z.string() }),
       });
@@ -35,7 +45,9 @@ adjust the relative path to `src/index.js` for the workflow's actual location; k
 suffix.
 
 Declare the agents the workflow calls in an optional `roster` field, a `defineRoster` result kept in
-its own module, and call them as `ctx.roster.Name`; see [the roster](agent-calls.md#roster).
+its own module, and call them as `ctx.roster.Name`; see [the roster](agent-calls.md#roster). Keep
+long prompts in markdown templates with typed parameters ([prompt templates](prompts.md)), and name
+swappable roles as [teams](packages.md#teams).
 
 `name` and `version` must be nonempty. Version is an explicit compatibility string, not necessarily
 semver. Change it when semantics change, including external dependencies/configuration; a changed
