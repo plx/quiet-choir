@@ -548,6 +548,74 @@ function wireAnswer(question: ProtocolQuestion, raw: unknown): unknown {
   };
 }
 
+/** Canned answers in the recorded shape, as a decision fixture holds them. @internal */
+export interface FixtureDecisionAnswers {
+  /** Answers by question name, in the recorded shape (`{ noul }`, `{ choice, ... }`, ...). */
+  readonly answers: Readonly<Record<string, JsonValue>>;
+  /** The served model, or null or absent when the fixture names none. */
+  readonly model?: string | null | undefined;
+  /** Token counts; a null or absent count is unknown. */
+  readonly usage?:
+    | {
+        readonly inputTokens?: number | null | undefined;
+        readonly outputTokens?: number | null | undefined;
+      }
+    | undefined;
+}
+
+/** Recorded answer fields and their wire names; the first three are the headline fields. */
+const answerFields = [
+  ['noul', decisionWire.answer.noul],
+  ['choice', decisionWire.answer.choice],
+  ['score', decisionWire.answer.score],
+  ['probabilities', decisionWire.answer.probabilities],
+  ['confidence', decisionWire.answer.confidence],
+  ['legend', decisionWire.answer.legend],
+] as const;
+
+/**
+ * Translate canned answers in the recorded shape into a protocol response body, so they go through
+ * {@link parseDecisionResponse} like a live response. Each answer's `type` is inferred from the one
+ * headline field it carries (`noul`, `choice` or `score`) and omitted when it has none or several,
+ * so an answer recorded for another kind of question fails the type check. Known fields are copied
+ * under their wire names and anything else is dropped; usage goes in as `input_tokens` and
+ * `output_tokens`, with unknown counts left out, and no usage key at all when the fixture has none.
+ * @internal
+ */
+export function fixtureDecisionBody(response: FixtureDecisionAnswers): JsonValue {
+  const answers: Record<string, JsonValue> = {};
+  for (const [name, raw] of Object.entries(response.answers)) {
+    let answer: JsonValue = raw;
+    if (plainObject(raw)) {
+      const headlines = answerFields
+        .slice(0, 3)
+        .filter(([field]) => Object.hasOwn(raw, field))
+        .map(([field]) => field);
+      const wire: Record<string, JsonValue> = {};
+      if (headlines.length === 1 && headlines[0] !== undefined)
+        wire[decisionWire.answer.type] = headlines[0];
+      for (const [field, wireName] of answerFields)
+        if (Object.hasOwn(raw, field)) wire[wireName] = raw[field] as JsonValue;
+      answer = wire;
+    }
+    Object.defineProperty(answers, name, { value: answer, enumerable: true });
+  }
+  const usage: Record<string, JsonValue> = {};
+  // The first, preferred names, which a live host sends.
+  const [input = 'input_tokens'] = decisionWire.usage.input;
+  const [output = 'output_tokens'] = decisionWire.usage.output;
+  const { inputTokens, outputTokens } = response.usage ?? {};
+  if (typeof inputTokens === 'number') usage[input] = inputTokens;
+  if (typeof outputTokens === 'number') usage[output] = outputTokens;
+  return {
+    ...(typeof response.model === 'string'
+      ? { [decisionWire.response.model]: response.model }
+      : {}),
+    [decisionWire.response.answers]: answers,
+    ...(response.usage === undefined ? {} : { [decisionWire.response.usage]: usage }),
+  };
+}
+
 /** The served model a response reports, or null. @internal */
 export function servedModel(body: unknown): string | null {
   const model = plainObject(body) ? body[decisionWire.response.model] : undefined;

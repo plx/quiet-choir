@@ -23,6 +23,7 @@ import {
   DecisionProviders,
   checkedDecisionConfigurations,
   prepareDecision,
+  type DecisionFixture,
   type PreparedDecision,
 } from './decisions.js';
 import { agentUsageSchema, normalizeUsage } from './usage.js';
@@ -538,6 +539,16 @@ export interface RunOptions extends WorkflowCodeOptions {
    * identity.
    */
   readonly decisionConfigurations?: Readonly<Record<string, DecisionProviderConfiguration>>;
+  /**
+   * Answer every `ctx.decide` attempt in place of the provider transport, as the CLI's fixture and
+   * dry-run harnesses do (#652): when set, no provider transport factory is ever called, so no base
+   * URL or token is needed. Answers go through the same validation as a live response. A throw,
+   * such as an unmatched decision's {@link ConfigurationError}, is fatal configuration: the step is
+   * never settled or retried.
+   *
+   * @internal
+   */
+  readonly decisionFixture?: DecisionFixture;
   /** Explicitly accept replaying outputs recorded under a different harness kind, including forks. */
   readonly allowHarnessChange?: boolean;
   /**
@@ -861,6 +872,7 @@ export async function runWorkflow<
   const registry = new HarnessRegistry(options);
   const decisionProviders = new DecisionProviders(
     checkedDecisionConfigurations(options.decisionConfigurations),
+    options.decisionFixture,
   );
   registry.definitions(definition);
   let harnessKind = registry.kind(checkedDefinition(definition));
@@ -3988,17 +4000,17 @@ export async function runWorkflow<
       // One version-identified step per call (ADR 0066 section 3). Validation, provider resolution
       // and the capability check fail before any record, attributed to the call's step ID.
       decide: ((leaf: string, settings: unknown) => {
+        const id = names.qualify(leaf);
         let prepared: PreparedDecision;
         try {
-          prepared = prepareDecision(decisionProviders, children.definition, settings);
+          prepared = prepareDecision(decisionProviders, children.definition, id, settings);
         } catch (error) {
-          return launch<never>(names.qualify(leaf), 'step', () => {
+          return launch<never>(id, 'step', () => {
             throw error;
           });
         }
         // The answers are projected inside the tracked operation, so the promise the body gets is
         // the one an unawaited failure check and a settled map's failure drain watch.
-        const id = names.qualify(leaf);
         return launch(id, 'step', async () => {
           const outcome = await localStep<DecisionResult, ErrorMode>(id, prepared.step);
           if (!prepared.settled) return (outcome as DecisionResult).answers;

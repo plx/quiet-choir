@@ -17,6 +17,7 @@ import type {
 import { helperRefinementsKey } from '../runtime/helper-refinements.js';
 import { matchesStepGlob, policyOverrideSchema, type ExecutionPolicy } from '../runtime/policy.js';
 import type { RunOptions, WorkflowEvent } from '../runtime/runner.js';
+import type { DecisionFixtureRequest, DecisionFixtureResponse } from '../runtime/decisions.js';
 import { readRequiredRun } from '../runtime/read-required-run.js';
 import { refuseRecordSchemaDrift, writeRun, type RunRecord } from '../runtime/store.js';
 import { runDirectory } from '../runtime/paths.js';
@@ -96,11 +97,32 @@ export interface RehearsalCommand {
    */
   readonly error: string | null;
 }
+/**
+ * One `ctx.decide` attempt the rehearsal answered without calling its provider: from the global
+ * fixture file's `decisions` entry for the step, or synthesized from the step schema's one-hot
+ * defaults. A `--stub-steps` match never reaches the provider path and is listed in `stubbedSteps`
+ * instead. @internal
+ */
+export interface RehearsalDecision {
+  /** Fully qualified step ID. */
+  readonly stepId: string;
+  /** Cumulative one-based attempt. */
+  readonly attempt: number;
+  /** Provider name. */
+  readonly provider: string;
+  /** The requested model, or null. */
+  readonly model: string | null;
+  readonly outputSource: 'fixture' | 'synthesized';
+  /** The message of a matched error entry, or of a synthesis failure; null otherwise. */
+  readonly error: string | null;
+}
 /** Plain-data report; its checkpoint has already been removed from temporary storage. @internal */
 export interface RehearsalReport {
   readonly kind: 'workflow.rehearsal';
   readonly calls: readonly RehearsalCall[];
   readonly commands: readonly RehearsalCommand[];
+  /** Decision attempts, in attempt order. */
+  readonly decisions: readonly RehearsalDecision[];
   /** Synthesized merges, in completion order. */
   readonly merges: readonly RehearsalMerge[];
   readonly replays: readonly { stepId: string; kind: string }[];
@@ -122,6 +144,8 @@ export interface RehearsalReport {
     readonly harness: string | null;
     readonly index: number;
   }[];
+  /** Step IDs of the global fixture file's `decisions` entries that answered no attempt. */
+  readonly staleDecisionFixtures: readonly string[];
   readonly warnings: readonly string[];
 }
 
@@ -131,6 +155,10 @@ export class RehearsalHarness extends FixtureHarness {
   private readonly cli: CliHarness;
   private readonly calls: RehearsalCall[] = [];
   private readonly commands: RehearsalCommand[] = [];
+  private readonly decisions: RehearsalDecision[] = [];
+  /** Step IDs of the global file's decision entries, and those that answered an attempt. */
+  private readonly decisionKeys: readonly string[];
+  private readonly usedDecisions = new Set<string>();
   private readonly execRules: FixtureExecRules;
   /** Per combined agent rule, the fixture file it came from and its index in that file. */
   private readonly callSources: readonly { harness: string | null; index: number }[];
@@ -229,7 +257,12 @@ export class RehearsalHarness extends FixtureHarness {
         ...(selection.fixtures?.calls ?? []),
       ],
       unmatched: 'synthesize',
+      // Named files cannot carry decisions; they are keyed by step, not by harness.
+      ...(selection.fixtures?.decisions === undefined
+        ? {}
+        : { decisions: selection.fixtures.decisions }),
     });
+    this.decisionKeys = Object.keys(selection.fixtures?.decisions ?? {});
     this.callSources = [
       ...named.flatMap(([harness, fixtures]) =>
         fixtures.calls.map((_, index) => ({ harness: harness, index })),
@@ -302,6 +335,33 @@ export class RehearsalHarness extends FixtureHarness {
       return await super.invoke(request, invocation);
     } catch (error) {
       call.error = error instanceof Error ? error.message : String(error);
+      throw error;
+    }
+  }
+  /** Answer a decision attempt from the global file or by synthesis, and record it. @internal */
+  public override decide(request: DecisionFixtureRequest): DecisionFixtureResponse {
+    const matched = this.matchDecision(request.stepId) !== undefined;
+    if (matched) this.usedDecisions.add(request.stepId);
+    else
+      this.warnings.add(
+        'Decisions without a fixture entry are synthesized: every choice and score answer is one-hot on its first option or level and noul answers are 0, so a branch on the answers can differ from a real run.',
+      );
+    const entry = {
+      stepId: request.stepId,
+      attempt: request.attempt,
+      provider: request.provider,
+      model: request.model,
+      outputSource: matched ? ('fixture' as const) : ('synthesized' as const),
+    };
+    try {
+      const response = super.decide(request);
+      this.decisions.push({ ...entry, error: 'error' in response ? response.error : null });
+      return response;
+    } catch (error) {
+      this.decisions.push({
+        ...entry,
+        error: error instanceof Error ? error.message : String(error),
+      });
       throw error;
     }
   }
@@ -396,6 +456,11 @@ export class RehearsalHarness extends FixtureHarness {
       this.warnings.add(
         `Exec fixture rules ${staleExecFixtures.join(', ')} matched no command; check their step, argvPrefix, digests, occurrence and call. Rules for steps replayed from a checkpoint are always stale.`,
       );
+    const staleDecisionFixtures = this.decisionKeys.filter((key) => !this.usedDecisions.has(key));
+    if (staleDecisionFixtures.length)
+      this.warnings.add(
+        `Decision fixture entries ${staleDecisionFixtures.join(', ')} answered no decision; check their step IDs, which must be exact and fully qualified. Entries for steps replayed from a checkpoint or stubbed with --stub-steps are always stale.`,
+      );
     const staleCallFixtures = this.callSources.filter((_, index) => !this.usedCalls.has(index));
     if (staleCallFixtures.length)
       this.warnings.add(
@@ -411,6 +476,7 @@ export class RehearsalHarness extends FixtureHarness {
     const replayed =
       this.calls.length === 0 &&
       this.commands.length === 0 &&
+      this.decisions.length === 0 &&
       this.replays.length === 0 &&
       record?.status === 'completed'
         ? Object.entries(record.steps)
@@ -425,6 +491,7 @@ export class RehearsalHarness extends FixtureHarness {
       kind: 'workflow.rehearsal',
       calls: this.calls,
       commands: this.commands,
+      decisions: this.decisions,
       merges: this.merges,
       replays: replayed,
       harnessCounts: Object.fromEntries(
@@ -445,6 +512,7 @@ export class RehearsalHarness extends FixtureHarness {
       stubbedSteps: [...this.stubbedSteps],
       staleExecFixtures,
       staleCallFixtures,
+      staleDecisionFixtures,
       skippedSleeps: [...this.skippedSleeps].filter((id) => {
         const step = record?.steps[id];
         return (

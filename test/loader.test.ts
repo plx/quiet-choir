@@ -11,6 +11,8 @@ import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import type { ExecuteWorkflowPlan } from '../src/workflow/loader/model.js';
 import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
 import { TypecheckProgramCache } from '../src/workflow/typecheck/program-cache.js';
+import type { HarnessFixtures } from '../src/harnesses/fixture.js';
+import { startFakeDecisionServer } from './decision-fake-server.js';
 
 // One program cache for the file, so each compile of the engine source after the first reuses its
 // parse and checks (see CONTRIBUTING.md, "Test timeouts and storage sync").
@@ -376,5 +378,306 @@ export default defineWorkflow({
       ok: false,
       message: `Run nope not found in ${absent} (0 runs present). --state-dir resolves against the current directory.`,
     });
+  });
+});
+
+// Decision fixtures through the executor (#652): --dry-run and --harness fixture answer ctx.decide
+// without building a provider transport, and `workflow fixtures` exports decision steps.
+// measured: like the loader suite above, dominated by the tsImport compile of each module.
+describe('decision fixtures through the executor', { timeout: 20_000 }, () => {
+  const decisionImports = `${imports}
+import { choice, defineDecisionProvider, jevCompatible, noul } from ${JSON.stringify(join(projectRoot, 'src/integrations/decision.js'))};`;
+  const guardedSource = `${decisionImports}
+const guarded = defineDecisionProvider({
+  name: 'guarded',
+  revision: 1,
+  capabilities: { kinds: ['noul', 'choice', 'score'], maxOptions: 255, levels: [2, 10], idempotencyKey: false },
+  defaultModel: 'guarded-1',
+  transport: () => { throw new Error('the guarded transport factory was called'); },
+});
+const jev = jevCompatible({ name: 'jev', apiKeyEnv: 'QC_UNSET_DECISION_TOKEN', defaultModel: 'jev-1' });
+const team = choice({ instructions: 'Which team?', options: { a: null, b: null } });
+export default defineWorkflow({
+  name: 'decide', version: '1', input: z.null(), output: z.unknown(),
+  decisions: [guarded, jev],
+  async run(ctx) {
+    const first = await ctx.decide('first', { provider: 'guarded', state: 1, questions: { team } });
+    const second = await ctx.decide('second', { provider: 'jev', state: 2, questions: { ok: noul({ instructions: 'ok?' }) } });
+    return { first, second };
+  },
+});`;
+  const synthesizedOutput = {
+    first: { team: { choice: 'a', probabilities: { a: 1, b: 0 }, confidence: 1 } },
+    second: { ok: { noul: 0 } },
+  };
+
+  it('rehearses under --dry-run without configuration, credentials or a transport', async () => {
+    vi.stubEnv('QC_UNSET_DECISION_TOKEN', undefined);
+    const { file, root } = await fixture(guardedSource);
+    const executed = await executor().execute({
+      ...plan(file),
+      kind: 'workflow.execute',
+      runId: 'dry',
+      stateDir: join(root, 'state'),
+      cwd: root,
+      resume: false,
+      input: null,
+      dryRun: true,
+    });
+    vi.unstubAllEnvs();
+    expect(executed).toMatchObject({
+      kind: 'workflow.run.result',
+      ok: true,
+      run: { status: 'completed', output: synthesizedOutput },
+    });
+    if (executed.kind !== 'workflow.run.result' || !executed.rehearsal)
+      throw new Error('expected a rehearsal');
+    expect(executed.rehearsal.decisions).toEqual([
+      {
+        stepId: 'first',
+        attempt: 1,
+        provider: 'guarded',
+        model: 'guarded-1',
+        outputSource: 'synthesized',
+        error: null,
+      },
+      {
+        stepId: 'second',
+        attempt: 1,
+        provider: 'jev',
+        model: 'jev-1',
+        outputSource: 'synthesized',
+        error: null,
+      },
+    ]);
+  });
+
+  it('answers from a fixture file, refuses an unmatched decision, and synthesizes on request', async () => {
+    const { file, root } = await fixture(guardedSource);
+    const execute = (
+      runId: string,
+      decisions: NonNullable<HarnessFixtures['decisions']>,
+      unmatched?: 'synthesize',
+      dryRun = false,
+    ) =>
+      executor().execute({
+        ...plan(file),
+        kind: 'workflow.execute',
+        runId,
+        stateDir: join(root, 'state'),
+        cwd: root,
+        resume: false,
+        input: null,
+        dryRun,
+        harness: {
+          kind: 'fixture',
+          config: {},
+          fixtures: {
+            version: 1,
+            calls: [],
+            ...(unmatched === undefined ? {} : { unmatched }),
+            decisions,
+          },
+        },
+      });
+    const answered = await execute('answered', {
+      first: { answers: { team: { choice: 'b', probabilities: { a: 0, b: 1 }, confidence: 0.5 } } },
+      second: { answers: { ok: { noul: 0.9 } }, model: 'served' },
+    });
+    expect(answered).toMatchObject({
+      ok: true,
+      run: {
+        status: 'completed',
+        output: {
+          first: { team: { choice: 'b', probabilities: { a: 0, b: 1 }, confidence: 0.5 } },
+          second: { ok: { noul: 0.9 } },
+        },
+        harness: { kind: 'fixture' },
+        steps: { second: { output: { model: 'served' } } },
+      },
+    });
+    const partial = {
+      first: { answers: { team: { choice: 'a', probabilities: { a: 1, b: 0 }, confidence: 1 } } },
+    };
+    const refused = await execute('refused', partial);
+    expect(refused).toMatchObject({
+      ok: false,
+      message: expect.stringContaining(
+        'No decision fixture matches step second (provider jev, attempt 1).',
+      ) as unknown,
+    });
+    expect(await execute('synthesized', partial, 'synthesize')).toMatchObject({
+      ok: true,
+      run: { output: synthesizedOutput },
+    });
+    const rehearsed = await execute('rehearsed', partial, undefined, true);
+    expect(rehearsed).toMatchObject({ ok: true, run: { output: synthesizedOutput } });
+    if (rehearsed.kind !== 'workflow.run.result' || !rehearsed.rehearsal)
+      throw new Error('expected a rehearsal');
+    expect(rehearsed.rehearsal.decisions.map(({ outputSource }) => outputSource)).toEqual([
+      'fixture',
+      'synthesized',
+    ]);
+  });
+
+  it('exports decision steps that replay to the same run and export again identically', async () => {
+    const token = 'dummy-decision-token-0123456789';
+    const server = await startFakeDecisionServer(token);
+    vi.stubEnv('QC_LOADER_DECISION_TOKEN', token);
+    try {
+      server.script(
+        {
+          status: 200,
+          body: {
+            model: 'jev-served',
+            answers: {
+              refund: { type: 'noul', noul: 0.25 },
+              team: {
+                type: 'choice',
+                choice: 'b',
+                probabilities: { a: 0.2, b: 0.8 },
+                confidence: 0.7,
+              },
+            },
+            usage: { input_tokens: 11, output_tokens: 4 },
+          },
+        },
+        { status: 429, body: { detail: 'slow down' } },
+        { status: 200, body: { answers: { refund: { type: 'noul', noul: 3 } } } },
+      );
+      const source = (factory: string) => `${decisionImports}
+const live = jevCompatible({ name: 'jev', apiKeyEnv: 'QC_LOADER_DECISION_TOKEN', defaultModel: 'jev-1' });
+const jev = ${factory};
+const refund = noul({ instructions: 'Refund?' });
+const team = choice({ instructions: 'Which team?', options: { a: null, b: null } });
+export default defineWorkflow({
+  name: 'decide', version: '1', input: z.null(), output: z.unknown(),
+  decisions: [jev],
+  async run(ctx) {
+    const answered = await ctx.decide('answered', { state: 1, questions: { refund, team } });
+    const limited = await ctx.decide('limited', { state: 2, questions: { refund }, onError: 'return' });
+    let absorbed = 'none';
+    try {
+      await ctx.decide('absorbed', { state: 3, questions: { refund } });
+    } catch (error) {
+      absorbed = String((error as { kind?: unknown }).kind);
+    }
+    return { answered, limited: limited.ok ? 'ok' : limited.error.kind, absorbed };
+  },
+});`;
+      const { file, root } = await fixture(source('live'));
+      const stateDir = join(root, 'state');
+      const original = await executor().execute({
+        ...plan(file),
+        kind: 'workflow.execute',
+        runId: 'original',
+        stateDir,
+        cwd: root,
+        resume: false,
+        input: null,
+        harness: { kind: 'cli', config: {}, decisions: { jev: { baseUrl: server.url } } },
+      });
+      if (original.kind !== 'workflow.run.result')
+        throw new Error(`expected a completed run: ${JSON.stringify(original)}`);
+      expect(original.run.output).toEqual({
+        answered: {
+          refund: { noul: 0.25 },
+          team: { choice: 'b', probabilities: { a: 0.2, b: 0.8 }, confidence: 0.7 },
+        },
+        limited: 'rate-limit',
+        absorbed: 'schema',
+      });
+      expect(server.count).toBe(3);
+      const exported = await executor().execute({
+        kind: 'workflow.fixtures',
+        runId: 'original',
+        stateDir,
+      });
+      if (exported.kind !== 'workflow.fixtures.result') throw new Error('expected fixtures');
+      const limitedMessage = original.run.steps['limited']?.settledError?.message ?? '';
+      const absorbedMessage = original.run.steps['absorbed']?.error ?? '';
+      expect(limitedMessage).toMatch(/^Decision provider jev: /u);
+      expect(exported.fixtures.decisions).toEqual({
+        answered: {
+          answers: original.run.steps['answered']?.output
+            ? (original.run.steps['answered'].output as { answers: unknown }).answers
+            : null,
+          model: 'jev-served',
+          usage: { inputTokens: 11, outputTokens: 4 },
+        },
+        limited: {
+          error: limitedMessage.slice('Decision provider jev: '.length),
+          kind: 'rate-limit',
+        },
+        absorbed: {
+          error: absorbedMessage.slice('Decision provider jev: '.length),
+          kind: 'schema',
+        },
+      });
+      // The replay's provider factory throws, so every answer must come from the exported file.
+      const { file: replayFile } = await fixture(
+        source(
+          "defineDecisionProvider({ name: 'jev', revision: live.revision, capabilities: live.capabilities, defaultModel: 'jev-1', transport: () => { throw new Error('the replay built a transport'); } })",
+        ),
+      );
+      const replayed = await executor().execute({
+        ...plan(replayFile),
+        kind: 'workflow.execute',
+        runId: 'replayed',
+        stateDir,
+        // The original cwd, which is part of each step's identity.
+        cwd: root,
+        resume: false,
+        input: null,
+        harness: { kind: 'fixture', config: {}, fixtures: exported.fixtures },
+      });
+      if (replayed.kind !== 'workflow.run.result')
+        throw new Error(`expected a completed replay: ${JSON.stringify(replayed)}`);
+      expect(server.count).toBe(3);
+      expect(replayed.run.output).toEqual(original.run.output);
+      for (const id of ['answered', 'limited', 'absorbed']) {
+        const before = original.run.steps[id];
+        const after = replayed.run.steps[id];
+        expect(after?.status).toBe(before?.status);
+        expect(after?.output).toEqual(before?.output);
+        expect(after?.identity).toEqual(before?.identity);
+        expect(after?.settledError?.kind).toBe(before?.settledError?.kind);
+        expect(after?.settledError?.message).toBe(before?.settledError?.message);
+        expect(after?.error).toBe(before?.error);
+      }
+      expect(replayed.run.steps['answered']?.attemptHistory?.at(-1)?.usage).toEqual(
+        original.run.steps['answered']?.attemptHistory?.at(-1)?.usage,
+      );
+      expect(replayed.run.steps['limited']?.attemptHistory?.at(-1)?.usage).toEqual(
+        original.run.steps['limited']?.attemptHistory?.at(-1)?.usage,
+      );
+      const again = await executor().execute({
+        kind: 'workflow.fixtures',
+        runId: 'replayed',
+        stateDir,
+      });
+      expect(again).toEqual(exported);
+      // A run without decisions exports no decisions key.
+      const { file: plain, root: plainRoot } = await fixture(validSource);
+      await executor().execute({
+        ...plan(plain),
+        kind: 'workflow.execute',
+        runId: 'plain',
+        stateDir: join(plainRoot, 'state'),
+        cwd: plainRoot,
+        resume: false,
+        input: { value: 2 },
+      });
+      const plainExport = await executor().execute({
+        kind: 'workflow.fixtures',
+        runId: 'plain',
+        stateDir: join(plainRoot, 'state'),
+      });
+      expect(plainExport).toMatchObject({ ok: true });
+      expect(plainExport).not.toHaveProperty('fixtures.decisions');
+    } finally {
+      vi.unstubAllEnvs();
+      await server.close();
+    }
   });
 });

@@ -259,7 +259,12 @@ export type {
 } from './workflow/runtime/observability-model.js';
 
 export { FixtureHarness, parseHarnessFixtures } from './harnesses/fixture.js';
-export type { FixtureCall, FixtureExecCall, HarnessFixtures } from './harnesses/fixture.js';
+export type {
+  FixtureCall,
+  FixtureDecision,
+  FixtureExecCall,
+  HarnessFixtures,
+} from './harnesses/fixture.js';
 export { synthesizeOutput } from './harnesses/synthesize.js';
 
 export type {

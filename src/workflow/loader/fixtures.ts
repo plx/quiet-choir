@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { filtersMatch } from '../../harnesses/fixture-exec.js';
 import {
   parseHarnessFixtures,
+  type FixtureDecision,
   type FixtureExecCall,
   type HarnessFixtures,
 } from '../../harnesses/fixture.js';
@@ -35,7 +36,9 @@ import { stepErrorKind } from './failure-kind.js';
  * step's latest settled attempt, a poll-completed wait's terminal observation), with `call` only
  * where the parent ran more than one command that meets the same filters or its recording omitted
  * later commands. No rule pins an attempt. Failed steps inside an `onError: 'return'` child frame
- * export like any absorbed failure, under their frame-prefixed IDs.
+ * export like any absorbed failure, under their frame-prefixed IDs. `ctx.decide` steps become
+ * `decisions` entries keyed by full step ID (see `decisionFixtures`); a run without them has
+ * no `decisions` key.
  * @internal
  */
 export function fixturesFromRun(run: RunRecord): HarnessFixtures {
@@ -54,6 +57,7 @@ export function fixturesFromRun(run: RunRecord): HarnessFixtures {
     }),
   });
   const exec = execFixtures(run);
+  const decisions = decisionFixtures(run);
   return parseHarnessFixtures({
     version: 1,
     unmatched: 'error',
@@ -101,8 +105,99 @@ export function fixturesFromRun(run: RunRecord): HarnessFixtures {
     ...(exec.considered
       ? { ...(exec.rules.length ? { exec: exec.rules } : {}), commands: 'fixture' }
       : {}),
+    ...(decisions === undefined ? {} : { decisions }),
   });
 }
+
+/**
+ * Decision entries for the run's completed, settled-failed and absorbed (`failed` in a completed
+ * run) `ctx.decide` steps, selected by their `decision`/`decide` meta, so the legacy
+ * `decision().choose` helper (op `choose`) is left out; undefined when there are none. A completed
+ * step exports its answers, its served model when one was recorded, and the token counts of its
+ * last attempt when any is known. A failure exports its message without the
+ * `Decision provider <name>: ` prefix that the replayed `DecisionError` adds again, and its kind
+ * (except `unknown`; unlike agent rules, `cancelled` is kept, because a replayed `DecisionError` of
+ * that kind is fatal as the original was), so export, replay and export give the same file. Lossy edges: a failure that was not a `DecisionError`, such as a transport's bare `Error`,
+ * replays with the prefix added; a replayed `schema` failure keeps its kind and message but not
+ * the raw body or issues; a failed attempt's token counts and served model, the attempt count and a
+ * live response's other `usage` fields (`reported`) are not exported.
+ *
+ * An absorbed failure that was a fatal configuration failure (see `configurationFailure`),
+ * such as a transport factory that threw, is left out on purpose: an error entry would replay as an
+ * ordinary `DecisionError` that `onError: 'return'` settles or `retry` repeats, while the exported
+ * file's `unmatched: 'error'` makes the replay hit an unmatched decision, whose fatal
+ * `ConfigurationError` takes the same branch as the original.
+ */
+function decisionFixtures(run: RunRecord): Record<string, FixtureDecision> | undefined {
+  const entries = Object.entries(run.steps)
+    .filter(
+      ([, step]) =>
+        step.kind === 'step' &&
+        step.meta?.['integration'] === 'decision' &&
+        step.meta['op'] === 'decide' &&
+        (step.status === 'completed' ||
+          step.status === 'settled-failed' ||
+          (step.status === 'failed' && !configurationFailure(step))),
+    )
+    .sort((a, b) => (a[1].seq ?? 0) - (b[1].seq ?? 0));
+  if (entries.length === 0) return undefined;
+  const result: Record<string, FixtureDecision> = {};
+  for (const [stepId, step] of entries) {
+    const provider = step.meta?.['provider'];
+    const prefix = typeof provider === 'string' ? `Decision provider ${provider}: ` : undefined;
+    const text = (message: string | null | undefined, fallback: string): string => {
+      const full = message ?? '';
+      const stripped =
+        prefix !== undefined && full.startsWith(prefix) ? full.slice(prefix.length) : full;
+      return stripped.length > 0 ? stripped : fallback;
+    };
+    let entry: FixtureDecision;
+    if (step.status === 'settled-failed')
+      entry = {
+        error: text(
+          step.settledError?.message,
+          `Settled ${step.settledError?.kind ?? 'unknown'} failure`,
+        ),
+        ...exportedDecisionKind(step.settledError?.kind),
+      };
+    else if (step.status === 'failed')
+      entry = {
+        error: text(step.error, `Failed ${stepErrorKind(step) ?? 'unknown'} failure`),
+        ...exportedDecisionKind(stepErrorKind(step)),
+      };
+    else {
+      const output = decisionOutput.parse(step.output);
+      const usage = step.attemptHistory?.at(-1)?.usage;
+      const tokens = {
+        ...(typeof usage?.inputTokens === 'number' ? { inputTokens: usage.inputTokens } : {}),
+        ...(typeof usage?.outputTokens === 'number' ? { outputTokens: usage.outputTokens } : {}),
+      };
+      entry = {
+        answers: output.answers,
+        ...(output.model === null ? {} : { model: output.model }),
+        ...(Object.keys(tokens).length ? { usage: tokens } : {}),
+      };
+    }
+    Object.defineProperty(result, stepId, { value: entry, enumerable: true });
+  }
+  return result;
+}
+
+/**
+ * Whether a failed step's latest error was a `ConfigurationError` (a `GrantRequiredError`
+ * included), which is fatal: never settled or retried. The record keeps no error class or brand, so
+ * the class name heading the recorded stack (the step's, else its last attempt's) identifies it.
+ */
+function configurationFailure(step: StepRecord): boolean {
+  const stack = step.errorStack ?? step.attemptHistory?.at(-1)?.errorStack;
+  return (
+    typeof stack === 'string' && /^(?:ConfigurationError|GrantRequiredError)(?::|\n|$)/u.test(stack)
+  );
+}
+const decisionOutput = z.object({
+  model: z.string().nullable(),
+  answers: z.record(z.string(), z.json()),
+});
 
 /**
  * The optional `kind` field of an exported error rule. `unknown` is what a kindless failure records
@@ -120,6 +215,16 @@ function exportedKind(kind: ErrorKind | null | undefined): { readonly kind?: Err
   return kind === undefined || kind === null || kind === 'unknown' || kind === 'cancelled'
     ? {}
     : { kind };
+}
+
+/**
+ * The optional `kind` field of an exported decision error entry: every kind except `unknown`, which
+ * a kindless entry replays as. Unlike {@link exportedKind}, `cancelled` is kept: a decision error
+ * entry replays as a `DecisionError`, and a `cancelled` one is fatal like the original, never
+ * retried or settled.
+ */
+function exportedDecisionKind(kind: ErrorKind | null | undefined): { readonly kind?: ErrorKind } {
+  return kind === undefined || kind === null || kind === 'unknown' ? {} : { kind };
 }
 
 /**

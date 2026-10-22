@@ -377,3 +377,20 @@ describe('command fixtures in named fixture files', () => {
       );
   });
 });
+
+describe('decision fixtures in named fixture files', () => {
+  it('refuses decisions in a named file, pointing to the global file', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'choir-selection-'));
+    directories.push(cwd);
+    const decisions = '"decisions":{"ask":{"answers":{"ok":{"noul":1}}}}';
+    await writeFile(join(cwd, 'g.json'), `{"version":1,"calls":[],${decisions}}`);
+    await writeFile(join(cwd, 'n.json'), `{"version":1,"calls":[],${decisions}}`);
+    const global = await readHarnessSelection('fixture:g.json', undefined, cwd);
+    expect(global.fixtures?.decisions).toEqual({ ask: { answers: { ok: { noul: 1 } } } });
+    await expect(
+      readHarnessSelection(['fixture:g.json', 'claude=fixture:n.json'], undefined, cwd),
+    ).rejects.toThrow(
+      `Named fixture file ${join(cwd, 'n.json')} for harness claude has decisions; decisions are keyed by step, not by harness, so put them in the global --harness fixture:FILE.`,
+    );
+  });
+});

@@ -13,6 +13,10 @@ import { jsonValue } from '../harness-kit.js';
 import { matchesStepGlob } from '../harness-kit.js';
 import { synthesizeOutput } from './synthesize.js';
 import { errorKindSchema } from '../workflow/runtime/step-error.js';
+import type {
+  DecisionFixtureRequest,
+  DecisionFixtureResponse,
+} from '../workflow/runtime/decisions.js';
 
 /** One first-match fixture rule; exactly one of output, text, or error must be present. */
 export interface FixtureCall {
@@ -98,6 +102,40 @@ export interface FixtureExecCall {
   readonly kind?: ErrorKind;
 }
 
+/**
+ * Canned outcome of one `ctx.decide` step, keyed by its fully qualified step ID in
+ * {@link HarnessFixtures.decisions}: either answers in the recorded shape, which the step validates
+ * against its questions like a live response (a stale entry fails with kind `schema`), or `error`
+ * for a simulated provider failure. Every attempt of the step gets the same entry.
+ */
+export type FixtureDecision =
+  | {
+      /**
+       * Answers by question name, as the step records them: `{ noul }`,
+       * `{ choice, probabilities, confidence }` or `{ score, probabilities, legend, confidence }`.
+       */
+      readonly answers: Readonly<Record<string, JsonValue>>;
+      /** The served model to record; absent or null records none. */
+      readonly model?: string | null;
+      /** Token counts reported for the attempt; missing values are unknown. */
+      readonly usage?: {
+        /** Input tokens, or null when unknown. */
+        readonly inputTokens?: number | null;
+        /** Output tokens, or null when unknown. */
+        readonly outputTokens?: number | null;
+      };
+    }
+  | {
+      /** Simulated provider failure: the attempt fails with a `DecisionError` of this message. */
+      readonly error: string;
+      /**
+       * Failure category, so `retry.on` and branches on `error.kind` can be rehearsed; without it
+       * the failure is `unknown`. `configuration` is refused: configuration failures are fatal and
+       * never settled or retried, so an attempt-recorded failure can never be one.
+       */
+      readonly kind?: ErrorKind;
+    };
+
 /** Portable, versioned agent fixtures, exportable from completed run records. */
 export interface HarnessFixtures {
   /** Fixture file version. */
@@ -113,6 +151,12 @@ export interface HarnessFixtures {
    * (under `--dry-run`) or running it (under `--harness fixture`).
    */
   readonly commands?: 'fixture';
+  /**
+   * Canned `ctx.decide` outcomes by exact fully qualified step ID (not a glob). Under
+   * `--harness fixture` a decision without an entry is a configuration error unless `unmatched` is
+   * `synthesize`; under `--dry-run` it is synthesized. No decision ever calls its provider.
+   */
+  readonly decisions?: Readonly<Record<string, FixtureDecision>>;
 }
 
 const stepGlob = z
@@ -121,6 +165,39 @@ const stepGlob = z
   .max(200)
   .regex(/^[a-zA-Z0-9*][a-zA-Z0-9._:/*-]*$/u);
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/u);
+/** An exact step ID: the step glob without `*`, so `__proto__` and globs are refused. */
+const exactStepId = z
+  .string()
+  .min(1)
+  .max(200)
+  .regex(/^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$/u);
+
+/**
+ * A record that refuses an own `__proto__` key, which `z.record` would otherwise drop silently
+ * (and an object literal could not hold as data).
+ */
+function recordWithoutProto<T extends z.ZodType>(schema: T) {
+  return z
+    .unknown()
+    .superRefine((value, context) => {
+      if (typeof value === 'object' && value !== null && Object.hasOwn(value, '__proto__'))
+        context.addIssue({ code: 'custom', message: 'The key __proto__ is not allowed.' });
+    })
+    .pipe(schema);
+}
+
+const tokenCount = z.number().nonnegative().nullable().optional();
+// An attempt-recorded decision failure is never `configuration` (those are fatal, never settled or
+// retried), so an entry cannot claim it.
+const decisionErrorKind = errorKindSchema.exclude(['configuration']);
+const decisionEntry = z.union([
+  z.strictObject({
+    answers: recordWithoutProto(z.record(z.string(), z.json())),
+    model: z.string().min(1).nullable().optional(),
+    usage: z.strictObject({ inputTokens: tokenCount, outputTokens: tokenCount }).optional(),
+  }),
+  z.strictObject({ error: z.string().min(1), kind: decisionErrorKind.optional() }),
+]);
 
 const rule = z
   .object({
@@ -199,6 +276,7 @@ export function parseHarnessFixtures(value: unknown): HarnessFixtures {
       unmatched: z.enum(['error', 'synthesize']).optional(),
       exec: z.array(execRule).optional(),
       commands: z.literal('fixture').optional(),
+      decisions: recordWithoutProto(z.record(exactStepId, decisionEntry)).optional(),
     })
     .strict()
     .parse(jsonValue(value)) as HarnessFixtures;
@@ -225,6 +303,28 @@ export class FixtureHarness implements Harness {
     );
     const fixture = this.fixtures.calls[index];
     return fixture === undefined ? undefined : { fixture, index };
+  }
+  /** The decision entry for exactly this step ID, or undefined. */
+  protected matchDecision(stepId: string): FixtureDecision | undefined {
+    const { decisions } = this.fixtures;
+    return decisions !== undefined && Object.hasOwn(decisions, stepId)
+      ? decisions[stepId]
+      : undefined;
+  }
+  /**
+   * Answer one `ctx.decide` attempt for the runtime's decision fixture hook: the step's own entry,
+   * otherwise answers synthesized from the step schema's one-hot defaults when `unmatched` is
+   * `synthesize`, otherwise a {@link ConfigurationError} naming the step, provider and attempt.
+   *
+   * @internal
+   */
+  public decide(request: DecisionFixtureRequest): DecisionFixtureResponse {
+    const entry = this.matchDecision(request.stepId);
+    if (entry !== undefined) return entry;
+    if (this.fixtures.unmatched === 'synthesize') return synthesizedDecision(request);
+    throw new ConfigurationError(
+      `No decision fixture matches step ${request.stepId} (provider ${request.provider}, attempt ${String(request.attempt)}).`,
+    );
   }
   /** Resolve a fixture without subprocesses; the runtime still parses, validates, and checkpoints it. */
   public invoke(request: HarnessRequest, invocation: HarnessInvocation): Promise<HarnessResponse> {
@@ -272,4 +372,18 @@ export class FixtureHarness implements Harness {
       },
     });
   }
+}
+
+/** Answers synthesized from a decision step's schema, with no served model. */
+function synthesizedDecision(request: DecisionFixtureRequest): DecisionFixtureResponse {
+  const result = synthesizeOutput(request.schema, request.stepId);
+  const answers =
+    typeof result === 'object' && result !== null && !Array.isArray(result)
+      ? result['answers']
+      : undefined;
+  return {
+    answers:
+      typeof answers === 'object' && answers !== null && !Array.isArray(answers) ? answers : {},
+    model: null,
+  };
 }

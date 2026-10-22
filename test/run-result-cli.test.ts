@@ -225,6 +225,7 @@ describe('dry-run documents', () => {
     warnings: [],
     calls: [],
     commands: [],
+    decisions: [],
     merges: [],
     replays: [],
     nominalClaudeCeilingUsd: 0,
@@ -253,6 +254,30 @@ describe('dry-run documents', () => {
       rehearsal: { kind: 'workflow.rehearsal' },
     });
     expect(document).not.toHaveProperty('summary');
+  });
+
+  it('counts decisions in the stderr summary when any ran', async () => {
+    const execute = await executeInvocation();
+    const decision = { stepId: 'ask', attempt: 1, provider: 'p', model: null, error: null };
+    mockOutcome('success', {
+      rehearsal: {
+        ...rehearsal,
+        decisions: [
+          { ...decision, outputSource: 'fixture' },
+          { ...decision, attempt: 2, outputSource: 'synthesized' },
+        ],
+      } as RehearsalReport,
+    });
+    const written: string[] = [];
+    vi.spyOn(process.stderr, 'write').mockImplementation((chunk: string | Uint8Array) => {
+      written.push(String(chunk));
+      return true;
+    });
+    await captureCommand(execute.command, await execute.argv(['--dry-run']));
+    const errors = vi.mocked(console.error).mock.calls.map((call) => String(call[0]));
+    expect([...written, ...errors].join('\n')).toMatch(
+      /Rehearsal: 0 calls;.*; 2 decisions \(1 synthesized\)\./u,
+    );
   });
 
   it('keeps run in a failure that carries a rehearsal', async () => {
