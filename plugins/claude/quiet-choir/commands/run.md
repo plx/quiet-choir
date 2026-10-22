@@ -63,7 +63,10 @@ the export line from here on. For a package it is the result's `package.name`, a
 `workflow.name`, a `-` and a UTC timestamp (`date -u +%Y%m%d-%H%M`), such as
 `merge-down-merge-down-pr-20261022-1204`; the validate result names the workflow even when
 `--workflow` was omitted and the entry was selected. For a single workflow file it is the file's
-base name without `.workflow.*` plus a UTC timestamp, such as `review-20261001-1204`.
+base name without `.workflow.*` plus a UTC timestamp, such as `review-20261001-1204`. In either
+form, replace every character other than a letter, digit, `_` or `-` with `-`, then shorten the name
+part so the whole ID, `-YYYYMMDD-HHMM` included, has at most 128 characters. If a command still
+refuses the ID with `usage.run_id`, ask the user for a `--run-id`.
 
 Then rehearse without paid calls, and show the user a short summary of the rehearsal: the number of
 `calls` and their harnesses (`harnessCounts`), `nominalClaudeCeilingUsd`, and every warning. A real
