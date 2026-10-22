@@ -51,7 +51,7 @@ import { synthesizeOutput } from './synthesize.js';
 /**
  * Options the real run passes on to its preflight are everything except these. Each could reach the
  * real record or a live integration (a bound store, named or declared adapters and their
- * configuration, process supervision and orphan recovery, blocking waits, event observers, a shared
+ * configuration, a decision fixture answerer, process supervision and orphan recovery, blocking waits, event observers, a shared
  * agent limiter, launch metadata, Git checkout policy) or is replaced by the probe's own.
  */
 const liveOnly = [
@@ -60,6 +60,7 @@ const liveOnly = [
   'harness',
   'adapters',
   'harnessConfigurations',
+  'decisionFixture',
   'harnessConfigDigest',
   'allowHarnessConfigChange',
   'allowHarnessChange',

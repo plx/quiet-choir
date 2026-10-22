@@ -21,14 +21,24 @@ import {
   decisionConfigurationsSchema,
   decisionResultSchema,
   decisionUsage,
+  fixtureDecisionBody,
   parseDecisionResponse,
   type DecisionConfigurations,
   type DecisionResult,
+  type FixtureDecisionAnswers,
 } from './decision-protocol.js';
 import type { WorkflowDeclaration } from './child-model.js';
 import { jsonValue } from './json.js';
-import type { ErrorMode, RetryPolicy, StepDefinition } from './model.js';
+import type {
+  ErrorKind,
+  ErrorMode,
+  JsonValue,
+  RetryPolicy,
+  StepContext,
+  StepDefinition,
+} from './model.js';
 import { retryPolicySchema } from './policy.js';
+import { schemaJson } from './schema.js';
 
 /**
  * Version that identifies a `ctx.decide` step. Bump it only if the recorded behavior or result
@@ -47,14 +57,48 @@ const optionKeys = [
   'timeoutMs',
 ] as const;
 
+/** One decision attempt a fixture answerer is asked to answer. @internal */
+export interface DecisionFixtureRequest {
+  /** Fully qualified step ID. */
+  readonly stepId: string;
+  /** Cumulative one-based attempt number, as `StepContext.attempt`. */
+  readonly attempt: number;
+  /** Provider name. */
+  readonly provider: string;
+  /** The requested model, or null. */
+  readonly model: string | null;
+  /** JSON Schema of the step's result, with one-hot defaults for synthesis. */
+  readonly schema: JsonValue;
+}
+
+/**
+ * A fixture answerer's reply: canned answers in the recorded shape, validated like a live response,
+ * or a simulated provider failure of `kind` (default `unknown`). @internal
+ */
+export type DecisionFixtureResponse =
+  FixtureDecisionAnswers | { readonly error: string; readonly kind?: ErrorKind | undefined };
+
+/**
+ * Answers decision attempts in place of the provider transport, as fixture and dry-run harnesses
+ * do. It throws a {@link ConfigurationError} for a decision it cannot answer, which is fatal: never
+ * settled or retried. @internal
+ */
+export type DecisionFixture = (request: DecisionFixtureRequest) => DecisionFixtureResponse;
+
 /** Resolve providers and build their transports lazily for one run. @internal */
 export class DecisionProviders {
   readonly #configurations: DecisionConfigurations;
   readonly #transports = new WeakMap<DecisionProviderDeclaration, ProviderTransport>();
   readonly #failures = new WeakMap<DecisionProviderDeclaration, ConfigurationError>();
+  /** The fixture answerer; when set, no transport is ever built. */
+  public readonly fixture: DecisionFixture | undefined;
 
-  public constructor(configurations: DecisionConfigurations | undefined) {
+  public constructor(
+    configurations: DecisionConfigurations | undefined,
+    fixture?: DecisionFixture,
+  ) {
     this.#configurations = configurations ?? {};
+    this.fixture = fixture;
   }
 
   /** The operator configuration for a provider name, or an empty one. */
@@ -144,14 +188,42 @@ function plainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * Answer one attempt from the fixture answerer instead of the transport. An error reply counts as
+ * an attempt with unknown tokens, as a live failure does, and throws a {@link DecisionError} of its
+ * kind; answers go through the same wire validation as a live response, so a stale fixture fails
+ * with kind `schema`. A {@link ConfigurationError} from the answerer propagates unchanged.
+ */
+function fixtureAttempt(
+  fixture: DecisionFixture,
+  request: DecisionFixtureRequest,
+  questions: DecisionQuestions,
+  reportUsage: StepContext['reportUsage'],
+): DecisionResult {
+  const { provider, model } = request;
+  const response = fixture(request);
+  if ('error' in response) {
+    reportUsage(decisionUsage(provider, model, null));
+    throw new DecisionError({
+      provider,
+      kind: response.kind ?? 'unknown',
+      message: response.error,
+    });
+  }
+  const body = fixtureDecisionBody(response);
+  reportUsage(decisionUsage(provider, model, body));
+  return parseDecisionResponse(provider, questions, { body });
+}
+
+/**
  * Validate a `ctx.decide` call synchronously, resolve its provider for the running workflow and
- * check its questions against the provider's capabilities, then build its step. Every failure is
- * raised before any request or step record: an authoring error, or a {@link ConfigurationError}
- * for the provider and capability checks. @internal
+ * check its questions against the provider's capabilities, then build its step for `stepId`, its
+ * fully qualified ID. Every failure is raised before any request or step record: an authoring
+ * error, or a {@link ConfigurationError} for the provider and capability checks. @internal
  */
 export function prepareDecision(
   providers: DecisionProviders,
   owner: WorkflowDeclaration,
+  stepId: string,
   options: unknown,
 ): PreparedDecision {
   if (!plainObject(options)) throw new Error('ctx.decide requires options { state, questions }.');
@@ -189,6 +261,9 @@ export function prepareDecision(
   const model = providers.model(declaration, requestedModel);
   const schema = decisionResultSchema(questions);
   const provider = declaration.name;
+  const { fixture } = providers;
+  // Computed once, and only for a fixture answerer, so a live call pays nothing for it.
+  let schemaSource: JsonValue | undefined;
   return {
     settled: onError === 'return',
     step: {
@@ -201,7 +276,19 @@ export function prepareDecision(
       schema,
       ...(retry === undefined ? {} : { retry }),
       ...(onError === undefined ? {} : { onError }),
-      async run({ signal, idempotencyKey, reportUsage }) {
+      async run({ signal, idempotencyKey, reportUsage, attempt }) {
+        // A fixture answerer replaces the transport for every attempt: no factory is called, so no
+        // base URL or token is needed.
+        if (fixture !== undefined) {
+          signal.throwIfAborted();
+          schemaSource ??= schemaJson(schema);
+          return fixtureAttempt(
+            fixture,
+            { stepId, attempt, provider, model, schema: schemaSource },
+            questions,
+            reportUsage,
+          );
+        }
         const transport = providers.transport(declaration);
         const timeout = timeoutMs === undefined ? undefined : AbortSignal.timeout(timeoutMs);
         const requestSignal = timeout === undefined ? signal : AbortSignal.any([signal, timeout]);
