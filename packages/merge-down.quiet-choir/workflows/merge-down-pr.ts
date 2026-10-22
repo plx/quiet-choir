@@ -42,6 +42,7 @@ import {
   replyFor,
   underLimit,
   unfixed,
+  unregisteredRequired,
   type PlannedReply,
   type ThreadDecision,
   type WorkItem,
@@ -973,7 +974,9 @@ export default defineWorkflow({
         waitAll('wait', githubCodex ? [codexReviewer(), codeqlReviewer()] : [codeqlReviewer()]),
         wantCodex && LOCAL ? reviewAt(`r${String(r)}`, head) : Promise.resolve(null),
       ]);
-      const early = blockedIf([ci0, reviewed0], 'CI and reviews');
+      const early =
+        blockedIf([ci0, reviewed0], 'CI and reviews') ??
+        unregisteredRequired(ci0, A.requiredChecks);
       if (early) return blocked('gate', early);
       let ci = ci0;
       let reviewed = reviewed0;
@@ -981,7 +984,9 @@ export default defineWorkflow({
         // The local review usually outlasts the CI wait, so threads can arrive meanwhile: read the
         // gate again, which costs only the settle delay now that CI is done.
         [ci, reviewed] = await waitAll('refresh', [codeqlReviewer()]);
-        const late = blockedIf([ci, reviewed], 'the refreshed gate');
+        const late =
+          blockedIf([ci, reviewed], 'the refreshed gate') ??
+          unregisteredRequired(ci, A.requiredChecks);
         if (late) return blocked('gate', late);
       }
       const codexVerdict = reviewed0.by.find((b) => b.name === 'codex')?.status ?? null;
@@ -1013,7 +1018,9 @@ export default defineWorkflow({
         );
         if (rerun.rerun.length) {
           const [again, againReview] = await waitAll('rerun', [codeqlReviewer()]);
-          const stuck = blockedIf([again, againReview], 'the re-run CI');
+          const stuck =
+            blockedIf([again, againReview], 'the re-run CI') ??
+            unregisteredRequired(again, A.requiredChecks);
           if (stuck) return blocked('gate', stuck);
           const flaky = again.status === 'success' || again.status === 'no-checks';
           record.notes.push(

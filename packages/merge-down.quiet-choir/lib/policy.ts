@@ -297,6 +297,21 @@ export function ciItem(input: {
   };
 }
 
+/**
+ * Why a CI wait must block because required checks never registered; null otherwise. Without
+ * `requiredChecks`, `no-checks` means the repository has no CI and does not block. With them,
+ * `waitChecks` ends with `no-checks` once nothing registered is pending, so `pending` names exactly
+ * the required checks that never registered.
+ */
+export function unregisteredRequired(
+  ci: { readonly status: string; readonly pending: readonly string[] },
+  requiredChecks: readonly string[],
+): string | null {
+  if (ci.status !== 'no-checks' || requiredChecks.length === 0) return null;
+  const missing = ci.pending.length ? ci.pending : requiredChecks;
+  return `required check(s) never registered: ${missing.join(', ')}`;
+}
+
 /** A thread reply to publish, with how to settle a linked code-scanning alert. */
 export interface PlannedReply {
   readonly threadId: string;

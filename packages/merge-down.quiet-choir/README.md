@@ -120,7 +120,7 @@ Tags are counted in pure code.
 | `parentEpic`         | none                                 | Epic the landed issues belong to.                                                                    |
 | `standingNotes`      | `[]`                                 | Decisions every reviewer, resolver and fixer applies without re-litigating.                          |
 | `checkCommand`       | `npm run check`                      | The local check suite.                                                                               |
-| `requiredChecks`     | `[]`                                 | CI check names that must register before a green rollup counts (`waitChecks` `requiredChecks`).      |
+| `requiredChecks`     | `[]`                                 | CI check names that must register before a green rollup counts; one that never does blocks the gate. |
 
 ## Result
 

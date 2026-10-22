@@ -23,6 +23,7 @@ import {
   reviewFindings,
   underLimit,
   unfixed,
+  unregisteredRequired,
   type FindingDecision,
   type FixReport,
   type ThreadDecision,
@@ -217,6 +218,23 @@ describe('work items', () => {
     const item = ciItem({ round: 2, failed: ['test (22)'], pr: 9, repo, rerun: true });
     expect(item).toMatchObject({ key: 'ci:2', title: 'CI failed: test (22)', severity: 'major' });
     expect(item.plan).toContain('survived one re-run');
+  });
+});
+
+describe('unregisteredRequired', () => {
+  it('blocks a no-checks wait that has required checks, naming the unregistered ones', () => {
+    expect(unregisteredRequired({ status: 'no-checks', pending: ['e2e'] }, ['test', 'e2e'])).toBe(
+      'required check(s) never registered: e2e',
+    );
+    expect(unregisteredRequired({ status: 'no-checks', pending: [] }, ['e2e'])).toBe(
+      'required check(s) never registered: e2e',
+    );
+  });
+
+  it('lets no-checks pass without required checks, and other statuses through', () => {
+    expect(unregisteredRequired({ status: 'no-checks', pending: [] }, [])).toBeNull();
+    expect(unregisteredRequired({ status: 'success', pending: [] }, ['e2e'])).toBeNull();
+    expect(unregisteredRequired({ status: 'failure', pending: ['e2e'] }, ['e2e'])).toBeNull();
   });
 });
 
