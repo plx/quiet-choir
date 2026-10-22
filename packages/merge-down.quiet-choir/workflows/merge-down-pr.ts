@@ -816,11 +816,26 @@ export default defineWorkflow({
     let replies = firstRound.replies;
     const rerunHeads = new Set<string>();
     let head = SYNC.origHead ?? PR.headRefOid;
+    let base = PR.baseRefName;
     let codexRequests = 0;
 
-    // Push, confirm GitHub sees the head, retarget and fix the closing keyword, reply to threads.
+    // Retarget, push, confirm GitHub sees the head, fix the closing keyword, reply to threads.
     const publishRound = async (r: number): Promise<{ since: number } | { error: string }> => {
       if (checkedHead === null) return { error: 'no head passed the local checks' };
+      // A stacked PR moves to the default branch before the push, so the checks the push starts run
+      // against the base it will merge into.
+      let retargeted = false;
+      if (base !== DEF) {
+        const moved = await gh.pr.edit(
+          ctx.id('gate', r, 'retarget'),
+          { number: A.pr, expectHead: head, base: DEF },
+          write,
+        );
+        if (moved.reason !== null)
+          return { error: `could not retarget the PR (${moved.reason}, head ${moved.head})` };
+        base = DEF;
+        retargeted = moved.changed.includes('base');
+      }
       const pushed = await publish(ctx, ctx.id('gate', r, 'push'), {
         workdir: W,
         branch: PR.headRefName,
@@ -828,6 +843,10 @@ export default defineWorkflow({
         sha: checkedHead,
       });
       if (!pushed.ok) return { error: pushed.error.message };
+      if (retargeted && pushed.value.head === head)
+        record.notes.push(
+          `retargeted to ${DEF} with no new head to push, so CI was not re-triggered against the new base`,
+        );
       head = pushed.value.head;
       const sha = head;
       // GitHub can report the old head for a while after a push; the waits pin the new one.
@@ -861,15 +880,10 @@ export default defineWorkflow({
         : keepsIssueOpen
           ? keepOpenBody(current, ISSUE.number, info.nameWithOwner)
           : null;
-      if (PR.baseRefName !== DEF || body !== null) {
+      if (body !== null) {
         const edited = await gh.pr.edit(
           ctx.id('gate', r, 'edit'),
-          {
-            number: A.pr,
-            expectHead: head,
-            ...(PR.baseRefName === DEF ? {} : { base: DEF }),
-            ...(body === null ? {} : { body }),
-          },
+          { number: A.pr, expectHead: head, body },
           write,
         );
         if (edited.reason !== null)

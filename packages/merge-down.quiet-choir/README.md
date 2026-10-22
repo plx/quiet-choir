@@ -75,7 +75,7 @@ deliberately shared, so a stack recorded by either tool is honored by both.
 | Rebase  | `Surgeon` opus / high (`Mechanic` sonnet / high for Dependabot)                       | Only on conflicts, through the `ResolveTeam.resolver` slot; the `snapshot` step then verifies that no rebase is in progress and that the PR's commits survived.                                                                         |
 | Review  | `Reviewer` opus / medium → `Judge` opus / xhigh                                       | In parallel: the `check-0` suite, the change review (or the dependency review, by `Reviewer` for a major bump, else `Mechanic`) and the first local Codex review, triaged by `Reviewer`. Escalation on the native reasons.              |
 | Fix     | `FixTeam.mechanic` sonnet / high or `.surgeon` opus / high ∥ `Scribe` sonnet / medium | The slot by complexity; the workflow verifies the reported commits and runs the suite at the new head, with one surgeon repair on failure. The scribe drafts follow-ups and the workflow files them.                                    |
-| Gate    | no agent (`Reviewer` triages new threads)                                             | Push with lease, confirm GitHub sees the head, retarget and fix the closing keyword, reply to and resolve threads, dismiss settled alerts; then CI ∥ reviewers ∥ the local Codex review of the pushed head; loop on findings or red CI. |
+| Gate    | no agent (`Reviewer` triages new threads)                                             | Retarget stacked PRs, push with lease, confirm GitHub sees the head, fix the closing keyword, reply to and resolve threads, dismiss settled alerts; then CI ∥ reviewers ∥ a local Codex review of the head; loop on findings or red CI. |
 | Land    | no agent                                                                              | Guards (open, head, base, unanswered threads, open alerts), `pr.merge` pinned to the gated SHA, the issue closed or reopened, children read, the local branch deleted.                                                                  |
 | Report  | `Scribe` sonnet / medium                                                              | Drafts the issue summary and headline; the workflow posts the comment.                                                                                                                                                                  |
 
@@ -160,6 +160,8 @@ invalid input fails before the run starts.
 - **The follow-up epic** gets sub-issues but no checklist line (there is no `issue.edit` write).
 - **Closing links** are confirmed by a bounded poll; the native script's re-save of the body after a
   retarget is not repeated. A missing link is a note, and land closes the issue explicitly.
+- **A retarget with nothing to push** leaves CI as it ran against the old base, since only the push
+  restarts it; the ledger notes this, which explains a required check that never registers.
 - **Stale heads.** Before the waits, a poll confirms GitHub reports the pushed head, because the
   waits accept only an ancestor as a stale view, not the head a rebase push leased against.
 - **Codex in `github` mode** counts as having reviewed when a Codex thread exists; the summary-row
@@ -191,11 +193,13 @@ npm run build && npm run packages:rehearse
 checks its `package` section, refuses `ctx.claude`, `ctx.codex` and `ctx.agent(` in the package and
 any multi-line literal in `workflows/`, and rehearses the cases in
 [`packages/rehearsals/merge-down/`](../rehearsals/merge-down) (kept outside the package root, which
-is fingerprinted) with `execute --dry-run --harness fixture:<case>.fixtures.json`: `clean-land`
-(merged in round 1), `fix-round` (a Codex thread fixed with a commit and replied to, a new thread
-triaged, merged in round 2), `stop-at-fix` (`until: fix`, with the planned `Addressed in` reply) and
-`blocked-gate` (red CI, a rerun that fails again, `maxCiRepairs: 0`). Every agent call and command
-is answered by its fixtures (`"commands": "fixture"`), and no rule may go unused. It runs in
+is fingerprinted) with `execute --dry-run --harness fixture:<case>.fixtures.json`: `clean-land` (a
+stacked PR retargeted to `main` with nothing to push, noted, merged in round 1), `fix-round` (a
+stacked PR retargeted before the push, a Codex thread fixed with a commit and replied to, a new
+thread triaged, merged in round 2), `stop-at-fix` (`until: fix`, with the planned `Addressed in`
+reply) and `blocked-gate` (red CI, a rerun that fails again, `maxCiRepairs: 0`). Every agent call
+and command is answered by its fixtures (`"commands": "fixture"`), no rule may go unused, and a
+case's `order` lists steps that must start in that order (the retarget before the push). It runs in
 `npm run check` and in the Package rehearsals CI job.
 
 ## Measurements
