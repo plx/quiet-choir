@@ -744,6 +744,212 @@
       }
     },
     {
+      "step": "gate/1/refresh/ci",
+      "json": {
+        "data": {
+          "repository": {
+            "pullRequest": {
+              "number": 42,
+              "state": "OPEN",
+              "headRefOid": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+              "commits": {
+                "nodes": [
+                  {
+                    "commit": {
+                      "oid": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+                      "statusCheckRollup": {
+                        "state": "SUCCESS",
+                        "contexts": {
+                          "pageInfo": {
+                            "hasNextPage": false
+                          },
+                          "nodes": [
+                            {
+                              "__typename": "CheckRun",
+                              "name": "Quality and package",
+                              "status": "COMPLETED",
+                              "conclusion": "SUCCESS",
+                              "detailsUrl": "https://github.com/acme/widgets/actions/runs/555",
+                              "checkSuite": {
+                                "workflowRun": {
+                                  "databaseId": 555
+                                }
+                              }
+                            },
+                            {
+                              "__typename": "CheckRun",
+                              "name": "test (22)",
+                              "status": "COMPLETED",
+                              "conclusion": "SUCCESS",
+                              "detailsUrl": "https://github.com/acme/widgets/actions/runs/555",
+                              "checkSuite": {
+                                "workflowRun": {
+                                  "databaseId": 555
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "gate/1/refresh/review",
+      "argvPrefix": [
+        "gh",
+        "api",
+        "graphql",
+        "-f",
+        "query=query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { number state headRefOid commits(last: 1) { nodes { commit { oid statusCheckRollup { state contexts(first: 100) { pageInfo { hasNextPage } nodes { __typename ... on CheckRun { name status conclusion detailsUrl checkSuite { workflowRun { databaseId } } } ... on StatusContext { context state targetUrl } } } } } } } } } }",
+        "-f",
+        "owner=acme",
+        "-f",
+        "name=widgets",
+        "-F",
+        "number=42"
+      ],
+      "json": {
+        "data": {
+          "repository": {
+            "pullRequest": {
+              "number": 42,
+              "state": "OPEN",
+              "headRefOid": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+              "commits": {
+                "nodes": [
+                  {
+                    "commit": {
+                      "oid": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+                      "statusCheckRollup": {
+                        "state": "SUCCESS",
+                        "contexts": {
+                          "pageInfo": {
+                            "hasNextPage": false
+                          },
+                          "nodes": [
+                            {
+                              "__typename": "CheckRun",
+                              "name": "Quality and package",
+                              "status": "COMPLETED",
+                              "conclusion": "SUCCESS",
+                              "detailsUrl": "https://github.com/acme/widgets/actions/runs/555",
+                              "checkSuite": {
+                                "workflowRun": {
+                                  "databaseId": 555
+                                }
+                              }
+                            },
+                            {
+                              "__typename": "CheckRun",
+                              "name": "test (22)",
+                              "status": "COMPLETED",
+                              "conclusion": "SUCCESS",
+                              "detailsUrl": "https://github.com/acme/widgets/actions/runs/555",
+                              "checkSuite": {
+                                "workflowRun": {
+                                  "databaseId": 555
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "gate/1/refresh/review",
+      "argvPrefix": [
+        "gh",
+        "api",
+        "graphql",
+        "--paginate",
+        "--slurp",
+        "-f",
+        "query=query($owner: String!, $name: String!, $number: Int!, $endCursor: String) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewThreads(first: 100, after: $endCursor) { pageInfo { hasNextPage endCursor } nodes { id isResolved isOutdated path line originalLine comments(first: 100) { pageInfo { hasNextPage } nodes { databaseId author { login __typename } body url createdAt } } } } } } }",
+        "-f",
+        "owner=acme",
+        "-f",
+        "name=widgets",
+        "-F",
+        "number=42"
+      ],
+      "json": [
+        {
+          "data": {
+            "repository": {
+              "pullRequest": {
+                "reviewThreads": {
+                  "pageInfo": {
+                    "hasNextPage": false,
+                    "endCursor": null
+                  },
+                  "nodes": []
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "gate/1/refresh/review",
+      "argvPrefix": [
+        "gh",
+        "api",
+        "graphql",
+        "-f",
+        "query=query($owner: String!, $name: String!) { viewer { login } repository(owner: $owner, name: $name) { nameWithOwner isPrivate viewerPermission defaultBranchRef { name } } }",
+        "-f",
+        "owner=acme",
+        "-f",
+        "name=widgets"
+      ],
+      "json": {
+        "data": {
+          "viewer": {
+            "login": "merge-bot"
+          },
+          "repository": {
+            "nameWithOwner": "acme/widgets",
+            "isPrivate": false,
+            "viewerPermission": "ADMIN",
+            "defaultBranchRef": {
+              "name": "main"
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "gate/1/refresh/review",
+      "argvPrefix": [
+        "gh",
+        "api",
+        "--paginate",
+        "repos/acme/widgets/code-scanning/alerts?ref=refs%2Fpull%2F42%2Fmerge&state=open&per_page=100"
+      ],
+      "code": 1,
+      "json": {
+        "message": "Code scanning is not enabled for this repository. Please enable code scanning in the repository settings.",
+        "documentation_url": "https://docs.github.com/rest/code-scanning/code-scanning#list-code-scanning-alerts-for-a-repository",
+        "status": "403"
+      }
+    },
+    {
       "step": "land/ci/0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
       "json": {
         "data": {

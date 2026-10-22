@@ -196,12 +196,13 @@ any multi-line literal in `workflows/`, and rehearses the cases in
 is fingerprinted) with `execute --dry-run --harness fixture:<case>.fixtures.json`: `clean-land` (a
 stacked PR retargeted to `main` with nothing to push, noted, merged in round 1), `fix-round` (a
 stacked PR retargeted before the push, a Codex thread fixed with a commit and replied to, a new
-thread triaged, merged in round 2), `stop-at-fix` (`until: fix`, with the planned `Addressed in`
-reply), `blocked-gate` (red CI, a rerun that fails again, `maxCiRepairs: 0`) and `land-red-ci` (the
-gate sees green CI but the land-time wait sees red: blocked at `land`, no merge). Every agent call
-and command is answered by its fixtures (`"commands": "fixture"`), no rule may go unused, and a
-case's `order` lists steps that must start in that order (the retarget before the push). It runs in
-`npm run check` and in the Package rehearsals CI job.
+thread that only the gate's refresh read after CI sees triaged, merged in round 2), `stop-at-fix`
+(`until: fix`, with the planned `Addressed in` reply), `blocked-gate` (red CI, a rerun that fails
+again, `maxCiRepairs: 0`) and `land-red-ci` (the gate sees green CI but the land-time wait sees red:
+blocked at `land`, no merge). Every agent call and command is answered by its fixtures
+(`"commands": "fixture"`), no rule may go unused, and a case's `order` lists steps that must start
+in that order (the retarget before the push). It runs in `npm run check` and in the Package
+rehearsals CI job.
 
 ## Measurements
 

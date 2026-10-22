@@ -992,17 +992,14 @@ export default defineWorkflow({
         blockedIf([ci0, reviewed0], 'CI and reviews') ??
         unregisteredRequired(ci0, A.requiredChecks);
       if (early) return blocked('gate', early);
-      let ci = ci0;
-      let reviewed = reviewed0;
-      if (localReview) {
-        // The local review usually outlasts the CI wait, so threads can arrive meanwhile: read the
-        // gate again, which costs only the settle delay now that CI is done.
-        [ci, reviewed] = await waitAll('refresh', [codeqlReviewer()]);
-        const late =
-          blockedIf([ci, reviewed], 'the refreshed gate') ??
-          unregisteredRequired(ci, A.requiredChecks);
-        if (late) return blocked('gate', late);
-      }
+      // Either the local review or CI can outlast the reviewer wait, so threads and alerts can
+      // arrive meanwhile: read the gate again, which costs only the settle delay now that both are
+      // done.
+      const [ci, reviewed] = await waitAll('refresh', [codeqlReviewer()]);
+      const late =
+        blockedIf([ci, reviewed], 'the refreshed gate') ??
+        unregisteredRequired(ci, A.requiredChecks);
+      if (late) return blocked('gate', late);
       const codexVerdict = reviewed0.by.find((b) => b.name === 'codex')?.status ?? null;
       ctx.log(
         `Round ${String(r)}: CI ${ci.status}; Codex ${LOCAL ? (wantCodex ? `local, ${localReview?.error ? 'failed' : `${String(localReview?.findings ?? 0)} finding(s)`}` : 'not run') : String(codexVerdict)}`,
