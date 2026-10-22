@@ -389,7 +389,8 @@ export default defineConfig(
     // `--events` and `workflow events` share one pure line shape. The pure rate-limit module
     // supplies the window gate's suspension message, which the runtime's notification also uses, and
     // the pure step-event-error module bounds the step error text the runner also puts on events.
-    // failure-kind.ts supplies the recorded error kinds and the retryable flag.
+    // failure-kind.ts supplies the recorded error kinds and the retryable flag, and the pure
+    // decision-summary module the compact summary of a completed decision step.
     files: ['src/workflow/loader/event-line.ts', 'src/workflow/loader/event-follow.ts'],
     rules: {
       '@typescript-eslint/no-restricted-imports': [
@@ -400,15 +401,35 @@ export default defineConfig(
               group: ['node:*', ...builtinModules],
               allowTypeImports: true,
               message:
-                'Event line modules must stay free of I/O: import values only from ./event-line.js, ./failure-kind.js and the pure ../runtime/rate-limit.js and ../runtime/step-event-error.js; everything else must be import type.',
+                'Event line modules must stay free of I/O: import values only from ./event-line.js, ./failure-kind.js and the pure ../runtime/rate-limit.js, ../runtime/step-event-error.js and ../runtime/decision-summary.js; everything else must be import type.',
             },
             {
               // A regex, because a gitignore group cannot re-include a file below ../runtime/.
               regex:
-                '^(?:\\./(?!(?:event-line|failure-kind)\\.js$)|\\.\\./(?!runtime/(?:rate-limit|step-event-error)\\.js$))',
+                '^(?:\\./(?!(?:event-line|failure-kind)\\.js$)|\\.\\./(?!runtime/(?:rate-limit|step-event-error|decision-summary)\\.js$))',
               allowTypeImports: true,
               message:
-                'Event line modules must stay free of I/O: import values only from ./event-line.js, ./failure-kind.js and the pure ../runtime/rate-limit.js and ../runtime/step-event-error.js; everything else must be import type.',
+                'Event line modules must stay free of I/O: import values only from ./event-line.js, ./failure-kind.js and the pure ../runtime/rate-limit.js, ../runtime/step-event-error.js and ../runtime/decision-summary.js; everything else must be import type.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // The decision step summary is shared by inspect, the live event sink and the follower: a pure
+    // function of the record, so it imports no value at all.
+    files: ['src/workflow/runtime/decision-summary.ts'],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['node:*', ...builtinModules, './**', '../**'],
+              allowTypeImports: true,
+              message:
+                'The decision step summary must stay a pure function of the record: every import must be import type.',
             },
           ],
         },

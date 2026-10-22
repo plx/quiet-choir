@@ -2,8 +2,10 @@ import type { JsonValue } from '../runtime/model.js';
 import type { RunEvent } from '../runtime/observability-model.js';
 import { windowSuspensionMessage } from '../runtime/rate-limit.js';
 import { stepEventError } from '../runtime/step-event-error.js';
+import { summarizeDecisionStep } from '../runtime/decision-summary.js';
 import type { AttemptRecord, RunRecord, StepRecord } from '../runtime/record.js';
 import {
+  decisionMessage,
   eventMessage,
   formatEventFields,
   validToolUses,
@@ -206,6 +208,7 @@ function stepCandidates(
       attempt.request?.harness === undefined ? undefined : attempt.diagnostics?.['toolUses'];
     return validToolUses(value) ? { toolUses: value } : {};
   };
+  const decision = summarizeDecisionStep(step);
   history.forEach((attempt, index) => {
     if (attempt.finishedAt === null) return;
     const latest = index === history.length - 1;
@@ -226,10 +229,13 @@ function stepCandidates(
           ...toolUsesOf(attempt),
           // step.warnings is reset per attempt, so it belongs only to the step's latest attempt.
           // Only agent steps carry them live (on agent.finished), so only they do here.
+          // A completed decision step carries its summary instead, as the live event does.
           msg:
-            harness !== undefined && latest && step.status === 'completed'
-              ? warningsMessage(step.warnings)
-              : undefined,
+            decision !== null && latest
+              ? decisionMessage(decision)
+              : harness !== undefined && latest && step.status === 'completed'
+                ? warningsMessage(step.warnings)
+                : undefined,
         },
       });
     } else if (attempt.status === 'failed') {
@@ -277,7 +283,12 @@ function stepCandidates(
           attempt: step.attempts,
           errorKind: ev === 'step.failed' ? stepErrorKind(step) : undefined,
           ms: step.durationMs ?? undefined,
-          msg: ev === 'step.completed' ? undefined : stepEventError(step.error),
+          msg:
+            ev === 'step.completed'
+              ? decision === null
+                ? undefined
+                : decisionMessage(decision)
+              : stepEventError(step.error),
         },
       });
   }
@@ -321,7 +332,9 @@ function stepCandidates(
  * cleanup is pending in the running execution (the receipt still retained and no cleanup warning
  * yet), and produced on the read after the cleanup save, as the runner emits it only then, so a
  * cleanup warning is never lost; it is also released once `options.stale` says the run's owner is
- * gone, as the cleanup can then never land. Fork-reused steps and cancelled or
+ * gone, as the cleanup can then never land. A completed decision step's latest `step.completed`
+ * line carries the `decisionMessage` of its record summary instead of warnings, the text the live
+ * `--events` line carries. Fork-reused steps and cancelled or
  * interrupted attempts write nothing, and fields the record cannot supply are omitted. Lines are
  * deduplicated by identity, not position, so eviction past the 500-event cap neither repeats nor
  * hides newer lines. Each call returns the lines not yet accounted for in `cursor` (null on the

@@ -147,7 +147,7 @@ export function formatEventLine(event: WorkflowEvent, memory: EventLineMemory): 
     costUsd: event.usage?.costUsd,
     toolUses: derived.toolUses,
     phase: event.phase,
-    msg: eventMessage({ ...event, warnings: derived.warnings }),
+    msg: eventMessage({ ...event, warnings: derived.warnings, decision: event.decision }),
   });
 }
 

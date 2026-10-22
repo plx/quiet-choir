@@ -16,6 +16,7 @@ import {
   type EventLine,
 } from '../src/workflow/loader/events.js';
 import type { WorkflowEvent } from '../src/workflow/runtime/runner.js';
+import type { DecisionStepSummary } from '../src/index.js';
 import { formatEventFields } from '../src/workflow/loader/event-line.js';
 import { recordEventLines } from '../src/workflow/loader/event-follow.js';
 import type { AttemptRecord, RunRecord } from '../src/workflow/runtime/record.js';
@@ -322,6 +323,71 @@ describe('formatEventLine', () => {
       expect((JSON.parse(text) as EventLine).msg?.startsWith('no-tool-use: expected tools; ')).toBe(
         true,
       );
+    });
+
+    it('writes the decision summary as msg on a decision step.completed', () => {
+      const decision: DecisionStepSummary = {
+        op: 'decide',
+        provider: 'jev',
+        requestedModel: 'jev-latest',
+        servedModel: 'jev-1.2',
+        questions: [
+          { name: 'refund', kind: 'noul', answer: 0.4 },
+          { name: 'team', kind: 'choice', answer: 'a', confidence: 0.8 },
+          { name: 'grade', kind: 'score', answer: 2.1, level: 'good', confidence: 0.7 },
+        ],
+        usage: { attempts: 2, inputTokens: 120, outputTokens: null },
+      };
+      expect(line(event({ type: 'step.completed', stepId: 'ask', decision }))?.msg).toBe(
+        'decision jev jev-latest->jev-1.2 120/? tok 2 att: refund=0.40, team=a c0.80, grade=2.10 good c0.70',
+      );
+      expect(
+        line(
+          event({
+            type: 'step.completed',
+            stepId: 'ask',
+            decision: {
+              ...decision,
+              provider: null,
+              requestedModel: null,
+              servedModel: null,
+              questions: [{ name: 'odd', kind: 'unknown', answer: null }],
+            },
+          }),
+        )?.msg,
+      ).toBe('decision - -->- 120/? tok 2 att: odd=?');
+    });
+
+    it('bounds the decision msg for a call with many questions, keeping the header', () => {
+      const decision: DecisionStepSummary = {
+        op: 'decide',
+        provider: 'jev',
+        requestedModel: 'jev-latest',
+        servedModel: 'jev-1.2',
+        questions: Array.from({ length: 60 }, (_, index) => ({
+          name: `question-with-a-long-name-${String(index)}`,
+          kind: 'score' as const,
+          answer: index / 10,
+          level: 'level-name',
+          confidence: 0.5,
+        })),
+        usage: { attempts: 1, inputTokens: 10, outputTokens: 5 },
+      };
+      const text =
+        formatEventLine(
+          event({ type: 'step.completed', stepId: 'ask', decision, phase: 'p'.repeat(100) }),
+          new EventLineMemory(),
+        ) ?? '';
+      expect(Buffer.byteLength(text)).toBeLessThanOrEqual(EVENT_LINE_MAX_BYTES);
+      const msg = (JSON.parse(text) as EventLine).msg ?? '';
+      expect(msg.startsWith('decision jev jev-latest->jev-1.2 10/5 tok 1 att: ')).toBe(true);
+      expect(msg.endsWith('…')).toBe(true);
+    });
+
+    it('leaves an agent step.completed with its warnings message', () => {
+      const memory = new EventLineMemory();
+      memory.observe(event(finished('a', { diagnostics: { toolUses: 1 }, warnings: ['Note'] })));
+      expect(line(event({ type: 'step.completed', stepId: 'a' }), memory)?.msg).toBe('Note');
     });
 
     it('writes toolUses but never warnings on step.failed and step.settled', () => {

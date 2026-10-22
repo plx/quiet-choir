@@ -231,6 +231,7 @@ import {
 } from './replay-decision.js';
 import { digest, jsonValue } from './json.js';
 import { recordWarnings } from './record-warnings.js';
+import { summarizeDecisionStep, type DecisionStepSummary } from './decision-summary.js';
 import type {
   AgentClient,
   ErrorMode,
@@ -297,6 +298,12 @@ export type WorkflowEvent = {
   readonly promptTemplate?: string;
   /** Reported usage on step.completed and live agent.finished; do not sum across event types. */
   readonly usage?: AgentUsage;
+  /**
+   * The compact summary of a completed decision step on its step.completed event: provider,
+   * requested and served model, each question's kind and headline answer, and usage. The same
+   * value `workflow inspect` lists as `steps[].decision`; absent for every other step.
+   */
+  readonly decision?: DecisionStepSummary;
   /** Observed native session, or predicted Claude ID on early live notifications; absent on replay. */
   readonly sessionId?: string | null;
   /** ISO notification time. */
@@ -2653,12 +2660,15 @@ export async function runWorkflow<
                 ...(step.warnings?.length ? { warnings: [...step.warnings] } : {}),
                 ...promptTemplateField(attemptRecord.request),
               });
+            const decision = summarizeDecisionStep(step);
             emit(
               'step.completed',
               id,
               step,
               metadata === undefined
-                ? {}
+                ? decision === null
+                  ? {}
+                  : { decision }
                 : {
                     usage: metadata.usage,
                     sessionId: metadata.sessionId,

@@ -115,6 +115,30 @@ function integrationLabel(meta: RunSummary['steps'][number]['meta']): string | u
     : undefined;
 }
 
+/** A decision step's headline answer: a probability, an option, or a score with its level. */
+function decisionHeadline(
+  question: NonNullable<RunSummary['steps'][number]['decision']>['questions'][number],
+): string {
+  const answer =
+    typeof question.answer === 'number' ? question.answer.toFixed(2) : (question.answer ?? '?');
+  return question.level === undefined ? answer : `${answer} (${question.level})`;
+}
+
+/** The step line and one indented line per question of a completed decision step. */
+function decisionLines(step: RunSummary['steps'][number]): string[] {
+  const decision = step.decision;
+  if (decision === null) return [];
+  const { usage } = decision;
+  const tokens = (count: number | null): string => (count === null ? '?' : String(count));
+  return [
+    `${step.status} ${step.id}  decision ${decision.provider ?? '-'} ${decision.requestedModel ?? '(provider default)'} -> ${decision.servedModel ?? 'unknown'}  ${String(usage.attempts)} attempts, ${tokens(usage.inputTokens)} in / ${tokens(usage.outputTokens)} out tokens${step.elapsedMs === null ? '' : `  ${duration(step.elapsedMs)}`}`,
+    ...decision.questions.map(
+      (question) =>
+        `  ${question.name} ${question.kind} ${decisionHeadline(question)}${question.confidence === undefined ? '' : ` confidence ${question.confidence.toFixed(2)}`}`,
+    ),
+  ];
+}
+
 function agentLine(row: RunSummary['agents']['recent'][number]): string {
   return `${row.status === 'completed' ? '' : `${row.status} `}${row.id}  ${row.harness} ${row.model ?? '(native model)'} effort ${row.effort ?? '-'}${row.profile === null ? '' : ` profile ${row.profile}`}${row.promptTemplate === undefined ? '' : `  template ${row.promptTemplate}`}${row.elapsedMs === null ? '' : `  ${duration(row.elapsedMs)}`}  ${row.costUsd === null ? 'unknown cost' : `$${row.costUsd.toFixed(4)}`}${row.toolUses === undefined ? '' : `  tools ${String(row.toolUses)}`}${row.warnings?.length ? `  warnings: ${row.warnings.join(' ')}` : ''}`;
 }
@@ -258,6 +282,10 @@ export function formatRunSummary(
       lines.push(
         `Integration ${step.id}: base ${step.merge.base}, target ${step.merge.ref}, commit ${step.merge.result?.commit ?? 'pending'}${step.merge.result?.conflicts.length ? `; ${String(step.merge.result.conflicts.length)} conflicts` : ''}`,
       );
+    if (step.decision) {
+      lines.push(...decisionLines(step));
+      continue;
+    }
     if (step.exec && !verbose && !step.worktree && !step.merge && step.status === 'completed') {
       lines.push(
         `${step.status} ${step.id}  ${integrationLabel(step.meta) ?? commandLabel(step.exec.command)}${step.elapsedMs === null ? '' : `  ${duration(step.elapsedMs)}`}${step.rootCause ? ' [root cause]' : ''}`,
