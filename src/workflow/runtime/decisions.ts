@@ -215,10 +215,11 @@ export function prepareDecision(
             },
           );
         } catch (cause) {
-          // Every attempt that may have reached the host counts, with unknown tokens; a
-          // configuration failure is raised before any request.
-          if (!(cause instanceof ConfigurationError))
-            reportUsage(decisionUsage(provider, model, null));
+          // A configuration failure is raised before any request and stays fatal even if it
+          // arrives after this call's timer.
+          if (cause instanceof ConfigurationError) throw cause;
+          // Every attempt that may have reached the host counts, with unknown tokens.
+          reportUsage(decisionUsage(provider, model, null));
           // Only this call's own timer is a timeout; the step's signal stays a cancellation.
           if (timeout?.aborted === true && !signal.aborted)
             throw new DecisionError({

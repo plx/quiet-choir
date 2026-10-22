@@ -912,4 +912,28 @@ describe('ctx.decide', () => {
     ]);
     expect(factory).toHaveBeenCalledTimes(1);
   });
+
+  it('keeps a configuration failure that arrives after the timeout fatal', async () => {
+    const provider = defineDecisionProvider({
+      name: 'late',
+      revision: 1,
+      capabilities: allCapabilities,
+      transport: () => async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        throw new ConfigurationError('late configuration failure');
+      },
+    });
+    const error: unknown = await runWorkflow(
+      workflow([provider], (ctx) =>
+        ctx.decide('ask', { state: null, questions: { refund }, timeoutMs: 1, onError: 'return' }),
+      ),
+      options(),
+    ).catch((caught: unknown) => caught);
+    expect((error as Error).cause).toBeInstanceOf(ConfigurationError);
+    expect((error as Error).message).toMatch(/late configuration failure/u);
+    const run = await readRun({ stateDir, runId: 'decide' });
+    expect(run.steps['ask']?.status).toBe('failed');
+    expect(run.steps['ask']?.settledError).toBeUndefined();
+    expect(run.steps['ask']?.attemptHistory?.[0]?.errorKind).not.toBe('timeout');
+  });
 });
