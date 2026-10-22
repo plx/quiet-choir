@@ -121,6 +121,12 @@ export function fixturesFromRun(run: RunRecord): HarnessFixtures {
  * replays with the prefix added; a replayed `schema` failure keeps its kind and message but not
  * the raw body or issues; a failed attempt's token counts and served model, the attempt count and a
  * live response's other `usage` fields (`reported`) are not exported.
+ *
+ * An absorbed failure that was a fatal configuration failure (see `configurationFailure`),
+ * such as a transport factory that threw, is left out on purpose: an error entry would replay as an
+ * ordinary `DecisionError` that `onError: 'return'` settles or `retry` repeats, while the exported
+ * file's `unmatched: 'error'` makes the replay hit an unmatched decision, whose fatal
+ * `ConfigurationError` takes the same branch as the original.
  */
 function decisionFixtures(run: RunRecord): Record<string, FixtureDecision> | undefined {
   const entries = Object.entries(run.steps)
@@ -131,7 +137,7 @@ function decisionFixtures(run: RunRecord): Record<string, FixtureDecision> | und
         step.meta['op'] === 'decide' &&
         (step.status === 'completed' ||
           step.status === 'settled-failed' ||
-          step.status === 'failed'),
+          (step.status === 'failed' && !configurationFailure(step))),
     )
     .sort((a, b) => (a[1].seq ?? 0) - (b[1].seq ?? 0));
   if (entries.length === 0) return undefined;
@@ -175,6 +181,18 @@ function decisionFixtures(run: RunRecord): Record<string, FixtureDecision> | und
     Object.defineProperty(result, stepId, { value: entry, enumerable: true });
   }
   return result;
+}
+
+/**
+ * Whether a failed step's latest error was a `ConfigurationError` (a `GrantRequiredError`
+ * included), which is fatal: never settled or retried. The record keeps no error class or brand, so
+ * the class name heading the recorded stack (the step's, else its last attempt's) identifies it.
+ */
+function configurationFailure(step: StepRecord): boolean {
+  const stack = step.errorStack ?? step.attemptHistory?.at(-1)?.errorStack;
+  return (
+    typeof stack === 'string' && /^(?:ConfigurationError|GrantRequiredError)(?::|\n|$)/u.test(stack)
+  );
 }
 const decisionOutput = z.object({
   model: z.string().nullable(),

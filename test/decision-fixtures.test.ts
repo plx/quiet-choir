@@ -25,6 +25,7 @@ import {
   type DecisionProviderDeclaration,
   type ProviderTransportFactory,
 } from '../src/integrations/decision.js';
+import { fixturesFromRun } from '../src/workflow/loader/fixtures.js';
 import { RehearsalHarness } from '../src/workflow/loader/rehearsal.js';
 import { fixtureDecisionBody } from '../src/workflow/runtime/decision-protocol.js';
 import { errorKind } from '../src/workflow/runtime/step-error.js';
@@ -330,6 +331,66 @@ describe('decision fixtures', () => {
     });
     expect(synthesized.steps['ask']?.output).toMatchObject({ model: null });
     expect(factory).not.toHaveBeenCalled();
+  });
+
+  it('export no entry for a caught configuration failure, so its replay is fatal too', async ({
+    stateDir,
+    runs,
+  }) => {
+    const broken = guarded('broken', () => {
+      throw new Error('missing token');
+    });
+    const live = guarded(
+      'live',
+      () => () =>
+        Promise.resolve({
+          body: fixtureDecisionBody({ answers: { refund: { noul: 0.25 } }, model: 'served-1' }),
+        }),
+    );
+    // The fallback branch runs only if the failure settles, as an ordinary error entry would.
+    const definition = (answer: boolean) =>
+      workflow([broken.provider, live.provider], async (ctx) => {
+        const answered = answer
+          ? await ctx.decide('answered', { provider: 'live', state: 1, questions: { refund } })
+          : null;
+        try {
+          const result = await ctx.decide('broken', {
+            provider: 'broken',
+            state: 2,
+            questions: { refund },
+            onError: 'return',
+          });
+          return { answered, broken: result.ok ? 'answered' : 'fallback' };
+        } catch (error) {
+          return { answered, broken: error instanceof ConfigurationError ? 'caught' : 'other' };
+        }
+      });
+    for (const answer of [true, false]) {
+      const runId = answer ? 'mixed' : 'only';
+      const original = await runs.run(definition(answer), { runId, stateDir, input: null });
+      expect(original.status).toBe('completed');
+      expect(original.output).toEqual({
+        answered: answer ? { refund: { noul: 0.25 } } : null,
+        broken: 'caught',
+      });
+      expect(original.steps['broken']?.status).toBe('failed');
+      expect(original.steps['broken']?.errorStack).toMatch(/^ConfigurationError: /u);
+      const exported = fixturesFromRun(original);
+      if (answer) {
+        expect(Object.keys(exported.decisions ?? {})).toEqual(['answered']);
+      } else {
+        expect(exported).not.toHaveProperty('decisions');
+      }
+      expect(exported.unmatched).toBe('error');
+      const replay = await runs.run(
+        definition(answer),
+        fixtureOptions(stateDir, exported, { runId: `${runId}-replay` }),
+      );
+      expect(replay.output).toEqual(original.output);
+      expect(fixturesFromRun(replay)).toEqual(exported);
+    }
+    expect(broken.factory).toHaveBeenCalledTimes(2);
+    expect(live.factory).toHaveBeenCalledTimes(1);
   });
 
   it('keep the identity of the same call answered live', async ({ stateDir, runs }) => {

@@ -160,7 +160,10 @@ kind except `unknown` and `cancelled`, so export, replay and export give the sam
 `DecisionError` (such as a custom transport's plain `Error`) replays with the prefix added; a
 replayed `schema` failure keeps its kind and message but not the original raw body or issues; and a
 failed attempt's token counts and served model, the provider's other `usage` fields and the attempt
-count are not kept. A run without decisions exports no `decisions` key.
+count are not kept. A decision failure the workflow caught that was a fatal `ConfigurationError`,
+such as a transport factory that threw, exports no entry, so its replay under `--harness fixture`
+meets an unmatched decision, which is fatal configuration as the original was, instead of an error
+entry that `onError: 'return'` would settle. A run without decisions exports no `decisions` key.
 
 ## Command fixtures
 
