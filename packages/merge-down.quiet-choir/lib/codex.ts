@@ -60,7 +60,9 @@ const Teardown = z.object({ moved: z.boolean(), dirty: z.array(z.string()) });
  * the review worktree at `<dir>/review-<sha12>`, records its canonical path for `review`'s cwd, and
  * gives it dependencies (a copy-on-write clone of the PR worktree's node_modules when package.json
  * and the lockfile match, else `npm ci`); `review` runs codex there with a 54-minute deadline and
- * its stderr in a log; `file` saves the review text; `teardown`, in a finally that also covers a
+ * its stderr in a log, after resetting the worktree to `sha` and cleaning untracked files (not
+ * node_modules), so a retried or resumed attempt never reviews what an earlier one left behind;
+ * `file` saves the review text; `teardown`, in a finally that also covers a
  * failed setup, notes whether the review moved its worktree and removes it. A failure is returned
  * in `error`, never thrown: the gate proceeds on CI without the review.
  */
@@ -143,7 +145,7 @@ export async function localCodexReview(
       [
         'sh',
         '-c',
-        'exec "$@" 2>"$MERGE_DOWN_REVIEW_LOG"',
+        'git reset --hard "$MERGE_DOWN_REVIEW_SHA" && git clean -fd -e node_modules && exec "$@" 2>"$MERGE_DOWN_REVIEW_LOG"',
         'merge-down-review',
         'codex',
         'review',
@@ -153,7 +155,7 @@ export async function localCodexReview(
       ],
       {
         cwd,
-        env: { MERGE_DOWN_REVIEW_LOG: log },
+        env: { MERGE_DOWN_REVIEW_LOG: log, MERGE_DOWN_REVIEW_SHA: sha },
         scrubEnv: true,
         okExitCodes: 'any',
         timeoutMs: 54 * MINUTE,
