@@ -190,6 +190,7 @@ codes above. After `answer --resume`, add `--after-execution N` with the suspend
 | Control native configuration, environment, and checkout trust                          | [Harness isolation](references/harness-isolation.md)           |
 | Declare a roster, bind agents, shared call options, identity, usage, or process limits | [Agent calls](references/agent-calls.md)                       |
 | Keep prompts in markdown templates with typed, load-checked parameters                 | [Prompt templates](references/prompts.md)                      |
+| Route or grade with a decision provider (ctx.decide, roster deciders)                  | [Decision providers](references/decisions.md)                  |
 | Observe native activity, inspect transcripts, retain failed response evidence          | [Agent streaming](references/agent-streaming.md)               |
 | Inspect spend, understand token categories, stop new work at a run cap                 | [Usage and budgets](references/usage-budgets.md)               |
 | Select provider-specific controls or diagnose native protocol failures                 | [Claude](references/claude.md), [Codex](references/codex.md)   |

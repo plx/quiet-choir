@@ -149,7 +149,9 @@ the prompt, the schema, placement (`cwd`, `addDirs`, `worktree`) and policy (`on
 A decider entry names a decision provider and model instead of a harness
 ([ADR 0066](decisions/0066-decision-providers.md) §2): `{ decider, model?, description? }`
 (`RosterDeciderEntry`). `ctx.roster.Name` is then a `RosterDecider`, whose only method is `decide`:
-`ctx.decide` with the entry's provider and model preset.
+`ctx.decide` with the entry's provider and model preset. See
+[decision providers](decision-providers.md) for providers, configuration and the
+[decide-then-act recipe](decision-providers.md#walkthrough-decide-then-act).
 
 ```ts
 import { defineRoster, defineWorkflow, z } from 'quiet-choir';

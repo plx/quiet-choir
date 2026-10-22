@@ -101,6 +101,7 @@
     "test:contract": "node ./test/harness-contract.mjs",
     "test:contract:isolation": "node ./test/harness-isolation-contract.mjs",
     "test:contract:doctor": "node ./test/doctor-contract.mjs",
+    "test:contract:decision": "node ./test/decision-live-contract.mjs",
     "skills:check": "node scripts/check-skills.mjs && node --test test/skills-check.test.mjs",
     "test:storage-benchmark": "node ./test/storage-benchmark.mjs"
   },

@@ -412,25 +412,32 @@ another durable step, and do not run effects at module import time.
 
 ## Service helper pattern
 
-Use ordinary helper functions for decisions, GitHub and Linear operations. Each operation should
-make exactly one `ctx.step`, `ctx.exec` or `ctx.wait` at workflow level. Inside that step's callback
-or wait's observer, run `gh` and other commands through `context.exec`, which the run owns and
-rehearses but does not checkpoint, never through `child_process` (see
+Decisions are core API: declare a decision provider in the workflow's `decisions` and call
+`ctx.decide`, or a [roster decider](decisions.md#roster-deciders), as described in
+[decision providers](decisions.md). Each call is one durable `decision/2` step with configured
+credentials, fixtures and inspection, so no helper is needed.
+
+Use ordinary helper functions for other services, such as GitHub and Linear operations. Each
+operation should make exactly one `ctx.step`, `ctx.exec` or `ctx.wait` at workflow level. Inside
+that step's callback or wait's observer, run `gh` and other commands through `context.exec`, which
+the run owns and rehearses but does not checkpoint, never through `child_process` (see
 [commands inside a callback](commands-files.md#commands-inside-a-callback-or-observer)).
-`StepDefinition.meta` can label `{ integration: 'decision', op: 'choose' }`, and `ExecOptions.meta`
+`StepDefinition.meta` can label `{ integration: 'linear', op: 'comment' }`, and `ExecOptions.meta`
 labels a helper's `ctx.exec` the same way, without affecting replay identity. Explicit
 inputs/version capture meaningful service-operation changes; pass the stable idempotency key to
 services that support deduplication. Never put credentials in inputs or metadata.
 
-`quiet-choir/decision` exports `decision(ctx, transport).choose(id, question)` as a reference with
-an injected transport and a validated answer and normalized probability distribution. It is not a
-JEV SDK adapter. It snapshots the question when `choose` is called and gives every attempt a fresh
-copy of that recorded input, so later caller or transport mutations never reach the service. The
-callback's `reportUsage(usage)` replaces cumulative usage for that attempt and saves it with its
-outcome, including local validation failure. Reports after the callback returns reject. Inspect
-separates `integrationUsage`/`byIntegration` from agent totals; helpers do not consume agent attempt
-slots, while reported cost contributes to the next agent's cost gate. Replay makes no transport
-call.
+A helper's step callback receives `reportUsage(usage)`, which replaces cumulative usage for that
+attempt and saves it with its outcome, including local validation failure. Reports after the
+callback returns reject. Inspect separates `integrationUsage`/`byIntegration` from agent totals;
+helpers do not consume agent attempt slots, while reported cost contributes to the next agent's cost
+gate. Replay makes no service call.
+
+`quiet-choir/decision` still exports the older `decision(ctx, transport).choose(id, question)`
+helper, which is deprecated: it emits a `DeprecationWarning` with code `QUIET_CHOIR_DECISION_CHOOSE`
+once per process. Completed steps it recorded keep identity `decision/1` and keep replaying without
+calling the transport. Write new decisions with `ctx.decide` (see
+[decision providers](decisions.md)).
 
 `quiet-choir/github` exports `github(ctx, { repo })` with typed reads (`repo.info`, `pr.view`,
 `pr.list`, `pr.reviewThreads`, `issue.view`, `codeScanning.alerts`). Each read is one

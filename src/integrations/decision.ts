@@ -1,8 +1,9 @@
 /**
  * Decision providers over the shared Jev-style protocol (ADR 0066): typed `noul`, `choice` and
  * `score` questions for `ctx.decide`, provider declarations, and the `jevCompatible` HTTP
- * provider. The older transport-injected `decision(ctx, transport).choose(...)` helper stays
- * available below.
+ * provider. The older transport-injected `decision(ctx, transport).choose(...)` helper below is
+ * deprecated: use `ctx.decide` with a decision provider (see `docs/decision-providers.md`). Its
+ * completed `decision/1` steps keep replaying.
  *
  * @packageDocumentation
  */
@@ -362,7 +363,30 @@ export function jevCompatible(options: JevCompatibleOptions): DecisionProviderDe
 /** Version that identifies a decision step; see `choose` before changing it. */
 const DECISION_STEP_VERSION = 'decision/1';
 
-/** Prompt-free decision input; this reference transport does not integrate a particular service. */
+/**
+ * The process-wide key of the once flag. A CLI workflow can load this subpath as a second module
+ * instance (as for ADR 0028's error brands), so a module-level boolean would warn once per
+ * instance rather than once per process.
+ */
+const chooseDeprecationKey = Symbol.for('quiet-choir.decision-choose-deprecation');
+
+/** Emit the `decision().choose` deprecation warning the first time any instance builds the helper. */
+function warnChooseDeprecated(): void {
+  const flags = globalThis as unknown as Record<symbol, true | undefined>;
+  if (flags[chooseDeprecationKey] === true) return;
+  flags[chooseDeprecationKey] = true;
+  process.emitWarning(
+    'quiet-choir/decision: decision(ctx, transport).choose is deprecated; use ctx.decide with a decision provider (see docs/decision-providers.md). Completed decision/1 steps still replay.',
+    { type: 'DeprecationWarning', code: 'QUIET_CHOIR_DECISION_CHOOSE' },
+  );
+}
+
+/**
+ * Prompt-free decision input; this reference transport does not integrate a particular service.
+ *
+ * @deprecated Use `ctx.decide` with typed `noul`, `choice` or `score` questions and a decision
+ * provider (see `docs/decision-providers.md`). Completed `decision/1` steps keep replaying.
+ */
 export interface DecisionQuestion<A extends readonly [string, ...string[]]> {
   /** Explicit state captured as replay input. */
   readonly state: JsonValue;
@@ -372,7 +396,12 @@ export interface DecisionQuestion<A extends readonly [string, ...string[]]> {
   readonly answers: A;
 }
 
-/** Validated selection with the complete reported distribution. */
+/**
+ * Validated selection with the complete reported distribution.
+ *
+ * @deprecated Use `ctx.decide`, whose `choice` answers carry the choice, its probabilities and a
+ * confidence (see `docs/decision-providers.md`). Completed `decision/1` steps keep replaying.
+ */
 export interface DecisionAnswer<TAnswer extends string> {
   /** One answer from the declared finite answer space. */
   readonly answer: TAnswer;
@@ -380,8 +409,14 @@ export interface DecisionAnswer<TAnswer extends string> {
   readonly probabilities: Record<TAnswer, number>;
 }
 
-/** Inject a service client with its own authentication, outside durable semantic inputs. */
+/**
+ * Inject a service client with its own authentication, outside durable semantic inputs.
+ *
+ * @deprecated Declare a decision provider with `defineDecisionProvider` or `jevCompatible` and call
+ * `ctx.decide` (see `docs/decision-providers.md`). Completed `decision/1` steps keep replaying.
+ */
 export type DecisionTransport = (
+  // eslint-disable-next-line @typescript-eslint/no-deprecated -- legacy decision/1 helper
   question: DecisionQuestion<readonly [string, ...string[]]>,
   context: {
     /** Cooperative cancellation. */
@@ -396,17 +431,31 @@ export type DecisionTransport = (
   readonly usage?: AgentUsage;
 }>;
 
-/** One ordinary step per decision, with no extra context property or effect kind. */
+/**
+ * One ordinary step per decision, with no extra context property or effect kind.
+ *
+ * Building the helper emits a `DeprecationWarning` with code `QUIET_CHOIR_DECISION_CHOOSE` once per
+ * process. The step it records is unchanged: version `decision/1`, the same input, schema and
+ * `meta`, so completed steps replay without calling the transport.
+ *
+ * @deprecated Use `ctx.decide` with a decision provider, or a roster decider entry (see
+ * `docs/decision-providers.md`). Completed `decision/1` steps keep replaying; the helper is removed
+ * no earlier than the next release.
+ */
 export function decision(
   ctx: Pick<WorkflowContext, 'step'>,
+  // eslint-disable-next-line @typescript-eslint/no-deprecated -- legacy decision/1 helper
   transport: DecisionTransport,
 ): {
   /** Choose one declared answer, preserving the complete reported probability distribution. */
   choose<const A extends readonly [string, ...string[]]>(
     id: string,
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- legacy decision/1 helper
     question: DecisionQuestion<A>,
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- legacy decision/1 helper
   ): Promise<DecisionAnswer<A[number]>>;
 } {
+  warnChooseDeprecated();
   return {
     choose(id, question) {
       // One synchronous snapshot is both the fingerprinted input and every attempt's transport input.

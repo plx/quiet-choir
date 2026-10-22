@@ -13,30 +13,31 @@ I/O unless stubbed. Use the
 [launch-directory and external-state rules](../SKILL.md#run-a-first-workflow-against-a-project). The
 tests' fake responses prove replay behavior, not the quality of a model's review or edits.
 
-| Need                                                             | Recipe                                                              |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------- |
-| Declare agents once and bind options for a helper                | [Roster and bound agents](#roster-and-bound-agents)                 |
-| Combine Claude and Codex reviews; retry failed reviewers         | [Cross-harness fan-out/fan-in](#cross-harness-fan-outfan-in)        |
-| Preserve a quorum decision despite failed reviewers              | [Failure-tolerant panel](#failure-tolerant-panel)                   |
-| Discover until no new findings appear                            | [Loop until dry](#loop-until-dry)                                   |
-| Run sequential stages for each item                              | [Per-item pipeline](#per-item-pipeline)                             |
-| Stop revising after approval or a round limit; fill a typed team | [Bounded review/revise](#bounded-reviewrevise)                      |
-| Reuse a helper without ID collisions                             | [Scoped helper](#reusable-helper)                                   |
-| Isolate parallel file edits                                      | [Worktree per item](#worktree-per-item)                             |
-| Wait with a stable deadline                                      | [Polling and deadlines](#polling-and-deadlines)                     |
-| Reuse old completed work after a fix                             | [Salvage with a fork](#salvage-an-old-run)                          |
-| Freeze a failure before selecting a fallback                     | [Latch an outcome](#latch-an-outcome)                               |
-| Retry a small extraction without repeating expensive work        | [Work, then extract](#work-then-extract)                            |
-| Test before native calls                                         | [Rehearse for free](#rehearse-for-free)                             |
-| Keep a human decision attached to its saved plan                 | [Human review](#human-review)                                       |
-| Branch on a trusted command's exit code                          | [Commands and test verdicts](#commands-and-test-verdicts)           |
-| Edit existing text with an optimistic baseline guard             | [File snapshots and publication](#file-snapshots-and-publication)   |
-| Restore a Git file after a journaled mutation                    | [Hash guard for mutation](#hash-guard-for-mutation)                 |
-| Read GitHub state through `gh` with typed results                | [GitHub snapshots through gh](#github-snapshots-through-gh)         |
-| Fix CI until it passes, keyed by head SHA                        | [CI-gated fix loop](#ci-gated-fix-loop)                             |
-| Burn down an epic one ticket per run                             | [Ticket loop](#ticket-loop)                                         |
-| Recognize tempting but unsafe code                               | [Traps](#traps)                                                     |
-| See the recipes expanded into strict ports                       | [Workflow Lab acceptance recipes](#workflow-lab-acceptance-recipes) |
+| Need                                                                    | Recipe                                                              |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Declare agents once and bind options for a helper                       | [Roster and bound agents](#roster-and-bound-agents)                 |
+| Combine Claude and Codex reviews; retry failed reviewers                | [Cross-harness fan-out/fan-in](#cross-harness-fan-outfan-in)        |
+| Preserve a quorum decision despite failed reviewers                     | [Failure-tolerant panel](#failure-tolerant-panel)                   |
+| Discover until no new findings appear                                   | [Loop until dry](#loop-until-dry)                                   |
+| Run sequential stages for each item                                     | [Per-item pipeline](#per-item-pipeline)                             |
+| Stop revising after approval or a round limit; fill a typed team        | [Bounded review/revise](#bounded-reviewrevise)                      |
+| Reuse a helper without ID collisions                                    | [Scoped helper](#reusable-helper)                                   |
+| Isolate parallel file edits                                             | [Worktree per item](#worktree-per-item)                             |
+| Wait with a stable deadline                                             | [Polling and deadlines](#polling-and-deadlines)                     |
+| Reuse old completed work after a fix                                    | [Salvage with a fork](#salvage-an-old-run)                          |
+| Freeze a failure before selecting a fallback                            | [Latch an outcome](#latch-an-outcome)                               |
+| Retry a small extraction without repeating expensive work               | [Work, then extract](#work-then-extract)                            |
+| Test before native calls                                                | [Rehearse for free](#rehearse-for-free)                             |
+| Route before an agent runs and grade after; fall back on low confidence | [Decide, then act](#decide-then-act)                                |
+| Keep a human decision attached to its saved plan                        | [Human review](#human-review)                                       |
+| Branch on a trusted command's exit code                                 | [Commands and test verdicts](#commands-and-test-verdicts)           |
+| Edit existing text with an optimistic baseline guard                    | [File snapshots and publication](#file-snapshots-and-publication)   |
+| Restore a Git file after a journaled mutation                           | [Hash guard for mutation](#hash-guard-for-mutation)                 |
+| Read GitHub state through `gh` with typed results                       | [GitHub snapshots through gh](#github-snapshots-through-gh)         |
+| Fix CI until it passes, keyed by head SHA                               | [CI-gated fix loop](#ci-gated-fix-loop)                             |
+| Burn down an epic one ticket per run                                    | [Ticket loop](#ticket-loop)                                         |
+| Recognize tempting but unsafe code                                      | [Traps](#traps)                                                     |
+| See the recipes expanded into strict ports                              | [Workflow Lab acceptance recipes](#workflow-lab-acceptance-recipes) |
 
 ## Roster and bound agents
 
@@ -688,6 +689,126 @@ branches they reach. Native contract probes still use repository fake APIs/CLIs;
 exit nonzero (normally 1). Use `.mjs`/ESM shims or an explicit CommonJS package for `require`,
 rather than an extensionless `require` shim under `"type":"module"`. See [rehearsal](rehearsal.md)
 for the complete loop.
+
+## Decide, then act
+
+**Rule:** put a branch that is a judgment about state behind a decision provider, and keep the
+threshold in code. A [decider roster entry](decisions.md#roster-deciders) routes the ticket before
+any agent runs. Below the confidence threshold, the workflow takes the conservative branch and calls
+no agent. Otherwise a tool-less agent drafts the reply, and a second decider grades it. Each
+decision is one durable `decision/2` step with `meta.roster` naming its entry, and replay never
+calls the provider again. The support module holds the provider, the roster and the questions:
+
+<!-- skills-check: example pattern-deciders -->
+
+```ts
+import { defineRoster } from '../../src/index.js';
+import { choice, jevCompatible, noul } from '../../src/integrations/decision.js';
+
+// The operator supplies the host: --harness-config '{"decisions":{"jev":{"baseUrl":"https://..."}}}'.
+// The token is read from TYPESAFE_API_KEY at request time and never recorded.
+export const jev = jevCompatible({
+  name: 'jev',
+  apiKeyEnv: 'TYPESAFE_API_KEY',
+  defaultModel: 'jev-latest',
+});
+
+// Two deciders and one tool-less agent, so the recipe needs no grant.
+export const deskRoster = defineRoster({
+  Triage: { decider: 'jev', description: 'Routes a support ticket before any agent runs.' },
+  Grader: { decider: 'jev', description: 'Grades a drafted reply against its ticket.' },
+  Responder: {
+    harness: 'claude',
+    description: 'Drafts a reply from the ticket text alone; uses no tools.',
+    tools: [],
+    maxTurns: 5,
+    maxBudgetUsd: 1,
+    timeoutMs: 600_000,
+  },
+});
+
+export const route = choice({
+  instructions:
+    'Can a reply drafted from the ticket text alone resolve it, or must a human take it?',
+  options: { answer: null, escalate: 'Needs account access, a refund or a judgment call.' },
+});
+export const resolved = noul({ instructions: 'Does the reply resolve the ticket?' });
+```
+
+<!-- skills-check: example pattern-decide-then-act -->
+
+```ts
+import { defineWorkflow, z } from '../../src/index.js';
+import { deskRoster, jev, resolved, route } from './deciders.js';
+
+const minConfidence = 0.7; // a threshold is ordinary code; a low-confidence answer is a result
+
+export default defineWorkflow({
+  name: 'decide-then-act',
+  version: '1',
+  decisions: [jev],
+  roster: deskRoster,
+  input: z.object({ ticket: z.string() }),
+  output: z.object({ outcome: z.enum(['escalated', 'sent', 'needs-review']), reply: z.string() }),
+  async run(ctx, input) {
+    const triage = await ctx.roster.Triage.decide('triage', { state: input, questions: { route } });
+    if (triage.route.choice === 'escalate' || triage.route.confidence < minConfidence)
+      return { outcome: 'escalated', reply: '' }; // conservative: no agent runs
+    const reply = await ctx.roster.Responder.value('reply', {
+      prompt: `Draft a reply to this support ticket:\n${input.ticket}`,
+    });
+    // The same step as ctx.decide('grade', { provider: 'jev', ... }), plus meta.roster 'Grader'.
+    const grade = await ctx.roster.Grader.decide('grade', {
+      state: { ticket: input.ticket, reply },
+      questions: { resolved },
+    });
+    return { outcome: grade.resolved.noul >= 0.9 ? 'sent' : 'needs-review', reply };
+  },
+});
+```
+
+Save the matching `decide-then-act.fixtures.json` alongside the workflow. It answers the agent call
+under `calls` and both decisions under `decisions`, so the rehearsal needs no host or token:
+
+<!-- skills-check: example pattern-decide-then-act-fixtures -->
+
+```json
+{
+  "version": 1,
+  "calls": [{ "step": "reply", "text": "Reset your password from Settings, then sign in again." }],
+  "decisions": {
+    "triage": {
+      "answers": {
+        "route": {
+          "choice": "answer",
+          "probabilities": { "answer": 0.85, "escalate": 0.15 },
+          "confidence": 0.85
+        }
+      },
+      "model": "jev-1.13",
+      "usage": { "inputTokens": 140, "outputTokens": 9 }
+    },
+    "grade": {
+      "answers": { "resolved": { "noul": 0.95 } },
+      "model": "jev-1.13",
+      "usage": { "inputTokens": 180, "outputTokens": 4 }
+    }
+  }
+}
+```
+
+```sh
+node "$QC_CHECKOUT/bin/run.js" workflow execute "$QC_CHECKOUT/examples/patterns/decide-then-act.workflow.ts" \
+  --run-id desk --state-dir "$QC_RUNS" --input '{"ticket":"I forgot my password."}' \
+  --harness "fixture:$QC_CHECKOUT/examples/patterns/decide-then-act.fixtures.json" --json
+node "$QC_CHECKOUT/bin/run.js" workflow inspect desk --state-dir "$QC_RUNS"
+```
+
+`inspect` lists `triage` and `grade` with the provider, requested and served models, each answer and
+its confidence. Change the triage entry's `confidence` below 0.7 to rehearse the escalation branch.
+For a live run, set `TYPESAFE_API_KEY` and pass
+`--harness-config '{"decisions":{"jev":{"baseUrl":"https://..."}}}'`; a resume reuses completed
+decisions without a request. See [decision providers](decisions.md).
 
 ## Human review
 

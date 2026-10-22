@@ -67,6 +67,21 @@ test('sourceExample maps quiet-choir/github beside the runtime it maps the root 
   assert.equal(rewritten[4], "const prompt = 'quiet-choir/github';");
   assert.match(sourceExample(code), /src\/integrations\/github\.js/u);
 });
+test('sourceExample maps quiet-choir/decision beside the runtime it maps the root to', () => {
+  const code = [
+    "import { choice, noul } from 'quiet-choir/decision';",
+    "import { jevCompatible } from '../../src/integrations/decision.js';",
+    "const prompt = 'quiet-choir/decision';",
+  ].join('\n');
+  const dist = join(repository, 'dist/index.js');
+  const decision = JSON.stringify(join(repository, 'dist/integrations/decision.js'));
+  assert.deepEqual(sourceExample(code, dist).split('\n'), [
+    `import { choice, noul } from ${decision};`,
+    `import { jevCompatible } from ${decision};`,
+    "const prompt = 'quiet-choir/decision';",
+  ]);
+  assert.match(sourceExample(code), /src\/integrations\/decision\.js/u);
+});
 for (const [name, path, transform] of [
   [
     'portable manifest',

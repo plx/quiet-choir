@@ -488,5 +488,18 @@ export default defineConfig(
       ],
     },
   },
+  {
+    // These suites cover the deprecated decision(ctx, transport).choose helper and its decision/1
+    // records on purpose: identity, replay, inspection and the deprecation warning itself.
+    files: [
+      'test/builtin-identity.test.ts',
+      'test/decision-choose-deprecation.test.ts',
+      'test/decision-inspection.test.ts',
+      'test/integration-helper.test.ts',
+    ],
+    rules: {
+      '@typescript-eslint/no-deprecated': 'off',
+    },
+  },
   prettier,
 );

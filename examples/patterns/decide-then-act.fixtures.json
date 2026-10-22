@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "calls": [{ "step": "reply", "text": "Reset your password from Settings, then sign in again." }],
+  "decisions": {
+    "triage": {
+      "answers": {
+        "route": {
+          "choice": "answer",
+          "probabilities": { "answer": 0.85, "escalate": 0.15 },
+          "confidence": 0.85
+        }
+      },
+      "model": "jev-1.13",
+      "usage": { "inputTokens": 140, "outputTokens": 9 }
+    },
+    "grade": {
+      "answers": { "resolved": { "noul": 0.95 } },
+      "model": "jev-1.13",
+      "usage": { "inputTokens": 180, "outputTokens": 4 }
+    }
+  }
+}

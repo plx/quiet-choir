@@ -113,5 +113,20 @@
     "id": "pattern-ticket-loop",
     "file": "ticket-loop.workflow.ts",
     "kind": "workflow"
+  },
+  {
+    "id": "pattern-deciders",
+    "file": "deciders.ts",
+    "kind": "support"
+  },
+  {
+    "id": "pattern-decide-then-act",
+    "file": "decide-then-act.workflow.ts",
+    "kind": "workflow"
+  },
+  {
+    "id": "pattern-decide-then-act-fixtures",
+    "file": "decide-then-act.fixtures.json",
+    "kind": "fixture"
   }
 ]
