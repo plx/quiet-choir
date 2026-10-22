@@ -2,6 +2,20 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Teach agents to author and run packages (#591, ADR 0065 section 5). Both skill copies gain
+  `references/packages.md`, a condensed authoring reference covering layout, `definePackage`, the
+  shared roster, prompts, teams, `--workflow`, the `validate` package section, discovery,
+  fingerprinting and resume, rehearsal from fixtures, and `merge-down` as the worked example with
+  its measured before/after table. The porting map leads with package-era equivalents and gains rows
+  for the tier map, prompt template literals, tier choice by complexity, routing and
+  `needs-decision`, the helper CLI, the verified clerk relay, `workflow({ scriptPath })`, `until`
+  stops and root state; `workflow-authoring.md`, `patterns.md`, `agent-calls.md` (a Teams
+  subsection) and the `SKILL.md` routing table point to rosters, prompts, teams and packages.
+  `/quiet-choir:run` accepts a workflow file or a `*.quiet-choir` directory, `--workflow NAME` and
+  `--fixtures FILE` (rehearsal only), derives a package's default run ID from the validate result
+  (`<package>-<workflow>-<UTC timestamp>`), and splits its `run-preflight` fence into `run-validate`
+  and `run-rehearse`. The skills smoke runs those fences against a throwaway two-workflow package
+  and rehearses `packages/merge-down.quiet-choir` from its clean-land fixtures.
 - Port `merge-down-pr` from a native Workflow script to the package
   [`packages/merge-down.quiet-choir`](packages/merge-down.quiet-choir/README.md) (#589, ADRs
   0063-0065 and 0067). Control flow lives in `workflows/merge-down-pr.ts`, every prompt in
