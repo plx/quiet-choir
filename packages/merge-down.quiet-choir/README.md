@@ -69,22 +69,32 @@ deliberately shared, so a stack recorded by either tool is honored by both.
 
 ## How it works
 
-| Stage   | Who (model / effort)                                                                  | What                                                                                                                                                                                                                                    |
-| ------- | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Prepare | no agent                                                                              | GitHub reads (PR, issue, parent, children, stack, threads, alerts) into `state/pr-N/`; the `sync` step checks out the PR and rebases it, recording fork points first.                                                                   |
-| Rebase  | `Surgeon` opus / high (`Mechanic` sonnet / high for Dependabot)                       | Only on conflicts, through the `ResolveTeam.resolver` slot; the `snapshot` step then verifies that no rebase is in progress and that the PR's commits survived.                                                                         |
-| Review  | `Reviewer` opus / medium → `Judge` opus / xhigh                                       | In parallel: the `check-0` suite, the change review (or the dependency review, by `Reviewer` for a major bump, else `Mechanic`) and the first local Codex review, triaged by `Reviewer`. Escalation on the native reasons.              |
-| Fix     | `FixTeam.mechanic` sonnet / high or `.surgeon` opus / high ∥ `Scribe` sonnet / medium | The slot by complexity; the workflow verifies the reported commits and runs the suite at the new head, with one surgeon repair on failure. The scribe drafts follow-ups and the workflow files them.                                    |
-| Gate    | no agent (`Reviewer` triages new threads)                                             | Retarget stacked PRs, push with lease, confirm GitHub sees the head, fix the closing keyword, reply to and resolve threads, dismiss settled alerts; then CI ∥ reviewers ∥ a local Codex review of the head; loop on findings or red CI. |
-| Land    | no agent                                                                              | CI re-read at landing (a fresh wait on the gated head), guards (open, head, base, CI, unanswered threads, open alerts), `pr.merge` pinned to the gated SHA, the issue closed or reopened, children read, the local branch deleted.      |
-| Report  | `Scribe` sonnet / medium                                                              | Drafts the issue summary and headline; the workflow posts the comment.                                                                                                                                                                  |
+| Stage   | Who (model / effort)                                                                  | What                                                                                                                                                                                                                                                                |
+| ------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Prepare | no agent                                                                              | GitHub reads (PR, issue, parent, children, stack, threads, alerts) into `state/pr-N/`; the `sync` step checks out the PR and rebases it, recording fork points first.                                                                                               |
+| Rebase  | `Surgeon` opus / high (`Mechanic` sonnet / high for Dependabot)                       | Only on conflicts, through the `ResolveTeam.resolver` slot; the `snapshot` step then verifies that no rebase is in progress and that the PR's commits survived.                                                                                                     |
+| Review  | `Reviewer` opus / medium → `Judge` opus / xhigh                                       | In parallel: the `check-0` suite, the change review (or the dependency review, by `Reviewer` for a major bump, else `Mechanic`) and the first local Codex review, triaged by `Reviewer`. Escalation on the native reasons.                                          |
+| Fix     | `FixTeam.mechanic` sonnet / high or `.surgeon` opus / high ∥ `Scribe` sonnet / medium | The slot by complexity; the workflow verifies the reported commits and runs the suite at the new head, with one surgeon repair on failure. The scribe drafts follow-ups and the workflow files them.                                                                |
+| Gate    | no agent (`Reviewer` triages new threads)                                             | Retarget stacked PRs, push with lease, confirm GitHub sees the head, fix the closing keyword, reply to and resolve threads, dismiss settled alerts; then CI ∥ reviewers ∥ a local Codex review of the head; loop on findings or red CI.                             |
+| Land    | no agent                                                                              | CI re-read at landing (a fresh wait on the gated head); the `land/merge` step rereads the guards (open, head, base, CI, unanswered threads, open alerts) and squash-merges at the gated SHA; the issue closed or reopened, children read, the local branch deleted. |
+| Report  | `Scribe` sonnet / medium                                                              | Drafts the issue summary and headline; the workflow posts the comment.                                                                                                                                                                                              |
 
 Every mechanical step is a durable effect that costs no model call. There is no Clerk or Copyist and
 no verified relay: no nonces, FNV hashes or saved `last/` outputs. GitHub reads, waits and writes go
-through `quiet-choir/github`; git and the check suite run as versioned `ctx.step` callbacks
-(`lib/git.ts`, `lib/checks.ts`) that read before they write, so a step retried after a crash finds
-the state the last attempt left (a push that already happened is skipped, fork points are never
-overwritten, leftovers of a crashed rebase are reset). Agents never write to GitHub.
+through `quiet-choir/github`, except the merge; git, the check suite and the merge run as versioned
+`ctx.step` callbacks (`lib/git.ts`, `lib/checks.ts`, `lib/land.ts`) that read before they write, so
+a step retried after a crash finds the state the last attempt left (a push that already happened is
+skipped, fork points are never overwritten, leftovers of a crashed rebase are reset, a PR already
+merged at the gated head is reported merged). Agents never write to GitHub.
+
+The land guards and the merge are one step, `land/merge` (`merge-down.land/1`), rather than
+checkpointed reads followed by `pr.merge`: a resume reuses completed reads, so a merge attempt that
+failed after them would otherwise be retried on stale guards. Every attempt of the step, a retry's
+(up to three on a process failure or timeout) or a resumed run's, reads the PR's state, head and
+base, its CI rollup (pending or failed checks block), the unresolved threads whose last comment is
+not the viewer's and the open code-scanning alerts, and only then issues the REST merge
+(`PUT pulls/N/merge` with `sha` set to the gated head; never auto-merge or a merge queue). A guard
+that fails, or a merge GitHub refuses, is `blocked` at `land`.
 
 The check suite runs inside the workflow (input `checkCommand`, default `npm run check`, with
 `npm ci` when package.json or the lockfile changed) as one step with a 45-minute deadline. Its
@@ -203,11 +213,14 @@ stacked PR retargeted before the push, a Codex thread fixed with a commit and re
 thread that only the gate's refresh read after CI sees triaged, merged in round 2), `stop-at-fix`
 (`until: fix`, with the planned `Addressed in` reply), `dirty-fix` (the fixer leaves uncommitted
 edits, so its check fails as `dirty worktree` and the surgeon's repair is checked instead),
-`blocked-gate` (red CI, a rerun that fails again, `maxCiRepairs: 0`) and `land-red-ci` (the gate
-sees green CI but the land-time wait sees red: blocked at `land`, no merge). Every agent call and
-command is answered by its fixtures (`"commands": "fixture"`), no rule may go unused, and a case's
-`order` lists steps that must start in that order (the retarget before the push). It runs in
-`npm run check` and in the Package rehearsals CI job.
+`blocked-gate` (red CI, a rerun that fails again, `maxCiRepairs: 0`), `land-red-ci` (the gate sees
+green CI but the land-time wait sees red: blocked at `land`, no merge) and `land-retry` (the first
+merge attempt passes its guards but its PUT fails; the retry rereads them, finds a new unanswered
+thread and blocks at `land` without a second PUT). Every agent call and command is answered by its
+fixtures (`"commands": "fixture"`), no rule may go unused, no command may fail except the
+simulations a case lists in `failures`, and a case's `order` lists steps that must start in that
+order (the retarget before the push). It runs in `npm run check` and in the Package rehearsals CI
+job.
 
 ## Measurements
 

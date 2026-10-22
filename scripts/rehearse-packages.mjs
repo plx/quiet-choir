@@ -4,8 +4,9 @@
 // literals in workflows/), and rehearses every case in packages/rehearsals/merge-down/ with
 // `execute --dry-run --harness fixture:<case>.fixtures.json`: the run must complete with the
 // expected ledger subset, answer every agent call and command from the fixtures, leave no
-// fixture rule unused, and start the steps a case lists in `order` in that order (by their first
-// command). Run after `npm run build`; the CLI runs from dist.
+// fixture rule unused, fail no command except the `{ step, error }` simulations a case lists in
+// `failures` (each of which must happen), and start the steps a case lists in `order` in that
+// order (by their first command). Run after `npm run build`; the CLI runs from dist.
 //
 //   node scripts/rehearse-packages.mjs [case ...]
 import { execFile } from 'node:child_process';
@@ -163,6 +164,7 @@ async function rehearse(name) {
     input,
     expect,
     order = [],
+    failures = [],
   } = JSON.parse(await readFile(join(cases, `${name}.json`), 'utf8'));
   const root = await mkdtemp(join(tmpdir(), `merge-down-${name}-`));
   try {
@@ -196,11 +198,18 @@ async function rehearse(name) {
     for (const call of report.calls ?? [])
       if (call.outputSource !== 'fixture')
         fail(`${where}: agent call ${call.stepId} was ${call.outputSource}`);
+    // A fixture error rule the case lists in `failures` simulates a failed command on purpose.
+    const simulated = (command) =>
+      command.fixtureIndex !== null &&
+      failures.some((f) => f.step === command.stepId && f.error === command.error);
     for (const command of report.commands ?? [])
-      if (command.outputSource !== 'fixture' || command.error)
+      if (command.outputSource !== 'fixture' || (command.error && !simulated(command)))
         fail(
           `${where}: command ${JSON.stringify(command.command)} of ${command.stepId}: ${command.error ?? command.outputSource}`,
         );
+    for (const f of failures)
+      if (!(report.commands ?? []).some((c) => c.stepId === f.step && c.error === f.error))
+        fail(`${where}: step ${f.step} never failed with ${JSON.stringify(f.error)}`);
     const first = order.map((step) => (report.commands ?? []).findIndex((c) => c.stepId === step));
     order.forEach((step, index) => {
       if (first[index] === -1) fail(`${where}: step ${step} ran no command`);

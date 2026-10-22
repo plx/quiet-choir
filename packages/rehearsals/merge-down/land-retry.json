@@ -1,0 +1,21 @@
+{
+  "input": {
+    "pr": 42,
+    "repo": "acme/widgets",
+    "parentEpic": 7
+  },
+  "expect": {
+    "status": "blocked",
+    "blocked": {
+      "stage": "land",
+      "reason": "unanswered review threads: PRRT_LATE (octo-human: Should the widget log its size?)"
+    },
+    "mergeCommit": null
+  },
+  "failures": [
+    {
+      "step": "land/merge/0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+      "error": "gh: connection reset by peer"
+    }
+  ]
+}

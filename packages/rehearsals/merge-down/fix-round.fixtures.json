@@ -1952,7 +1952,8 @@
       }
     },
     {
-      "step": "land/pr/1b2c3d4e5f60718293a4b5c6d7e8f90123456789",
+      "step": "land/merge/1b2c3d4e5f60718293a4b5c6d7e8f90123456789",
+      "argvPrefix": ["gh", "api", "graphql", "-f"],
       "json": {
         "data": {
           "repository": {
@@ -2030,7 +2031,8 @@
       }
     },
     {
-      "step": "threads/42/land-1b2c3d4e5f60718293a4b5c6d7e8f90123456789",
+      "step": "land/merge/1b2c3d4e5f60718293a4b5c6d7e8f90123456789",
+      "argvPrefix": ["gh", "api", "graphql", "--paginate"],
       "json": [
         {
           "data": {
@@ -2111,7 +2113,8 @@
       ]
     },
     {
-      "step": "alerts/42/land-1b2c3d4e5f60718293a4b5c6d7e8f90123456789",
+      "step": "land/merge/1b2c3d4e5f60718293a4b5c6d7e8f90123456789",
+      "argvPrefix": ["gh", "api", "--paginate"],
       "code": 1,
       "json": {
         "message": "Code scanning is not enabled for this repository. Please enable code scanning in the repository settings.",

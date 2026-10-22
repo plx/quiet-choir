@@ -231,6 +231,13 @@ export const Check = z.object({
 });
 export type Check = z.output<typeof Check>;
 
+/** What the land step reports: the merge, or why a guard or GitHub refused it. */
+export const Landed = z.discriminatedUnion('merged', [
+  z.object({ merged: z.literal(true), mergeCommit: z.string().nullable(), acted: z.boolean() }),
+  z.object({ merged: z.literal(false), reason: z.string() }),
+]);
+export type Landed = z.output<typeof Landed>;
+
 const workItem = z.object({
   key: z.string(),
   source: z.string(),

@@ -21,6 +21,7 @@ import {
 import { runCheck } from '../lib/checks.js';
 import { localCodexReview, type LocalReview } from '../lib/codex.js';
 import { cleanupBranch, publish, snapshot, sync, verifyFixes } from '../lib/git.js';
+import { landMerge } from '../lib/land.js';
 import {
   canonicalizeKeys,
   checkItem,
@@ -1163,47 +1164,19 @@ export default defineWorkflow({
         'land',
         `CI failed before landing: ${landCi.failed.map((f) => f.name).join(', ')}`,
       );
-    const landing = await gh.pr.view(ctx.id('land', 'pr', head), { number: A.pr }, write);
-    if (landing.state !== 'OPEN') return blocked('land', `PR is ${landing.state}`);
-    if (landing.headRefOid !== head) return blocked('land', `head moved to ${landing.headRefOid}`);
-    if (landing.baseRefName !== DEF)
-      return blocked('land', `base is ${landing.baseRefName}, expected ${DEF}`);
-    // CI can change between the wait above and this read.
-    if (landing.checks.state === 'failure' || landing.checks.state === 'pending')
-      return blocked(
-        'land',
-        `CI is ${landing.checks.state} at landing: ${(landing.checks.state === 'failure' ? landing.checks.failed : landing.checks.pending).join(', ')}`,
-      );
-    const final = await readThreads(ctx, gh, { number: A.pr, paths, key: `land-${head}` });
-    const untriaged = final.threads.filter(
-      (t) => !t.isResolved && (t.lastAuthor ?? t.author) !== info.viewer,
-    );
-    if (untriaged.length)
-      return blocked(
-        'land',
-        `unanswered review threads: ${untriaged.map((t) => `${t.id} (${t.author}: ${t.title})`).join('; ')}`,
-      );
-    if (final.alerts.length)
-      return blocked(
-        'land',
-        `open code-scanning alerts on the PR: ${final.alerts.map((x) => `#${String(x.number)} ${String(x.rule)} ${String(x.path)}:${String(x.line)}`).join('; ')}`,
-      );
-    // The REST merge, pinned to the gated head: never auto-merge or a merge queue. The checks above
-    // are checkpointed, so a resume after a failed merge reuses them; the merge itself rechecks the
-    // base on every attempt, so a PR retargeted meanwhile is refused rather than merged.
-    const merged = await gh.pr.merge(
-      ctx.id('land', 'merge', head),
-      { number: A.pr, sha: head, base: DEF },
-      write,
-    );
-    if (!merged.merged)
-      return blocked(
-        'land',
-        merged.reason === 'base-changed'
-          ? `base changed from ${DEF} before the merge`
-          : `${merged.reason}${merged.message ? `: ${merged.message}` : ''}`,
-      );
-    const mergeCommit = merged.mergeCommit ?? 'unknown';
+    // The guards (open, head, base, CI, unanswered threads, open alerts) and the REST merge pinned
+    // to the gated head (never auto-merge or a merge queue) are one step. Every attempt of it, a
+    // retry's or a resumed run's included, rereads the guards right before the merge, so a merge
+    // never rests on reads checkpointed before an earlier attempt failed.
+    const landed = await landMerge(ctx, ctx.id('land', 'merge', head), {
+      repo,
+      pr: A.pr,
+      head,
+      base: DEF,
+      viewer: info.viewer,
+    });
+    if (!landed.merged) return blocked('land', landed.reason);
+    const mergeCommit = landed.mergeCommit ?? 'unknown';
     record.mergeCommit = mergeCommit;
     if (kind === 'change' && ISSUE && record.issue) {
       let state: string;
