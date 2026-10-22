@@ -504,6 +504,20 @@ describe('epic.md', () => {
       '# #7 Epic\n\nState: OPEN · https://x/7\n\nBody.\n\n## Items as of the last survey (2026-10-22T00:00:00.000Z)',
     );
   });
+
+  it('escapes backslashes so a title cannot break out of its cell', () => {
+    const table = renderItemsTable(
+      [item(5, { title: 'Back\\|slash' }), item(6, { title: 'Trailing\\' })],
+      itemStatuses(selection),
+    );
+    const rows = table.split('\n').slice(2, 4);
+    expect(rows).toEqual([
+      '| #5 | Back\\\\\\|slash | ready |   | - | - |',
+      '| #6 | Trailing\\\\ | ready |   | - | - |',
+    ]);
+    // Drop escaped characters, as GFM does, and count the column breaks left.
+    for (const row of rows) expect(row.replace(/\\./g, '').split('|').length - 2).toBe(6);
+  });
 });
 
 describe('EpicTicketInput', () => {

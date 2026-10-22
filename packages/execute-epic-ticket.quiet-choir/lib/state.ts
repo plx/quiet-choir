@@ -6,8 +6,12 @@ import type { EpicItem } from './policy.js';
 
 export { renderIssue };
 
-/** An item table row's cell: no pipes or newlines. */
-const cell = (text: string): string => text.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+/**
+ * An item table row's cell: backslashes doubled before pipes are escaped, so a title's own `\|`
+ * cannot turn an escaped pipe back into a column break, and newlines become spaces.
+ */
+const cell = (text: string): string =>
+  text.replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
 
 /**
  * The native item table: number, title, status, whether its checklist line is checked (`-` when
