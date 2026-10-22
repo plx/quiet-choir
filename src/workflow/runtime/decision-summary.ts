@@ -57,7 +57,10 @@ export interface DecisionStepSummary {
    * models and answers still show, but `usage` is zero because this run made no attempts.
    */
   readonly reusedFrom?: string;
-  /** Attempts and the tokens their reports add up to; zero for a fork-reused step. */
+  /**
+   * Attempts and the tokens their reports add up to; zero for a fork-reused step. It spans every
+   * attempt of the step, including any made before a redefinition, like the step's `attempts`.
+   */
   readonly usage: {
     /** Attempts the step made, failed ones included. */
     readonly attempts: number;

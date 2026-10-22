@@ -2248,6 +2248,9 @@ export async function runWorkflow<
                 attempts: step.attempts,
               });
               step.kind = kind;
+              // The new definition's labels, so summaries classify it, not the prior one.
+              if (meta === undefined) delete step.meta;
+              else step.meta = meta;
               if (kind === 'agent' && observedRequest) {
                 step.harness = observedRequest.harness;
                 step.revision = observedRequest.revision ?? 1;

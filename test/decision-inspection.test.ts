@@ -510,6 +510,143 @@ describe('a ctx.decide run', () => {
   });
 });
 
+describe('a redefined decision step', () => {
+  const ask = (ctx: WorkflowContext, model?: string) =>
+    ctx.decide('ask', { state: 'ticket text', questions, ...(model ? { model } : {}) });
+
+  it('summarizes a failed local step resumed as ctx.decide under the same ID', async () => {
+    const options = { runId: 'into-decide', stateDir, input: null };
+    await expect(
+      runWorkflow(
+        workflow((ctx) =>
+          ctx.step('ask', {
+            input: null,
+            schema: z.null(),
+            retry: { maxAttempts: 1 },
+            run: () => {
+              throw new Error('local fails');
+            },
+          }),
+        ),
+        options,
+      ),
+    ).rejects.toThrow(/local fails/u);
+    const events: WorkflowEvent[] = [];
+    await runWorkflow(
+      workflow((ctx) => ask(ctx)),
+      { ...options, resume: true, onEvent: (event) => void events.push(event) },
+    );
+    const run = await readRun({ stateDir, runId: 'into-decide' });
+    expect(run.steps['ask']?.redefinitions).toHaveLength(1);
+    const { summary } = await inspectRun({ stateDir, runId: 'into-decide' });
+    const decision = stepSummary(summary, 'ask').decision;
+    expect(decision).toMatchObject({
+      op: 'decide',
+      provider: 'stub',
+      requestedModel: 'stub-latest',
+      questions: [
+        { name: 'grade', kind: 'score' },
+        { name: 'refund', kind: 'noul' },
+        { name: 'team', kind: 'choice' },
+      ],
+    });
+    const completed = events.find((event) => event.type === 'step.completed');
+    expect(completed?.decision).toEqual(decision);
+  });
+
+  it('drops the decision summary when a failed decision is resumed as a local step', async () => {
+    const down = defineDecisionProvider({
+      name: 'down',
+      revision: 1,
+      capabilities: { kinds: ['noul'], maxOptions: 255, levels: [2, 10], idempotencyKey: false },
+      transport: () => () => Promise.reject(new Error('down')),
+    });
+    const options = { runId: 'out-of-decide', stateDir, input: null };
+    await expect(
+      runWorkflow(
+        workflow(
+          (ctx) =>
+            ctx.decide('ask', {
+              state: 1,
+              questions: { refund: questions.refund },
+              retry: { maxAttempts: 1 },
+            }),
+          [down],
+        ),
+        options,
+      ),
+    ).rejects.toThrow();
+    const events: WorkflowEvent[] = [];
+    await runWorkflow(
+      workflow(
+        (ctx) => ctx.step('ask', { input: null, schema: z.null(), run: () => null }),
+        [down],
+      ),
+      { ...options, resume: true, onEvent: (event) => void events.push(event) },
+    );
+    const run = await readRun({ stateDir, runId: 'out-of-decide' });
+    expect(run.steps['ask']).toMatchObject({ status: 'completed', redefinitions: [{}] });
+    expect(run.steps['ask']).not.toHaveProperty('meta');
+    // A completed plain step has no decision summary, so the step filter leaves it out.
+    const { summary } = await inspectRun({ stateDir, runId: 'out-of-decide' });
+    expect(summary.steps.find((step) => step.id === 'ask')?.decision ?? null).toBeNull();
+    const completed = events.find((event) => event.type === 'step.completed');
+    expect(completed).toBeDefined();
+    expect(completed?.decision).toBeUndefined();
+  });
+
+  it('shows the new requested model after a failed decide is resumed with another model', async () => {
+    let fail = true;
+    const flaky = stubProvider();
+    const answer = flaky.transport;
+    const provider: DecisionProviderDeclaration = {
+      ...flaky,
+      transport: (...args) => {
+        const send = answer(...args);
+        return (...request) => (fail ? Promise.reject(new Error('down')) : send(...request));
+      },
+    };
+    const options = { runId: 'new-model', stateDir, input: null };
+    const failing = (ctx: WorkflowContext) =>
+      ctx.decide('ask', {
+        state: 'ticket text',
+        questions,
+        model: 'old',
+        retry: { maxAttempts: 1 },
+      });
+    await expect(runWorkflow(workflow(failing, [provider]), options)).rejects.toThrow();
+    fail = false;
+    await runWorkflow(
+      workflow((ctx) => ask(ctx, 'new'), [provider]),
+      {
+        ...options,
+        resume: true,
+      },
+    );
+    const run = await readRun({ stateDir, runId: 'new-model' });
+    const step = run.steps['ask'];
+    expect(step?.redefinitions).toHaveLength(1);
+    expect(step?.meta).toMatchObject({ op: 'decide', provider: 'stub', model: 'new' });
+    const summary = step ? summarizeDecisionStep(step) : null;
+    expect(summary).toMatchObject({ op: 'decide', provider: 'stub', requestedModel: 'new' });
+    // Usage spans every attempt of the step, including the one made before the redefinition.
+    expect(summary?.usage.attempts).toBe(2);
+    // Without the latest attempt's usage, the summary falls back to the refreshed meta.
+    const bare = step && {
+      ...step,
+      attemptHistory: (step.attemptHistory ?? []).map((attempt) => {
+        const copy = { ...attempt };
+        delete copy.usage;
+        return copy;
+      }),
+    };
+    expect(bare ? summarizeDecisionStep(bare as StepRecord) : null).toMatchObject({
+      provider: 'stub',
+      requestedModel: 'new',
+    });
+  });
+});
+
 describe('a legacy decision/1 choose run', () => {
   it('inspects, formats and follows without error', async () => {
     await runWorkflow(

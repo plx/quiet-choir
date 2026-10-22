@@ -40,16 +40,18 @@ fork-reused step: `op` is `decide` (or `choose` for a legacy `decision/1` step),
 attempt recorded none (a recorded null `requestedModel` means the host chose, and does not fall
 back), `servedModel` from the recorded output (null when the provider reported none), and `usage` is
 `{ attempts, inputTokens, outputTokens }`, where a token total is null when any attempt reported no
-count, so a partial sum never looks complete. A step a fork reused from another run (`reusedFrom` is
-that run's id) made no attempts here: it keeps its provider, models and answers, but its `usage` is
-`{ attempts: 0, inputTokens: 0, outputTokens: 0 }` and text prints `reused from RUN` in place of the
-attempts and tokens. `questions` has one entry per answer, in the record's key order (sorted by
-name), as `{ name, kind, answer, level?, confidence? }`. The record keeps no question definitions,
-so `kind` follows the answer's shape: `noul` (`answer` is the probability of yes, and no
-`confidence`), `choice` (`answer` is the option, with `confidence`), `score` (`answer` is the
-probability-weighted level index, `level` the legend entry at the nearest level, clamped to the
-legend, with `confidence`), or `unknown` (`answer` null) for a record of no recognized shape. A
-legacy `decision(ctx, transport).choose` step has one `choice` question named `answer` without a
+count, so a partial sum never looks complete. `usage` spans every attempt of the step, including any
+made before a redefinition, while a redefinition replaces `meta` with the new definition's. A step a
+fork reused from another run (`reusedFrom` is that run's id) made no attempts here: it keeps its
+provider, models and answers, but its `usage` is `{ attempts: 0, inputTokens: 0, outputTokens: 0 }`
+and text prints `reused from RUN` in place of the attempts and tokens. `questions` has one entry per
+answer, in the record's key order (sorted by name), as
+`{ name, kind, answer, level?, confidence? }`. The record keeps no question definitions, so `kind`
+follows the answer's shape: `noul` (`answer` is the probability of yes, and no `confidence`),
+`choice` (`answer` is the option, with `confidence`), `score` (`answer` is the probability-weighted
+level index, `level` the legend entry at the nearest level, clamped to the legend, with
+`confidence`), or `unknown` (`answer` null) for a record of no recognized shape. A legacy
+`decision(ctx, transport).choose` step has one `choice` question named `answer` without a
 confidence, the provider and requested model from its last attempt's usage when it reported them,
 and no served model. The summary never throws on a malformed record. Text prints one line per
 decision step and one indented line per question:
