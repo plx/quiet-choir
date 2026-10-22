@@ -145,9 +145,9 @@ lines carry `toolUses` when the attempt reported a count, and `step.completed` c
 warnings as `msg` with `no-tool-use:` first, so `grep --line-buffered no-tool-use` finds an attempt
 that expected tools and used none. A completed `ctx.decide` step's `step.completed` line carries its
 summary as `msg`, `decision PROVIDER MODEL->SERVED IN/OUT tok N att: NAME=HEADLINE[ cC], ...`, cut
-with `…` after the header when long; `inspect --json` has the full `steps[].decision`. The file is
-created owner-only and an existing file keeps its mode, so use a new path or one under an owner-only
-`$QC_RUNS`.
+with `…` after the header when long; `inspect --json --summary` has the full `steps[].decision`. The
+file is created owner-only and an existing file keeps its mode, so use a new path or one under an
+owner-only `$QC_RUNS`.
 
 The stream is a best-effort observation: lines are written without fsync, and a write failure warns
 once without changing the outcome. Branch on inspect or watch status, not on the stream. The flag is

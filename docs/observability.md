@@ -214,7 +214,7 @@ option (`choice`) or the score and its level (`score`), with numbers at two deci
 The header comes first, so the usual 200-byte `msg` budget and 512-byte line cap cut the question
 list, ending in `…`, never the header. The runner puts the same summary on the in-process
 `WorkflowEvent.decision` of that `step.completed`, which is how the live sink knows it; the
-structured form with every question is `steps[].decision` in `inspect --json`.
+structured form with every question is `steps[].decision` in `inspect --json --summary`.
 
 ```json
 {
