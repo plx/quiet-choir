@@ -37,7 +37,7 @@ if (token === undefined || token === '') {
 }
 if (typeof configuration.baseUrl !== 'string' || configuration.baseUrl === '') {
   console.error(
-    `decision live contract: ${apiKeyEnv} is set but no host is configured; set decisions.jev.baseUrl in QUIET_CHOIR_HARNESS_CONFIG (the repository records no host URL).`,
+    'decision live contract: the token variable is set but no host is configured; set decisions.jev.baseUrl in QUIET_CHOIR_HARNESS_CONFIG (the repository records no host URL).',
   );
   process.exit(1);
 }
