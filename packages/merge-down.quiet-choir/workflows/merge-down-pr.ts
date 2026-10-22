@@ -1149,11 +1149,34 @@ export default defineWorkflow({
 
     // ── Land ────────────────────────────────────────────────────────────────────────────────
     ctx.phase('Land');
+    // The gate's CI success can be hours old (review waits and fix rounds run after it), and a
+    // re-run, a new required check or a base update may have turned it red since: read CI again.
+    const landCi = await gh.waitChecks(ctx.id('land', 'ci', head), {
+      pr: A.pr,
+      sha: head,
+      timeoutMs: 2 * HOUR,
+      staleGraceMs: 90_000,
+      ...(A.requiredChecks.length ? { requiredChecks: A.requiredChecks } : {}),
+    });
+    const landCiBlock =
+      blockedIf([landCi], 'CI before landing') ?? unregisteredRequired(landCi, A.requiredChecks);
+    if (landCiBlock) return blocked('land', landCiBlock);
+    if (landCi.status === 'failure')
+      return blocked(
+        'land',
+        `CI failed before landing: ${landCi.failed.map((f) => f.name).join(', ')}`,
+      );
     const landing = await gh.pr.view(ctx.id('land', 'pr', head), { number: A.pr }, write);
     if (landing.state !== 'OPEN') return blocked('land', `PR is ${landing.state}`);
     if (landing.headRefOid !== head) return blocked('land', `head moved to ${landing.headRefOid}`);
     if (landing.baseRefName !== DEF)
       return blocked('land', `base is ${landing.baseRefName}, expected ${DEF}`);
+    // CI can change between the wait above and this read.
+    if (landing.checks.state === 'failure' || landing.checks.state === 'pending')
+      return blocked(
+        'land',
+        `CI is ${landing.checks.state} at landing: ${(landing.checks.state === 'failure' ? landing.checks.failed : landing.checks.pending).join(', ')}`,
+      );
     const final = await readThreads(ctx, gh, { number: A.pr, paths, key: `land-${head}` });
     const untriaged = final.threads.filter(
       (t) => !t.isResolved && (t.lastAuthor ?? t.author) !== info.viewer,
