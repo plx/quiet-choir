@@ -116,8 +116,8 @@ export function fixturesFromRun(run: RunRecord): HarnessFixtures {
  * step exports its answers, its served model when one was recorded, and the token counts of its
  * last attempt when any is known. A failure exports its message without the
  * `Decision provider <name>: ` prefix that the replayed `DecisionError` adds again, and its kind
- * (except `unknown` and `cancelled`, as for agent rules), so export, replay and export give the same
- * file. Lossy edges: a failure that was not a `DecisionError`, such as a transport's bare `Error`,
+ * (except `unknown`; unlike agent rules, `cancelled` is kept, because a replayed `DecisionError` of
+ * that kind is fatal as the original was), so export, replay and export give the same file. Lossy edges: a failure that was not a `DecisionError`, such as a transport's bare `Error`,
  * replays with the prefix added; a replayed `schema` failure keeps its kind and message but not
  * the raw body or issues; a failed attempt's token counts and served model, the attempt count and a
  * live response's other `usage` fields (`reported`) are not exported.
@@ -158,12 +158,12 @@ function decisionFixtures(run: RunRecord): Record<string, FixtureDecision> | und
           step.settledError?.message,
           `Settled ${step.settledError?.kind ?? 'unknown'} failure`,
         ),
-        ...exportedKind(step.settledError?.kind),
+        ...exportedDecisionKind(step.settledError?.kind),
       };
     else if (step.status === 'failed')
       entry = {
         error: text(step.error, `Failed ${stepErrorKind(step) ?? 'unknown'} failure`),
-        ...exportedKind(stepErrorKind(step)),
+        ...exportedDecisionKind(stepErrorKind(step)),
       };
     else {
       const output = decisionOutput.parse(step.output);
@@ -215,6 +215,16 @@ function exportedKind(kind: ErrorKind | null | undefined): { readonly kind?: Err
   return kind === undefined || kind === null || kind === 'unknown' || kind === 'cancelled'
     ? {}
     : { kind };
+}
+
+/**
+ * The optional `kind` field of an exported decision error entry: every kind except `unknown`, which
+ * a kindless entry replays as. Unlike {@link exportedKind}, `cancelled` is kept: a decision error
+ * entry replays as a `DecisionError`, and a `cancelled` one is fatal like the original, never
+ * retried or settled.
+ */
+function exportedDecisionKind(kind: ErrorKind | null | undefined): { readonly kind?: ErrorKind } {
+  return kind === undefined || kind === null || kind === 'unknown' ? {} : { kind };
 }
 
 /**

@@ -393,6 +393,43 @@ describe('decision fixtures', () => {
     expect(live.factory).toHaveBeenCalledTimes(1);
   });
 
+  it('export a caught cancellation as kind cancelled, so its replay is fatal and unretried', async ({
+    stateDir,
+    runs,
+  }) => {
+    const aborting = guarded('aborting', () => () => {
+      throw new DecisionError({ provider: 'aborting', kind: 'cancelled', message: 'aborted' });
+    });
+    const definition = workflow([aborting.provider], async (ctx) => {
+      try {
+        await ctx.decide('ask', {
+          state: null,
+          questions: { refund },
+          onError: 'return',
+          retry: { maxAttempts: 3, delayMs: 0 },
+        });
+        return 'answered';
+      } catch (error) {
+        return errorKind(error);
+      }
+    });
+    const original = await runs.run(definition, { runId: 'cancel', stateDir, input: null });
+    expect(original.output).toBe('cancelled');
+    expect(original.steps['ask']?.attemptHistory).toHaveLength(1);
+    const exported = fixturesFromRun(original);
+    expect(exported.decisions).toEqual({
+      ask: { error: 'aborted', kind: 'cancelled' },
+    });
+    const replay = await runs.run(
+      definition,
+      fixtureOptions(stateDir, exported, { runId: 'cancel-replay' }),
+    );
+    expect(replay.output).toBe('cancelled');
+    expect(replay.steps['ask']?.attemptHistory).toHaveLength(1);
+    expect(fixturesFromRun(replay)).toEqual(exported);
+    expect(aborting.factory).toHaveBeenCalledTimes(1);
+  });
+
   it('keep the identity of the same call answered live', async ({ stateDir, runs }) => {
     const fixtureProvider = guarded().provider;
     const live = guarded(

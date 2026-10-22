@@ -155,7 +155,7 @@ Completed `ctx.decide` steps export as `decisions` entries keyed by full step ID
 `answers`, the served `model` when one was recorded and the last attempt's known token counts as
 `usage`. A settled (`onError: 'return'`) or absorbed decision failure exports as `{ error, kind }`:
 the message without its `Decision provider <name>: ` prefix, which the replay adds again, and the
-kind except `unknown` and `cancelled`, so export, replay and export give the same file. The legacy
+kind except `unknown`, so export, replay and export give the same file. The legacy
 `decision().choose` helper's steps are not exported. Some edges are lossy: a failure that was not a
 `DecisionError` (such as a custom transport's plain `Error`) replays with the prefix added; a
 replayed `schema` failure keeps its kind and message but not the original raw body or issues; and a
