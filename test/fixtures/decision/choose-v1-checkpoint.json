@@ -1,0 +1,248 @@
+{
+  "allowModelOverride": false,
+  "capabilities": {
+    "defaultProfile": "text",
+    "defaults": {
+      "access": "read",
+      "claude": { "allowedTools": [], "isolation": "restricted", "tools": [] },
+      "claudeAccess": "none",
+      "codex": { "isolation": "restricted", "sandbox": "read-only" },
+      "codexAccess": "read",
+      "environment": {
+        "claude": {
+          "set": [],
+          "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+          "unset": []
+        },
+        "codex": {
+          "set": [],
+          "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+          "unset": []
+        }
+      },
+      "expectsToolUse": false,
+      "maxBudgetUsd": 0.5,
+      "maxTurns": 10,
+      "name": "text",
+      "onPermissionDenied": "warn",
+      "timeoutMs": 300000
+    },
+    "profiles": {
+      "edit": {
+        "access": "write",
+        "claude": {
+          "allowedTools": ["Read", "Grep", "Glob", "Edit", "Write"],
+          "isolation": "restricted",
+          "tools": ["Read", "Grep", "Glob", "Edit", "Write"]
+        },
+        "claudeAccess": "write",
+        "codex": { "isolation": "restricted", "sandbox": "workspace-write" },
+        "codexAccess": "write",
+        "environment": {
+          "claude": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          },
+          "codex": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          }
+        },
+        "expectsToolUse": true,
+        "maxBudgetUsd": 5,
+        "maxTurns": 40,
+        "name": "edit",
+        "onPermissionDenied": "warn",
+        "timeoutMs": 1800000
+      },
+      "readonly": {
+        "access": "read",
+        "claude": {
+          "allowedTools": ["Read", "Grep", "Glob"],
+          "isolation": "restricted",
+          "tools": ["Read", "Grep", "Glob"]
+        },
+        "claudeAccess": "read",
+        "codex": { "isolation": "restricted", "sandbox": "read-only" },
+        "codexAccess": "read",
+        "environment": {
+          "claude": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          },
+          "codex": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          }
+        },
+        "expectsToolUse": true,
+        "maxBudgetUsd": 2,
+        "maxTurns": 25,
+        "name": "readonly",
+        "onPermissionDenied": "warn",
+        "timeoutMs": 900000
+      },
+      "text": {
+        "access": "read",
+        "claude": { "allowedTools": [], "isolation": "restricted", "tools": [] },
+        "claudeAccess": "none",
+        "codex": { "isolation": "restricted", "sandbox": "read-only" },
+        "codexAccess": "read",
+        "environment": {
+          "claude": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          },
+          "codex": {
+            "set": [],
+            "sha256": "2427b8a3193f4941d731ebcc7f2ea9ae4029bd00b6f30c119edb89cc70dd7247",
+            "unset": []
+          }
+        },
+        "expectsToolUse": false,
+        "maxBudgetUsd": 0.5,
+        "maxTurns": 10,
+        "name": "text",
+        "onPermissionDenied": "warn",
+        "timeoutMs": 300000
+      }
+    },
+    "requiredGrants": [],
+    "strictProfiles": false
+  },
+  "createdAt": "2026-10-22T07:18:55.024Z",
+  "cwd": "/",
+  "engine": { "node": "v26.10.0", "quietChoir": "0.0.0", "tsx": "4.23.11", "zod": "4.5.4" },
+  "error": "fixture tail",
+  "errorStack": "Error: fixture tail\n    at Object.run (/fixture/gen.ts:17:11)\n    at async executeOwned (/fixture/src/workflow/runtime/runner.ts:4210:22)\n    at async runWorkflow (/fixture/src/workflow/runtime/runner.ts:4460:32)\n    at async <anonymous> (/fixture/gen.ts:21:3)",
+  "eventCounts": {},
+  "events": [
+    {
+      "at": "2026-10-22T07:18:55.026Z",
+      "data": null,
+      "execution": 1,
+      "message": null,
+      "phase": null,
+      "stepId": null,
+      "total": null,
+      "type": "run.started"
+    },
+    {
+      "at": "2026-10-22T07:18:55.066Z",
+      "data": null,
+      "execution": 1,
+      "message": "fixture tail",
+      "phase": null,
+      "stepId": null,
+      "total": null,
+      "type": "run.failed"
+    }
+  ],
+  "executions": [
+    {
+      "endedAt": "2026-10-22T07:18:55.062Z",
+      "error": "fixture tail",
+      "errorStack": "Error: fixture tail\n    at Object.run (/fixture/gen.ts:17:11)\n    at async executeOwned (/fixture/src/workflow/runtime/runner.ts:4210:22)\n    at async runWorkflow (/fixture/src/workflow/runtime/runner.ts:4460:32)\n    at async <anonymous> (/fixture/gen.ts:21:3)",
+      "n": 1,
+      "outcome": "failed",
+      "pid": 34877,
+      "startedAt": "2026-10-22T07:18:55.026Z"
+    }
+  ],
+  "formatVersion": 7,
+  "generation": "66549ff8-96f9-4b5b-9224-487cb6a7efb5",
+  "grantedProfiles": {},
+  "grants": [],
+  "harness": { "kind": "none", "previousKinds": [] },
+  "id": "choose-v1",
+  "input": null,
+  "maps": {},
+  "maxChildDepth": 8,
+  "nextWakeAt": null,
+  "output": null,
+  "phase": null,
+  "policy": [],
+  "policyWarnings": [],
+  "profileOverrides": [],
+  "recoveryCause": { "kind": "authoring" },
+  "recoveryHint": "All recorded work has terminal outcomes, including settled map items. Fix the workflow tail, output or configuration and use --resume --accept-code-change to re-finalize; unchanged identities reuse their results.",
+  "replayWarnings": [],
+  "rootCause": { "effect": null, "error": "fixture tail", "errorKind": null, "stepId": null },
+  "runBudget": { "maxRunAgentAttempts": null, "maxRunCostUsd": null, "maxWindowUtilization": null },
+  "schemaRevision": 21,
+  "seq": 3,
+  "sessionSalt": "0debeea2-dc46-451c-9bec-2326830a44b9",
+  "status": "failed",
+  "steps": {
+    "pick": {
+      "attemptHistory": [
+        {
+          "attempt": 1,
+          "durationMs": 4,
+          "effort": null,
+          "error": null,
+          "errorStack": null,
+          "execution": 1,
+          "fingerprint": "14b973656eac24f341c890053d4b3417e9dd20a553f72214abd1ea10649262dc",
+          "finishedAt": "2026-10-22T07:18:55.056Z",
+          "integration": "decision",
+          "policy": { "retry": { "delayMs": 100, "maxAttempts": 1 } },
+          "request": null,
+          "requestedModel": null,
+          "sources": { "retry.delayMs": "runtime", "retry.maxAttempts": "runtime" },
+          "startedAt": "2026-10-22T07:18:55.052Z",
+          "status": "completed",
+          "usage": {
+            "completeness": "reported",
+            "costUsd": 0.01,
+            "inputTokens": 12,
+            "outputTokens": 3
+          }
+        }
+      ],
+      "attempts": 1,
+      "durationMs": 4,
+      "error": null,
+      "errorStack": null,
+      "fingerprint": "14b973656eac24f341c890053d4b3417e9dd20a553f72214abd1ea10649262dc",
+      "finishedAt": "2026-10-22T07:18:55.056Z",
+      "identity": {
+        "cwd": "df7e940f72aa93cbcb6d70cc35124b0767c7a0e353043c7c24b660ea9be7b952",
+        "input": "1af4303a2bcc0b062d2b1d923cc28ec3ebc3c50031a0bdce2cf5fa8b0cafebcf",
+        "kind": "0d9f50d8178cb7c5b044c4dce43f1a35c44697ac03e70407e2dda2324fa92f56",
+        "onError": "a8ae35eaddff8b9970e3075d77d711798ddfa511a5391581aef83e1a8ebbf64f",
+        "schema": "5b5e90f41712b594d61d3d3622d26c7647fdd74007f52e59f7b9ff4ad9881ba7",
+        "version": "9877238849fe9f70252af45aaa4dc864cd4d1e18f0a6425749c9dc79c263a00c"
+      },
+      "kind": "step",
+      "launchStamp": 0,
+      "meta": { "integration": "decision", "op": "choose" },
+      "output": { "answer": "fix", "probabilities": { "fix": 0.75, "skip": 0.25 } },
+      "phase": null,
+      "request": null,
+      "seq": 1,
+      "settleStamp": 1,
+      "startedAt": "2026-10-22T07:18:55.052Z",
+      "status": "completed",
+      "wakeAt": null
+    }
+  },
+  "updatedAt": "2026-10-22T07:18:55.066Z",
+  "workflow": {
+    "fingerprint": "c71cd2d8c2bf54c26cfd3d752e0c3226aad81dc75dc52b22f77391230ec1198e",
+    "identity": {
+      "code": "decision-choose",
+      "engine": { "formatVersion": 6, "version": "0.0.0" },
+      "files": {},
+      "inputSchema": "199490fad0bd9dd1925ebbce2ed02f949ef0396fcbabcd41baa5ffa3b1ea49b2",
+      "outputSchema": "d03c54f3209978faa97a15da835462ec5e01a40c5e9d54bb6d859999ac2ccd22"
+    },
+    "name": "decision-choose",
+    "version": "1"
+  }
+}
