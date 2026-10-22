@@ -30,14 +30,15 @@ Resolve `QC_CHECKOUT`, `QC_TARGET`, `QC_WORKFLOW` and `QC_RUNS` to absolute path
 [first-run setup](../skills/quiet-choir/SKILL.md#run-a-first-workflow-against-a-project) describes:
 a built runtime checkout, the target project (the run's working directory), the workflow file or
 package directory, and a state directory outside the target worktree. Also set `QC_INPUT` to the
-input JSON, `QC_WORKFLOW_NAME` to the `--workflow` name and `QC_FIXTURES` to the absolute fixture
-path; set each to the empty string `''` when its flag is absent. Set `QC_RUN` to an explicit
-`--run-id` once you have one.
+input JSON, `QC_REHEARSAL_INPUT` to the input the rehearsal takes (the same JSON as `QC_INPUT`
+unless step 2 says otherwise), `QC_WORKFLOW_NAME` to the `--workflow` name and `QC_FIXTURES` to the
+absolute fixture path; set each of the last two to the empty string `''` when its flag is absent.
+Set `QC_RUN` to an explicit `--run-id` once you have one.
 
 Shell state does not persist between Bash calls. Start **every** Bash call with one `export` line
 that sets each value resolved so far as a single-quoted literal (paths absolute; write a `'` inside
 a value as `'\''`), for example
-`export QC_CHECKOUT='/abs/quiet-choir' QC_TARGET='/abs/project' QC_WORKFLOW='/abs/merge-down.quiet-choir' QC_WORKFLOW_NAME='merge-down-pr' QC_FIXTURES='' QC_RUNS='/abs/runs' QC_RUN='merge-down-merge-down-pr-20261001-1204' QC_INPUT='{}'`,
+`export QC_CHECKOUT='/abs/quiet-choir' QC_TARGET='/abs/project' QC_WORKFLOW='/abs/merge-down.quiet-choir' QC_WORKFLOW_NAME='merge-down-pr' QC_FIXTURES='' QC_RUNS='/abs/runs' QC_RUN='merge-down-merge-down-pr-20261001-1204' QC_INPUT='{"pr":42}' QC_REHEARSAL_INPUT='{"pr":42,"root":"/tmp/qc-rehearsal-x1"}'`,
 then the block below unchanged. Later steps add `QC_STEP`, `QC_ANSWER`, `QC_BY` and `QC_EXECUTION`
 the same way.
 
@@ -67,7 +68,11 @@ base name without `.workflow.*` plus a UTC timestamp, such as `review-20261001-1
 Then rehearse without paid calls, and show the user a short summary of the rehearsal: the number of
 `calls` and their harnesses (`harnessCounts`), `nominalClaudeCeilingUsd`, and every warning. A real
 package usually needs `--fixtures`, because synthesized command output (for example empty `gh`
-reads) cannot drive it; a rehearsal that reaches a question exits 75, which is expected.
+reads) cannot drive it; a rehearsal that reaches a question exits 75, which is expected. A rehearsal
+still runs local steps and file writes, so when the input names a location the workflow writes to
+(such as merge-down's `root`, which holds its worktree and state files), set `QC_REHEARSAL_INPUT` to
+a copy of the input that points it at a fresh temporary directory (`mktemp -d`) outside the target
+and the live location.
 
 <!-- skills-check: example run-rehearse -->
 
@@ -76,7 +81,7 @@ cd "$QC_TARGET" || exit 1
 node "$QC_CHECKOUT/bin/run.js" workflow execute "$QC_WORKFLOW" \
   ${QC_WORKFLOW_NAME:+--workflow} ${QC_WORKFLOW_NAME:+"$QC_WORKFLOW_NAME"} \
   ${QC_FIXTURES:+--harness} ${QC_FIXTURES:+"fixture:$QC_FIXTURES"} \
-  --run-id "$QC_RUN" --state-dir "$QC_RUNS" --input "$QC_INPUT" --dry-run --json
+  --run-id "$QC_RUN" --state-dir "$QC_RUNS" --input "$QC_REHEARSAL_INPUT" --dry-run --json
 ```
 
 ## 3. Launch in the background
@@ -84,8 +89,8 @@ node "$QC_CHECKOUT/bin/run.js" workflow execute "$QC_WORKFLOW" \
 Run this block with Bash `run_in_background: true` and a Bash `timeout` longer than the watch's
 `--timeout` (for example 600000 ms for `8m`). Do not add `nohup` or `&`: the background task must
 end when the watch ends, so that its completion notification means the run reached an outcome. The
-launch never takes fixtures. Steps 4 to 6 take only the run ID: a package run resumes through its
-manifest and its recorded workflow, so they need no selection.
+launch takes the live input `QC_INPUT` and never takes fixtures. Steps 4 to 6 take only the run ID:
+a package run resumes through its manifest and its recorded workflow, so they need no selection.
 
 <!-- skills-check: example run-launch -->
 

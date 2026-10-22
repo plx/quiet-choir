@@ -204,7 +204,13 @@ async function runCommandRecipe(pkg, directory, target, env) {
   };
 
   // The workflow-name and fixtures expansions are empty for a single workflow file.
-  const first = { QC_RUN: 'command-first', QC_INPUT: '{}', QC_WORKFLOW_NAME: '', QC_FIXTURES: '' };
+  const first = {
+    QC_RUN: 'command-first',
+    QC_INPUT: '{}',
+    QC_REHEARSAL_INPUT: '{}',
+    QC_WORKFLOW_NAME: '',
+    QC_FIXTURES: '',
+  };
   const [validated] = run('run-validate', first);
   assert.equal(validated.kind, 'workflow.validate.result');
   assert.equal(validated.ok, true);
@@ -225,7 +231,12 @@ async function runCommandRecipe(pkg, directory, target, env) {
   );
 
   // A package, selecting its non-entry workflow with --workflow. Without a name the entry runs.
-  const hello = { QC_WORKFLOW: await helloPackage(directory), QC_INPUT: '{}', QC_FIXTURES: '' };
+  const hello = {
+    QC_WORKFLOW: await helloPackage(directory),
+    QC_INPUT: '{}',
+    QC_REHEARSAL_INPUT: '{}',
+    QC_FIXTURES: '',
+  };
   const [entry] = run('run-validate', { ...hello, QC_WORKFLOW_NAME: '' });
   assert.equal(entry.ok, true);
   assert.equal(entry.package.name, 'hello');
@@ -263,14 +274,18 @@ async function runCommandRecipe(pkg, directory, target, env) {
     assert.equal(viaZsh.workflow.name, 'farewell');
   }
 
-  // merge-down rehearsed from its clean-land fixtures, with a temporary root for its state files.
+  // merge-down rehearsed from its clean-land fixtures. The rehearsal input points `root` at a
+  // temporary directory for its state files; the live input's root stays untouched.
   const cases = join(repository, 'packages/rehearsals/merge-down');
   const clean = JSON.parse(await readFile(join(cases, 'clean-land.json'), 'utf8'));
+  const liveRoot = join(root, 'merge-down-live');
+  const rehearsalRoot = await mkdtemp(join(root, 'merge-down-'));
   const mergeDown = {
     QC_WORKFLOW: join(repository, 'packages/merge-down.quiet-choir'),
     QC_WORKFLOW_NAME: 'merge-down-pr',
     QC_FIXTURES: join(cases, 'clean-land.fixtures.json'),
-    QC_INPUT: JSON.stringify({ ...clean.input, root: await mkdtemp(join(root, 'merge-down-')) }),
+    QC_INPUT: JSON.stringify({ ...clean.input, root: liveRoot }),
+    QC_REHEARSAL_INPUT: JSON.stringify({ ...clean.input, root: rehearsalRoot }),
     QC_RUN: 'command-merge-down',
   };
   const [mergeValidated] = run('run-validate', mergeDown);
@@ -280,6 +295,8 @@ async function runCommandRecipe(pkg, directory, target, env) {
   assert.equal(mergeRehearsal.ok, true);
   assert.equal(mergeRehearsal.run.status, 'completed');
   assert.equal(mergeRehearsal.run.output.status, 'merged');
+  assert.notDeepEqual(await readdir(rehearsalRoot), []);
+  await assert.rejects(stat(liveRoot), { code: 'ENOENT' });
 
   const askWorkflow = join(directory, 'ask.workflow.mts');
   await writeFile(
