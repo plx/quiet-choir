@@ -7,8 +7,13 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { describe, expect } from 'vitest';
-import { defineWorkflow, readRun, z } from '../src/index.js';
-import { decision } from '../src/integrations/decision.js';
+import { defineWorkflow, readRun, StepIdentityChangedError, z } from '../src/index.js';
+import {
+  choice,
+  decision,
+  defineDecisionProvider,
+  type ProviderTransportRequest,
+} from '../src/integrations/decision.js';
 import { digest } from '../src/workflow/runtime/json.js';
 import { it } from './setup/state-dir.js';
 
@@ -50,7 +55,7 @@ describe('a decision/1 record written before the deprecation', () => {
   const runId = 'choose-v1';
   const question = { state: { ticket: 1 }, question: 'Route?', answers: ['fix', 'skip'] } as const;
 
-  it('resumes to completed without calling its transport', async ({ stateDir, runs }) => {
+  async function install(stateDir: string): Promise<void> {
     const fixture = await readFile(
       new URL('./fixtures/decision/choose-v1-checkpoint.json', import.meta.url),
       'utf8',
@@ -58,6 +63,10 @@ describe('a decision/1 record written before the deprecation', () => {
     await mkdir(join(stateDir, runId));
     await writeFile(join(stateDir, runId, 'run.json'), fixture);
     await writeFile(join(stateDir, runId, 'journal.jsonl'), '');
+  }
+
+  it('resumes to completed without calling its transport', async ({ stateDir, runs }) => {
+    await install(stateDir);
     const original = await readRun({ stateDir, runId });
 
     let calls = 0;
@@ -85,5 +94,51 @@ describe('a decision/1 record written before the deprecation', () => {
     const saved = await readRun({ stateDir, runId });
     expect(saved.steps['pick']?.identity?.['version']).toBe(digest('decision/1'));
     expect(saved.steps).toEqual(original.steps);
+  });
+
+  it('is refused, with zero transport calls, when resumed by ctx.decide under the same ID', async ({
+    stateDir,
+    runs,
+  }) => {
+    await install(stateDir);
+    const requests: ProviderTransportRequest[] = [];
+    const provider = defineDecisionProvider({
+      name: 'router',
+      revision: 1,
+      capabilities: { kinds: ['choice'], maxOptions: 255, levels: [2, 10], idempotencyKey: false },
+      transport: () => (request: ProviderTransportRequest) => {
+        requests.push(request);
+        return Promise.reject(new Error('a refused resume must not call the transport'));
+      },
+    });
+    const definition = defineWorkflow({
+      name: 'decision-choose',
+      version: '1',
+      input: z.null(),
+      output: z.unknown(),
+      decisions: [provider],
+      run: (ctx) =>
+        ctx.decide('pick', {
+          state: question.state,
+          questions: {
+            route: choice({ instructions: 'Route?', options: { fix: null, skip: null } }),
+          },
+        }),
+    });
+    const refused: unknown = await runs
+      .run(definition, {
+        stateDir,
+        runId,
+        resume: true,
+        cwd: '/',
+        fingerprint: 'decision-choose',
+        acceptCodeChange: true,
+      })
+      .catch((caught: unknown) => caught);
+    // The accepted resume's preflight refuses before the run changes.
+    expect(refused).toBeInstanceOf(StepIdentityChangedError);
+    expect((refused as StepIdentityChangedError).stepId).toBe('pick');
+    expect((refused as Error).message).toMatch(/changed on a completed step/u);
+    expect(requests).toHaveLength(0);
   });
 });
