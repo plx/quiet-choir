@@ -110,6 +110,7 @@ import {
   type GithubThreadReplyOptions,
   type GithubThreadReplyResult,
   type GithubWriteRequest,
+  type MergeFailure,
   type PullResponse,
 } from './github-write-model.js';
 
@@ -262,7 +263,7 @@ const VERSIONS = {
   'alert.dismiss': 'github.alert.dismiss/1',
   'pr.create': 'github.pr.create/1',
   'pr.edit': 'github.pr.edit/1',
-  'pr.merge': 'github.pr.merge/1',
+  'pr.merge': 'github.pr.merge/2',
   'checks.rerunFailed': 'github.checks.rerunFailed/2',
 } as const;
 
@@ -788,10 +789,12 @@ export function githubWrites(
         const number = positiveInteger(given['number'], 'github pr.merge number');
         const sha = fullSha(given['sha'], 'github pr.merge sha');
         const method = choice(given['method'] ?? 'squash', mergeMethods, 'github pr.merge method');
+        const base =
+          given['base'] === undefined ? null : branch(given['base'], 'github pr.merge base');
         return step(
           'pr.merge',
           id,
-          { number, sha, method },
+          { number, sha, method, ...(base === null ? {} : { base }) },
           prMergeResultSchema,
           settings,
           async (gh) => {
@@ -799,7 +802,7 @@ export function githubWrites(
             /** A decision that needs no PUT, from a read. */
             const settled = (
               pull: PullResponse,
-              decision: 'merged' | 'merged-elsewhere' | 'closed' | 'head-moved' | 'not-mergeable',
+              decision: Exclude<MergeFailure, 'unknown'>,
               message: string | null,
             ): GithubPrMergeResult => {
               if (decision === 'merged')
@@ -817,7 +820,9 @@ export function githubWrites(
               return { merged: false, number, reason: decision, head: pull.head.sha, message };
             };
             const before = await read();
-            const precheck = mergePrecheck(before, sha);
+            // Every attempt reads the base again, so a retry cannot merge a pull request that was
+            // retargeted after an earlier attempt failed.
+            const precheck = mergePrecheck(before, sha, base);
             if (precheck !== 'put') return settled(before, precheck, null);
             // gh exits 1 on an HTTP error and prints GitHub's error body.
             const response = await gh.json(
@@ -836,7 +841,7 @@ export function githubWrites(
               return { merged: true, number, mergeCommit: response.sha, head: sha, acted: true };
             }
             const after = await read();
-            const failure = mergeFailure(response, after, sha);
+            const failure = mergeFailure(response, after, sha, base);
             if (failure === 'unknown')
               throw new Error(
                 `github pr.merge ${id}: GitHub refused to merge #${String(number)}${response.status === undefined ? '' : ` (HTTP ${String(response.status)})`}: ${response.message}`,

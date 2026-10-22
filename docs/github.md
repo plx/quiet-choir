@@ -544,7 +544,7 @@ response (`{ data: { repository: { pullRequest } } }` with `number`, `state`, `h
 | `alert.dismiss(id, { number, comment, reason? })`           | `GET repos/O/R/code-scanning/alerts/N`; `PATCH` of the same path                                                                                                                                                       | `{ number, state, reason, dismissed }`                                                                     |
 | `pr.create(id, { head, base, title, body, draft? })`        | Every pull request for the head, any base (`gh api --paginate .../pulls?head=OWNER:HEAD&state=all`); the marker is searched across bases, open ones narrowed to the base; `POST repos/O/R/pulls`                       | `{ number, url, nodeId, state, created }`                                                                  |
 | `pr.edit(id, { number, expectHead, title?, body?, base? })` | `GET repos/O/R/pulls/N`; `PATCH` of the same path with the fields that differ                                                                                                                                          | `{ number, edited, reason, head, changed }`                                                                |
-| `pr.merge(id, { number, sha, method? })`                    | `GET repos/O/R/pulls/N`; `PUT .../pulls/N/merge -f merge_method=METHOD -f sha=SHA`; after a merge, the pull request until it reports merged; after a refusal, the pull request once                                    | `{ merged: true, number, mergeCommit, head, acted }` or `{ merged: false, number, reason, head, message }` |
+| `pr.merge(id, { number, sha, method?, base? })`             | `GET repos/O/R/pulls/N`; `PUT .../pulls/N/merge -f merge_method=METHOD -f sha=SHA`; after a merge, the pull request until it reports merged; after a refusal, the pull request once                                    | `{ merged: true, number, mergeCommit, head, acted }` or `{ merged: false, number, reason, head, message }` |
 | `checks.rerunFailed(id, { sha, attempt?, attempts? })`      | Every workflow run of the commit (`gh api --paginate --slurp .../actions/runs?head_sha=SHA`); `POST .../actions/runs/ID/rerun-failed-jobs` per run; the runs until each rerun shows                                    | `{ rerun, skipped, confirmed }`                                                                            |
 
 Each write is exactly one `ctx.step` under your ID, so it leaves one step record, and a completed
@@ -665,8 +665,9 @@ is harmless once the create step has completed, since a completed step replays f
 
 ### Merging
 
-`pr.merge(id, { number, sha, method? })` merges at exactly the full head SHA `sha`, with `method`
-`squash` (default), `merge` or `rebase`. It reads the pull request first:
+`pr.merge(id, { number, sha, method?, base? })` merges at exactly the full head SHA `sha`, with
+`method` `squash` (default), `merge` or `rebase`. `base`, when given, is the base branch the merge
+expects. It reads the pull request first:
 
 | Read or response                                      | Result                                                         |
 | ----------------------------------------------------- | -------------------------------------------------------------- |
@@ -674,19 +675,22 @@ is harmless once the create step has completed, since a completed step replays f
 | Merged at another head                                | Throws, naming both SHAs; never reported as `merged: false`    |
 | Closed without merging                                | `merged: false`, `reason: 'closed'`; no `PUT`                  |
 | Open at another head                                  | `merged: false`, `reason: 'head-moved'`; no `PUT`              |
+| Open at `sha` into a base other than `base`           | `merged: false`, `reason: 'base-changed'`; no `PUT`            |
 | Open at `sha`: the `PUT` succeeds                     | `merged: true`, `acted: true`, after the confirmation below    |
 | The `PUT` answers 409 (the head moved since the read) | `merged: false`, `reason: 'head-moved'`, GitHub's message      |
 | The `PUT` answers 405                                 | `merged: false`, `reason: 'not-mergeable'`, GitHub's message   |
 | Any other refusal                                     | Throws with GitHub's message                                   |
 
+Every attempt makes that first read, so a retry after a failed or interrupted attempt never merges a
+pull request retargeted meanwhile, which a base check in an earlier, checkpointed step would miss.
 After a refused `PUT` the step reads the pull request again, and that read wins: merged at `sha`
-(say, by someone else) is success, and a closed pull request or a moved head is reported as such.
-`not-mergeable` covers what GitHub refuses with 405: merge conflicts, failing required checks or
-reviews, a draft, or a branch protected by a merge queue, which the REST merge does not bypass. A
-403, 404 or 422, or an error body without a `status`, as some GitHub Enterprise Server versions
-send, throws instead: the step never claims a pull request is not mergeable without GitHub saying
-so. A `PUT` that leaves no JSON (a dropped connection) fails the attempt, and the retry's first read
-finds the merge if GitHub committed it.
+(say, by someone else) is success, and a closed pull request, a moved head or a changed base is
+reported as such. `not-mergeable` covers what GitHub refuses with 405: merge conflicts, failing
+required checks or reviews, a draft, or a branch protected by a merge queue, which the REST merge
+does not bypass. A 403, 404 or 422, or an error body without a `status`, as some GitHub Enterprise
+Server versions send, throws instead: the step never claims a pull request is not mergeable without
+GitHub saying so. A `PUT` that leaves no JSON (a dropped connection) fails the attempt, and the
+retry's first read finds the merge if GitHub committed it.
 
 The merge is `gh api -X PUT repos/O/R/pulls/N/merge -f merge_method=METHOD -f sha=SHA`, never
 `gh pr merge`, `--auto` or a merge queue: `gh pr merge` may enable auto-merge or enqueue the pull
@@ -758,7 +762,7 @@ policy: an unfinished write runs again and reconciles.
 
 A write's identity is a version constant (`github.comment/1`, `github.thread.reply/1`,
 `github.issue.create/1`, `github.issue.close/1`, `github.issue.reopen/1`, `github.alert.dismiss/1`,
-`github.pr.create/1`, `github.pr.edit/1`, `github.pr.merge/1` and `github.checks.rerunFailed/2`),
+`github.pr.create/1`, `github.pr.edit/1`, `github.pr.merge/2` and `github.checks.rerunFailed/2`),
 its input (the repository as `HOST/OWNER/REPO` or `OWNER/REPO` and the normalized arguments, bodies
 included) and its result schema, never the callback's source text or the policy. Changing a body or
 title under the ID of a completed write refuses the resume like any changed step input; use a new

@@ -1,0 +1,20 @@
+{
+  "input": {
+    "pr": 42,
+    "repo": "acme/widgets",
+    "parentEpic": 7,
+    "codex": "never",
+    "maxCiRepairs": 0
+  },
+  "expect": {
+    "status": "blocked",
+    "blocked": {
+      "stage": "gate",
+      "reason": "CI still failing after 0 repair attempts: test (22)"
+    },
+    "rounds": 1,
+    "ciRepairs": 1,
+    "mergeCommit": null,
+    "notes": ["CI failed on test (22); re-ran the failed jobs: failed again"]
+  }
+}

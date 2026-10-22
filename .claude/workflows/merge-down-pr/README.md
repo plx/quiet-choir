@@ -183,3 +183,10 @@ a deterministic effect that a Claude Code workflow can only reach through an age
 that runs the command and relays its JSON). In quiet-choir these become durable `ctx.exec` or
 `ctx.step` calls with no model cost. The waits are `ctx.wait` polls, the Codex and CI loop is a
 bounded `while`, and the tiered agents keep their models and effort levels.
+
+That port exists:
+[`packages/merge-down.quiet-choir`](../../../packages/merge-down.quiet-choir/README.md) (#589). It
+keeps the stages, `until` stops, statuses and ledger record, and drops the verified relay. It uses
+its own default root (`<main checkout>-merge-down-package`) and local branch
+(`merge-down/package/pr-N`), so this script remains a safe fallback, and it shares the fork-point
+refs, so either tool honors a stack the other recorded.

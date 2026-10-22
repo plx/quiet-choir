@@ -1,0 +1,18 @@
+{
+  "input": {
+    "pr": 42,
+    "repo": "acme/widgets",
+    "parentEpic": 7,
+    "codex": "never"
+  },
+  "expect": {
+    "status": "blocked",
+    "blocked": {
+      "stage": "prepare",
+      "reason": "PR head is in octo-fork/widgets, not acme/widgets; merge-down only lands same-repository PRs"
+    },
+    "rebase": null,
+    "rounds": 0,
+    "mergeCommit": null
+  }
+}

@@ -12,3 +12,6 @@ comparisons/batches/*/originals/
 # Prompt template fixtures: their rendered text is step identity and the goldens pin it, so a
 # formatter must never rewrite them (ADR 0064).
 test/fixtures/prompts/
+
+# Package prompt templates: rendered text is step identity, so a formatter must never rewrite them.
+packages/*/prompts/

@@ -731,10 +731,15 @@ export interface GithubPrMergeOptions {
   readonly sha: string;
   /** Merge method, default `squash`. */
   readonly method?: GithubPrMergeMethod;
+  /**
+   * The base branch name the merge expects; when given, every attempt refuses with
+   * `base-changed`, before the `PUT`, a pull request that now targets another base.
+   */
+  readonly base?: string;
 }
 
 /** Why `pr.merge` did not merge. */
-export type GithubPrMergeRefusal = 'head-moved' | 'not-mergeable' | 'closed';
+export type GithubPrMergeRefusal = 'head-moved' | 'not-mergeable' | 'closed' | 'base-changed';
 
 /** Result of `pr.merge`: merged at `sha`, or a refusal as data. */
 export type GithubPrMergeResult =
@@ -761,7 +766,7 @@ export type GithubPrMergeResult =
       /**
        * `head-moved`: the head is not `sha`. `not-mergeable`: GitHub refused (HTTP 405), for
        * example for conflicts, required checks or reviews, a draft or a merge queue. `closed`:
-       * closed without merging.
+       * closed without merging. `base-changed`: open at `sha` but into a base other than `base`.
        */
       readonly reason: GithubPrMergeRefusal;
       /** The head SHA the step observed. */
@@ -854,7 +859,7 @@ export const prMergeResultSchema: z.ZodType<GithubPrMergeResult> = z.discriminat
   z.object({
     merged: z.literal(false),
     number: issueNumber,
-    reason: z.enum(['head-moved', 'not-mergeable', 'closed']),
+    reason: z.enum(['head-moved', 'not-mergeable', 'closed', 'base-changed']),
     head: z.string(),
     message: z.string().nullable(),
   }),
@@ -1113,19 +1118,23 @@ export function editChanges(
 }
 
 /** What `pr.merge` does after reading the pull request. @internal */
-export type MergePrecheck = 'merged' | 'merged-elsewhere' | 'closed' | 'head-moved' | 'put';
+export type MergePrecheck =
+  'merged' | 'merged-elsewhere' | 'closed' | 'head-moved' | 'base-changed' | 'put';
 
 /**
  * Merged at `sha` is success with no PUT (an earlier attempt may have merged it); merged at
- * another head refuses; closed and a moved head are refusals as data; otherwise PUT. @internal
+ * another head refuses; closed, a moved head and a base other than `base` (when given) are
+ * refusals as data; otherwise PUT. @internal
  */
 export function mergePrecheck(
-  pull: Pick<PullResponse, 'state' | 'merged' | 'head'>,
+  pull: Pick<PullResponse, 'state' | 'merged' | 'head' | 'base'>,
   sha: string,
+  base: string | null = null,
 ): MergePrecheck {
   if (pull.merged) return pull.head.sha === sha ? 'merged' : 'merged-elsewhere';
   if (pull.state !== 'open') return 'closed';
-  return pull.head.sha === sha ? 'put' : 'head-moved';
+  if (pull.head.sha !== sha) return 'head-moved';
+  return base === null || pull.base.ref === base ? 'put' : 'base-changed';
 }
 
 /** What a refused PUT means after the pull request is read again. @internal */
@@ -1133,16 +1142,17 @@ export type MergeFailure = Exclude<MergePrecheck, 'put'> | 'not-mergeable' | 'un
 
 /**
  * Classify a refused PUT from the re-read and GitHub's error body: the re-read wins (merged at
- * `sha` is success, elsewhere refuses, closed, head moved); then status 409 is `head-moved` and
- * 405 `not-mergeable`. Anything else, such as 403, 404, 422 or a body without status, is
- * `unknown`: never claimed not mergeable without GitHub saying so. @internal
+ * `sha` is success, elsewhere refuses, closed, head moved, base changed); then status 409 is
+ * `head-moved` and 405 `not-mergeable`. Anything else, such as 403, 404, 422 or a body without
+ * status, is `unknown`: never claimed not mergeable without GitHub saying so. @internal
  */
 export function mergeFailure(
   error: { readonly status?: string | number | undefined },
-  reread: Pick<PullResponse, 'state' | 'merged' | 'head'>,
+  reread: Pick<PullResponse, 'state' | 'merged' | 'head' | 'base'>,
   sha: string,
+  base: string | null = null,
 ): MergeFailure {
-  const settled = mergePrecheck(reread, sha);
+  const settled = mergePrecheck(reread, sha, base);
   if (settled !== 'put') return settled;
   const status = error.status === undefined ? null : String(error.status);
   if (status === '409') return 'head-moved';

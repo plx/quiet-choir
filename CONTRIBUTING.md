@@ -24,7 +24,11 @@ incident-investigation, sdlc-orchestrator and bug-hunt; see
 runs the durability lint that `workflow validate` runs
 ([ADR 0041](docs/decisions/0041-static-durability-lint.md)) over every `examples/` and ported
 Workflow Lab workflow, and fails on any finding, type error or `// quiet-choir-ignore` comment
-without a reason.
+without a reason. It also lints the workflow modules of `packages/merge-down.quiet-choir`, which
+`npm run typecheck` type-checks with its own tsconfig. `packages:rehearse`, also after the build,
+validates that package and rehearses its fixture cases in `packages/rehearsals/merge-down/`
+(`node scripts/rehearse-packages.mjs [case ...]` runs a subset); add a case there, with its
+`.fixtures.json`, when a change alters the workflow's path.
 
 `test:cli` first runs `test/cli-smoke-runner.test.mjs` (the runner's own `node:test` checks) and
 then `scripts/run-cli-smokes.mjs`, which runs every `test/*smoke.mjs` against the built CLI, four at

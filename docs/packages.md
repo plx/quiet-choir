@@ -285,6 +285,17 @@ the same way after import. A refused package request also carries `requestedPack
 `entrypoint_missing` refusal, whose fork hint is `<PACKAGE_DIR> --workflow NAME` for you to fill in
 with the package's new directory.
 
+## A worked package
+
+[`packages/merge-down.quiet-choir`](../packages/merge-down.quiet-choir/README.md) ports the native
+`merge-down-pr` workflow script (#589): control flow in `workflows/`, prompts in `prompts/`, the
+tier map as a roster, teams for its swappable slots, and the git and check mechanics as versioned
+steps in `lib/`. `npm run packages:rehearse` (after `npm run build`) validates it and rehearses its
+cases in `packages/rehearsals/merge-down/`, kept outside the package root because every file under
+the root is fingerprinted. Its `tsconfig.json` maps `quiet-choir` and its subpaths to `src/`, and
+the repository's `.prettierignore` keeps formatters off `packages/*/prompts/`, whose rendered text
+is step identity.
+
 ## What comes next
 
 - #591 adds the package authoring reference to the skill copies and a package-aware run command.

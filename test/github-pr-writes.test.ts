@@ -474,6 +474,21 @@ describe('pr.merge', { timeout: 30_000 }, () => {
     expect(writes(await state())).toEqual([]);
   });
 
+  it('returns base-changed for a pull request into another base than the given one, with no PUT', async () => {
+    const { runner, state } = await fake({ pulls: pull(9, { base: 'release' }) });
+    const result = await outcome(runner, 'retargeted', (ctx) =>
+      client(ctx).pr.merge('merge', { number: 9, sha: HEAD, base: 'main' }),
+    );
+    expect(result.output).toEqual({
+      merged: false,
+      number: 9,
+      reason: 'base-changed',
+      head: HEAD,
+      message: null,
+    });
+    expect(writes(await state())).toEqual([]);
+  });
+
   it('returns not-mergeable with GitHub message on a 405', async () => {
     const { runner, state } = await fake({ pulls: pull(9, { mergeable: false }) });
     const result = await outcome(runner, 'blocked', (ctx) =>
@@ -956,6 +971,7 @@ describe('arguments and requests', () => {
       'edit number': (gh) => gh.pr.edit('w', { number: 0, expectHead: HEAD, title: 't' }),
       'edit base': (gh) => gh.pr.edit('w', { number: 9, expectHead: HEAD, base: 'a:b' }),
       'merge sha': (gh) => gh.pr.merge('w', { number: 9, sha: HEAD.toUpperCase() }),
+      'merge base': (gh) => gh.pr.merge('w', { number: 9, sha: HEAD, base: 'a:b' }),
       'merge method': (gh) =>
         gh.pr.merge('w', { number: 9, sha: HEAD, method: as('fast-forward') }),
       'rerun sha': (gh) => gh.checks.rerunFailed('w', { sha: 'main' }),
@@ -1031,11 +1047,12 @@ describe('arguments and requests', () => {
 
 describe('pure rules', () => {
   const view = (
-    overrides: Partial<{ state: 'open' | 'closed'; merged: boolean; sha: string }>,
+    overrides: Partial<{ state: 'open' | 'closed'; merged: boolean; sha: string; base: string }>,
   ) => ({
     state: overrides.state ?? ('open' as const),
     merged: overrides.merged ?? false,
     head: { ref: 'feature', sha: overrides.sha ?? HEAD },
+    base: { ref: overrides.base ?? 'main' },
   });
 
   it('decide the merge from the read', () => {
@@ -1049,6 +1066,21 @@ describe('pure rules', () => {
         [view({ state: 'closed', merged: true, sha: OTHER }), 'merged-elsewhere'],
       ];
     for (const [pullRead, expected] of table) expect(mergePrecheck(pullRead, HEAD)).toBe(expected);
+  });
+
+  it('refuse a merge into another base only when the base is given, after state and head', () => {
+    expect(mergePrecheck(view({ base: 'release' }), HEAD)).toBe('put');
+    expect(mergePrecheck(view({}), HEAD, 'main')).toBe('put');
+    expect(mergePrecheck(view({ base: 'release' }), HEAD, 'main')).toBe('base-changed');
+    expect(mergePrecheck(view({ base: 'release', sha: OTHER }), HEAD, 'main')).toBe('head-moved');
+    expect(mergePrecheck(view({ base: 'release', state: 'closed' }), HEAD, 'main')).toBe('closed');
+    expect(
+      mergePrecheck(view({ base: 'release', state: 'closed', merged: true }), HEAD, 'main'),
+    ).toBe('merged');
+    expect(mergeFailure({ status: '405' }, view({ base: 'release' }), HEAD, 'main')).toBe(
+      'base-changed',
+    );
+    expect(mergeFailure({ status: '405' }, view({ base: 'release' }), HEAD)).toBe('not-mergeable');
   });
 
   it('classify a refused PUT from the re-read first, then the status', () => {

@@ -476,10 +476,12 @@ export interface GithubPullRequestWrites {
    * GitHub checks atomically; never `gh pr merge`, auto-merge or a merge queue. It reads the pull
    * request first: merged at `sha` returns the merge commit with `acted: false` and no `PUT` (an
    * earlier attempt merged it), merged at another head throws, closed and another head return
-   * `merged: false` with `closed` or `head-moved`. A refused `PUT` reads again and returns
-   * `head-moved` (HTTP 409), `not-mergeable` (HTTP 405, with GitHub's message) or throws for
-   * anything else. After a merge it reads until GitHub reports it merged, up to 20 reads 3 seconds
-   * apart. Readiness (base branch, review threads, alerts) is the caller's to check.
+   * `merged: false` with `closed` or `head-moved`, and with `base` given, an open pull request
+   * into another base returns `base-changed`; every attempt reads again, so a retry never merges
+   * one retargeted meanwhile. A refused `PUT` reads again and returns `head-moved` (HTTP 409),
+   * `not-mergeable` (HTTP 405, with GitHub's message) or throws for anything else. After a merge
+   * it reads until GitHub reports it merged, up to 20 reads 3 seconds apart. Other readiness
+   * (review threads, alerts) is the caller's to check.
    */
   merge(
     id: string,

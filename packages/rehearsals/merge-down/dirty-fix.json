@@ -1,0 +1,29 @@
+{
+  "input": {
+    "pr": 42,
+    "repo": "acme/widgets",
+    "parentEpic": 7,
+    "codex": "never",
+    "until": "fix"
+  },
+  "expect": {
+    "status": "stopped",
+    "rounds": 0,
+    "fixes": [
+      {
+        "key": "thread:PRRT_T1",
+        "status": "fixed",
+        "commit": "def5678",
+        "summary": "render returns early on an empty list, with the test committed."
+      }
+    ],
+    "plannedReplies": [
+      {
+        "threadId": "PRRT_T1",
+        "body": "Valid: render now returns early on an empty list.\n\nAddressed in def5678: render returns early on an empty list, with the test committed."
+      }
+    ],
+    "mergeCommit": null
+  },
+  "order": ["check/fix-1", "fix/1-repair/verify", "check/fix-1-repair"]
+}

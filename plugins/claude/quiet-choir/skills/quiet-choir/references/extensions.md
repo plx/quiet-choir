@@ -481,15 +481,16 @@ returns the pull request carrying its marker in any state and base, else an open
 same-repository `head` and `base`, and opens one only when there is neither.
 `gh.pr.edit(id, { number, expectHead, title?, body?, base? })` patches only differing fields of an
 open pull request still at `expectHead`, otherwise returning `reason: 'closed'` or `'head-moved'`.
-`gh.pr.merge(id, { number, sha, method? })` sends `PUT .../pulls/N/merge` with `sha` (never
+`gh.pr.merge(id, { number, sha, method?, base? })` sends `PUT .../pulls/N/merge` with `sha` (never
 `gh pr merge`, auto-merge or a queue): already merged at `sha` returns the merge commit with
 `acted: false` and no second `PUT`, merged elsewhere throws, and `closed`, `head-moved` (also
-GitHub's 409) or `not-mergeable` (GitHub's 405) come back as `{ merged: false, reason }`. Check the
-base, threads and alerts yourself first. `gh.checks.rerunFailed(id, { sha, attempt, attempts? })`
-reruns failed runs at or below the run attempt you saw failing and skips runs past it, so pass the
-round number. Pass `attempts` (run ID to the attempt you saw that run fail) when runs failed at
-different attempts: a mapped run is rerun only at exactly its attempt, so none is rerun twice. A
-rehearsed edit or merge reports `head-moved`. See [merging](github.md#merging).
+GitHub's 409), `base-changed` (open into a base other than `base`, checked on every attempt) or
+`not-mergeable` (GitHub's 405) come back as `{ merged: false, reason }`. Check threads and alerts
+yourself first. `gh.checks.rerunFailed(id, { sha, attempt, attempts? })` reruns failed runs at or
+below the run attempt you saw failing and skips runs past it, so pass the round number. Pass
+`attempts` (run ID to the attempt you saw that run fail) when runs failed at different attempts: a
+mapped run is rerun only at exactly its attempt, so none is rerun twice. A rehearsed edit or merge
+reports `head-moved`. See [merging](github.md#merging).
 
 Its epic read `gh.epic.snapshot(id, { number })` is one `ctx.exec.json` (one `gh api graphql`) that
 returns the epic's sub-issues with state, labels, linked pull requests, blocked-by relations,
