@@ -11,7 +11,7 @@ import { WorkflowExecutor } from '../src/workflow/loader/executor.js';
 import { inspectRun } from '../src/workflow/loader/inspection.js';
 import { analyzeTypecheckEntrypoint } from '../src/workflow/typecheck/plan.js';
 import { TypecheckProgramCache } from '../src/workflow/typecheck/program-cache.js';
-import { it } from './setup/state-dir.js';
+import { it, type RunScope } from './setup/state-dir.js';
 
 // One program cache for the file, so each compile after the first reuses its parse and checks
 // (see CONTRIBUTING.md, "Test timeouts and storage sync").
@@ -30,6 +30,7 @@ async function recipeFixtures(): Promise<HarnessFixtures> {
 
 function execute(
   stateDir: string,
+  runs: RunScope,
   runId: string,
   options: { fixtures?: HarnessFixtures; dryRun?: boolean },
 ) {
@@ -38,20 +39,23 @@ function execute(
   const executor = new WorkflowExecutor({
     typecheckCache,
     logger: new ThresholdLogger('silent', () => undefined),
+    signal: runs.signal,
   });
-  return executor.execute({
-    kind: 'workflow.execute',
-    typecheck: analysis.plan,
-    runId,
-    stateDir,
-    cwd: stateDir,
-    resume: false,
-    input: { ticket },
-    dryRun: options.dryRun ?? false,
-    ...(options.fixtures === undefined
-      ? {}
-      : { harness: { kind: 'fixture' as const, config: {}, fixtures: options.fixtures } }),
-  });
+  return runs.track(
+    executor.execute({
+      kind: 'workflow.execute',
+      typecheck: analysis.plan,
+      runId,
+      stateDir,
+      cwd: stateDir,
+      resume: false,
+      input: { ticket },
+      dryRun: options.dryRun ?? false,
+      ...(options.fixtures === undefined
+        ? {}
+        : { harness: { kind: 'fixture' as const, config: {}, fixtures: options.fixtures } }),
+    }),
+  );
 }
 
 // measured: 1.4 s alone for the first compile, 4.8 s in the full coverage run (typecheck compile)
@@ -64,8 +68,11 @@ describe('the decide-then-act recipe', { timeout: 30_000 }, () => {
     vi.unstubAllEnvs();
   });
 
-  it('rehearses under --harness fixture and inspects both decisions', async ({ stateDir }) => {
-    const executed = await execute(stateDir, 'fixture', { fixtures: await recipeFixtures() });
+  it('rehearses under --harness fixture and inspects both decisions', async ({
+    stateDir,
+    runs,
+  }) => {
+    const executed = await execute(stateDir, runs, 'fixture', { fixtures: await recipeFixtures() });
     expect(executed).toMatchObject({
       kind: 'workflow.run.result',
       ok: true,
@@ -113,8 +120,8 @@ describe('the decide-then-act recipe', { timeout: 30_000 }, () => {
     });
   });
 
-  it('rehearses under --dry-run with the fixture file', async ({ stateDir }) => {
-    const executed = await execute(stateDir, 'dry', {
+  it('rehearses under --dry-run with the fixture file', async ({ stateDir, runs }) => {
+    const executed = await execute(stateDir, runs, 'dry', {
       fixtures: await recipeFixtures(),
       dryRun: true,
     });
@@ -139,6 +146,7 @@ describe('the decide-then-act recipe', { timeout: 30_000 }, () => {
 
   it('escalates without running the agent when the route confidence is low', async ({
     stateDir,
+    runs,
   }) => {
     const fixtures = await recipeFixtures();
     const unsure = {
@@ -156,7 +164,7 @@ describe('the decide-then-act recipe', { timeout: 30_000 }, () => {
         },
       },
     };
-    const executed = await execute(stateDir, 'unsure', { fixtures: unsure });
+    const executed = await execute(stateDir, runs, 'unsure', { fixtures: unsure });
     expect(executed).toMatchObject({
       ok: true,
       run: { status: 'completed', output: { outcome: 'escalated', reply: '' } },
@@ -165,9 +173,9 @@ describe('the decide-then-act recipe', { timeout: 30_000 }, () => {
     expect(Object.keys(executed.run.steps)).toEqual(['triage']);
   });
 
-  it('reaches the needs-review branch under a bare --dry-run', async ({ stateDir }) => {
+  it('reaches the needs-review branch under a bare --dry-run', async ({ stateDir, runs }) => {
     // Synthesis picks the first option with confidence 1 and answers noul 0.
-    const executed = await execute(stateDir, 'bare', { dryRun: true });
+    const executed = await execute(stateDir, runs, 'bare', { dryRun: true });
     expect(executed).toMatchObject({
       ok: true,
       run: { status: 'completed', output: { outcome: 'needs-review' } },
