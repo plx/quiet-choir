@@ -241,10 +241,10 @@ Measured on this branch with the commands below, against the native originals.
 
 | Measure                                                  | Package                                       | Native                                                               |
 | -------------------------------------------------------- | --------------------------------------------- | -------------------------------------------------------------------- |
-| Total lines (package without README; script plus helper) | 4,463 in 28 files                             | 3,377 (merge-down-pr.js 1,552 + merge-down.mjs 1,825)                |
+| Total lines (package without README; script plus helper) | 4,576 in 28 files                             | 3,377 (merge-down-pr.js 1,552 + merge-down.mjs 1,825)                |
 | Prompt prose                                             | 355 lines, 21.9 KB in prompts/\*\*/\*.md      | 12 multi-line template literals, 139 lines, 19.2 KB in the script    |
-| Control flow                                             | 1,314 lines in workflows/                     | the whole 1,552-line script                                          |
-| Mechanics                                                | 2,115 lines in lib/ (600 of them pure policy) | 1,825 lines in merge-down.mjs                                        |
+| Control flow                                             | 1,351 lines in workflows/                     | the whole 1,552-line script                                          |
+| Mechanics                                                | 2,191 lines in lib/ (623 of them pure policy) | 1,825 lines in merge-down.mjs                                        |
 | Agent call sites                                         | 9 roster or team-slot calls                   | 9 judgment `agent(` calls + 13 clerk relay calls (one `agent(` site) |
 | Model calls per mechanical step                          | 0                                             | 1 haiku clerk, plus a sonnet copyist on a failed relay               |
 
@@ -259,7 +259,7 @@ grep -n 'agent(' .claude/workflows/merge-down-pr.js
 grep -nE 'clerk\(' .claude/workflows/merge-down-pr.js
 ```
 
-The package is about 32% longer than the native pair. The relay protocol is gone, but the port
+The package is about 36% longer than the native pair. The relay protocol is gone, but the port
 spells out what the native JavaScript left implicit: Zod contracts for every agent result and the
 ledger (384 lines in `contracts.ts`), typed prompt parameters (161 lines in `prompts.ts`), the
 roster's tools and limits, versioned step definitions, and Prettier's 100-column formatting of typed
