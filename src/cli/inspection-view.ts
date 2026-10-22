@@ -130,8 +130,12 @@ function decisionLines(step: RunSummary['steps'][number]): string[] {
   if (decision === null) return [];
   const { usage } = decision;
   const tokens = (count: number | null): string => (count === null ? '?' : String(count));
+  const spent =
+    decision.reusedFrom === undefined
+      ? `${String(usage.attempts)} attempts, ${tokens(usage.inputTokens)} in / ${tokens(usage.outputTokens)} out tokens`
+      : `reused from ${decision.reusedFrom}`;
   return [
-    `${step.status} ${step.id}  decision ${decision.provider ?? '-'} ${decision.requestedModel ?? '(provider default)'} -> ${decision.servedModel ?? 'unknown'}  ${String(usage.attempts)} attempts, ${tokens(usage.inputTokens)} in / ${tokens(usage.outputTokens)} out tokens${step.elapsedMs === null ? '' : `  ${duration(step.elapsedMs)}`}`,
+    `${step.status} ${step.id}  decision ${decision.provider ?? '-'} ${decision.requestedModel ?? '(provider default)'} -> ${decision.servedModel ?? 'unknown'}  ${spent}${step.elapsedMs === null ? '' : `  ${duration(step.elapsedMs)}`}`,
     ...decision.questions.map(
       (question) =>
         `  ${question.name} ${question.kind} ${decisionHeadline(question)}${question.confidence === undefined ? '' : ` confidence ${question.confidence.toFixed(2)}`}`,

@@ -121,15 +121,17 @@ and the last 20 completed agent calls, with `template <Name>` for a templated ca
 any `no-tool-use` warning (a listed agent step's line shows `template <Name>` too), then a
 `Rate windows` line per harness after the usage lines when windows were reported and a
 `Budget stop:` line for a saved `budgetStop`. A completed `ctx.decide` step is listed with a
-`decision` object (`op`, `provider`, `requestedModel`, `servedModel`, `usage` as
-`{ attempts, inputTokens, outputTokens }`, null totals when any attempt reported no count, and
-`questions` as `{ name, kind, answer, level?, confidence? }` where `kind` is `noul`, `choice`,
-`score` or `unknown`, taken from the recorded answer's shape; `noul` has no `confidence`, `score`
-has the nearest legend `level`), and text prints a `completed ID  decision PROVIDER MODEL -> SERVED`
-line with one indented line per question; a legacy `decision(ctx, transport).choose` step shows one
-`choice` question named `answer`. Failed decision steps print on the generic step line. `-v`
-restores two-line commands with absolute argv and cwd, all recent agent rows and saved stacks. For
-embedding, `await readRun({ runId, cwd, stateDir })` returns the validated checkpoint alone;
+`decision` object (`op`, `provider` and `requestedModel` from the latest attempt, `servedModel`,
+`usage` as `{ attempts, inputTokens, outputTokens }`, null totals when any attempt reported no
+count, `reusedFrom` the source run id on a fork-reused step whose `usage` is zero, and `questions`
+as `{ name, kind, answer, level?, confidence? }` where `kind` is `noul`, `choice`, `score` or
+`unknown`, taken from the recorded answer's shape; `noul` has no `confidence`, `score` has the
+nearest legend `level`), and text prints a `completed ID  decision PROVIDER MODEL -> SERVED` line
+(`reused from RUN` replaces the attempts and tokens for a fork-reused step) with one indented line
+per question; a legacy `decision(ctx, transport).choose` step shows one `choice` question named
+`answer`. Failed decision steps print on the generic step line. `-v` restores two-line commands with
+absolute argv and cwd, all recent agent rows and saved stacks. For embedding,
+`await readRun({ runId, cwd, stateDir })` returns the validated checkpoint alone;
 `inspectRunOwnership({ runId, cwd, stateDir })` returns the separate current ownership view. Like
 `runWorkflow`, it resolves explicit options, then `QUIET_CHOIR_STATE_DIR`, an existing run's legacy
 location, and the external XDG project default. Relative state paths resolve against `cwd` (default:

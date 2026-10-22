@@ -38,15 +38,26 @@ export interface DecisionQuestionSummary {
 export interface DecisionStepSummary {
   /** `decide` for a `ctx.decide` step, `choose` for a legacy `decision/1` step. */
   readonly op: 'decide' | 'choose';
-  /** The provider's declared name, or null when the record does not name one. */
+  /**
+   * The provider's declared name, from the latest attempt's usage and else the step's `meta`; null
+   * when the record names none.
+   */
   readonly provider: string | null;
-  /** The model the call requested after defaults, or null when the host chose its own. */
+  /**
+   * The model the call requested after defaults, from the latest attempt's usage and else the
+   * step's `meta`; null when the host chose its own.
+   */
   readonly requestedModel: string | null;
   /** The model the provider reported answering, or null when it reported none. */
   readonly servedModel: string | null;
   /** One entry per answered question, in the key order of the recorded answers (sorted by name). */
   readonly questions: readonly DecisionQuestionSummary[];
-  /** Attempts and the tokens their reports add up to. */
+  /**
+   * The source run of a step a fork reused from it; absent for a step that ran here. Its provider,
+   * models and answers still show, but `usage` is zero because this run made no attempts.
+   */
+  readonly reusedFrom?: string;
+  /** Attempts and the tokens their reports add up to; zero for a fork-reused step. */
   readonly usage: {
     /** Attempts the step made, failed ones included. */
     readonly attempts: number;
@@ -134,34 +145,47 @@ export function summarizeDecisionStep(step: StepRecord): DecisionStepSummary | n
   const usages = history.map((attempt) => (plain(attempt) ? attempt.usage : undefined));
   const tokens = (field: 'inputTokens' | 'outputTokens'): number | null =>
     total(usages.map((usage) => (plain(usage) ? count(own(usage, field)) : null)));
-  const usage = {
-    attempts: typeof step.attempts === 'number' ? step.attempts : history.length,
-    inputTokens: tokens('inputTokens'),
-    outputTokens: tokens('outputTokens'),
-  };
+  const reused = step.reusedFrom;
+  // A fork-reused step made no attempts in this run, so the source run's tokens are not its usage.
+  const usage = reused
+    ? { attempts: 0, inputTokens: 0, outputTokens: 0 }
+    : {
+        attempts: typeof step.attempts === 'number' ? step.attempts : history.length,
+        inputTokens: tokens('inputTokens'),
+        outputTokens: tokens('outputTokens'),
+      };
+  const reuse = reused ? { reusedFrom: reused.runId } : {};
+  const last = usages.at(-1);
+  const lastUsage = plain(last) ? last : undefined;
+  const lastModel = lastUsage ? own(lastUsage, 'model') : undefined;
   if (op === 'decide') {
     const answers = plain(output) ? own(output, 'answers') : undefined;
     return {
       op,
-      provider: text(own(meta, 'provider')),
-      requestedModel: text(own(meta, 'model')),
+      // The latest attempt's usage is authoritative; `meta` is the fallback. A recorded `requested`
+      // of null means the provider default, so only a missing model object falls back.
+      provider:
+        (lastUsage ? text(own(lastUsage, 'provider')) : null) ?? text(own(meta, 'provider')),
+      requestedModel: plain(lastModel)
+        ? text(own(lastModel, 'requested'))
+        : text(own(meta, 'model')),
       servedModel: plain(output) ? text(own(output, 'model')) : null,
       questions: plain(answers)
         ? Object.keys(answers).map((name) => question(name, own(answers, name)))
         : [],
+      ...reuse,
       usage,
     };
   }
-  const last = usages.at(-1);
-  const model = plain(last) ? own(last, 'model') : undefined;
   const chosen = plain(output) ? own(output, 'answer') : undefined;
   return {
     op,
-    provider: plain(last) ? text(own(last, 'provider')) : null,
-    requestedModel: plain(model) ? text(own(model, 'requested')) : null,
+    provider: lastUsage ? text(own(lastUsage, 'provider')) : null,
+    requestedModel: plain(lastModel) ? text(own(lastModel, 'requested')) : null,
     servedModel: null,
     questions:
       typeof chosen === 'string' ? [{ name: 'answer', kind: 'choice', answer: chosen }] : [],
+    ...reuse,
     usage,
   };
 }

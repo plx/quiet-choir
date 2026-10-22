@@ -34,20 +34,25 @@ measurements; inspection leaves those fields unknown rather than reconstructing 
 
 A completed `ctx.decide` step ([ADR 0066](decisions/0066-decision-providers.md)) is listed in
 `steps` with a `decision` object, which is null on every other step. `decision` is
-`{ op, provider, requestedModel, servedModel, questions, usage }`: `op` is `decide` (or `choose` for
-a legacy `decision/1` step), `requestedModel` comes from the step's `meta.model` (null when the host
-chose), `servedModel` from the recorded output (null when the provider reported none), and `usage`
-is `{ attempts, inputTokens, outputTokens }`, where a token total is null when any attempt reported
-no count, so a partial sum never looks complete. `questions` has one entry per answer, in the
-record's key order (sorted by name), as `{ name, kind, answer, level?, confidence? }`. The record
-keeps no question definitions, so `kind` follows the answer's shape: `noul` (`answer` is the
-probability of yes, and no `confidence`), `choice` (`answer` is the option, with `confidence`),
-`score` (`answer` is the probability-weighted level index, `level` the legend entry at the nearest
-level, clamped to the legend, with `confidence`), or `unknown` (`answer` null) for a record of no
-recognized shape. A legacy `decision(ctx, transport).choose` step has one `choice` question named
-`answer` without a confidence, the provider and requested model from its last attempt's usage when
-it reported them, and no served model. The summary never throws on a malformed record. Text prints
-one line per decision step and one indented line per question:
+`{ op, provider, requestedModel, servedModel, questions, usage }`, plus `reusedFrom` on a
+fork-reused step: `op` is `decide` (or `choose` for a legacy `decision/1` step), `provider` and
+`requestedModel` come from the latest attempt's usage, falling back to the step's `meta` when that
+attempt recorded none (a recorded null `requestedModel` means the host chose, and does not fall
+back), `servedModel` from the recorded output (null when the provider reported none), and `usage` is
+`{ attempts, inputTokens, outputTokens }`, where a token total is null when any attempt reported no
+count, so a partial sum never looks complete. A step a fork reused from another run (`reusedFrom` is
+that run's id) made no attempts here: it keeps its provider, models and answers, but its `usage` is
+`{ attempts: 0, inputTokens: 0, outputTokens: 0 }` and text prints `reused from RUN` in place of the
+attempts and tokens. `questions` has one entry per answer, in the record's key order (sorted by
+name), as `{ name, kind, answer, level?, confidence? }`. The record keeps no question definitions,
+so `kind` follows the answer's shape: `noul` (`answer` is the probability of yes, and no
+`confidence`), `choice` (`answer` is the option, with `confidence`), `score` (`answer` is the
+probability-weighted level index, `level` the legend entry at the nearest level, clamped to the
+legend, with `confidence`), or `unknown` (`answer` null) for a record of no recognized shape. A
+legacy `decision(ctx, transport).choose` step has one `choice` question named `answer` without a
+confidence, the provider and requested model from its last attempt's usage when it reported them,
+and no served model. The summary never throws on a malformed record. Text prints one line per
+decision step and one indented line per question:
 
 ```text
 completed ask  decision jev jev-latest -> jev-1.2  1 attempts, 120 in / 15 out tokens  2s

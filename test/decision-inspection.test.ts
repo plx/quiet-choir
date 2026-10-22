@@ -191,6 +191,59 @@ describe('summarizeDecisionStep', () => {
     expect(partial?.usage).toMatchObject({ inputTokens: 14, outputTokens: null });
   });
 
+  it('reads provider and requested model from the latest attempt, not the original meta', () => {
+    const attempt = (provider: string, requested: string | null): Record<string, unknown> => ({
+      usage: { ...usage(1, 1), provider, model: { requested, effective: null } },
+    });
+    const summarize = (fields: Record<string, unknown>) => summarizeDecisionStep(record(fields));
+    const later = summarize({
+      meta: { integration: 'decision', op: 'decide', provider: 'p1', model: 'm1' },
+      attemptHistory: [attempt('p1', 'm1'), attempt('p2', 'm2')],
+    });
+    expect(later).toMatchObject({ provider: 'p2', requestedModel: 'm2' });
+    // A recorded null requested model is the provider default, not a reason to use meta.
+    const standard = summarize({
+      meta: { integration: 'decision', op: 'decide', provider: 'p1', model: 'm1' },
+      attemptHistory: [attempt('p2', null)],
+    });
+    expect(standard).toMatchObject({ provider: 'p2', requestedModel: null });
+    // Without attempt usage, or without its fields, meta still answers.
+    for (const attemptHistory of [[], [{ usage: usage(1, 1) }], [{}]])
+      expect(
+        summarize({
+          meta: { integration: 'decision', op: 'decide', provider: 'p1', model: 'm1' },
+          attemptHistory,
+        }),
+      ).toMatchObject({ provider: 'p1', requestedModel: 'm1' });
+  });
+
+  it('reports zero usage for a fork-reused step and names its source run', () => {
+    const reusedFrom = {
+      runId: 'source-run',
+      stateDir: '/tmp/source',
+      stepId: 'ask',
+      fingerprint: 'f',
+      at: '2026-01-01T00:00:00.000Z',
+    };
+    const reused = summarizeDecisionStep(
+      record({
+        reusedFrom,
+        attempts: 2,
+        attemptHistory: [{ usage: usage(10, 2) }, { usage: usage(5, 1) }],
+        output: { model: 'srv', answers: { q: { noul: 0.5 } } },
+      }),
+    );
+    expect(reused).toEqual({
+      op: 'decide',
+      provider: 'p',
+      requestedModel: 'req',
+      servedModel: 'srv',
+      questions: [{ name: 'q', kind: 'noul', answer: 0.5 }],
+      reusedFrom: 'source-run',
+      usage: { attempts: 0, inputTokens: 0, outputTokens: 0 },
+    } satisfies DecisionStepSummary);
+  });
+
   it('summarizes a legacy choose step from its answer and last attempt usage', () => {
     const summary = summarizeDecisionStep(
       record({
@@ -331,6 +384,32 @@ describe('a ctx.decide run', () => {
         '  team choice a confidence 0.80',
       ].join('\n'),
     );
+  });
+
+  it('prints a fork-reused decision step as reused instead of its attempts and tokens', async () => {
+    await runWorkflow(
+      workflow((ctx) => ctx.decide('ask', { state: 'ticket text', questions })),
+      { runId: 'decide-source', stateDir, input: null },
+    );
+    const { summary } = await inspectRun({ stateDir, runId: 'decide-source' });
+    const decision = stepSummary(summary, 'ask').decision;
+    if (decision === null) throw new Error('Expected a decision summary.');
+    const text = formatRunSummary({
+      ...summary,
+      steps: summary.steps.map((step) => ({
+        ...step,
+        elapsedMs: null,
+        decision: {
+          ...decision,
+          reusedFrom: 'decide-source',
+          usage: { attempts: 0, inputTokens: 0, outputTokens: 0 },
+        },
+      })),
+    });
+    expect(text).toContain(
+      'completed ask  decision stub stub-latest -> stub-1.2  reused from decide-source',
+    );
+    expect(text).not.toContain('decision stub stub-latest -> stub-1.2  1 attempts');
   });
 
   it('prints the defaults for an absent requested model, served model and tokens', async () => {

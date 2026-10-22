@@ -8,10 +8,11 @@
   `ctx.decide` step (and a legacy `decision(ctx, transport).choose` step): `steps[]` gains
   `decision`, `{ op, provider, requestedModel, servedModel, questions, usage }` (null on every other
   step), with each question's kind, headline answer, `level` for a score and `confidence` where the
-  kind has one (never for `noul`); a token total is null when any attempt reported no count. Text
-  prints one line per decision step and one indented line per question. Completed decision steps are
-  listed without a cap, like completed commands. The `step.completed` event line of a decision step
-  carries the summary as `msg`
+  kind has one (never for `noul`); a token total is null when any attempt reported no count. The
+  provider and requested model come from the latest attempt; a fork-reused step reports zero usage
+  and its source run as `reusedFrom`. Text prints one line per decision step and one indented line
+  per question. Completed decision steps are listed without a cap, like completed commands. The
+  `step.completed` event line of a decision step carries the summary as `msg`
   (`decision PROVIDER MODEL->SERVED IN/OUT tok N att: NAME=HEADLINE, ...`), within the existing
   200-byte `msg` and 512-byte line limits, and `workflow events` derives the same text from the
   record. `WorkflowEvent` gains the optional `decision` field on `step.completed`, and the new
