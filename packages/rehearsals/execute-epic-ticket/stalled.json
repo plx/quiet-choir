@@ -1,0 +1,22 @@
+{
+  "input": {
+    "epic": 7,
+    "repo": "acme/widgets"
+  },
+  "expect": {
+    "status": "stalled",
+    "ticket": null,
+    "blocked": null,
+    "remaining": {
+      "total": 3,
+      "open": 2,
+      "closed": 1,
+      "ready": 0,
+      "inFlight": 0,
+      "waiting": 1,
+      "held": 1,
+      "split": 0
+    },
+    "headline": "Nothing in #7 is ready: #9 waiting on #10; #10 held."
+  }
+}

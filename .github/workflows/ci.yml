@@ -99,8 +99,8 @@ jobs:
   packages:
     name: Package rehearsals
     runs-on: ubuntu-latest
-    # measured: validate plus the four merge-down rehearsals took 8 s locally (macOS, Node 26.10);
-    # install and build dominate the job.
+    # measured: validating both packages plus their 16 rehearsals (10 merge-down, 6
+    # execute-epic-ticket) took 24 s locally (macOS, Node 26.10); install and build dominate the job.
     timeout-minutes: 10
 
     steps:

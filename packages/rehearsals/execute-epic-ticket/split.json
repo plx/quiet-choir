@@ -1,0 +1,29 @@
+{
+  "input": {
+    "epic": 7,
+    "repo": "acme/widgets"
+  },
+  "expect": {
+    "status": "split",
+    "ticket": {
+      "number": 9,
+      "title": "Widget plugins",
+      "status": "ready"
+    },
+    "plan": {
+      "readiness": "split"
+    },
+    "slices": [
+      {
+        "number": 21,
+        "title": "Add the widget plugin registry"
+      },
+      {
+        "number": 22,
+        "title": "Load widget plugins from the config file"
+      }
+    ],
+    "blocked": null,
+    "headline": "Split #9 \"Widget plugins\" into #21, #22; the next run takes #21."
+  }
+}

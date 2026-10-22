@@ -1,0 +1,579 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "step": "ticket/9/plan/first",
+      "output": {
+        "readiness": "split",
+        "rationale": "The registry and the config loader are independent reviews; the loader needs the registry.",
+        "issueComment": "This ticket is too large for one PR, so it is split into two slices.",
+        "obsoleteKind": "n/a",
+        "decision": {
+          "question": "",
+          "options": [],
+          "recommendation": ""
+        },
+        "blockedBy": [],
+        "slices": [
+          {
+            "title": "Add the widget plugin registry",
+            "summary": "A registry plugins add themselves to.",
+            "acceptance": ["Plugins register by name."],
+            "dependsOnPrevious": false
+          },
+          {
+            "title": "Load widget plugins from the config file",
+            "summary": "Read plugin names from widgets.json.",
+            "acceptance": ["Configured plugins load at start."],
+            "dependsOnPrevious": true
+          }
+        ],
+        "plan": {
+          "title": "",
+          "approach": "",
+          "steps": [],
+          "acceptance": [],
+          "tests": [],
+          "docs": [],
+          "risks": [],
+          "outOfScope": [],
+          "complexity": "mechanical",
+          "size": "small"
+        }
+      }
+    },
+    {
+      "step": "ticket/9/slices",
+      "output": {
+        "issues": [
+          {
+            "key": "slice-1",
+            "duplicateOf": 0,
+            "title": "Add the widget plugin registry",
+            "label": "enhancement",
+            "body": "## Summary\n\nA registry.\n\n_Part of #7. Split from #9._"
+          },
+          {
+            "key": "slice-2",
+            "duplicateOf": 0,
+            "title": "Load widget plugins from the config file",
+            "label": "enhancement",
+            "body": "## Summary\n\nA loader.\n\n_Part of #7. Split from #9._"
+          }
+        ]
+      }
+    }
+  ],
+  "exec": [
+    {
+      "step": "repo-info",
+      "json": {
+        "data": {
+          "viewer": {
+            "login": "epic-bot"
+          },
+          "repository": {
+            "nameWithOwner": "acme/widgets",
+            "isPrivate": false,
+            "viewerPermission": "ADMIN",
+            "defaultBranchRef": {
+              "name": "main"
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "survey/epic/7",
+      "json": {
+        "data": {
+          "viewer": {
+            "login": "epic-bot"
+          },
+          "repository": {
+            "issue": {
+              "number": 7,
+              "title": "Epic: widgets",
+              "state": "OPEN",
+              "url": "https://github.com/acme/widgets/issues/7",
+              "body": "## Items\n\n- [x] #8 First widget\n- [ ] #9 Widget plugins\n- [ ] #10 Widget docs\n",
+              "subIssuesSummary": {
+                "total": 3,
+                "completed": 1
+              },
+              "subIssues": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "number": 8,
+                    "title": "First widget",
+                    "state": "CLOSED",
+                    "stateReason": "COMPLETED",
+                    "url": "https://github.com/acme/widgets/issues/8",
+                    "body": "",
+                    "repository": {
+                      "nameWithOwner": "acme/widgets"
+                    },
+                    "labels": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "assignees": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "blockedBy": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "closedByPullRequestsReferences": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "comments": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    }
+                  },
+                  {
+                    "number": 9,
+                    "title": "Widget plugins",
+                    "state": "OPEN",
+                    "stateReason": null,
+                    "url": "https://github.com/acme/widgets/issues/9",
+                    "body": "",
+                    "repository": {
+                      "nameWithOwner": "acme/widgets"
+                    },
+                    "labels": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "assignees": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "blockedBy": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "closedByPullRequestsReferences": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "comments": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    }
+                  },
+                  {
+                    "number": 10,
+                    "title": "Widget docs",
+                    "state": "OPEN",
+                    "stateReason": null,
+                    "url": "https://github.com/acme/widgets/issues/10",
+                    "body": "",
+                    "repository": {
+                      "nameWithOwner": "acme/widgets"
+                    },
+                    "labels": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "assignees": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "blockedBy": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "closedByPullRequestsReferences": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "comments": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    }
+                  }
+                ]
+              }
+            },
+            "pullRequests": {
+              "pageInfo": {
+                "hasNextPage": false
+              },
+              "nodes": []
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "ticket/9/issue",
+      "json": [
+        {
+          "data": {
+            "repository": {
+              "issue": {
+                "number": 9,
+                "title": "Widget plugins",
+                "state": "OPEN",
+                "body": "Widgets need plugins.",
+                "url": "https://github.com/acme/widgets/issues/9",
+                "author": {
+                  "login": "octo-human",
+                  "__typename": "User"
+                },
+                "labels": {
+                  "pageInfo": {
+                    "hasNextPage": false
+                  },
+                  "nodes": []
+                },
+                "comments": {
+                  "pageInfo": {
+                    "hasNextPage": false,
+                    "endCursor": null
+                  },
+                  "nodes": []
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "survey/epic-body/7",
+      "json": {
+        "data": {
+          "repository": {
+            "issue": {
+              "number": 7,
+              "title": "Epic: widgets",
+              "state": "OPEN",
+              "body": "## Items\n\n- [x] #8 First widget\n- [ ] #9 Widget plugins\n- [ ] #10 Widget docs\n",
+              "url": "https://github.com/acme/widgets/issues/7",
+              "author": {
+                "login": "octo-human",
+                "__typename": "User"
+              },
+              "labels": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": ["git", "fetch", "--quiet", "origin", "main"],
+      "stdout": ""
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": ["git", "worktree", "add", "--detach"],
+      "stdout": ""
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": [
+        "git",
+        "fetch",
+        "--quiet",
+        "origin",
+        "+refs/heads/epic-7/*:refs/remotes/origin/epic-7/*"
+      ],
+      "stdout": ""
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": ["git", "rev-parse", "--path-format=absolute", "--git-path"],
+      "stdout": "/nonexistent/git-state\n"
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": ["git", "for-each-ref", "--format=%(refname)", "refs/heads/epic-7/"],
+      "stdout": ""
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": ["git", "for-each-ref", "--format=%(refname)", "refs/remotes/origin/epic-7/"],
+      "stdout": ""
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": ["git", "symbolic-ref", "--quiet", "HEAD"],
+      "stdout": "",
+      "code": 1
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": ["git", "status", "--porcelain"],
+      "stdout": ""
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": ["git", "log", "--format=%h %s", "HEAD", "--not", "--branches", "--remotes"],
+      "stdout": ""
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": ["git", "worktree", "list", "--porcelain"],
+      "stdout": "worktree /src/widgets\nHEAD a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0\nbranch refs/heads/main\n"
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": [
+        "git",
+        "checkout",
+        "--quiet",
+        "--no-track",
+        "-B",
+        "epic-7/9-widget-plugins",
+        "origin/main"
+      ],
+      "stdout": ""
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": [
+        "git",
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        "refs/remotes/origin/epic-7/9-widget-plugins"
+      ],
+      "stdout": "",
+      "code": 1
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": ["git", "rev-list", "--count"],
+      "stdout": "0\n"
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": ["git", "rev-parse", "origin/main"],
+      "stdout": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0\n"
+    },
+    {
+      "step": "ticket/9/slice/1/find",
+      "json": []
+    },
+    {
+      "step": "ticket/9/slice/1/file",
+      "argvPrefix": ["gh", "api", "graphql"],
+      "call": 1,
+      "json": {
+        "data": {
+          "repository": {
+            "wanted": {
+              "id": "I_7",
+              "number": 7
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "ticket/9/slice/1/file",
+      "argvPrefix": ["gh", "api", "graphql"],
+      "call": 2,
+      "json": {
+        "data": {
+          "viewer": {
+            "login": "epic-bot"
+          },
+          "repository": {
+            "nameWithOwner": "acme/widgets",
+            "isPrivate": false,
+            "viewerPermission": "ADMIN",
+            "defaultBranchRef": {
+              "name": "main"
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "ticket/9/slice/1/file",
+      "argvPrefix": ["gh", "api", "graphql"],
+      "call": 3,
+      "json": {
+        "data": {
+          "addSubIssue": {
+            "issue": {
+              "number": 7
+            },
+            "subIssue": {
+              "number": 21
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "ticket/9/slice/1/file",
+      "argvPrefix": [
+        "gh",
+        "api",
+        "repos/acme/widgets/issues?creator=epic-bot&state=all&sort=created&direction=desc&per_page=100&page=1"
+      ],
+      "json": []
+    },
+    {
+      "step": "ticket/9/slice/1/file",
+      "argvPrefix": ["gh", "api", "-X", "POST", "repos/acme/widgets/issues"],
+      "json": {
+        "number": 21,
+        "html_url": "https://github.com/acme/widgets/issues/21",
+        "node_id": "I_21"
+      }
+    },
+    {
+      "step": "ticket/9/slice/2/find",
+      "json": []
+    },
+    {
+      "step": "ticket/9/slice/2/file",
+      "argvPrefix": ["gh", "api", "graphql"],
+      "call": 1,
+      "json": {
+        "data": {
+          "repository": {
+            "wanted": {
+              "id": "I_7",
+              "number": 7
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "ticket/9/slice/2/file",
+      "argvPrefix": ["gh", "api", "graphql"],
+      "call": 2,
+      "json": {
+        "data": {
+          "viewer": {
+            "login": "epic-bot"
+          },
+          "repository": {
+            "nameWithOwner": "acme/widgets",
+            "isPrivate": false,
+            "viewerPermission": "ADMIN",
+            "defaultBranchRef": {
+              "name": "main"
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "ticket/9/slice/2/file",
+      "argvPrefix": ["gh", "api", "graphql"],
+      "call": 3,
+      "json": {
+        "data": {
+          "addSubIssue": {
+            "issue": {
+              "number": 7
+            },
+            "subIssue": {
+              "number": 22
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "ticket/9/slice/2/file",
+      "argvPrefix": [
+        "gh",
+        "api",
+        "repos/acme/widgets/issues?creator=epic-bot&state=all&sort=created&direction=desc&per_page=100&page=1"
+      ],
+      "json": []
+    },
+    {
+      "step": "ticket/9/slice/2/file",
+      "argvPrefix": ["gh", "api", "-X", "POST", "repos/acme/widgets/issues"],
+      "json": {
+        "number": 22,
+        "html_url": "https://github.com/acme/widgets/issues/22",
+        "node_id": "I_22"
+      }
+    },
+    {
+      "step": "ticket/9/checklist",
+      "argvPrefix": ["gh", "api", "repos/acme/widgets/issues/7", "--jq"],
+      "json": {
+        "body": "## Items\n\n- [x] #8 First widget\n- [ ] #9 Widget plugins\n- [ ] #10 Widget docs\n"
+      }
+    },
+    {
+      "step": "ticket/9/checklist",
+      "argvPrefix": ["gh", "api", "-X", "PATCH", "repos/acme/widgets/issues/7"],
+      "stdout": ""
+    },
+    {
+      "step": "ticket/9/split-marker",
+      "argvPrefix": [
+        "gh",
+        "api",
+        "--paginate",
+        "repos/acme/widgets/issues/9/comments?per_page=100"
+      ],
+      "json": []
+    },
+    {
+      "step": "ticket/9/split-marker",
+      "argvPrefix": ["gh", "api", "-X", "POST", "repos/acme/widgets/issues/9/comments"],
+      "json": {
+        "id": 903,
+        "html_url": "https://github.com/acme/widgets/issues/9#issuecomment-903"
+      }
+    }
+  ],
+  "unmatched": "error",
+  "commands": "fixture"
+}
