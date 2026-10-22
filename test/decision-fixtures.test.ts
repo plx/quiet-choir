@@ -383,6 +383,7 @@ describe('parseHarnessFixtures decisions', () => {
     ['kind without error', { ask: { answers: {}, kind: 'schema' } }],
     ['an empty error', { ask: { error: '' } }],
     ['an unknown kind', { ask: { error: 'x', kind: 'nope' } }],
+    ['the reserved kind configuration', { ask: { error: 'x', kind: 'configuration' } }],
     ['an unknown field', { ask: { answers: {}, extra: true } }],
     ['an unknown usage field', { ask: { answers: {}, usage: { costUsd: 1 } } }],
     ['negative tokens', { ask: { answers: {}, usage: { inputTokens: -1 } } }],

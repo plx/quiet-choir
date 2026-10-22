@@ -324,7 +324,8 @@ and the attempt's usage is reported under the provider and that model, as a live
 `error` entry fails every attempt with a `DecisionError` of that `kind` (default `unknown`) and the
 message `Decision provider <name>: <error>`, so `retry.on`, `onError: 'return'` and a `try/catch` on
 `error.kind` behave as they do for a live failure; each failed attempt counts in usage with unknown
-tokens.
+tokens. The `kind` `configuration` is refused when the file is read: configuration failures are
+fatal and never settled or retried, so an attempt-recorded failure can never be one.
 
 Under `--harness fixture`, a decision without an entry fails the run with a configuration error
 naming the step, provider and attempt. It is never retried or settled, even under

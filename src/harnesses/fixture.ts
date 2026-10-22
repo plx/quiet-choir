@@ -130,7 +130,8 @@ export type FixtureDecision =
       readonly error: string;
       /**
        * Failure category, so `retry.on` and branches on `error.kind` can be rehearsed; without it
-       * the failure is `unknown`.
+       * the failure is `unknown`. `configuration` is refused: configuration failures are fatal and
+       * never settled or retried, so an attempt-recorded failure can never be one.
        */
       readonly kind?: ErrorKind;
     };
@@ -186,13 +187,16 @@ function recordWithoutProto<T extends z.ZodType>(schema: T) {
 }
 
 const tokenCount = z.number().nonnegative().nullable().optional();
+// An attempt-recorded decision failure is never `configuration` (those are fatal, never settled or
+// retried), so an entry cannot claim it.
+const decisionErrorKind = errorKindSchema.exclude(['configuration']);
 const decisionEntry = z.union([
   z.strictObject({
     answers: recordWithoutProto(z.record(z.string(), z.json())),
     model: z.string().min(1).nullable().optional(),
     usage: z.strictObject({ inputTokens: tokenCount, outputTokens: tokenCount }).optional(),
   }),
-  z.strictObject({ error: z.string().min(1), kind: errorKindSchema.optional() }),
+  z.strictObject({ error: z.string().min(1), kind: decisionErrorKind.optional() }),
 ]);
 
 const rule = z
