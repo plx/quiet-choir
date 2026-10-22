@@ -472,7 +472,14 @@ export default defineWorkflow({
             'close',
             'the PR is still open 90 s after the closing comment; close it by hand',
           );
-        return finish('closed');
+        if (closed.status === 'closed') return finish('closed');
+        // Merged meanwhile (head-moved is a merge at another head while waiting for closure).
+        record.mergeCommit = closed.mergeCommit;
+        const at = `${String(closed.headRefOid)}${closed.mergeCommit ? `, merge commit ${closed.mergeCommit}` : ''}`;
+        return blocked(
+          'close',
+          `the PR was merged (at ${at}) instead of closed after the closing comment`,
+        );
       }
       const fixes: WorkItem[] = review.fixes.map((f) => ({
         key: `fix:${f.id}`,

@@ -155,7 +155,8 @@ invalid input fails before the run starts.
   the comment and the workflow posts it.
 - **Dependency PRs** are recognized by a `dependabot/` head branch, because `pr.view` returns no
   author. A Dependabot PR that does not close itself within 90 s of its closing comment is `blocked`
-  at `close` (there is no `pr.close` write).
+  at `close` (there is no `pr.close` write), as is one merged instead of closed meanwhile (its merge
+  commit in `mergeCommit`).
 - **The follow-up epic** gets sub-issues but no checklist line (there is no `issue.edit` write).
 - **Closing links** are confirmed by a bounded poll; the native script's re-save of the body after a
   retarget is not repeated. A missing link is a note, and land closes the issue explicitly.
