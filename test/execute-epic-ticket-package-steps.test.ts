@@ -1,0 +1,474 @@
+// The durable steps of the execute-epic-ticket package (packages/execute-epic-ticket.quiet-choir/lib,
+// #590) run for real against a scratch Git repository with an origin remote, and against a fake
+// `gh` on PATH for the GitHub mechanics.
+import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { delimiter, join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  defineWorkflow,
+  NodeProcessRunner,
+  runWorkflow,
+  z,
+  type WorkflowContext,
+} from '../src/index.js';
+
+// The package imports `quiet-choir`, which resolves to dist/, and npm run check typechecks and
+// tests before it builds. So the import maps to src/ here, and the modules load by a computed
+// specifier the root typecheck does not follow; the package's own typecheck covers them.
+vi.mock('quiet-choir', () => import('../src/index.js'));
+vi.mock('quiet-choir/github', () => import('../src/integrations/github.js'));
+const lib = async <T>(name: string): Promise<T> => {
+  const url = new URL(
+    `../packages/execute-epic-ticket.quiet-choir/lib/${name}.ts`,
+    import.meta.url,
+  );
+  return (await import(url.href)) as T;
+};
+
+interface Paths {
+  root: string;
+  workdir: string;
+  stateDir: string;
+  epicDir: string;
+}
+interface Started {
+  refused: string | null;
+  branch: string;
+  source: 'local' | 'remote' | 'new';
+  resumed: boolean;
+  ahead: number;
+  behind: number;
+  dirty: string[];
+  rebase: string;
+  baseSha: string;
+  remoteSha: string | null;
+}
+type Settled<T> = { ok: true; value: T } | { ok: false; error: { message: string } };
+const { start, verify, publish } = await lib<{
+  start: (
+    ctx: WorkflowContext,
+    id: string,
+    input: {
+      paths: Paths;
+      dir: string;
+      base: string;
+      epic: number;
+      ticket: number;
+      title: string;
+    },
+  ) => Promise<Started>;
+  verify: (
+    ctx: WorkflowContext,
+    id: string,
+    input: { workdir: string; base: string; commits: readonly string[] },
+  ) => Promise<
+    Settled<{
+      head: string;
+      branch: string | null;
+      ahead: number;
+      missingCommits: string[];
+      dirty: string[];
+    }>
+  >;
+  publish: (
+    ctx: WorkflowContext,
+    id: string,
+    input: { workdir: string; branch: string; sha: string; lease: string | null },
+  ) => Promise<Settled<{ head: string; pushed: boolean }>>;
+}>('git');
+const { runCheck } = await lib<{
+  runCheck: (
+    ctx: WorkflowContext,
+    id: string,
+    input: { workdir: string; branch: string; dir: string; label: string; command: string },
+  ) => Promise<{
+    passed: boolean;
+    head: string | null;
+    failedStep: string | null;
+    error: string | null;
+  }>;
+}>('checks');
+const { tick, insertChecklist, removeLabel, appendLedger } = await lib<{
+  tick: (
+    ctx: WorkflowContext,
+    id: string,
+    input: { repo: string; epic: number; ticket: number },
+  ) => Promise<{ changed: boolean }>;
+  insertChecklist: (
+    ctx: WorkflowContext,
+    id: string,
+    input: {
+      repo: string;
+      epic: number;
+      parent: number;
+      entries: readonly { number: number; title: string }[];
+    },
+  ) => Promise<{ changed: boolean }>;
+  removeLabel: (
+    ctx: WorkflowContext,
+    id: string,
+    input: { repo: string; number: number; label: string },
+  ) => Promise<{ changed: boolean }>;
+  appendLedger: (
+    ctx: WorkflowContext,
+    id: string,
+    input: { file: string; line: string },
+  ) => Promise<{ appended: boolean; lines: number }>;
+}>('github');
+
+let real: string;
+let runs = 0;
+beforeEach(async () => {
+  real = await realpath(await mkdtemp(join(tmpdir(), 'choir-epic-ticket-steps-')));
+});
+afterEach(async () => {
+  vi.unstubAllEnvs();
+  await rm(real, { recursive: true, force: true });
+});
+
+/** Run `body` as a one-off workflow with its cwd in `cwd` and return its output. */
+async function inWorkflow<T>(cwd: string, body: (ctx: WorkflowContext) => Promise<T>): Promise<T> {
+  const run = await runWorkflow(
+    defineWorkflow({
+      name: 'epic-ticket-steps',
+      version: '1',
+      input: z.null(),
+      output: z.unknown(),
+      run: body,
+    }),
+    {
+      cwd,
+      stateDir: join(real, 'runs'),
+      runId: `test-${String(++runs)}`,
+      input: null,
+      processRunner: new NodeProcessRunner(),
+    },
+  );
+  return run.output as T;
+}
+
+const sh = (cwd: string, ...args: string[]): string =>
+  execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], {
+    cwd,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
+
+/** A bare origin with one commit on main, and a clone of it (the main checkout). */
+async function origin(): Promise<{ remote: string; checkout: string }> {
+  const remote = join(real, 'origin.git');
+  const checkout = join(real, 'checkout');
+  await mkdir(checkout);
+  sh(real, 'init', '-q', '--bare', '-b', 'main', remote);
+  sh(checkout, 'init', '-q', '-b', 'main');
+  await writeFile(join(checkout, 'README.md'), 'hello\n');
+  sh(checkout, 'add', '.');
+  sh(checkout, 'commit', '-q', '-m', 'init');
+  sh(checkout, 'remote', 'add', 'origin', remote);
+  sh(checkout, 'push', '-q', 'origin', 'main');
+  return { remote, checkout };
+}
+
+/** Commit `content` to `file` in `cwd`; returns the new HEAD. */
+async function commit(
+  cwd: string,
+  file: string,
+  content: string,
+  message: string,
+): Promise<string> {
+  await writeFile(join(cwd, file), content);
+  sh(cwd, 'add', file);
+  sh(cwd, 'commit', '-q', '-m', message);
+  return sh(cwd, 'rev-parse', 'HEAD');
+}
+
+/** Advance origin/main from a second clone. */
+async function advanceMain(remote: string, file: string, content: string): Promise<void> {
+  const other = join(real, `other-${String(++runs)}`);
+  sh(real, 'clone', '-q', remote, other);
+  await commit(other, file, content, `upstream ${file}`);
+  sh(other, 'push', '-q', 'origin', 'main');
+}
+
+const pathsAt = (root: string): Paths => ({
+  root,
+  workdir: join(root, 'worktree'),
+  stateDir: join(root, 'state'),
+  epicDir: join(root, 'state', 'epic-7'),
+});
+const startInput = (paths: Paths) => ({
+  paths,
+  dir: join(paths.epicDir, 'issue-9'),
+  base: 'main',
+  epic: 7,
+  ticket: 9,
+  title: 'Add a widget',
+});
+const BRANCH = 'epic-7/9-add-a-widget';
+
+describe('start', () => {
+  it('creates epic-E/N-slug from origin/main in a new worktree, then reuses it', async () => {
+    const { checkout } = await origin();
+    const paths = pathsAt(join(real, 'root'));
+    const first = await inWorkflow(checkout, (ctx) => start(ctx, 'start', startInput(paths)));
+    expect(first).toMatchObject({
+      refused: null,
+      branch: BRANCH,
+      source: 'new',
+      resumed: false,
+      ahead: 0,
+      rebase: 'up-to-date',
+      remoteSha: null,
+      baseSha: sh(checkout, 'rev-parse', 'HEAD'),
+    });
+    expect(sh(paths.workdir, 'symbolic-ref', '--short', 'HEAD')).toBe(BRANCH);
+    await commit(paths.workdir, 'widget.ts', 'export {};\n', 'Add the widget');
+    const again = await inWorkflow(checkout, (ctx) => start(ctx, 'start', startInput(paths)));
+    expect(again).toMatchObject({ refused: null, branch: BRANCH, source: 'local', ahead: 1 });
+  });
+
+  it('adopts a remote ticket branch another run pushed, recording its head for the lease', async () => {
+    const { checkout } = await origin();
+    sh(checkout, 'checkout', '-q', '-b', 'epic-7/9-an-older-title');
+    const pushed = await commit(checkout, 'widget.ts', 'export {};\n', 'Add the widget');
+    sh(checkout, 'push', '-q', 'origin', 'epic-7/9-an-older-title');
+    sh(checkout, 'checkout', '-q', 'main');
+    sh(checkout, 'branch', '-q', '-D', 'epic-7/9-an-older-title');
+    const paths = pathsAt(join(real, 'root'));
+    const started = await inWorkflow(checkout, (ctx) => start(ctx, 'start', startInput(paths)));
+    expect(started).toMatchObject({
+      refused: null,
+      branch: 'epic-7/9-an-older-title',
+      source: 'remote',
+      resumed: true,
+      ahead: 1,
+      remoteSha: pushed,
+    });
+  });
+
+  it('rebases a reused branch onto a moved origin/main', async () => {
+    const { remote, checkout } = await origin();
+    const paths = pathsAt(join(real, 'root'));
+    await inWorkflow(checkout, (ctx) => start(ctx, 'start', startInput(paths)));
+    await commit(paths.workdir, 'widget.ts', 'export {};\n', 'Add the widget');
+    await advanceMain(remote, 'other.txt', 'upstream\n');
+    const started = await inWorkflow(checkout, (ctx) => start(ctx, 'start', startInput(paths)));
+    expect(started).toMatchObject({ rebase: 'rebased', ahead: 1, behind: 0, source: 'local' });
+    expect(existsSync(join(paths.workdir, 'other.txt'))).toBe(true);
+  });
+
+  it('reports a conflicting rebase without leaving it in progress', async () => {
+    const { remote, checkout } = await origin();
+    const paths = pathsAt(join(real, 'root'));
+    await inWorkflow(checkout, (ctx) => start(ctx, 'start', startInput(paths)));
+    const own = await commit(paths.workdir, 'README.md', 'ours\n', 'Edit the readme');
+    await advanceMain(remote, 'README.md', 'theirs\n');
+    const started = await inWorkflow(checkout, (ctx) => start(ctx, 'start', startInput(paths)));
+    expect(started).toMatchObject({ rebase: 'conflict', refused: null });
+    expect(sh(paths.workdir, 'rev-parse', 'HEAD')).toBe(own);
+    expect(sh(paths.workdir, 'status', '--porcelain')).toBe('');
+    const gitDir = sh(paths.workdir, 'rev-parse', '--path-format=absolute', '--git-dir');
+    expect(existsSync(join(gitDir, 'rebase-merge'))).toBe(false);
+  });
+
+  it('refuses a dirty worktree on another branch', async () => {
+    const { checkout } = await origin();
+    const paths = pathsAt(join(real, 'root'));
+    await inWorkflow(checkout, (ctx) => start(ctx, 'start', startInput(paths)));
+    sh(paths.workdir, 'checkout', '-q', '-b', 'epic-7/8-other-ticket');
+    await writeFile(join(paths.workdir, 'README.md'), 'unfinished\n');
+    const started = await inWorkflow(checkout, (ctx) => start(ctx, 'start', startInput(paths)));
+    expect(started.refused).toContain('has uncommitted changes on epic-7/8-other-ticket');
+    expect(sh(paths.workdir, 'symbolic-ref', '--short', 'HEAD')).toBe('epic-7/8-other-ticket');
+  });
+
+  it('refuses a ticket branch that another worktree has checked out', async () => {
+    const { checkout } = await origin();
+    sh(checkout, 'branch', '-q', BRANCH);
+    const native = join(real, 'native-worktree');
+    sh(checkout, 'worktree', 'add', '-q', native, BRANCH);
+    const paths = pathsAt(join(real, 'root'));
+    const started = await inWorkflow(checkout, (ctx) => start(ctx, 'start', startInput(paths)));
+    expect(started.refused).toContain(`branch ${BRANCH} is checked out in another worktree`);
+    expect(started.refused).toContain(native);
+  });
+});
+
+describe('verify, runCheck and publish', () => {
+  async function ticket(): Promise<{ checkout: string; paths: Paths; head: string }> {
+    const { checkout } = await origin();
+    const paths = pathsAt(join(real, 'root'));
+    await inWorkflow(checkout, (ctx) => start(ctx, 'start', startInput(paths)));
+    const head = await commit(paths.workdir, 'widget.ts', 'export {};\n', 'Add the widget');
+    return { checkout, paths, head };
+  }
+
+  it('verify reports missing commits, a dirty tree and a branch with nothing of its own', async () => {
+    const { checkout, paths, head } = await ticket();
+    const short = head.slice(0, 7);
+    const clean = await inWorkflow(checkout, (ctx) =>
+      verify(ctx, 'verify', { workdir: paths.workdir, base: 'main', commits: [short, 'deadbee'] }),
+    );
+    expect(clean).toMatchObject({
+      ok: true,
+      value: { head, branch: BRANCH, ahead: 1, missingCommits: ['deadbee'], dirty: [] },
+    });
+    await writeFile(join(paths.workdir, 'stray.txt'), 'x\n');
+    const dirty = await inWorkflow(checkout, (ctx) =>
+      verify(ctx, 'verify', { workdir: paths.workdir, base: 'main', commits: [] }),
+    );
+    expect(dirty).toMatchObject({ ok: true, value: { dirty: ['?? stray.txt'] } });
+    await rm(join(paths.workdir, 'stray.txt'));
+    sh(paths.workdir, 'reset', '-q', '--hard', 'origin/main');
+    const empty = await inWorkflow(checkout, (ctx) =>
+      verify(ctx, 'verify', { workdir: paths.workdir, base: 'main', commits: [short] }),
+    );
+    expect(empty).toMatchObject({ ok: true, value: { ahead: 0, missingCommits: [short] } });
+  });
+
+  it('runCheck passes, fails, and refuses a dirty tree or another branch', async () => {
+    const { checkout, paths, head } = await ticket();
+    const check = (command: string) =>
+      inWorkflow(checkout, (ctx) =>
+        runCheck(ctx, 'check', {
+          workdir: paths.workdir,
+          branch: BRANCH,
+          dir: join(paths.epicDir, 'issue-9'),
+          label: 'impl-1',
+          command,
+        }),
+      );
+    expect(await check('echo ok')).toMatchObject({ passed: true, head, failedStep: null });
+    expect(await check('echo boom; false')).toMatchObject({ passed: false, head, error: null });
+    await writeFile(join(paths.workdir, 'stray.txt'), 'x\n');
+    expect(await check('echo ok')).toMatchObject({ passed: false, failedStep: 'dirty worktree' });
+    await rm(join(paths.workdir, 'stray.txt'));
+    sh(paths.workdir, 'checkout', '-q', '-b', 'epic-7/8-other-ticket');
+    expect(await check('echo ok')).toMatchObject({
+      passed: false,
+      failedStep: 'foreign worktree',
+      error: `the worktree is on epic-7/8-other-ticket, not ${BRANCH}`,
+    });
+  });
+
+  it('publish pushes only the checked head, and skips a push that already happened', async () => {
+    const { checkout, paths, head } = await ticket();
+    const push = (sha: string) =>
+      inWorkflow(checkout, (ctx) =>
+        publish(ctx, 'push', { workdir: paths.workdir, branch: BRANCH, sha, lease: null }),
+      );
+    const stale = await push(sh(checkout, 'rev-parse', 'origin/main'));
+    expect(stale).toMatchObject({ ok: false });
+    expect(stale.ok ? '' : stale.error.message).toContain(
+      'is not the head the check suite passed at',
+    );
+    expect(await push(head)).toEqual({ ok: true, value: { head, pushed: true } });
+    expect(sh(checkout, 'ls-remote', 'origin', `refs/heads/${BRANCH}`).split(/\s+/)[0]).toBe(head);
+    expect(await push(head)).toEqual({ ok: true, value: { head, pushed: false } });
+    await writeFile(join(paths.workdir, 'stray.txt'), 'x\n');
+    const dirty = await push(head);
+    expect(dirty.ok ? '' : dirty.error.message).toContain('uncommitted changes');
+  });
+});
+
+describe('appendLedger', () => {
+  it('appends a line once, however often the step runs', async () => {
+    const file = join(real, 'state', 'epic-7', 'ledger.jsonl');
+    const line = JSON.stringify({ ticket: 9, pr: 42 });
+    expect(await inWorkflow(real, (ctx) => appendLedger(ctx, 'ledger', { file, line }))).toEqual({
+      appended: true,
+      lines: 1,
+    });
+    expect(await inWorkflow(real, (ctx) => appendLedger(ctx, 'ledger', { file, line }))).toEqual({
+      appended: false,
+      lines: 1,
+    });
+    expect(await readFile(file, 'utf8')).toBe(`${line}\n`);
+  });
+});
+
+describe('epic body and label mechanics', () => {
+  /** A fake `gh` that serves an epic body from a file, records PATCHes, and 404s label deletes. */
+  async function fakeGh(body: string, labels: readonly string[]) {
+    const bin = join(real, 'bin');
+    await mkdir(bin);
+    const bodyFile = join(real, 'epic-body.json');
+    const log = join(real, 'gh.log');
+    await writeFile(bodyFile, JSON.stringify({ body }));
+    const script = [
+      '#!/usr/bin/env node',
+      "const fs = require('node:fs');",
+      `const [bodyFile, log, labels] = ${JSON.stringify([bodyFile, log, labels])};`,
+      'const args = process.argv.slice(2);',
+      "fs.appendFileSync(log, args.join(' ') + '\\n');",
+      "if (args.includes('PATCH')) {",
+      "  const input = JSON.parse(fs.readFileSync(0, 'utf8'));",
+      '  fs.writeFileSync(bodyFile, JSON.stringify({ body: input.body }));',
+      "} else if (args.includes('DELETE')) {",
+      "  process.stderr.write('gh: Label does not exist (HTTP 404)\\n');",
+      '  process.exit(1);',
+      "} else if (args.includes('{labels: [.labels[].name]}')) {",
+      '  process.stdout.write(JSON.stringify({ labels }));',
+      '} else {',
+      "  process.stdout.write(fs.readFileSync(bodyFile, 'utf8'));",
+      '}',
+    ].join('\n');
+    await writeFile(join(bin, 'gh'), `${script}\n`);
+    await chmod(join(bin, 'gh'), 0o755);
+    vi.stubEnv('PATH', `${bin}${delimiter}${process.env['PATH'] ?? ''}`);
+    return {
+      body: async () => (JSON.parse(await readFile(bodyFile, 'utf8')) as { body: string }).body,
+      patches: async () =>
+        (await readFile(log, 'utf8')).split('\n').filter((l) => l.includes('PATCH')).length,
+    };
+  }
+  const repo = 'acme/widgets';
+
+  it('tick PATCHes the epic once, and a retry finds it ticked', async () => {
+    const gh = await fakeGh('## Items\n\n- [ ] #9 Add a widget\n- [ ] #10 Docs\n', []);
+    const run = () => inWorkflow(real, (ctx) => tick(ctx, 'tick', { repo, epic: 7, ticket: 9 }));
+    expect(await run()).toEqual({ changed: true });
+    expect(await run()).toEqual({ changed: false });
+    expect(await gh.body()).toBe('## Items\n\n- [x] #9 Add a widget\n- [ ] #10 Docs\n');
+    expect(await gh.patches()).toBe(1);
+  });
+
+  it('insertChecklist PATCHes the epic once, and a retry finds the slices listed', async () => {
+    const gh = await fakeGh('## Items\n\n- [ ] #9 Plugins\n- [ ] #10 Docs\n', []);
+    const entries = [
+      { number: 21, title: 'Registry' },
+      { number: 22, title: 'Loader' },
+    ];
+    const run = () =>
+      inWorkflow(real, (ctx) =>
+        insertChecklist(ctx, 'checklist', { repo, epic: 7, parent: 9, entries }),
+      );
+    expect(await run()).toEqual({ changed: true });
+    expect(await run()).toEqual({ changed: false });
+    expect(await gh.body()).toBe(
+      '## Items\n\n- [ ] #9 Plugins\n- [ ] #21 Registry\n- [ ] #22 Loader\n- [ ] #10 Docs\n',
+    );
+    expect(await gh.patches()).toBe(1);
+  });
+
+  it('removeLabel treats a 404 as success, and skips a label the issue lacks', async () => {
+    await fakeGh('', ['needs-decision']);
+    expect(
+      await inWorkflow(real, (ctx) =>
+        removeLabel(ctx, 'unlabel', { repo, number: 9, label: 'needs-decision' }),
+      ),
+    ).toEqual({ changed: false });
+    expect(
+      await inWorkflow(real, (ctx) =>
+        removeLabel(ctx, 'unlabel', { repo, number: 9, label: 'on-hold' }),
+      ),
+    ).toEqual({ changed: false });
+    const log = await readFile(join(real, 'gh.log'), 'utf8');
+    expect(log.split('\n').filter((l) => l.includes('DELETE'))).toEqual([
+      'api -X DELETE repos/acme/widgets/issues/9/labels/needs-decision --silent',
+    ]);
+  });
+});
