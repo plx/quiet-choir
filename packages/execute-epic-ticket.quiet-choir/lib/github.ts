@@ -1,5 +1,5 @@
 // GitHub mechanics that quiet-choir/github does not offer yet, as versioned steps over raw `gh api`
-// (follow-ups #668 and the label-write issue): the epic checklist tick and insert, label writes,
+// (follow-ups #668 and #682): the epic checklist tick and insert, label writes,
 // the sub-issue link, an issue read that tolerates a 404, the exact-title lookup before filing, and
 // the local ledger. Each step reads before it writes, so a retry or resume after a crash finds the
 // state the last attempt left and does nothing twice.
