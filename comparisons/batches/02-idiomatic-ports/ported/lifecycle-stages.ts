@@ -1,6 +1,6 @@
 import { defineWorkflow, z, type ExecResult, type ExecStepError, type Settled } from 'quiet-choir';
 import { readers, roster } from './roster.js';
-import { Argv, Path, json, writeCommittedArtifact } from './support.js';
+import { Argv, Path, json, committedArtifact } from './support.js';
 
 export const DocumentStage = z.enum(['requirements', 'spec', 'roadmap', 'backlog', 'feedback']);
 export const Stage = z.enum([
@@ -48,7 +48,7 @@ export const documentStage = defineWorkflow({
     });
     // Commit documents through a managed checkout so later implementation can integrate
     // without an untracked-document dirty tree. Redo uses a new artifact path.
-    await writeCommittedArtifact(ctx, input.out, `${content}\n`);
+    await committedArtifact(ctx, input.out, `${content}\n`);
     return { ...review, artifact: input.out };
   },
 });

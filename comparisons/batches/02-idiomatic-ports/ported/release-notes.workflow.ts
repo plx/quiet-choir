@@ -1,7 +1,7 @@
 // Idiomatic rewrite of the pinned MIT upstream; see ../LICENSE and ../notes.json.
 import { defineWorkflow, z } from 'quiet-choir';
 import { readers } from './roster.js';
-import { Path, Receipt, Sha, git, gitWindow, json, writeCommittedArtifact } from './support.js';
+import { Path, Receipt, Sha, git, gitWindow, json, committedArtifact } from './support.js';
 
 export default defineWorkflow({
   name: 'release-notes',
@@ -82,7 +82,7 @@ export default defineWorkflow({
     // Exclusive creation keeps an existing changelog from being silently overwritten.
     const written =
       input.publication === 'commit'
-        ? await writeCommittedArtifact(ctx, input.out, `${notes}\n`)
+        ? await committedArtifact(ctx, input.out, `${notes}\n`)
         : await ctx.writeFile('write', input.out, `${notes}\n`, { ifMatch: null });
     return {
       ...window,
