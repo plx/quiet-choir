@@ -75,8 +75,9 @@ export interface CheckInput {
  * Run the check suite (`command`, default `npm run check`) at the worktree's HEAD, with its output
  * in `<dir>/<label>.log` and the last 40 lines in `<label>.excerpt.txt` when it fails. The suite
  * certifies a clean HEAD only: a worktree with uncommitted or untracked changes fails as `dirty
- * worktree` without running it (the log and excerpt list the changes), and a HEAD that moved while
- * the suite ran fails as `HEAD moved`. Under load (1-minute load above the core count) Vitest is
+ * worktree` without running it (the log and excerpt list the changes), a HEAD that moved while the
+ * suite ran fails as `HEAD moved`, and a worktree the install or the suite left dirty fails as `dirty
+ * worktree` too (the excerpt lists the changes, then the suite's last 40 lines). Under load (1-minute load above the core count) Vitest is
  * capped at 4 workers. A step failure, such as a command that cannot start, settles as a failed
  * check with its message in `error`.
  */
@@ -87,7 +88,7 @@ export async function runCheck(
 ): Promise<CheckResult> {
   const settled: Settled<CheckResult> = await ctx.step(id, {
     identity: 'version',
-    version: 'merge-down.check/2',
+    version: 'merge-down.check/3',
     input: { ...input },
     schema: Check,
     onError: 'return',
@@ -101,26 +102,38 @@ export async function runCheck(
       const head = await git(context, W, ['rev-parse', 'HEAD']);
       // Untrimmed: a porcelain line starts with its status columns, which can be a space.
       const porcelain = ['git', 'status', '--porcelain', '--untracked-files=normal'] as const;
-      const status = await run(context, porcelain, { cwd: W });
-      if (status.code !== 0)
-        throw new Error(`git status failed: ${tail(status.stderr || status.stdout, 20)}`);
-      const dirty = dirtyTreeLog(head, status.stdout);
-      if (dirty !== null) {
-        await writeFile(log, dirty);
-        await writeFile(excerptFile, dirty);
+      const dirtyListing = async (): Promise<string | null> => {
+        const status = await run(context, porcelain, { cwd: W });
+        if (status.code !== 0)
+          throw new Error(`git status failed: ${tail(status.stderr || status.stdout, 20)}`);
+        return dirtyTreeLog(head, status.stdout);
+      };
+      // The suite's own log, when it ran, stays the log; the excerpt leads with the listing.
+      const dirtyVerdict = async (
+        listing: string,
+        installed: boolean,
+        suite: { text: string; exitCode: number | null; maxWorkers: string | null } | null,
+      ): Promise<CheckResult> => {
+        if (suite === null) await writeFile(log, listing);
+        await writeFile(
+          excerptFile,
+          suite === null ? listing : `${listing}${tail(suite.text, 40)}\n`,
+        );
         return {
           passed: false,
           head,
           failedStep: 'dirty worktree',
-          exitCode: null,
+          exitCode: suite?.exitCode ?? null,
           seconds: seconds(),
-          installedDependencies: false,
-          maxWorkers: null,
+          installedDependencies: installed,
+          maxWorkers: suite?.maxWorkers ?? null,
           log,
           excerptFile,
           error: null,
         };
-      }
+      };
+      const before = await dirtyListing();
+      if (before !== null) return dirtyVerdict(before, false, null);
       const deps = await provisionDependencies(context, W);
       if (deps.failure !== null) {
         await writeFile(log, deps.failure);
@@ -138,6 +151,9 @@ export async function runCheck(
           error: null,
         };
       }
+      // Provisioning can rewrite tracked files (a lockfile an install touches).
+      const provisioned = await dirtyListing();
+      if (provisioned !== null) return dirtyVerdict(provisioned, deps.installed, null);
       const busy = loadavg()[0] ?? 0;
       const maxWorkers = busy > availableParallelism() ? '4' : null;
       // Grouped so every part of a compound command logs; the newline ends a trailing comment.
@@ -158,6 +174,10 @@ export async function runCheck(
       // A suite that commits or checks out leaves a result that certifies neither head.
       const after = await git(context, W, ['rev-parse', 'HEAD']);
       const moved = after !== head;
+      // A suite that edits a tracked file or leaves one behind certified a tree HEAD does not hold.
+      const left = moved ? null : await dirtyListing();
+      if (left !== null)
+        return dirtyVerdict(left, deps.installed, { text, exitCode: suite.code, maxWorkers });
       const passed = suite.code === 0 && !moved;
       if (moved)
         await writeFile(
