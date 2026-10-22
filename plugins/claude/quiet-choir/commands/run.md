@@ -1,8 +1,8 @@
 ---
 description: >-
-  Launch a quiet-choir workflow in the background, follow its events with Monitor, answer its
-  questions, and report how it ended.
-argument-hint: WORKFLOW [--input JSON] [--run-id ID]
+  Launch a quiet-choir workflow file or package in the background, follow its events with Monitor,
+  answer its questions, and report how it ended.
+argument-hint: WORKFLOW [--workflow NAME] [--input JSON] [--run-id ID] [--fixtures FILE]
 allowed-tools: Bash, Monitor, TaskStop, AskUserQuestion, Read
 ---
 
@@ -16,37 +16,66 @@ Arguments: `$ARGUMENTS`
 
 ## 1. Resolve the run
 
-Read the arguments above. The first word is the workflow file. `--input JSON` is the workflow input
-(default `{}`), and `--run-id ID` is the run ID (default: the workflow file's base name without
-`.workflow.*` plus a UTC timestamp, such as `review-20261001-1204`; 1 to 128 letters, digits, `_` or
-`-`, starting with a letter or digit). Ask the user when the workflow file is missing or ambiguous.
+Read the arguments above. The first word is the workflow: a workflow file, or a `*.quiet-choir`
+package directory (the CLI treats a path whose last segment ends in `.quiet-choir` as a
+[package](../skills/quiet-choir/references/packages.md)). `--workflow NAME` selects a workflow the
+package declares; without it the package's entry runs, and it is only valid with a package.
+`--fixtures FILE` is a [fixture file](../skills/quiet-choir/references/rehearsal.md#fixtures) that
+answers the rehearsal's agent calls and commands; the rehearsal uses it and the launch never does.
+`--input JSON` is the workflow input (default `{}`), and `--run-id ID` is the run ID (1 to 128
+letters, digits, `_` or `-`, starting with a letter or digit). Without `--run-id`, step 2 derives
+one. Ask the user when the workflow is missing or ambiguous.
 
 Resolve `QC_CHECKOUT`, `QC_TARGET`, `QC_WORKFLOW` and `QC_RUNS` to absolute paths as the skill's
 [first-run setup](../skills/quiet-choir/SKILL.md#run-a-first-workflow-against-a-project) describes:
-a built runtime checkout, the target project (the run's working directory), the workflow file, and a
-state directory outside the target worktree. Also set `QC_RUN` to the run ID and `QC_INPUT` to the
-input JSON.
+a built runtime checkout, the target project (the run's working directory), the workflow file or
+package directory, and a state directory outside the target worktree. Also set `QC_INPUT` to the
+input JSON, `QC_WORKFLOW_NAME` to the `--workflow` name and `QC_FIXTURES` to the absolute fixture
+path; set each to the empty string `''` when its flag is absent. Set `QC_RUN` to an explicit
+`--run-id` once you have one.
 
 Shell state does not persist between Bash calls. Start **every** Bash call with one `export` line
 that sets each value resolved so far as a single-quoted literal (paths absolute; write a `'` inside
 a value as `'\''`), for example
-`export QC_CHECKOUT='/abs/quiet-choir' QC_TARGET='/abs/project' QC_WORKFLOW='/abs/review.workflow.mts' QC_RUNS='/abs/runs' QC_RUN='review-20261001-1204' QC_INPUT='{}'`,
+`export QC_CHECKOUT='/abs/quiet-choir' QC_TARGET='/abs/project' QC_WORKFLOW='/abs/merge-down.quiet-choir' QC_WORKFLOW_NAME='merge-down-pr' QC_FIXTURES='' QC_RUNS='/abs/runs' QC_RUN='merge-down-merge-down-pr-20261001-1204' QC_INPUT='{}'`,
 then the block below unchanged. Later steps add `QC_STEP`, `QC_ANSWER`, `QC_BY` and `QC_EXECUTION`
 the same way.
 
-## 2. Rehearse
+## 2. Validate and rehearse
 
-Validate and rehearse without paid calls, then show the user a short summary of the rehearsal: the
-number of `calls` and their harnesses (`harnessCounts`), `nominalClaudeCeilingUsd`, and every
-warning. Stop and report if validation fails. A rehearsal that reaches a question exits 75; that is
-expected.
+Validate first. The blocks pass `--workflow` and `--harness` only when `QC_WORKFLOW_NAME` or
+`QC_FIXTURES` is non-empty, with two expansions per flag so each yields exactly one word (or none)
+in sh, bash and zsh. Stop and report if validation fails. If it fails with `usage.entrypoint`
+because a package has no entry, or does not declare the name, report the error's `details.workflows`
+and ask the user which workflow to run; then start again with that name.
 
-<!-- skills-check: example run-preflight -->
+<!-- skills-check: example run-validate -->
 
 ```sh
 cd "$QC_TARGET" || exit 1
-node "$QC_CHECKOUT/bin/run.js" workflow validate "$QC_WORKFLOW" --json || exit 1
+node "$QC_CHECKOUT/bin/run.js" workflow validate "$QC_WORKFLOW" \
+  ${QC_WORKFLOW_NAME:+--workflow} ${QC_WORKFLOW_NAME:+"$QC_WORKFLOW_NAME"} --json || exit 1
+```
+
+Without an explicit `--run-id`, derive the run ID from that validate result now, and add `QC_RUN` to
+the export line from here on. For a package it is the result's `package.name`, a `-`, its
+`workflow.name`, a `-` and a UTC timestamp (`date -u +%Y%m%d-%H%M`), such as
+`merge-down-merge-down-pr-20261022-1204`; the validate result names the workflow even when
+`--workflow` was omitted and the entry was selected. For a single workflow file it is the file's
+base name without `.workflow.*` plus a UTC timestamp, such as `review-20261001-1204`.
+
+Then rehearse without paid calls, and show the user a short summary of the rehearsal: the number of
+`calls` and their harnesses (`harnessCounts`), `nominalClaudeCeilingUsd`, and every warning. A real
+package usually needs `--fixtures`, because synthesized command output (for example empty `gh`
+reads) cannot drive it; a rehearsal that reaches a question exits 75, which is expected.
+
+<!-- skills-check: example run-rehearse -->
+
+```sh
+cd "$QC_TARGET" || exit 1
 node "$QC_CHECKOUT/bin/run.js" workflow execute "$QC_WORKFLOW" \
+  ${QC_WORKFLOW_NAME:+--workflow} ${QC_WORKFLOW_NAME:+"$QC_WORKFLOW_NAME"} \
+  ${QC_FIXTURES:+--harness} ${QC_FIXTURES:+"fixture:$QC_FIXTURES"} \
   --run-id "$QC_RUN" --state-dir "$QC_RUNS" --input "$QC_INPUT" --dry-run --json
 ```
 
@@ -54,13 +83,16 @@ node "$QC_CHECKOUT/bin/run.js" workflow execute "$QC_WORKFLOW" \
 
 Run this block with Bash `run_in_background: true` and a Bash `timeout` longer than the watch's
 `--timeout` (for example 600000 ms for `8m`). Do not add `nohup` or `&`: the background task must
-end when the watch ends, so that its completion notification means the run reached an outcome.
+end when the watch ends, so that its completion notification means the run reached an outcome. The
+launch never takes fixtures. Steps 4 to 6 take only the run ID: a package run resumes through its
+manifest and its recorded workflow, so they need no selection.
 
 <!-- skills-check: example run-launch -->
 
 ```sh
 cd "$QC_TARGET" || exit 1
 node "$QC_CHECKOUT/bin/run.js" workflow start "$QC_WORKFLOW" \
+  ${QC_WORKFLOW_NAME:+--workflow} ${QC_WORKFLOW_NAME:+"$QC_WORKFLOW_NAME"} \
   --run-id "$QC_RUN" --state-dir "$QC_RUNS" --input "$QC_INPUT" --json &&
   node "$QC_CHECKOUT/bin/run.js" workflow inspect "$QC_RUN" --state-dir "$QC_RUNS" \
     --watch --final --json --summary --timeout 8m

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -122,6 +122,55 @@ const matchedEvents = (output) =>
       return JSON.parse(line);
     });
 /**
+ * A throwaway package outside the target: `hello.quiet-choir` with the entry `greet` and a second
+ * workflow `farewell`, in a project that is an ES module and reaches the repository's type
+ * packages. Returns the package directory.
+ */
+async function helloPackage(directory) {
+  const base = join(directory, 'throwaway');
+  const dir = join(base, 'hello.quiet-choir');
+  await mkdir(join(dir, 'workflows'), { recursive: true });
+  await symlink(join(repository, 'node_modules'), join(base, 'node_modules'));
+  await writeFile(join(base, 'package.json'), JSON.stringify({ type: 'module' }));
+  const engine = JSON.stringify(join(repository, 'dist/index.js'));
+  const workflow = (name, message) => `import { defineWorkflow, z } from ${engine};
+const Message = z.object({ message: z.string() });
+export default defineWorkflow({
+  name: ${JSON.stringify(name)},
+  version: '1',
+  input: z.object({}),
+  output: Message,
+  async run(ctx) {
+    return ctx.step('say', { input: {}, schema: Message, run: () => ({ message: ${JSON.stringify(message)} }) });
+  },
+});
+`;
+  await writeFile(
+    join(dir, 'workflows', 'greet.ts'),
+    workflow('greet', 'Hello from the greet workflow.'),
+  );
+  await writeFile(
+    join(dir, 'workflows', 'farewell.ts'),
+    workflow('farewell', 'Goodbye from the farewell workflow.'),
+  );
+  await writeFile(
+    join(dir, 'package.ts'),
+    `import { definePackage } from ${engine};
+import farewell from './workflows/farewell.js';
+import greet from './workflows/greet.js';
+
+export default definePackage({
+  root: import.meta.dirname,
+  name: 'hello',
+  version: '1',
+  workflows: [greet, farewell],
+  entry: greet,
+});
+`,
+  );
+  return dir;
+}
+/**
  * Run every shell fence of the Claude package's /quiet-choir:run command verbatim, with the QC_*
  * values the command tells Claude to export. first.workflow.mts has no question, so the answer
  * loop runs against a local ask workflow written here.
@@ -139,8 +188,8 @@ async function runCommandRecipe(pkg, directory, target, env) {
     executed.add(id);
     return found.code;
   };
-  const run = (id, values, expected = 0) => {
-    const result = spawnSync('sh', ['-c', fence(id)], {
+  const run = (id, values, expected = 0, interpreter = 'sh') => {
+    const result = spawnSync(interpreter, ['-c', fence(id)], {
       cwd: directory,
       env: { ...env, ...values },
       encoding: 'utf8',
@@ -154,10 +203,12 @@ async function runCommandRecipe(pkg, directory, target, env) {
       .map((line) => JSON.parse(line));
   };
 
-  const first = { QC_RUN: 'command-first', QC_INPUT: '{}' };
-  const [validated, rehearsed] = run('run-preflight', first);
+  // The workflow-name and fixtures expansions are empty for a single workflow file.
+  const first = { QC_RUN: 'command-first', QC_INPUT: '{}', QC_WORKFLOW_NAME: '', QC_FIXTURES: '' };
+  const [validated] = run('run-validate', first);
   assert.equal(validated.kind, 'workflow.validate.result');
   assert.equal(validated.ok, true);
+  const [rehearsed] = run('run-rehearse', first);
   assert.equal(rehearsed.kind, 'workflow.rehearsal');
   assert.equal(rehearsed.ok, true);
   // The follower starts alongside the launch and waits for the record to appear.
@@ -173,6 +224,63 @@ async function runCommandRecipe(pkg, directory, target, env) {
     ['command-first run.completed'],
   );
 
+  // A package, selecting its non-entry workflow with --workflow. Without a name the entry runs.
+  const hello = { QC_WORKFLOW: await helloPackage(directory), QC_INPUT: '{}', QC_FIXTURES: '' };
+  const [entry] = run('run-validate', { ...hello, QC_WORKFLOW_NAME: '' });
+  assert.equal(entry.ok, true);
+  assert.equal(entry.package.name, 'hello');
+  assert.equal(entry.workflow.name, 'greet');
+  const [selected] = run('run-validate', { ...hello, QC_WORKFLOW_NAME: 'farewell' });
+  assert.equal(selected.package.name, 'hello');
+  assert.equal(selected.workflow.name, 'farewell');
+  // The default run ID the command derives: package name, workflow name and a UTC timestamp.
+  const stamp = new Date().toISOString().replace(/[-:]/gu, '').slice(0, 13).replace('T', '-');
+  const chosen = {
+    ...hello,
+    QC_WORKFLOW_NAME: 'farewell',
+    QC_RUN: `${selected.package.name}-${selected.workflow.name}-${stamp}`,
+  };
+  assert.match(chosen.QC_RUN, /^hello-farewell-\d{8}-\d{4}$/u);
+  const [packageRehearsal] = run('run-rehearse', chosen);
+  assert.equal(packageRehearsal.ok, true);
+  assert.equal(packageRehearsal.run.workflow.name, 'farewell');
+  const packageFollow = background(fence('run-follow'), {
+    cwd: directory,
+    env: { ...env, ...chosen },
+  });
+  const packageLaunch = run('run-launch', chosen).at(-1);
+  assert.equal(packageLaunch.id, chosen.QC_RUN);
+  assert.equal(packageLaunch.status, 'completed');
+  assert.deepEqual(packageLaunch.output, { message: 'Goodbye from the farewell workflow.' });
+  assert.equal(await finished(packageFollow, 'run-follow'), 0);
+  assert.deepEqual(
+    matchedEvents(packageFollow.output).map((line) => line.ev),
+    ['run.completed'],
+  );
+  // Claude Code runs the user's shell, often zsh, which does not word-split an unquoted expansion.
+  if (spawnSync('zsh', ['-c', 'true']).status === 0) {
+    const [viaZsh] = run('run-validate', { ...hello, QC_WORKFLOW_NAME: 'farewell' }, 0, 'zsh');
+    assert.equal(viaZsh.workflow.name, 'farewell');
+  }
+
+  // merge-down rehearsed from its clean-land fixtures, with a temporary root for its state files.
+  const cases = join(repository, 'packages/rehearsals/merge-down');
+  const clean = JSON.parse(await readFile(join(cases, 'clean-land.json'), 'utf8'));
+  const mergeDown = {
+    QC_WORKFLOW: join(repository, 'packages/merge-down.quiet-choir'),
+    QC_WORKFLOW_NAME: 'merge-down-pr',
+    QC_FIXTURES: join(cases, 'clean-land.fixtures.json'),
+    QC_INPUT: JSON.stringify({ ...clean.input, root: await mkdtemp(join(root, 'merge-down-')) }),
+    QC_RUN: 'command-merge-down',
+  };
+  const [mergeValidated] = run('run-validate', mergeDown);
+  assert.equal(mergeValidated.package.name, 'merge-down');
+  assert.equal(mergeValidated.workflow.name, 'merge-down-pr');
+  const [mergeRehearsal] = run('run-rehearse', mergeDown);
+  assert.equal(mergeRehearsal.ok, true);
+  assert.equal(mergeRehearsal.run.status, 'completed');
+  assert.equal(mergeRehearsal.run.output.status, 'merged');
+
   const askWorkflow = join(directory, 'ask.workflow.mts');
   await writeFile(
     askWorkflow,
@@ -184,7 +292,13 @@ export default defineWorkflow({ name: 'ask', version: '1', input: z.object({}), 
 });
 `,
   );
-  const ask = { QC_WORKFLOW: askWorkflow, QC_RUN: 'command-ask', QC_INPUT: '{}' };
+  const ask = {
+    QC_WORKFLOW: askWorkflow,
+    QC_WORKFLOW_NAME: '',
+    QC_FIXTURES: '',
+    QC_RUN: 'command-ask',
+    QC_INPUT: '{}',
+  };
   const suspended = run('run-launch', ask, 75).at(-1);
   assert.equal(suspended.status, 'suspended');
   const [listed] = run('run-pending', ask);
@@ -794,7 +908,7 @@ try {
     assert.equal(warnings.length, 1);
     assert.equal(command('git', ['status', '--porcelain'], { cwd: target }), '');
     console.log(
-      `${pkg}: documented golden path, ${pkg === packages[1] ? 'Claude launch and Monitor, /quiet-choir:run blocks, ' : ''}jq, logging, and resume recipes passed`,
+      `${pkg}: documented golden path, ${pkg === packages[1] ? 'Claude launch and Monitor, /quiet-choir:run blocks (workflow file, package with --workflow, merge-down rehearsal), ' : ''}jq, logging, and resume recipes passed`,
     );
   }
   // Both copies carry the same references (skills:check), so run these recipes once.
