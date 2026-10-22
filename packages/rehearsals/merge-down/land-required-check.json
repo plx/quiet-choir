@@ -1,0 +1,16 @@
+{
+  "input": {
+    "pr": 42,
+    "repo": "acme/widgets",
+    "parentEpic": 7,
+    "requiredChecks": ["test (22)"]
+  },
+  "expect": {
+    "status": "blocked",
+    "blocked": {
+      "stage": "land",
+      "reason": "required checks missing at landing: test (22)"
+    },
+    "mergeCommit": null
+  }
+}

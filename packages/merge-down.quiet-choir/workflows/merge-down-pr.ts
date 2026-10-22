@@ -1174,6 +1174,7 @@ export default defineWorkflow({
       head,
       base: DEF,
       viewer: info.viewer,
+      requiredChecks: A.requiredChecks,
     });
     if (!landed.merged) return blocked('land', landed.reason);
     const mergeCommit = landed.mergeCommit ?? 'unknown';

@@ -114,20 +114,22 @@ export interface LandInput {
   readonly base: string;
   /** The login whose last word on a thread counts as an answer. */
   readonly viewer: string;
+  /** Names of the checks that must be on the head at landing, whatever else CI reports. */
+  readonly requiredChecks: readonly string[];
 }
 
 /**
  * Check the landing guards and squash-merge the PR at `head`, in one step. A PR already merged at
  * `head` is reported merged (`acted: false`), so a retry after a merge whose answer was lost finds
- * it. Any guard that fails (the PR closed, merged at another head, moved, retargeted, CI pending or
- * failed, a thread whose last comment is not the viewer's, an open alert) and a merge GitHub refuses
+ * it. Any guard that fails (the PR closed, merged at another head, moved, retargeted, a CI rollup
+ * of another commit, CI pending or failed or lacking a required check, a thread whose last comment is not the viewer's, an open alert) and a merge GitHub refuses
  * return `merged: false` with the reason. A failed read or merge command fails the attempt; it is
  * retried, and a resumed run runs the step again, each time from the guard reads.
  */
 export function landMerge(ctx: WorkflowContext, id: string, input: LandInput): Promise<Landed> {
   return ctx.step(id, {
     identity: 'version',
-    version: 'merge-down.land/1',
+    version: 'merge-down.land/2',
     input: { ...input },
     schema: Landed,
     retry: { maxAttempts: 3, on: ['process', 'timeout'] },
@@ -173,13 +175,21 @@ export function landMerge(ctx: WorkflowContext, id: string, input: LandInput): P
         })
       ).data.repository.pullRequest;
       if (rollup.headRefOid !== input.head) return refuse(`head moved to ${rollup.headRefOid}`);
-      const checks = summarizeChecks(
-        rollup.commits.nodes.at(-1)?.commit.statusCheckRollup?.contexts.nodes ?? [],
-      );
+      // The rollup belongs to the PR's last commit; a lagging read may still show another commit.
+      const last = rollup.commits.nodes.at(-1)?.commit;
+      if (last?.oid !== input.head)
+        return refuse(
+          `CI rollup is for ${last?.oid ?? 'no commit'}, not the gated head ${input.head}`,
+        );
+      const checks = summarizeChecks(last.statusCheckRollup?.contexts.nodes ?? []);
       if (checks.state === 'failure' || checks.state === 'pending')
         return refuse(
           `CI is ${checks.state} at landing: ${(checks.state === 'failure' ? checks.failed : checks.pending).join(', ')}`,
         );
+      const registered = new Set(checks.items.map((item) => item.name));
+      const missing = input.requiredChecks.filter((name) => !registered.has(name));
+      if (missing.length || (checks.state === 'none' && input.requiredChecks.length))
+        return refuse(`required checks missing at landing: ${missing.join(', ')}`);
 
       const pages = await context.exec.json(graphql(REVIEW_THREADS_QUERY, true), {
         schema: reviewThreadsResponseSchema,

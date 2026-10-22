@@ -87,14 +87,15 @@ a step retried after a crash finds the state the last attempt left (a push that 
 skipped, fork points are never overwritten, leftovers of a crashed rebase are reset, a PR already
 merged at the gated head is reported merged). Agents never write to GitHub.
 
-The land guards and the merge are one step, `land/merge` (`merge-down.land/1`), rather than
+The land guards and the merge are one step, `land/merge` (`merge-down.land/2`), rather than
 checkpointed reads followed by `pr.merge`: a resume reuses completed reads, so a merge attempt that
 failed after them would otherwise be retried on stale guards. Every attempt of the step, a retry's
 (up to three on a process failure or timeout) or a resumed run's, reads the PR's state, head and
-base, its CI rollup (pending or failed checks block), the unresolved threads whose last comment is
-not the viewer's and the open code-scanning alerts, and only then issues the REST merge
-(`PUT pulls/N/merge` with `sha` set to the gated head; never auto-merge or a merge queue). A guard
-that fails, or a merge GitHub refuses, is `blocked` at `land`.
+base, its CI rollup (which must be the gated head's; pending or failed checks, or a missing required
+check, block), the unresolved threads whose last comment is not the viewer's and the open
+code-scanning alerts, and only then issues the REST merge (`PUT pulls/N/merge` with `sha` set to the
+gated head; never auto-merge or a merge queue). A guard that fails, or a merge GitHub refuses, is
+`blocked` at `land`.
 
 The check suite runs inside the workflow (input `checkCommand`, default `npm run check`, with
 `npm ci` when package.json or the lockfile changed) as one step with a 45-minute deadline. Its
