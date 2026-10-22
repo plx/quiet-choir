@@ -122,6 +122,11 @@ function totals(values: readonly Entry[]): UsageTotals {
  */
 export function summarizeUsage(run: RunRecord): UsageSummary {
   const { values: all, ambiguous } = entries(run);
+  const add = <K>(map: Map<K, Entry[]>, key: K, entry: Entry): void => {
+    const list = map.get(key) ?? [];
+    list.push(entry);
+    map.set(key, list);
+  };
   const integrations = new Map<string, Entry[]>();
   // Provider, then served model; keyed like agent byModel, never by the requested alias.
   const providers = new Map<string, Map<string, Entry[]>>();
@@ -145,17 +150,12 @@ export function summarizeUsage(run: RunRecord): UsageSummary {
       const effective = usage.model?.effective;
       const model = effective?.length === 1 ? (effective[0] ?? '(unknown)') : '(unknown)';
       const byModel = providers.get(provider) ?? new Map<string, Entry[]>();
-      byModel.set(model, [...(byModel.get(model) ?? []), entry]);
+      add(byModel, model, entry);
       providers.set(provider, byModel);
     }
   }
   const harnesses = new Map<string, Entry[]>();
   const models = new Map<string, Entry[]>();
-  const add = (map: Map<string, Entry[]>, key: string, entry: Entry): void => {
-    const list = map.get(key) ?? [];
-    list.push(entry);
-    map.set(key, list);
-  };
   for (const entry of all) {
     add(harnesses, entry.harness, entry);
     const perModel = Object.entries(entry.usage?.byModel ?? {});
