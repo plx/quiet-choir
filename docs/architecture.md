@@ -38,7 +38,8 @@ definitions to a particular agent harness.
   `decisions.ts` (provider resolution for the running workflow, operator configuration, lazy
   transports and the one `decision/2` step each `ctx.decide` makes). Questions and declarations are
   plain frozen data checked structurally, because a CLI workflow may build them with another module
-  instance; the core never imports `src/integrations/`.
+  instance; the core never imports `src/integrations/`. See
+  [decision providers](decision-providers.md) for the authoring guide.
 - `src/workflow/team.ts` is the pure team helper (`defineTeam`, `TeamOf`, `Team`;
   [ADR 0067](decisions/0067-teams-as-typed-slots.md)). It takes a type-only dependency on
   `runtime/model.ts` and no core module imports it, so teams register nothing with the runtime.

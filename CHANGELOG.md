@@ -2,6 +2,29 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Deprecate `decision(ctx, transport).choose` and document decision providers (#655,
+  [ADR 0066](docs/decisions/0066-decision-providers.md) §6; see
+  [docs/decision-providers.md](docs/decision-providers.md)). `decision`, `DecisionTransport`,
+  `DecisionQuestion` and `DecisionAnswer` in `quiet-choir/decision` are `@deprecated` in favor of
+  `ctx.decide` with a decision provider or a roster decider, and will be removed no earlier than the
+  next release. Building the helper emits one `DeprecationWarning` per process, with code
+  `QUIET_CHOIR_DECISION_CHOOSE`, also when the subpath is loaded as several module instances (the
+  once flag is a `Symbol.for` key on `globalThis`). The step it records is unchanged: version
+  `decision/1`, the same input, schema, `meta` and callback, so completed steps replay without
+  calling the transport; a golden record generated before the change
+  (`test/fixtures/decision/choose-v1-checkpoint.json`) pins this. The new guide covers the API,
+  `jevCompatible` and `defineDecisionProvider`, `decisions.<name>` configuration, identity and
+  replay, validation, usage, fixtures, inspect, roster deciders, migration off the helper and the
+  live test. Both skill copies gain `references/decisions.md` and a task-table row, a "Decide, then
+  act" recipe (`examples/patterns/deciders.ts`, `decide-then-act.workflow.ts` and its fixtures:
+  route with a decider, escalate below a confidence threshold without running an agent, draft with a
+  tool-less agent, grade with a second decider), and `extensions.md` and `durability.md` now present
+  `ctx.decide` as the decision path. The opt-in `npm run test:contract:decision` makes one minimal
+  `noul` request against a configured host (`decisions.jev.baseUrl`) when `TYPESAFE_API_KEY`, or the
+  variable `decisions.jev.apiKeyEnv` names, is set, and otherwise reports itself skipped and exits
+  0; it is not part of `npm test`, `npm run check` or CI. `skills:check` maps `quiet-choir/decision`
+  import specifiers in skill examples to `integrations/decision.js` beside the runtime. `model.ts`
+  and the record schema revision are unchanged.
 - Decider roster entries and `ctx.roster.Name.decide` (#654,
   [ADR 0066](docs/decisions/0066-decision-providers.md) §2; see
   [docs/roster.md](docs/roster.md#decider-entries)). `defineRoster` accepts a second entry kind,

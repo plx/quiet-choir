@@ -326,9 +326,9 @@ them in the global `--harness fixture:FILE`.
 
 A `ctx.decide` call never reaches its provider under `--dry-run` or `--harness fixture`, so a
 workflow that decides rehearses without a base URL, a token or any `decisions.<name>` configuration:
-the provider's transport factory is never called. The global fixture file answers decisions in an
-optional `decisions` object keyed by exact, fully qualified step ID (not a glob); the same entry
-answers every attempt of its step:
+the provider's transport factory is never called (see [decision providers](decision-providers.md)).
+The global fixture file answers decisions in an optional `decisions` object keyed by exact, fully
+qualified step ID (not a glob); the same entry answers every attempt of its step:
 
 ```json
 {

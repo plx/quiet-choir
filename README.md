@@ -617,9 +617,11 @@ probes. `quiet-choir/harness-kit` supplies process ownership, fake binaries, the
 suite, and the JSONL framing, environment scrub, session/output/progress plumbing, output-limit
 error and prompted structured output the built-in adapters use
 ([ADR 0043](docs/decisions/0043-checked-harness-kit-declarations-and-adapter-helpers.md)).
-Additional service operations use one ordinary effect per helper call; the transport-injected
-`quiet-choir/decision` reference preserves answers and probability distributions. See
+Additional service operations use one ordinary effect per helper call. See
 [the integration decision](docs/decisions/0027-typed-harness-registry-and-integration-helpers.md).
+Decisions use `ctx.decide` with a decision provider declared under `quiet-choir/decision`, such as
+`jevCompatible`, configured under `--harness-config` `decisions.<name>`: typed `noul`, `choice` and
+`score` answers, one durable step per call. See [decision providers](docs/decision-providers.md).
 `quiet-choir/github` reads repositories, pull requests, review threads, issues and code-scanning
 alerts through the installed `gh`, one `ctx.exec.json` per read, and throws instead of returning a
 truncated list. Its head-pinned waits for CI, reviewers (Codex, CodeQL or your own) and merges are
