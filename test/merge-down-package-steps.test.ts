@@ -52,7 +52,8 @@ const { landMerge } = await lib<{
     },
   ) => Promise<unknown>;
 }>('land');
-const { localCodexReview } = await lib<{
+const { localCodexReview, REVIEW_SCRIPT } = await lib<{
+  REVIEW_SCRIPT: string;
   localCodexReview: (
     ctx: WorkflowContext,
     input: {
@@ -331,6 +332,48 @@ describe('localCodexReview', () => {
     expect(run.output).toMatchObject({ sha, findings: 0, error: null });
     expect(await readFile(hooked, 'utf8')).toBe('ran\n');
     expect(await readFile(seen, 'utf8')).toBe('');
+  });
+
+  const reviewWith = async (script: string) => {
+    const workdir = join(real, 'worktree');
+    const dir = join(real, 'state', 'pr-1');
+    await mkdir(dir, { recursive: true });
+    const sha = await repository(workdir);
+    const bin = join(real, 'bin');
+    await mkdir(bin);
+    await writeFile(join(bin, 'codex'), `#!/bin/sh\n${script}\n`);
+    await chmod(join(bin, 'codex'), 0o755);
+    vi.stubEnv('PATH', `${bin}${delimiter}${process.env['PATH'] ?? ''}`);
+    const run = await runWorkflow(
+      definition((ctx) =>
+        localCodexReview(ctx, {
+          label: 'r0',
+          paths: { root: real, workdir, stateDir: join(real, 'state'), dir },
+          base: 'main',
+          sha,
+          model: 'gpt-test',
+          effort: null,
+        }),
+      ),
+      setup(),
+    );
+    return { run, file: join(dir, `codex-review-${sha.slice(0, 12)}.md`) };
+  };
+
+  it("keeps the worktree preparation's output out of the review text", async () => {
+    const { run, file } = await reviewWith("echo '- [P2] Something to fix'");
+    expect(run.output).toMatchObject({ findings: 1, error: null });
+    expect(await readFile(file, 'utf8')).toBe('- [P2] Something to fix\n');
+  });
+
+  it('reports an error for a review whose stdout is empty', async () => {
+    const { run } = await reviewWith('exit 0');
+    expect(run.output).toMatchObject({ findings: 0, error: 'codex review printed no review' });
+  });
+
+  it('silences the git preparation in the exec argv', () => {
+    expect(REVIEW_SCRIPT).toMatch(/git reset -q --hard "\$MERGE_DOWN_REVIEW_SHA" >&2 &&/);
+    expect(REVIEW_SCRIPT).toMatch(/git clean -q -fd -e node_modules >&2 &&/);
   });
 
   it('resumes a finished review after teardown under a symlinked root', async () => {

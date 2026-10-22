@@ -49,6 +49,13 @@ export interface LocalReviewInput {
   readonly effort: string | null;
 }
 
+/**
+ * The review's shell: reset and clean the worktree, then exec codex with its stderr in a log. The
+ * git commands print to stderr, so codex's stdout is the review text and nothing else.
+ */
+export const REVIEW_SCRIPT =
+  'git reset -q --hard "$MERGE_DOWN_REVIEW_SHA" >&2 && git clean -q -fd -e node_modules >&2 && exec "$@" 2>"$MERGE_DOWN_REVIEW_LOG"';
+
 const Setup = z.object({
   deps: z.enum(['none', 'cloned', 'installed', 'missing']),
   review: z.string(),
@@ -145,7 +152,7 @@ export async function localCodexReview(
       [
         'sh',
         '-c',
-        'git reset --hard "$MERGE_DOWN_REVIEW_SHA" && git clean -fd -e node_modules && exec "$@" 2>"$MERGE_DOWN_REVIEW_LOG"',
+        REVIEW_SCRIPT,
         'merge-down-review',
         'codex',
         'review',
