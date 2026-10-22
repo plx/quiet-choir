@@ -83,7 +83,7 @@ describe('a decision/1 record written before the deprecation', () => {
     expect(calls).toBe(0);
     expect(result.output).toEqual({ answer: 'fix', probabilities: { fix: 0.75, skip: 0.25 } });
     const saved = await readRun({ stateDir, runId });
-    expect(saved.steps['pick']?.identity['version']).toBe(digest('decision/1'));
+    expect(saved.steps['pick']?.identity?.['version']).toBe(digest('decision/1'));
     expect(saved.steps).toEqual(original.steps);
   });
 });
