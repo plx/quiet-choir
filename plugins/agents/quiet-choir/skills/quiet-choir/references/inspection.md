@@ -120,9 +120,16 @@ execution was refused by a run cap, its `budgetStop`. Text prints a completed co
 and the last 20 completed agent calls, with `template <Name>` for a templated call, `tools N` and
 any `no-tool-use` warning (a listed agent step's line shows `template <Name>` too), then a
 `Rate windows` line per harness after the usage lines when windows were reported and a
-`Budget stop:` line for a saved `budgetStop`; `-v` restores two-line commands with absolute argv and
-cwd, all recent agent rows and saved stacks. For embedding,
-`await readRun({ runId, cwd, stateDir })` returns the validated checkpoint alone;
+`Budget stop:` line for a saved `budgetStop`. A completed `ctx.decide` step is listed with a
+`decision` object (`op`, `provider`, `requestedModel`, `servedModel`, `usage` as
+`{ attempts, inputTokens, outputTokens }`, null totals when any attempt reported no count, and
+`questions` as `{ name, kind, answer, level?, confidence? }` where `kind` is `noul`, `choice`,
+`score` or `unknown`, taken from the recorded answer's shape; `noul` has no `confidence`, `score`
+has the nearest legend `level`), and text prints a `completed ID  decision PROVIDER MODEL -> SERVED`
+line with one indented line per question; a legacy `decision(ctx, transport).choose` step shows one
+`choice` question named `answer`. Failed decision steps print on the generic step line. `-v`
+restores two-line commands with absolute argv and cwd, all recent agent rows and saved stacks. For
+embedding, `await readRun({ runId, cwd, stateDir })` returns the validated checkpoint alone;
 `inspectRunOwnership({ runId, cwd, stateDir })` returns the separate current ownership view. Like
 `runWorkflow`, it resolves explicit options, then `QUIET_CHOIR_STATE_DIR`, an existing run's legacy
 location, and the external XDG project default. Relative state paths resolve against `cwd` (default:
@@ -297,6 +304,10 @@ from the record have limits:
 - `toolUses` comes from the attempt's recorded `diagnostics.toolUses`. The `step.completed` warnings
   `msg` (`no-tool-use:` first) comes from the step's warnings, which the record keeps per step, so
   only the step's latest completed attempt carries it.
+- A completed decision step's `step.completed` `msg` is
+  `decision PROVIDER MODEL->SERVED IN/OUT tok N att: NAME=HEADLINE[ cC], ...` (`-` and `?` for
+  unknown values), the same text the live `--events` line carries; a long question list is cut with
+  `…` after the header.
 - `ms` is the recorded duration, and fields the record cannot supply are omitted.
 
 Without `--follow` it prints the whole record once and exits 0. With `--follow` it starts at the
