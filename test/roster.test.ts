@@ -186,6 +186,7 @@ describe('defineRoster', () => {
         Scout: { harnesses: { third: { thinking: 'deep' } } },
       },
       pins: { Reviewer: 'claude', Mechanic: 'codex', Clerk: 'claude', Scout: 'third' },
+      deciders: {},
     });
   });
 });

@@ -215,30 +215,55 @@ function fixtureAttempt(
 }
 
 /**
+ * The provider and model a decider roster entry fixes for `ctx.roster.<entry>.decide` (ADR 0066
+ * section 2). @internal
+ */
+export interface DecisionBinding {
+  /** Roster entry name, recorded as the step's `meta.roster` label. */
+  readonly entry: string;
+  /** Provider name. */
+  readonly provider: string;
+  /** Requested model; absent leaves it to the operator configuration and the declaration. */
+  readonly model?: string | undefined;
+}
+
+/**
  * Validate a `ctx.decide` call synchronously, resolve its provider for the running workflow and
  * check its questions against the provider's capabilities, then build its step for `stepId`, its
  * fully qualified ID. Every failure is raised before any request or step record: an authoring
- * error, or a {@link ConfigurationError} for the provider and capability checks. @internal
+ * error, or a {@link ConfigurationError} for the provider and capability checks.
+ *
+ * With a `binding`, the call came through a decider roster entry: a call-site `provider` or `model`
+ * is refused, the binding's are used exactly as if the call had spelled them, so the input and
+ * identity are unchanged, and the entry name is added to `meta` as `roster`. @internal
  */
 export function prepareDecision(
   providers: DecisionProviders,
   owner: WorkflowDeclaration,
   stepId: string,
   options: unknown,
+  binding?: DecisionBinding,
 ): PreparedDecision {
-  if (!plainObject(options)) throw new Error('ctx.decide requires options { state, questions }.');
+  const call = binding === undefined ? 'ctx.decide' : `ctx.roster.${binding.entry}.decide`;
+  if (!plainObject(options)) throw new Error(`${call} requires options { state, questions }.`);
   const extra = Object.keys(options).filter(
     (key) => !(optionKeys as readonly string[]).includes(key),
   );
-  if (extra.length) throw new Error(`ctx.decide has unknown options ${extra.join(', ')}.`);
-  const { provider: name, model: requestedModel, onError, timeoutMs } = options;
+  if (extra.length) throw new Error(`${call} has unknown options ${extra.join(', ')}.`);
+  if (binding !== undefined)
+    for (const key of ['provider', 'model'] as const)
+      if (options[key] !== undefined)
+        throw new Error(`${call} cannot set ${key}; roster entry ${binding.entry} fixes it.`);
+  const { onError, timeoutMs } = options;
+  const name = binding === undefined ? options['provider'] : binding.provider;
+  const requestedModel = binding === undefined ? options['model'] : binding.model;
   if (name !== undefined && typeof name !== 'string')
-    throw new Error('ctx.decide provider must be a string.');
+    throw new Error(`${call} provider must be a string.`);
   if (
     requestedModel !== undefined &&
     (typeof requestedModel !== 'string' || !requestedModel.trim())
   )
-    throw new Error('ctx.decide model must be a nonempty string.');
+    throw new Error(`${call} model must be a nonempty string.`);
   if (onError !== undefined && onError !== 'throw' && onError !== 'return')
     throw new Error('onError must be throw or return.');
   if (
@@ -248,7 +273,7 @@ export function prepareDecision(
       timeoutMs < 1 ||
       timeoutMs > 2_147_483_647)
   )
-    throw new Error('ctx.decide timeoutMs must be a positive integer of at most 2147483647.');
+    throw new Error(`${call} timeoutMs must be a positive integer of at most 2147483647.`);
   const retry = options['retry'] as RetryPolicy | undefined;
   if (retry !== undefined) retryPolicySchema.parse(retry);
   const state = jsonValue(options['state'], 'Decision state');
@@ -272,7 +297,14 @@ export function prepareDecision(
       version: DECIDE_STEP_VERSION,
       identity: 'version',
       input: { provider, revision: declaration.revision, model, state, questions: snapshot },
-      meta: { integration: 'decision', op: 'decide', provider, model },
+      // Labels only, never identity: renaming a roster entry strands no completed decision.
+      meta: {
+        integration: 'decision',
+        op: 'decide',
+        provider,
+        model,
+        ...(binding === undefined ? {} : { roster: binding.entry }),
+      },
       schema,
       ...(retry === undefined ? {} : { retry }),
       ...(onError === undefined ? {} : { onError }),

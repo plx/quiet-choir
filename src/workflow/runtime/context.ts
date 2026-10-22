@@ -1,13 +1,25 @@
 import type { AgentClient, AgentOptions, WorkflowContext } from './model.js';
 import { bindAgent, type BindHooks } from './bound-agent.js';
+import type { DecisionBinding } from './decisions.js';
 import type { NameFrame, NameScopes } from './names.js';
 import { rosterReader } from './roster.js';
+
+/** The runner's `ctx.decide`, which a decider roster entry calls with its binding. @internal */
+export type DecideCall = (
+  id: string,
+  options: unknown,
+  binding?: DecisionBinding,
+) => Promise<unknown>;
+
+const noDecide: DecideCall = () =>
+  Promise.reject(new Error('This context cannot make roster decisions.'));
 
 /**
  * Bind an existing context without dropping overloads or eagerly reading its signal. `hooks` gives
  * the runtime's hooks for a harness, passed to the agents bound from its client. `roster` reads the
  * roster of the definition running when `ctx.roster` is read, whose agents are rebuilt over this
- * context's prefixed clients. @internal
+ * context's prefixed clients; its decider entries call `decide`, the runner's `ctx.decide`, under
+ * this context's prefix. @internal
  */
 export function bindContext(
   context: WorkflowContext,
@@ -15,6 +27,7 @@ export function bindContext(
   frame: NameFrame,
   hooks: (harness: string) => BindHooks = () => ({}),
   roster: () => unknown = () => undefined,
+  decide: DecideCall = noDecide,
 ): WorkflowContext {
   function bind<T extends (...args: never[]) => unknown>(method: T): T {
     // This transparent wrapper forwards the same arguments/result, including generic overloads.
@@ -41,12 +54,15 @@ export function bindContext(
   }
   const claude = client(context.claude, 'claude');
   const codex = client(context.codex, 'codex');
-  const readRoster = rosterReader((harness) =>
-    harness === 'claude'
-      ? claude
-      : harness === 'codex'
-        ? codex
-        : client(context.agent(harness as Parameters<WorkflowContext['agent']>[0]), harness),
+  const readRoster = rosterReader(
+    (harness) =>
+      harness === 'claude'
+        ? claude
+        : harness === 'codex'
+          ? codex
+          : client(context.agent(harness as Parameters<WorkflowContext['agent']>[0]), harness),
+    // Bound like ctx.decide, so `ctx.within(p).roster.Name.decide('t', …)` records `p/t`.
+    (binding) => bind((id: string, options: unknown) => decide(id, options, binding)),
   );
   return {
     runId: context.runId,

@@ -224,6 +224,7 @@ describe('workflow lifecycle command adapters', () => {
         inputSchema: {},
         outputSchema: {},
         profiles: {},
+        deciders: {},
         prompts: [],
         children: [],
         recursive: false,

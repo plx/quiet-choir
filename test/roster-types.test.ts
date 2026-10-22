@@ -5,6 +5,7 @@ import { expect, expectTypeOf, it } from 'vitest';
 import {
   defineHarness,
   defineRoster,
+  defineTeam,
   defineWorkflow,
   z,
   type Agent,
@@ -13,9 +14,14 @@ import {
   type RegisteredAgentClient,
   type RosterAgentOf,
   type RosterAgents,
+  type RosterDecider,
+  type RosterDeciderEntry,
+  type RosterEntry,
+  type Settled,
   type WorkflowContext,
   type WorkflowDefinition,
 } from '../src/index.js';
+import { choice, defineDecisionProvider, noul, score } from '../src/integrations/decision.js';
 
 const base = { version: '1', input: z.null(), output: z.null() } as const;
 const prompt = 'x';
@@ -355,4 +361,93 @@ it('accepts only a defineRoster result as a workflow roster', () => {
     run: () => Promise.resolve(null),
   });
   expect(inline.name).toBe('inline');
+});
+
+it('types a decider entry as ctx.decide with the provider and model fixed', () => {
+  const jev = defineDecisionProvider({
+    name: 'jev',
+    revision: 1,
+    capabilities: {
+      kinds: ['noul', 'choice', 'score'],
+      maxOptions: 255,
+      levels: [2, 10],
+      idempotencyKey: false,
+    },
+    transport: () => () => Promise.resolve({ body: {} }),
+  });
+  const deciders = defineRoster({
+    Triage: { decider: 'jev', model: 'jev-1', description: 'Routes tickets.' },
+    Default: { decider: 'jev' },
+    Writer: { harness: 'claude' },
+  });
+  const questions = {
+    refund: noul({ instructions: 'Refund?' }),
+    route: choice({ instructions: 'Which team?', options: { billing: null, support: null } }),
+    urgency: score({ instructions: 'How urgent?', levels: ['low', 'high'] }),
+  };
+  const Pair = defineTeam({ actor: 'Acts.', critic: 'Judges.' });
+  const definition = defineWorkflow({
+    ...base,
+    name: 'roster-deciders',
+    decisions: [jev],
+    roster: deciders,
+    async run(ctx) {
+      expectTypeOf(ctx.roster.Triage).toEqualTypeOf<RosterDecider>();
+      const answers = await ctx.roster.Triage.decide('triage', { state: { n: 1 }, questions });
+      expectTypeOf(answers.route.choice).toEqualTypeOf<'billing' | 'support'>();
+      expectTypeOf(answers.urgency.score).toEqualTypeOf<number>();
+      expectTypeOf(answers.refund).not.toHaveProperty('confidence');
+      // The roster call and ctx.decide infer the same answers.
+      const direct = await ctx.decide('direct', { provider: 'jev', state: null, questions });
+      expectTypeOf(answers).toEqualTypeOf(direct);
+      expectTypeOf(
+        await ctx.roster.Default.decide('settled', { state: null, questions, onError: 'return' }),
+      ).toEqualTypeOf<Settled<typeof answers>>();
+      await ctx.within('p').roster.Triage.decide('scoped', {
+        state: null,
+        questions,
+        retry: { maxAttempts: 2 },
+        timeoutMs: 1,
+      });
+
+      // @ts-expect-error -- the entry fixes the provider.
+      await ctx.roster.Triage.decide('t', { provider: 'jev', state: null, questions });
+      // @ts-expect-error -- and the model.
+      await ctx.roster.Triage.decide('t', { model: 'x', state: null, questions });
+      // A decider is not an agent: no text, value, object or bind.
+      expectTypeOf(ctx.roster.Triage).not.toHaveProperty('text');
+      expectTypeOf(ctx.roster.Triage).not.toHaveProperty('value');
+      expectTypeOf(ctx.roster.Triage).not.toHaveProperty('object');
+      expectTypeOf(ctx.roster.Triage).not.toHaveProperty('bind');
+      // @ts-expect-error -- so a helper taking an Agent rejects it.
+      await reviewWith(ctx.roster.Triage);
+      // @ts-expect-error -- so it cannot fill a team slot.
+      Pair.from({ actor: ctx.roster.Writer, critic: ctx.roster.Triage });
+      // A roster holding a decider still fills slots that name agent entries.
+      Pair.from({ ...ctx.roster, actor: ctx.roster.Writer, critic: ctx.roster.Writer });
+      return null;
+    },
+  });
+  expect(definition.name).toBe('roster-deciders');
+  type Entries = RosterAgents<typeof deciders>;
+  expectTypeOf<Entries['Default']>().toEqualTypeOf<RosterDecider>();
+  expectTypeOf<Entries['Writer']>().toEqualTypeOf<Agent>();
+  expectTypeOf<RosterAgentOf<RosterDeciderEntry, readonly []>>().toEqualTypeOf<RosterDecider>();
+  expectTypeOf<RosterDeciderEntry>().toExtend<RosterEntry>();
+});
+
+it('refuses decider entries that set harness or agent keys', () => {
+  const refused = [
+    // @ts-expect-error -- an entry is an agent or a decider, not both.
+    () => defineRoster({ Both: { harness: 'claude', decider: 'jev' } }),
+    // @ts-expect-error -- a decider takes no agent key.
+    () => defineRoster({ Triage: { decider: 'jev', tools: [] } }),
+    // @ts-expect-error -- nor expectsToolUse.
+    () => defineRoster({ Triage: { decider: 'jev', expectsToolUse: true } }),
+    // @ts-expect-error -- nor a limit.
+    () => defineRoster({ Triage: { decider: 'jev', timeoutMs: 1 } }),
+    // @ts-expect-error -- the model is a string.
+    () => defineRoster({ Triage: { decider: 'jev', model: 1 } }),
+  ];
+  for (const define of refused) expect(define).toThrow(/Roster entry (Both|Triage)/u);
 });

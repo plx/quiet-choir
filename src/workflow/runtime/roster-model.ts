@@ -12,13 +12,18 @@ import type {
   BoundOptionsOf,
   ClaudeOptions,
   CodexOptions,
+  EffectResult,
+  ErrorMode,
   Prompt,
   SelectBranch,
+  Settled,
 } from './model.js';
+import type { DecideOptions, DecisionAnswers, DecisionQuestions } from './decision-model.js';
 import type { NoExtraKeys } from './profiles-model.js';
 
 // ADR 0063 sections 3-4: the roster is the one inventory of concrete, harness-pinned agent
-// configurations. These types are data only; `defineRoster` (roster.ts) validates and freezes.
+// configurations, and ADR 0066 section 2 adds decider entries that name a decision provider. These
+// types are data only; `defineRoster` (roster.ts) validates and freezes.
 
 /** Type-only marker that only `defineRoster` results carry; it never exists at runtime. */
 declare const rosterBrand: unique symbol;
@@ -60,21 +65,46 @@ export type DeepReadonlyOption<T> = T extends (...args: never[]) => unknown
     : T;
 
 /**
- * One roster entry: `{ harness, description?, expectsToolUse? }` plus that harness's own option
- * type minus the per-call-only keys and `profile` (ADR 0063 section 3). `harness` is the
- * discriminant: `'claude'` takes {@link ClaudeOptions}, `'codex'` takes {@link CodexOptions}, and a
- * registered harness in `H` takes its declared option schema. There is no cross-harness block and
- * no `extends`; spread a shared entry instead.
+ * A decider entry (ADR 0066 section 2): a named decision provider and model, which
+ * `ctx.roster.Name` binds to a {@link RosterDecider}. `decider` names one of the workflow's
+ * `decisions`, checked when the workflow loads. `model` is the requested model (else the operator
+ * configuration's, then the declaration's default), and both are fixed for every call. A decider
+ * entry is not an agent or a role: it takes no other key, has no grant, `--profile` override or
+ * capability profile, and cannot fill a team slot.
+ */
+export interface RosterDeciderEntry {
+  /** The decision provider's name, as declared in the workflow's `decisions`. */
+  readonly decider: string;
+  /** The requested model, part of each decision's identity. */
+  readonly model?: string;
+  /** Human-readable purpose, listed under `workflow.deciders` by `workflow validate`. */
+  readonly description?: string;
+  /** A decider entry names a decision provider, never a harness. */
+  readonly harness?: never;
+}
+
+/**
+ * One roster entry: an agent pinned to a harness, or a decider ({@link RosterDeciderEntry}). An
+ * agent entry is `{ harness, description?, expectsToolUse? }` plus that harness's own option type
+ * minus the per-call-only keys and `profile` (ADR 0063 section 3). `harness` is the discriminant:
+ * `'claude'` takes {@link ClaudeOptions}, `'codex'` takes {@link CodexOptions}, and a registered
+ * harness in `H` takes its declared option schema. There is no cross-harness block and no
+ * `extends`; spread a shared entry instead. An entry that sets both `harness` and `decider` fails
+ * typecheck.
  */
 export type RosterEntry<H extends readonly HarnessDeclaration[] = readonly []> =
   | ({
       /** Claude Code. */
       readonly harness: 'claude';
+      /** An agent entry names a harness, never a decision provider. */
+      readonly decider?: never;
     } & RosterEntryCommon &
       RosterEntryOptions<ClaudeOptions>)
   | ({
       /** Codex. */
       readonly harness: 'codex';
+      /** An agent entry names a harness, never a decision provider. */
+      readonly decider?: never;
     } & RosterEntryCommon &
       RosterEntryOptions<CodexOptions>)
   | (H[number] extends infer D
@@ -82,10 +112,13 @@ export type RosterEntry<H extends readonly HarnessDeclaration[] = readonly []> =
         ? {
             /** A harness registered with `defineRoster` options and the workflow's `harnesses`. */
             readonly harness: D['name'];
+            /** An agent entry names a harness, never a decision provider. */
+            readonly decider?: never;
           } & RosterEntryCommon &
             RosterEntryOptions<OptionsOf<D>>
         : never
-      : never);
+      : never)
+  | RosterDeciderEntry;
 
 /** The entry map `defineRoster` accepts: identifier keys to {@link RosterEntry} values. */
 export type RosterEntries<H extends readonly HarnessDeclaration[] = readonly []> = Readonly<
@@ -151,42 +184,89 @@ export interface AnyRoster {
 export type EmptyRoster = Roster<{}, readonly []>;
 
 /**
- * The agent `ctx.roster.Name` gives for entry `E`, typed against the registered harnesses `H`: the
- * type `bind` gives for the entry's options ({@link RosterEntryBindOptions}). That is an {@link Agent}
- * for Claude, the Codex bound client (an `Agent` that also takes per-call `images`) for Codex, and
- * for a registered harness `D` a `RegisteredAgentClient` over `D`'s own bound call options and
- * capabilities. A both-sides key the schema requires stays required on calls unless the entry
- * sets it, and a text-only registration yields a text-only agent without `object` or a
- * schema-bearing `value`. An entry whose harness is not in `H` gives `Agent<HarnessCapabilities>`.
+ * The options of one `ctx.roster.Name.decide` call: those of `ctx.decide` ({@link DecideOptions})
+ * without `provider` and `model`, which the decider entry fixes.
+ */
+export type RosterDecideOptions<Q extends DecisionQuestions = DecisionQuestions> = Omit<
+  DecideOptions<Q>,
+  'provider' | 'model'
+> & {
+  /** Fixed by the decider entry; a call cannot set it. */
+  readonly provider?: never;
+  /** Fixed by the decider entry; a call cannot set it. */
+  readonly model?: never;
+};
+
+/**
+ * What `ctx.roster.Name` gives for a decider entry ({@link RosterDeciderEntry}): `decide`, which is
+ * `ctx.decide` with the entry's provider and model preset. A call records the same step, with the
+ * same `decision/2` identity, as `ctx.decide(id, { provider, model, ... })` spelling them, and adds
+ * the entry name as the step's `meta.roster` label, which is never identity. It is not an
+ * {@link Agent}.
+ */
+export interface RosterDecider {
+  /**
+   * Ask the entry's decision provider typed questions about a JSON state, as `ctx.decide` does;
+   * with `onError: 'return'`, a final failure is saved and returned as `Settled`. A call that sets
+   * `provider` or `model` fails typecheck and, untyped, fails the step before any request.
+   */
+  decide<const Q extends DecisionQuestions>(
+    id: string,
+    options: RosterDecideOptions<Q> & { readonly onError: 'return' },
+  ): Promise<Settled<DecisionAnswers<Q>>>;
+  /** Ask the entry's decision provider with an inferred or dynamic error mode. */
+  decide<const Q extends DecisionQuestions, TMode extends ErrorMode = 'throw'>(
+    id: string,
+    options: RosterDecideOptions<Q> & { readonly onError?: TMode | undefined },
+  ): Promise<EffectResult<DecisionAnswers<Q>, TMode>>;
+}
+
+/**
+ * What `ctx.roster.Name` gives for entry `E`, typed against the registered harnesses `H`. A decider
+ * entry gives a {@link RosterDecider}. An agent entry gives the type `bind` gives for the entry's
+ * options ({@link RosterEntryBindOptions}). That is an {@link Agent} for Claude, the Codex bound
+ * client (an `Agent` that also takes per-call `images`) for Codex, and for a registered harness `D` a
+ * `RegisteredAgentClient` over `D`'s own bound call options and capabilities. A both-sides key the
+ * schema requires stays required on calls unless the entry sets it, and a text-only registration
+ * yields a text-only agent without `object` or a schema-bearing `value`. An entry whose harness is
+ * not in `H` gives `Agent<HarnessCapabilities>`.
  */
 export type RosterAgentOf<E, H extends readonly HarnessDeclaration[]> = E extends {
-  /** The pinned harness. */
-  readonly harness: infer N;
+  /** The decision provider of a decider entry. */
+  readonly decider: string;
 }
-  ? N extends 'claude'
-    ? Agent
-    : N extends 'codex'
-      ? AgentClient<
-          BoundOptionsOf<
-            SelectBranch<CodexOptions, RosterEntryBindOptions<E>>,
-            RosterEntryBindOptions<E>
-          >
-        >
-      : [Extract<H[number], NamedHarness<N>>] extends [never]
-        ? Agent<HarnessCapabilities>
-        : Extract<H[number], NamedHarness<N>> extends infer D
-          ? RegisteredAgentClient<
-              BoundOptionsOf<
-                SelectBranch<OptionsOf<D>, RosterEntryBindOptions<E>>,
-                RosterEntryBindOptions<E>
-              >,
-              CapabilitiesOf<D>
+  ? RosterDecider
+  : E extends {
+        /** The pinned harness. */
+        readonly harness: infer N;
+      }
+    ? N extends 'claude'
+      ? Agent
+      : N extends 'codex'
+        ? AgentClient<
+            BoundOptionsOf<
+              SelectBranch<CodexOptions, RosterEntryBindOptions<E>>,
+              RosterEntryBindOptions<E>
             >
-          : Agent<HarnessCapabilities>
-  : never;
+          >
+        : [Extract<H[number], NamedHarness<N>>] extends [never]
+          ? Agent<HarnessCapabilities>
+          : Extract<H[number], NamedHarness<N>> extends infer D
+            ? RegisteredAgentClient<
+                BoundOptionsOf<
+                  SelectBranch<OptionsOf<D>, RosterEntryBindOptions<E>>,
+                  RosterEntryBindOptions<E>
+                >,
+                CapabilitiesOf<D>
+              >
+            : Agent<HarnessCapabilities>
+    : never;
 
 /** The options of roster entry `E` that `bind` receives: the entry minus its roster-only fields. */
-export type RosterEntryBindOptions<E> = Omit<E, 'harness' | 'description' | 'expectsToolUse'>;
+export type RosterEntryBindOptions<E> = Omit<
+  E,
+  'harness' | 'decider' | 'description' | 'expectsToolUse'
+>;
 
 /** A harness declaration named `N`: what {@link RosterAgentOf} selects an entry's harness by. */
 export interface NamedHarness<N> {
@@ -195,8 +275,9 @@ export interface NamedHarness<N> {
 }
 
 /**
- * The type of `ctx.roster` for a workflow whose roster is `TRoster`: one readonly agent per entry
- * name ({@link RosterAgentOf}), so a misspelled name fails typecheck. An unparameterized context
+ * The type of `ctx.roster` for a workflow whose roster is `TRoster`: one readonly agent, or
+ * {@link RosterDecider} for a decider entry, per entry name ({@link RosterAgentOf}), so a
+ * misspelled name fails typecheck. An unparameterized context
  * (`any`) gives every name a possibly-text-only agent, so a bare `WorkflowContext` helper stays
  * permissive; take an `Agent` parameter instead of reading `ctx.roster` in a helper.
  */

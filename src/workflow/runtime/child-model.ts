@@ -32,14 +32,21 @@ export interface WorkflowDeclaration {
   readonly children?: readonly WorkflowDeclaration[];
   /** Named capability requirements. */
   readonly profiles?: Readonly<Record<string, AgentProfile>>;
-  /** Harness-pinned roster entries by name, from `defineRoster`; erased to their harness. */
+  /**
+   * Roster entries by name, from `defineRoster`: harness-pinned agents and decider entries, erased
+   * to their harness or decision provider.
+   */
   readonly roster?: Readonly<
     Record<
       string,
-      {
-        /** The harness the entry is pinned to. */
-        readonly harness: string;
-      }
+      | {
+          /** The harness the entry is pinned to. */
+          readonly harness: string;
+        }
+      | {
+          /** The decision provider a decider entry names. */
+          readonly decider: string;
+        }
     >
   >;
   /** Implicit role and common agent settings. */
@@ -198,6 +205,11 @@ export interface WorkflowDescription {
   /** Declared profile names, separate from implicit built-ins. */
   readonly profiles: Readonly<Record<string, CapabilityManifest['defaults']>>;
   /**
+   * The roster's decider entries by name (ADR 0066 section 2), with the provider and model each one
+   * fixes; empty when there are none. They are not roles, so `capabilities` does not list them.
+   */
+  readonly deciders: Readonly<Record<string, WorkflowDecider>>;
+  /**
    * The checked prompt sets this node declares (ADR 0064 section 3), in order; empty when it
    * declares none. A definition whose templates fail a check has no description: validation fails.
    */
@@ -208,6 +220,16 @@ export interface WorkflowDescription {
   readonly recursive: boolean;
   /** Trusted source path when known; inline definitions need not have separate entrypoints. */
   readonly entrypoint: string | null;
+}
+
+/** One decider roster entry in a {@link WorkflowDescription}. */
+export interface WorkflowDecider {
+  /** The decision provider the entry names. */
+  readonly provider: string;
+  /** The entry's requested model, or null when calls use the configured or declared default. */
+  readonly model: string | null;
+  /** The entry's description, or null. */
+  readonly description: string | null;
 }
 
 /** One checked prompt set in a {@link WorkflowDescription}. */

@@ -205,7 +205,7 @@ import { CancelledError, FailureOrigins } from './fan-out.js';
 import { createMap, settledMapChange } from './map.js';
 import { ExecutionScopes } from './scopes.js';
 import { NameScopes } from './names.js';
-import { bindContext } from './context.js';
+import { bindContext, type DecideCall } from './context.js';
 import { bindAgent, type BindHooks } from './bound-agent.js';
 import { rosterReader } from './roster.js';
 import { execFailureFields, stepError, errorKind, rootCauseKind } from './step-error.js';
@@ -3790,13 +3790,37 @@ export async function runWorkflow<
             }),
       });
     }
+    // One version-identified step per call (ADR 0066 section 3). Validation, provider resolution
+    // and the capability check fail before any record, attributed to the call's step ID. A decider
+    // roster entry calls it with its binding, which presets the provider and model (section 2).
+    const decideCall: DecideCall = (leaf, settings, binding) => {
+      const id = names.qualify(leaf);
+      let prepared: PreparedDecision;
+      try {
+        prepared = prepareDecision(decisionProviders, children.definition, id, settings, binding);
+      } catch (error) {
+        return launch<never>(id, 'step', () => {
+          throw error;
+        });
+      }
+      // The answers are projected inside the tracked operation, so the promise the body gets is
+      // the one an unawaited failure check and a settled map's failure drain watch.
+      return launch(id, 'step', async () => {
+        const outcome = await localStep<DecisionResult, ErrorMode>(id, prepared.step);
+        if (!prepared.settled) return (outcome as DecisionResult).answers;
+        const settled = outcome as Settled<DecisionResult>;
+        return settled.ok ? { ok: true, value: settled.value.answers } : settled;
+      });
+    };
     // Roster agents are bound over the context's own clients, so they share its bind hooks.
-    const readRoster = rosterReader((harness) =>
-      harness === 'claude'
-        ? context.claude
-        : harness === 'codex'
-          ? context.codex
-          : (context.agent as (name: string) => AgentClient<AgentOptions>)(harness),
+    const readRoster = rosterReader(
+      (harness) =>
+        harness === 'claude'
+          ? context.claude
+          : harness === 'codex'
+            ? context.codex
+            : (context.agent as (name: string) => AgentClient<AgentOptions>)(harness),
+      (binding) => (leaf, settings) => decideCall(leaf, settings, binding),
     );
     const context: WorkflowContext = {
       agent: (name: string) => client(name),
@@ -4010,27 +4034,8 @@ export async function runWorkflow<
           schema: z.number().int().nonnegative(),
           run: () => clockNow(clock),
         }),
-      // One version-identified step per call (ADR 0066 section 3). Validation, provider resolution
-      // and the capability check fail before any record, attributed to the call's step ID.
-      decide: ((leaf: string, settings: unknown) => {
-        const id = names.qualify(leaf);
-        let prepared: PreparedDecision;
-        try {
-          prepared = prepareDecision(decisionProviders, children.definition, id, settings);
-        } catch (error) {
-          return launch<never>(id, 'step', () => {
-            throw error;
-          });
-        }
-        // The answers are projected inside the tracked operation, so the promise the body gets is
-        // the one an unawaited failure check and a settled map's failure drain watch.
-        return launch(id, 'step', async () => {
-          const outcome = await localStep<DecisionResult, ErrorMode>(id, prepared.step);
-          if (!prepared.settled) return (outcome as DecisionResult).answers;
-          const settled = outcome as Settled<DecisionResult>;
-          return settled.ok ? { ok: true, value: settled.value.answers } : settled;
-        });
-      }) as WorkflowContext['decide'],
+      decide: ((leaf: string, settings: unknown) =>
+        decideCall(leaf, settings)) as WorkflowContext['decide'],
       // Cast: WaitSources<N> types previous.note for the author from noteSchema; the runtime passes
       // stored JSON, validated with noteSchema when the poll has one.
       wait: <const S extends WaitSources<N>, N extends JsonInput = JsonValue>(
@@ -4097,6 +4102,7 @@ export async function runWorkflow<
           scopeEntry(() => names.bind(prefix)),
           bindHooks,
           () => children.definition.roster,
+          decideCall,
         ),
       claude: client<ClaudeOptions>('claude'),
       codex: client<CodexOptions>('codex'),

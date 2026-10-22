@@ -2,6 +2,32 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Decider roster entries and `ctx.roster.Name.decide` (#654,
+  [ADR 0066](docs/decisions/0066-decision-providers.md) §2; see
+  [docs/roster.md](docs/roster.md#decider-entries)). `defineRoster` accepts a second entry kind,
+  `{ decider, model?, description? }`, which names a decision provider (`decider` matches the
+  provider-name pattern, `model` is a nonempty string). An entry that sets both `harness` and
+  `decider`, or a decider entry with any other key (`tools`, `expectsToolUse`, a limit, an agent
+  option), is refused by `defineRoster` and fails typecheck; an entry with neither now fails with
+  `must name its harness or decider`. When a workflow loads (validate, run, an inline child or a
+  package), each decider entry must name one of that definition's own `decisions`, or loading fails
+  with `Roster entry Triage names decision provider jev, which workflow review does not declare`.
+  `ctx.roster.Name` for a decider entry is a frozen `{ decide }`, typed by the new public
+  `RosterDecider` over `RosterDecideOptions` (the `ctx.decide` options without `provider` and
+  `model`, which the entry fixes) with the same `Settled` overload; `RosterDeciderEntry` is the new
+  `RosterEntry` member, and the harness members gain `decider?: never`. A call records exactly the
+  step `ctx.decide(id, { provider, model, ... })` records, so the `decision/2` identity and
+  fingerprint are unchanged and a completed step is reused across a switch between the two; the
+  step's `meta` gains `roster: '<Entry>'`, a label outside identity. An entry without `model` uses
+  the configured, then the declared, default model. An untyped call that passes `provider` or
+  `model` fails its step before any request. Decider entries are not roles: no capability profile,
+  grant, pin, `--profile` override or team slot. `workflow validate --json` (and `list-defs`) lists
+  them in a new `workflow.deciders` field, `{ provider, model, description }` by entry name (`{}`
+  when there are none), beside `workflow.capabilities` rather than inside it, so the persisted
+  capability manifest and the record schema revision are unchanged; `WorkflowDescription` gains
+  `deciders` and the new public `WorkflowDecider` type. `model.ts` changes only in the
+  `WorkflowContext.roster` doc comment, and `apiSnapshot.sha256` is bumped in both Workflow Lab
+  batches.
 - Decision steps in inspect and on their completion events (#653,
   [ADR 0066](docs/decisions/0066-decision-providers.md) §5; see
   [docs/observability.md](docs/observability.md)). `workflow inspect` now lists a completed

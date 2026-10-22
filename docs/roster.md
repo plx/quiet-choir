@@ -2,8 +2,9 @@
 
 The roster is a workflow's inventory of agents: named, concrete configurations, each pinned to one
 harness, that workflow code reaches by typed name
-([ADR 0063](decisions/0063-bound-agents-and-typed-rosters.md) §3–4). Keep it in its own module, so
-several workflows can import it:
+([ADR 0063](decisions/0063-bound-agents-and-typed-rosters.md) §3–4). It can also hold deciders:
+named decision providers and models ([decider entries](#decider-entries)). Keep it in its own
+module, so several workflows can import it:
 
 ```ts
 // roster.ts: data only.
@@ -51,11 +52,12 @@ export default defineWorkflow({
 
 ## The roster
 
-An entry is `{ harness, description?, expectsToolUse? }` plus **that harness's own option type**
-(`RosterEntry`). `harness` is the discriminant: `'claude'` takes `ClaudeOptions`, `'codex'` takes
-`CodexOptions`, and a registered harness takes its declared option schema. Pass registered harness
-definitions to `defineRoster(entries, { harnesses: [fake] })` to type their entries; the workflow
-must still list each one in its own `harnesses`, or validation fails with
+An agent entry is `{ harness, description?, expectsToolUse? }` plus **that harness's own option
+type** (`RosterEntry`; the other kind of entry is a [decider](#decider-entries)). `harness` is the
+discriminant: `'claude'` takes `ClaudeOptions`, `'codex'` takes `CodexOptions`, and a registered
+harness takes its declared option schema. Pass registered harness definitions to
+`defineRoster(entries, { harnesses: [fake] })` to type their entries; the workflow must still list
+each one in its own `harnesses`, or validation fails with
 `Roster entry Scout uses harness fake, which workflow review does not declare`. A roster never
 registers a harness by itself. An entry typed against the wrong harness fails typecheck: `sandbox`
 or a `codex: { … }` block on a Claude entry, `tools` on a Codex entry, or a Claude key on a
@@ -111,17 +113,18 @@ filled `maxTurns` or `maxBudgetUsd` stays out of the fingerprint.
 
 ## ctx.roster
 
-`ctx.roster.Name` is the entry's pinned harness client bound to the entry: `ctx.claude.bind(…)`,
-`ctx.codex.bind(…)` or `ctx.agent(name).bind(…)`. Its type is `RosterAgents<typeof roster>`, one
-readonly agent per entry name (`RosterAgentOf`), so `ctx.roster.Reviwer` fails typecheck. Each is
-typed as `bind` types the entry's options. Claude entries give an `Agent`; Codex entries give an
-`Agent` that also takes per-call `images`; a registered harness gives the agent its own `bind`
-gives, with `D`'s capabilities and the bound call keys its option schema declares, so a text-only
-registration (`structuredOutput: 'none'`) gives a text-only agent without `object` or a
-schema-bearing `value`, and a both-sides key that schema requires (such as `addDirs`) stays required
-on each call unless the entry sets it. A call takes only the prompt, the schema, placement (`cwd`,
-`addDirs`, `worktree`) and policy (`onError`, `retry`, `timeoutMs`, `idleTimeoutMs`); everything
-else is fixed by the entry. See [bound agents](#bound-agents) for the merge rules and errors.
+`ctx.roster.Name` is the entry's pinned harness client bound to the entry (for a decider entry, see
+[below](#decider-entries)): `ctx.claude.bind(…)`, `ctx.codex.bind(…)` or `ctx.agent(name).bind(…)`.
+Its type is `RosterAgents<typeof roster>`, one readonly agent per entry name (`RosterAgentOf`), so
+`ctx.roster.Reviwer` fails typecheck. Each is typed as `bind` types the entry's options. Claude
+entries give an `Agent`; Codex entries give an `Agent` that also takes per-call `images`; a
+registered harness gives the agent its own `bind` gives, with `D`'s capabilities and the bound call
+keys its option schema declares, so a text-only registration (`structuredOutput: 'none'`) gives a
+text-only agent without `object` or a schema-bearing `value`, and a both-sides key that schema
+requires (such as `addDirs`) stays required on each call unless the entry sets it. A call takes only
+the prompt, the schema, placement (`cwd`, `addDirs`, `worktree`) and policy (`onError`, `retry`,
+`timeoutMs`, `idleTimeoutMs`); everything else is fixed by the entry. See
+[bound agents](#bound-agents) for the merge rules and errors.
 
 - **Placement.** A call's `addDirs` are appended to the entry's, so a call cannot drop a declared
   directory; its `timeoutMs` and `idleTimeoutMs` replace the entry's.
@@ -141,18 +144,102 @@ else is fixed by the entry. See [bound agents](#bound-agents) for the merge rule
   `Agent<HarnessCapabilities>`. Pass the agent instead (`reviewWith(ctx.roster.Reviewer)` with a
   parameter typed `Agent`), which is also how a [team](#teams) slot (ADR 0067) is filled.
 
+## Decider entries
+
+A decider entry names a decision provider and model instead of a harness
+([ADR 0066](decisions/0066-decision-providers.md) §2): `{ decider, model?, description? }`
+(`RosterDeciderEntry`). `ctx.roster.Name` is then a `RosterDecider`, whose only method is `decide`:
+`ctx.decide` with the entry's provider and model preset.
+
+```ts
+import { defineRoster, defineWorkflow, z } from 'quiet-choir';
+import { choice, jevCompatible } from 'quiet-choir/decision';
+
+const jev = jevCompatible({
+  name: 'jev',
+  baseUrl: 'https://jev.example',
+  apiKeyEnv: 'JEV_TOKEN',
+  defaultModel: 'jev-latest',
+});
+const roster = defineRoster({
+  Triage: { decider: 'jev', model: 'jev-1.13', description: 'Routes support tickets.' },
+  Clerk: { harness: 'claude', model: 'haiku' },
+});
+const route = choice({ instructions: 'Which team?', options: { billing: null, support: null } });
+
+export default defineWorkflow({
+  name: 'triage',
+  version: '1',
+  input: z.object({ ticket: z.string() }),
+  output: z.enum(['billing', 'support']),
+  decisions: [jev],
+  roster,
+  async run(ctx, input) {
+    const answers = await ctx.roster.Triage.decide('triage', {
+      state: input,
+      questions: { route },
+    });
+    return answers.route.choice; // 'billing' | 'support'
+  },
+});
+```
+
+- **The entry.** `decider` is a provider name (`/^[a-z][a-z0-9-]{0,31}$/`), `model` a nonempty
+  string and `description` a string. An entry cannot set both `harness` and `decider`
+  (`Roster entry Both cannot set both harness and decider; an entry is an agent or a decider.`), and
+  a decider entry takes no other key: `tools`, `expectsToolUse`, a limit or any agent option fails
+  typecheck and, untyped, `defineRoster` throws
+  `Roster entry Triage is a decider; it cannot set tools (a decider entry takes only decider, model and description).`
+  Names follow the rules of every entry, and the stored entry is deep-frozen JSON.
+- **The load-time check.** When the workflow loads (validate, run, an inline child, a package), each
+  decider entry must name one of the workflow's own `decisions`:
+  `Roster entry Triage names decision provider jev, which workflow triage does not declare; add it to the workflow's decisions.`
+  An inline child is checked against its own `decisions`, as its `ctx.decide` calls resolve.
+- **The call.** `decide(id, { state, questions, onError?, retry?, timeoutMs? })` is typed like
+  `ctx.decide`: answers are inferred from the questions, and `onError: 'return'` gives `Settled`.
+  `provider` and `model` are fixed by the entry, so passing either fails typecheck; an untyped call
+  that passes one with a defined value fails its step before any request with
+  `ctx.roster.Triage.decide cannot set provider; roster entry Triage fixes it.` An entry without
+  `model` leaves it to the operator configuration (`decisions.<name>.defaultModel`) and then the
+  declaration's `defaultModel`, exactly as `ctx.decide({ provider })` does.
+- **Identity.** The call records the step `ctx.decide(id, { provider, model, … })` records: the same
+  `decision/2` identity over the provider name and revision, the requested model, the state and the
+  questions, and the same fingerprint. Moving a call between `ctx.decide` and the roster reuses its
+  completed step. The step's `meta` gains `roster: 'Triage'`, a label that is never identity, so
+  renaming an entry strands no completed decision. A step first recorded by `ctx.decide` keeps its
+  original `meta` (without `roster`) when a later execution reuses it through the roster.
+- **Prefixes and children.** `ctx.within('p').roster.Triage.decide('t', …)` records `p/t`, and a
+  call inside `ctx.scope` or `ctx.map` takes the IDs `ctx.decide` would. Inside an inline child,
+  `ctx.roster` is the child's roster and resolves against the child's `decisions`.
+- **Not a role.** A decider entry has no capability profile, grant, pin or `--profile` override (an
+  override naming one fails with `Unknown override profile: Triage.`), needs no grant under
+  `requireGrants`, and is not an `Agent`, so it cannot fill a [team](#teams) slot or be passed to a
+  helper typed `Agent`.
+
 ## Manifest and validate output
 
-`workflow validate --json` lists each entry in `workflow.capabilities.profiles` under its name, as a
-resolved role with its `harness`, model, tools or sandbox, limits, `description`, `expectsToolUse`
-and derived access label. The label is the pinned harness's access alone: a tool-less Claude entry
-is `none`, where the cross-harness maximum of a profile would be `read`. The unused harness blocks
-stay at the text baseline whatever `defaults` sets, since grant pins and child delegation compare
-both. Free-form controls (settings, MCP servers, subagents, system prompts such as
-`appendSystemPrompt`, Codex config and a registered harness's `sensitiveOptions`) appear only as
+`workflow validate --json` lists each agent entry in `workflow.capabilities.profiles` under its
+name, as a resolved role with its `harness`, model, tools or sandbox, limits, `description`,
+`expectsToolUse` and derived access label. The label is the pinned harness's access alone: a
+tool-less Claude entry is `none`, where the cross-harness maximum of a profile would be `read`. The
+unused harness blocks stay at the text baseline whatever `defaults` sets, since grant pins and child
+delegation compare both. Free-form controls (settings, MCP servers, subagents, system prompts such
+as `appendSystemPrompt`, Codex config and a registered harness's `sensitiveOptions`) appear only as
 digests under `redacted`, as for any profile. The top-level `workflow.profiles` list names declared
 profiles only. A run record's `capabilities` holds the same public manifest (record schema revision
 19 added the `harness` field; see [storage](storage.md#record-schema-revision)).
+
+Decider entries are not roles, so the capability manifest does not list them. `workflow.deciders`
+lists them instead, beside `workflow.capabilities`, at every node of the child tree: each entry's
+`provider`, `model` (null when calls use the configured or declared default) and `description` (or
+null), and `{}` for a workflow without any. The list lives outside the capability manifest that run
+records persist, so it adds no record schema revision.
+
+```json
+"deciders": {
+  "Triage": { "provider": "jev", "model": "jev-1.13", "description": "Routes support tickets." }
+}
+```
 
 ```json
 "Reviewer": {

@@ -181,12 +181,20 @@ interface CapabilityDeclaration {
   readonly harnesses?: readonly HarnessDeclaration[];
 }
 
-/** The declared role names of a definition: its `profiles`, then its roster entries. @internal */
+/**
+ * The declared role names of a definition: its `profiles`, then its agent roster entries. Decider
+ * entries (ADR 0066 section 2) are not roles. @internal
+ */
 export function declaredRoleNames(definition: {
   readonly profiles?: object;
   readonly roster?: object;
 }): string[] {
-  return [...Object.keys(definition.profiles ?? {}), ...Object.keys(definition.roster ?? {})];
+  return [
+    ...Object.keys(definition.profiles ?? {}),
+    ...Object.entries(definition.roster ?? {}).flatMap(([name, entry]: [string, unknown]) =>
+      typeof entry === 'object' && entry !== null && Object.hasOwn(entry, 'decider') ? [] : [name],
+    ),
+  ];
 }
 
 /**
