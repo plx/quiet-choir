@@ -64,12 +64,6 @@ export type DeepReadonlyOption<T> = T extends (...args: never[]) => unknown
     ? { readonly [K in keyof T]: DeepReadonlyOption<T[K]> }
     : T;
 
-/** The key that marks an agent entry as one; a decider entry cannot set it. */
-interface AgentEntryMark {
-  /** An agent entry names a harness, never a decision provider. */
-  readonly decider?: never;
-}
-
 /**
  * A decider entry (ADR 0066 section 2): a named decision provider and model, which
  * `ctx.roster.Name` binds to a {@link RosterDecider}. `decider` names one of the workflow's
@@ -102,22 +96,25 @@ export type RosterEntry<H extends readonly HarnessDeclaration[] = readonly []> =
   | ({
       /** Claude Code. */
       readonly harness: 'claude';
-    } & AgentEntryMark &
-      RosterEntryCommon &
+      /** An agent entry names a harness, never a decision provider. */
+      readonly decider?: never;
+    } & RosterEntryCommon &
       RosterEntryOptions<ClaudeOptions>)
   | ({
       /** Codex. */
       readonly harness: 'codex';
-    } & AgentEntryMark &
-      RosterEntryCommon &
+      /** An agent entry names a harness, never a decision provider. */
+      readonly decider?: never;
+    } & RosterEntryCommon &
       RosterEntryOptions<CodexOptions>)
   | (H[number] extends infer D
       ? D extends HarnessDeclaration
         ? {
             /** A harness registered with `defineRoster` options and the workflow's `harnesses`. */
             readonly harness: D['name'];
-          } & AgentEntryMark &
-            RosterEntryCommon &
+            /** An agent entry names a harness, never a decision provider. */
+            readonly decider?: never;
+          } & RosterEntryCommon &
             RosterEntryOptions<OptionsOf<D>>
         : never
       : never)
