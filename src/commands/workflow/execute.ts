@@ -247,7 +247,7 @@ export default class WorkflowExecute extends WorkflowCommand {
     const live = commands('live');
     const isolated = report.calls.filter((call) => call.worktree?.synthesized).length;
     this.logToStderr(
-      `Rehearsal: ${String(report.calls.length)} calls; ${commands('synthesized')} synthesized and ${commands('fixture')} fixture commands${live === '0' ? '' : `; ${live} live observer commands`}; nominal Claude ceiling $${String(report.nominalClaudeCeilingUsd)}; ${String(report.replays.length)} replayed effects${isolated > 0 ? `; ${String(isolated)} synthesized isolated calls` : ''}${report.merges.length > 0 ? `; ${String(report.merges.length)} synthesized merges` : ''}.`,
+      `Rehearsal: ${String(report.calls.length)} calls; ${commands('synthesized')} synthesized and ${commands('fixture')} fixture commands${live === '0' ? '' : `; ${live} live observer commands`}; nominal Claude ceiling $${String(report.nominalClaudeCeilingUsd)}; ${String(report.replays.length)} replayed effects${isolated > 0 ? `; ${String(isolated)} synthesized isolated calls` : ''}${report.merges.length > 0 ? `; ${String(report.merges.length)} synthesized merges` : ''}${report.decisions.length > 0 ? `; ${String(report.decisions.length)} decisions (${String(report.decisions.filter((entry) => entry.outputSource === 'synthesized').length)} synthesized)` : ''}.`,
     );
   }
 }

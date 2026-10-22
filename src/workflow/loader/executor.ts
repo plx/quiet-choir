@@ -108,6 +108,7 @@ import { packageListing, packageManifestSection } from '../package/manifest.js';
 import { checkPromptSets, promptRoots, type PromptChecks } from '../prompts/check.js';
 import { formatRateLimitWindows, readRateLimit } from '../runtime/rate-limit.js';
 import type { WorkflowEvent } from '../runtime/runner.js';
+import type { DecisionFixtureRequest } from '../runtime/decisions.js';
 import {
   AnswerError,
   listPendingRuns,
@@ -338,6 +339,8 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
     let harness = this.#options.harness;
     // Answers ctx.exec from fixture exec rules under a non-dry-run fixture harness.
     let execRunner: ProcessRunner | undefined;
+    // Answers ctx.decide in place of every provider transport under a fixture or dry-run harness.
+    let decisionHarness: FixtureHarness | undefined;
     let stage: CliErrorCode = 'load.typecheck';
     // The package to load (ADR 0065 section 2); on a resume, its workflow defaults to the run's.
     let packageSelection: PackageSelection | undefined =
@@ -800,12 +803,15 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
             plan.stubSteps,
           );
           harness = rehearsal;
+          decisionHarness = rehearsal;
           previewState = await rehearsalState(plan.runId, plan.stateDir, plan.resume);
           context.stateDir = previewState.stateDir;
         } else if (selection) {
           if (selection.kind === 'fixture') {
             if (!selection.fixtures) throw new Error('Fixture selection requires fixture data.');
-            harness = new FixtureHarness(selection.fixtures);
+            const fixtureHarness = new FixtureHarness(selection.fixtures);
+            harness = fixtureHarness;
+            decisionHarness = fixtureHarness;
             // Only ctx.exec goes through the rules; worktree Git keeps the real process runner.
             if (
               (selection.fixtures.exec?.length ?? 0) > 0 ||
@@ -1147,6 +1153,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         );
       // A one-execution mode (tick's suspend) applies now; the recorded policy keeps waitMode.
       const effectiveWaitMode = plan.waitModeOnce ?? waitMode;
+      const answerer = decisionHarness;
       const run = await runWorkflow(definition, {
         runId: plan.runId,
         launch,
@@ -1183,6 +1190,12 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         ...(selection?.decisions === undefined
           ? {}
           : { decisionConfigurations: selection.decisions }),
+        // A fixture or dry-run harness answers every decision, so no provider transport is built
+        // and no credentials are needed; an unmatched decision under a fixture is a configuration
+        // error, never a live call.
+        ...(answerer === undefined
+          ? {}
+          : { decisionFixture: (request: DecisionFixtureRequest) => answerer.decide(request) }),
         stateDir: previewState?.stateDir ?? plan.stateDir,
         // Under --dry-run, commands go to the rehearsal's synthesizing execRunner, as fixture exec
         // rules do under --harness fixture, while the real runner serves worktree Git (#148, #308).
