@@ -57,8 +57,10 @@ describe('test/decision-live-contract.mjs', () => {
       runs.signal,
     );
     expect(unconfigured).toMatchObject({ code: 1, stdout: '' });
+    // Getting past the skip with only QC_LIVE_TOKEN set shows the named variable was read; the
+    // message says "the token variable" so the script never prints the variable's name.
     expect(unconfigured.stderr).toContain(
-      'QC_LIVE_TOKEN is set but no host is configured; set decisions.jev.baseUrl',
+      'the token variable is set but no host is configured; set decisions.jev.baseUrl',
     );
   });
 });
