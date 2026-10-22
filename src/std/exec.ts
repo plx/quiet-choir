@@ -37,7 +37,7 @@ export function json(value: unknown): string {
  * @param ctx - The workflow context.
  * @param id - The command's step ID, scoped like any `ctx.exec` call.
  * @param args - The Git arguments, without `git`.
- * @param options - `ctx.exec` options; failures always throw, so `onError` is not accepted.
+ * @param options - `ctx.exec` options; failures always throw, so `onError` is not accepted and a forwarded value is overridden.
  * @returns The command's stdout.
  * @throws Error - `Incomplete Git output: <id>` when stdout or stderr was truncated, and the
  * `ExecError` of a failed command.
@@ -48,7 +48,8 @@ export async function git(
   args: readonly [string, ...string[]],
   options?: Omit<ExecOptions, 'onError'>,
 ): Promise<string> {
-  const result = await ctx.exec(id, ['git', ...args], options);
+  // A caller can still widen `options` to `ExecOptions`, so force the throwing overload at runtime.
+  const result = await ctx.exec(id, ['git', ...args], { ...options, onError: 'throw' });
   if (result.truncated) throw new Error(`Incomplete Git output: ${id}`);
   return result.stdout;
 }

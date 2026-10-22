@@ -13,6 +13,8 @@ import {
   readRun,
   runWorkflow,
   z,
+  ExecError,
+  type ExecOptions,
   type Harness,
   type WorkflowContext,
   type WorkflowDefinition,
@@ -96,6 +98,26 @@ it('git returns complete stdout and refuses truncated output', async () => {
   await expect(runWorkflow(truncated, options('git-truncated'))).rejects.toThrow(
     'Incomplete Git output: head',
   );
+});
+
+it('git always throws a failure, even when the options were widened to onError return', async () => {
+  const widened: ExecOptions = { onError: 'return' };
+  const failing = workflow(z.string(), async (ctx) => {
+    try {
+      await std.exec.git(ctx, 'missing', ['rev-parse', '--verify', 'refs/heads/none'], widened);
+      return 'returned';
+    } catch (error) {
+      return error instanceof ExecError ? 'ExecError' : 'other';
+    }
+  });
+  const failure = await runWorkflow(failing, options('git-widened-failure'));
+  expect(failure.output).toBe('ExecError');
+  const head = (await git('rev-parse', 'HEAD')).trim();
+  const succeeding = workflow(z.string(), (ctx) =>
+    std.exec.git(ctx, 'head', ['rev-parse', 'HEAD'], widened),
+  );
+  const result = await runWorkflow(succeeding, options('git-widened-success'));
+  expect(result.output?.trim()).toBe(head);
 });
 
 it('committedArtifact writes a nested file, merges it into the checkout and returns the receipt', async () => {
