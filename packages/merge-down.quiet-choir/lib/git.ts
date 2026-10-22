@@ -8,8 +8,8 @@
 // Git commands run with the worktree as cwd rather than `git -C <path>`, which keeps their argv free
 // of run-specific paths for fixture rules.
 import { existsSync } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import {
   z,
   type ExecResult,
@@ -392,22 +392,92 @@ export function verifyFixes(
 }
 
 /**
- * Check, before an agent edits the worktree, that it is still on this run's branch: another PR's
- * run on the same root checks out its own branch, and a resumed run must not work on that. Settles
- * with the refusal, or null when the worktree is this run's.
+ * The branch the worktree works on: HEAD's branch, or while a rebase is in progress (which detaches
+ * HEAD) the branch it rebases; null on a detached HEAD outside a rebase.
  */
-export function ownWorktree(
+export async function workingBranch(context: StepContext, W: string): Promise<string | null> {
+  const ref = await checkedOut(context, W);
+  if (ref !== null) return ref;
+  for (const name of ['rebase-merge', 'rebase-apply']) {
+    const args = ['rev-parse', '--path-format=absolute', '--git-path', `${name}/head-name`];
+    const path = await git(context, W, args);
+    if (existsSync(path)) return (await readFile(path, 'utf8')).trim();
+  }
+  return null;
+}
+
+/** How an owner probe ends: always thrown, so the probe never completes and is never replayed. */
+class OwnerProbe extends Error {
+  constructor(readonly refused: string | null) {
+    super(
+      refused ??
+        "the worktree is this run's (an owner probe never completes, so each resume checks again)",
+    );
+    this.name = 'OwnerProbe';
+  }
+}
+
+/** The owner probe of {@link ownedAgent}: the refusal, or null when the agent may run. */
+async function probeOwner(
   ctx: WorkflowContext,
   id: string,
-  input: { readonly workdir: string; readonly pr: number },
+  input: { readonly workdir: string; readonly pr: number; readonly marker: string },
 ): Promise<string | null> {
-  return ctx.step(id, {
+  try {
+    await ctx.step(id, {
+      identity: 'version',
+      version: 'merge-down.owner/2',
+      input: { workdir: input.workdir, pr: input.pr, marker: input.marker },
+      schema: z.null(),
+      async run(context) {
+        if (existsSync(input.marker)) throw new OwnerProbe(null);
+        const branch = await workingBranch(context, input.workdir);
+        throw new OwnerProbe(foreignWorktree(branch, input.pr));
+      },
+    });
+  } catch (error) {
+    let cause: unknown = error;
+    while (cause instanceof Error && !(cause instanceof OwnerProbe)) cause = cause.cause;
+    if (cause instanceof OwnerProbe) return cause.refused;
+    throw error;
+  }
+  throw new Error(`${id} completed; an owner probe always throws`);
+}
+
+/**
+ * Run `attempt`, an agent call that edits the worktree, only while the worktree is this run's:
+ * another PR's run on the same root checks out its own branch, and a resumed run must not let an
+ * agent work there. A completed check would replay on resume while the agent call it guarded, still
+ * unfinished, runs again; so the check is a probe step that always throws, which the runtime never
+ * checkpoints as completed, and every execution of the body that reaches `attempt` reads the
+ * branch again. Once `attempt` has returned, a marker under `dir` (keyed by run and `id`, the
+ * agent's step ID) tells later probes to pass without reading the branch, because the agent's
+ * outcome then replays and touches nothing: a run resumed after its own cleanup detached the
+ * worktree still replays its finished fix rounds. Returns the agent's result, or the refusal
+ * without calling it.
+ */
+export async function ownedAgent<T>(
+  ctx: WorkflowContext,
+  id: string,
+  input: { readonly workdir: string; readonly pr: number; readonly dir: string },
+  attempt: () => Promise<T>,
+): Promise<{ readonly value: T } | { readonly refused: string }> {
+  const marker = join(input.dir, 'agents', ctx.runId, `${id}.ran`);
+  const refused = await probeOwner(ctx, `${id}-owner`, { ...input, marker });
+  if (refused !== null) return { refused };
+  const value = await attempt();
+  await ctx.step(`${id}-ran`, {
     identity: 'version',
-    version: 'merge-down.owner/1',
-    input: { ...input },
-    schema: z.string().nullable(),
-    run: async (context) => foreignWorktree(await checkedOut(context, input.workdir), input.pr),
+    version: 'merge-down.agent-ran/1',
+    input: { marker },
+    schema: z.null(),
+    async run() {
+      await mkdir(dirname(marker), { recursive: true });
+      await writeFile(marker, '');
+      return null;
+    },
   });
+  return { value };
 }
 
 /** What {@link publish} reports. */

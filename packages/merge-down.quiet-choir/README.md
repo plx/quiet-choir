@@ -72,10 +72,16 @@ deliberately shared, so a stack recorded by either tool is honored by both.
 
 One root serves one unfinished run at a time: every run checks out its own PR's branch in the same
 `worktree/`. A run resumed after another PR's run used the root finds that branch checked out, and
-blocks (`worktree belongs to another run`) instead of working there: each fix round and check suite,
-and the push, first checks that the worktree is on `merge-down/package/pr-N`, and the push also
-checks that the head it publishes descends from the head this run synced. Restart such a run with a
-new `--run-id`, or give runs that must interleave distinct `root`s.
+blocks (`worktree belongs to another run`) instead of working there: each agent that edits the
+worktree (the conflict resolver, the implementer, its retry and the repair), each check suite, and
+the push first check that the worktree is on `merge-down/package/pr-N` (or rebasing it), and the
+push also checks that the head it publishes descends from the head this run synced. An agent's check
+is a probe step that never completes, so it is never replayed: a resume that runs an unfinished
+agent again reads the branch again first. Once the agent has returned, a marker in
+`state/pr-N/agents/<run id>/` lets the probe pass, so a resume that only replays the agent's outcome
+(after the run's own cleanup detached the worktree, for example) does not block. Each probe shows as
+a failed step attempt (`<agent step>-owner`) in the run record. Restart a blocked run with a new
+`--run-id`, or give runs that must interleave distinct `root`s.
 
 ## How it works
 

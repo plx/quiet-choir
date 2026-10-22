@@ -2,6 +2,7 @@
 // real against a scratch Git repository.
 import { execFileSync } from 'node:child_process';
 import {
+  appendFile,
   chmod,
   mkdir,
   mkdtemp,
@@ -38,6 +39,14 @@ const { runCheck } = await lib<{
     input: { workdir: string; pr: number; dir: string; label: string; command: string },
   ) => Promise<unknown>;
 }>('checks');
+const { ownedAgent } = await lib<{
+  ownedAgent: <T>(
+    ctx: WorkflowContext,
+    id: string,
+    input: { workdir: string; pr: number; dir: string },
+    attempt: () => Promise<T>,
+  ) => Promise<{ value: T } | { refused: string }>;
+}>('git');
 const { landMerge } = await lib<{
   landMerge: (
     ctx: WorkflowContext,
@@ -187,6 +196,101 @@ describe('runCheck', () => {
         'worktree belongs to another run (on merge-down/package/pr-2); re-run this PR from the start',
     });
     await expect(readFile(ran, 'utf8')).rejects.toThrow();
+  });
+});
+
+describe('ownedAgent', () => {
+  const own = 'merge-down/package/pr-1';
+  const git = (dir: string, ...args: string[]) =>
+    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], {
+      cwd: dir,
+      encoding: 'utf8',
+      stdio: 'pipe',
+    }).trim();
+
+  /** A workflow whose agent (a step that logs each live attempt to `calls`) edits `workdir`. */
+  const agentRun = (workdir: string, calls: string, crash: { agent: boolean; after: boolean }) =>
+    definition(async (ctx) => {
+      const owned = await ownedAgent(
+        ctx,
+        'fix/1/implement',
+        { workdir, pr: 1, dir: join(real, 'state') },
+        () =>
+          ctx.step('fix/1/implement', {
+            input: null,
+            schema: z.string(),
+            run: async () => {
+              await appendFile(calls, 'run\n');
+              if (crash.agent) throw new Error('interrupted during the agent');
+              return 'fixed';
+            },
+          }),
+      );
+      if (crash.after) throw new Error('interrupted after the agent');
+      return owned;
+    });
+
+  it('does not resume an unfinished agent in a worktree another PR’s run checked out', async () => {
+    const workdir = join(real, 'worktree');
+    const calls = join(real, 'calls');
+    await repository(workdir, own);
+    const crash = { agent: true, after: false };
+    const workflow = agentRun(workdir, calls, crash);
+    // The ownership check passed and the agent started, then the run was interrupted.
+    await expect(runWorkflow(workflow, setup())).rejects.toThrow('interrupted during the agent');
+    expect(await readFile(calls, 'utf8')).toBe('run\n');
+    git(workdir, 'checkout', '-q', '-b', 'merge-down/package/pr-2');
+    crash.agent = false;
+    const resumed = await runWorkflow(workflow, setup(true));
+    expect(resumed.output).toEqual({
+      refused:
+        'worktree belongs to another run (on merge-down/package/pr-2); re-run this PR from the start',
+    });
+    expect(await readFile(calls, 'utf8')).toBe('run\n');
+  });
+
+  it('replays a finished agent after the worktree changed hands', async () => {
+    const workdir = join(real, 'worktree');
+    const calls = join(real, 'calls');
+    await repository(workdir, own);
+    const crash = { agent: false, after: true };
+    const workflow = agentRun(workdir, calls, crash);
+    await expect(runWorkflow(workflow, setup())).rejects.toThrow('interrupted after the agent');
+    // As the run's own cleanup leaves it after the merge.
+    git(workdir, 'checkout', '-q', '--detach');
+    crash.after = false;
+    const resumed = await runWorkflow(workflow, setup(true));
+    expect(resumed.output).toEqual({ value: 'fixed' });
+    expect(await readFile(calls, 'utf8')).toBe('run\n');
+  });
+
+  it('owns a worktree whose rebase of this run’s branch stopped on a conflict', async () => {
+    const workdir = join(real, 'worktree');
+    await repository(workdir, own);
+    git(workdir, 'branch', 'base');
+    await writeFile(join(workdir, 'README.md'), 'ours\n');
+    git(workdir, 'commit', '-q', '-am', 'ours');
+    git(workdir, 'checkout', '-q', 'base');
+    await writeFile(join(workdir, 'README.md'), 'theirs\n');
+    git(workdir, 'commit', '-q', '-am', 'theirs');
+    git(workdir, 'checkout', '-q', own);
+    expect(() => git(workdir, 'rebase', 'base')).toThrow();
+    const run = await runWorkflow(
+      definition(async (ctx) => {
+        const attempt = (pr: number) =>
+          ownedAgent(ctx, `resolve-${String(pr)}`, { workdir, pr, dir: join(real, 'state') }, () =>
+            Promise.resolve('resolved'),
+          );
+        return [await attempt(1), await attempt(2)];
+      }),
+      setup(),
+    );
+    expect(run.output).toEqual([
+      { value: 'resolved' },
+      {
+        refused: `worktree belongs to another run (on ${own}); re-run this PR from the start`,
+      },
+    ]);
   });
 });
 

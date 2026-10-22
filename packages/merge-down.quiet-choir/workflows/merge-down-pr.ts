@@ -20,7 +20,7 @@ import {
 } from '../contracts.js';
 import { FOREIGN_WORKTREE, runCheck } from '../lib/checks.js';
 import { localCodexReview, type LocalReview } from '../lib/codex.js';
-import { cleanupBranch, ownWorktree, publish, snapshot, sync, verifyFixes } from '../lib/git.js';
+import { cleanupBranch, ownedAgent, publish, snapshot, sync, verifyFixes } from '../lib/git.js';
 import { landMerge } from '../lib/land.js';
 import {
   canonicalizeKeys,
@@ -244,6 +244,8 @@ export default defineWorkflow({
       upstreamDelta: SYNC.forkPoint !== null,
     };
     const place = { cwd: W, addDirs: [DIR], onError: 'return' } as const;
+    // What an agent that edits the worktree checks first (see ownedAgent).
+    const owner = { workdir: W, pr: A.pr, dir: DIR };
     const standingNotes = A.standingNotes;
     const roundCaps = { maxCodexRounds: A.maxCodexRounds, hardCap: A.codexRoundsHardCap };
 
@@ -253,17 +255,21 @@ export default defineWorkflow({
       const team: ResolveTeam = ResolveTeam.from({
         resolver: kind === 'dependency' ? ctx.roster.Mechanic : ctx.roster.Surgeon,
       });
-      const resolution = await team.resolver.value('resolve', {
-        ...place,
-        prompt: prompts.ResolveConflicts({
-          situation,
-          standingNotes,
-          forkPoint: SYNC.forkPoint ?? '',
-          origHead: SYNC.origHead ?? '',
-          conflicted: SYNC.conflictedFiles,
+      const resolved = await ownedAgent(ctx, 'resolve', owner, () =>
+        team.resolver.value('resolve', {
+          ...place,
+          prompt: prompts.ResolveConflicts({
+            situation,
+            standingNotes,
+            forkPoint: SYNC.forkPoint ?? '',
+            origHead: SYNC.origHead ?? '',
+            conflicted: SYNC.conflictedFiles,
+          }),
+          schema: Resolve,
         }),
-        schema: Resolve,
-      });
+      );
+      if ('refused' in resolved) return blocked('rebase', resolved.refused);
+      const resolution = resolved.value;
       if (!resolution.ok || !resolution.value.completed) {
         const concerns = resolution.ok ? resolution.value.concerns.join('; ') : '';
         return blocked('rebase', concerns || 'conflict resolution did not complete');
@@ -697,29 +703,31 @@ export default defineWorkflow({
         items.some((i) => i.complexity === 'subtle' || i.severity === 'blocker');
       const keys = items.map((i) => i.key) as [string, ...string[]];
       const listed = items.map((i) => ({ ...i, files: [...i.files] }));
-      const ask = (
+      // Another PR's run may have taken the root over since this run synced: no agent edits its
+      // checkout, whichever session the agent runs in.
+      const ask = async (
         agent: FixTeam['mechanic'],
         id: string,
         retry: boolean,
         repair: Parameters<typeof prompts.Implement>[0]['repair'],
-      ) =>
-        agent.value(ctx.id('fix', n, id), {
-          ...place,
-          prompt: prompts.Implement({ situation, standingNotes, items: listed, retry, repair }),
-          schema: Fix(keys),
-        });
-      // Another PR's run may have taken the root over since this run synced: no agent edits its
-      // checkout. Checked again before the repair, which can come in a later session.
-      const owner = (id: string) =>
-        ownWorktree(ctx, ctx.id('fix', n, id), { workdir: W, pr: A.pr });
-      const foreign = await owner('owner');
-      if (foreign !== null) return { error: foreign };
+      ) => {
+        const owned = await ownedAgent(ctx, ctx.id('fix', n, id), owner, () =>
+          agent.value(ctx.id('fix', n, id), {
+            ...place,
+            prompt: prompts.Implement({ situation, standingNotes, items: listed, retry, repair }),
+            schema: Fix(keys),
+          }),
+        );
+        return 'refused' in owned ? owned : owned.value;
+      };
       const first = hard ? team.surgeon : team.mechanic;
       let answer = await ask(first, 'implement', false, null);
+      if ('refused' in answer) return { error: answer.refused };
       if (!answer.ok) {
         // An implementer that ends without reporting may still have committed work; don't redo it.
         ctx.log(`fix-${String(n)}: implementer ended without a result; retrying once`);
         answer = await ask(first, 'implement-retry', true, null);
+        if ('refused' in answer) return { error: answer.refused };
       }
       if (!answer.ok) return { error: 'implementer returned nothing' };
       let settled = await settle(items, answer.value, String(n));
@@ -729,8 +737,6 @@ export default defineWorkflow({
         ctx.log(
           `fix-${String(n)}: checks fail at ${settled.head.slice(0, 7)}; repairing with the surgeon tier`,
         );
-        const taken = await owner('repair-owner');
-        if (taken !== null) return { error: taken };
         const repaired = await ask(team.surgeon, 'repair', false, {
           notes: JSON.stringify(settled.report.notes),
           head: settled.head,
@@ -738,6 +744,7 @@ export default defineWorkflow({
           log: gate.log ?? gate.error ?? 'no log',
           excerptFile: gate.excerptFile,
         });
+        if ('refused' in repaired) return { error: repaired.refused };
         if (!repaired.ok)
           return {
             error: `local checks at ${settled.head.slice(0, 7)} after fixes failed, and the repair returned nothing (${String(gate.log)})`,
