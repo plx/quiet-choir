@@ -744,6 +744,63 @@
       }
     },
     {
+      "step": "land/ci/0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+      "json": {
+        "data": {
+          "repository": {
+            "pullRequest": {
+              "number": 42,
+              "state": "OPEN",
+              "headRefOid": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+              "commits": {
+                "nodes": [
+                  {
+                    "commit": {
+                      "oid": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+                      "statusCheckRollup": {
+                        "state": "SUCCESS",
+                        "contexts": {
+                          "pageInfo": {
+                            "hasNextPage": false
+                          },
+                          "nodes": [
+                            {
+                              "__typename": "CheckRun",
+                              "name": "Quality and package",
+                              "status": "COMPLETED",
+                              "conclusion": "SUCCESS",
+                              "detailsUrl": "https://github.com/acme/widgets/actions/runs/555",
+                              "checkSuite": {
+                                "workflowRun": {
+                                  "databaseId": 555
+                                }
+                              }
+                            },
+                            {
+                              "__typename": "CheckRun",
+                              "name": "test (22)",
+                              "status": "COMPLETED",
+                              "conclusion": "SUCCESS",
+                              "detailsUrl": "https://github.com/acme/widgets/actions/runs/555",
+                              "checkSuite": {
+                                "workflowRun": {
+                                  "databaseId": 555
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
       "step": "land/pr/0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
       "json": {
         "data": {

@@ -1,0 +1,17 @@
+{
+  "input": {
+    "pr": 42,
+    "repo": "acme/widgets",
+    "parentEpic": 7
+  },
+  "expect": {
+    "status": "blocked",
+    "blocked": {
+      "stage": "land",
+      "reason": "CI failed before landing: test (22)"
+    },
+    "rounds": 1,
+    "mergeCommit": null
+  },
+  "order": ["gate/1/push", "gate/1/wait/ci", "land/ci/0a1b2c3d4e5f60718293a4b5c6d7e8f901234567"]
+}

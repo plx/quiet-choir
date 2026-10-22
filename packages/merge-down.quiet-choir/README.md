@@ -76,7 +76,7 @@ deliberately shared, so a stack recorded by either tool is honored by both.
 | Review  | `Reviewer` opus / medium → `Judge` opus / xhigh                                       | In parallel: the `check-0` suite, the change review (or the dependency review, by `Reviewer` for a major bump, else `Mechanic`) and the first local Codex review, triaged by `Reviewer`. Escalation on the native reasons.              |
 | Fix     | `FixTeam.mechanic` sonnet / high or `.surgeon` opus / high ∥ `Scribe` sonnet / medium | The slot by complexity; the workflow verifies the reported commits and runs the suite at the new head, with one surgeon repair on failure. The scribe drafts follow-ups and the workflow files them.                                    |
 | Gate    | no agent (`Reviewer` triages new threads)                                             | Retarget stacked PRs, push with lease, confirm GitHub sees the head, fix the closing keyword, reply to and resolve threads, dismiss settled alerts; then CI ∥ reviewers ∥ a local Codex review of the head; loop on findings or red CI. |
-| Land    | no agent                                                                              | Guards (open, head, base, unanswered threads, open alerts), `pr.merge` pinned to the gated SHA, the issue closed or reopened, children read, the local branch deleted.                                                                  |
+| Land    | no agent                                                                              | CI re-read at landing (a fresh wait on the gated head), guards (open, head, base, CI, unanswered threads, open alerts), `pr.merge` pinned to the gated SHA, the issue closed or reopened, children read, the local branch deleted.      |
 | Report  | `Scribe` sonnet / medium                                                              | Drafts the issue summary and headline; the workflow posts the comment.                                                                                                                                                                  |
 
 Every mechanical step is a durable effect that costs no model call. There is no Clerk or Copyist and
@@ -197,7 +197,8 @@ is fingerprinted) with `execute --dry-run --harness fixture:<case>.fixtures.json
 stacked PR retargeted to `main` with nothing to push, noted, merged in round 1), `fix-round` (a
 stacked PR retargeted before the push, a Codex thread fixed with a commit and replied to, a new
 thread triaged, merged in round 2), `stop-at-fix` (`until: fix`, with the planned `Addressed in`
-reply) and `blocked-gate` (red CI, a rerun that fails again, `maxCiRepairs: 0`). Every agent call
+reply), `blocked-gate` (red CI, a rerun that fails again, `maxCiRepairs: 0`) and `land-red-ci` (the
+gate sees green CI but the land-time wait sees red: blocked at `land`, no merge). Every agent call
 and command is answered by its fixtures (`"commands": "fixture"`), no rule may go unused, and a
 case's `order` lists steps that must start in that order (the retarget before the push). It runs in
 `npm run check` and in the Package rehearsals CI job.

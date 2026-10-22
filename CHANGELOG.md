@@ -12,13 +12,13 @@
   steps and commands, so the verified relay (clerks, nonces, FNV hashes) is gone. The stages,
   `until` stops, statuses and ledger record match the native script; its `error` status is the input
   schema's refusal. It uses its own default root and local branch, so the native script remains the
-  fallback. `npm run packages:rehearse` validates the package and rehearses four fixture cases
-  (clean land, fix round, stop at fix, blocked gate) from `packages/rehearsals/merge-down/`; it runs
-  in `npm run check` after the build and in a new Package rehearsals CI job. `npm run typecheck`
-  also checks the package, `durability:check` lints its workflows, and `.prettierignore` keeps
-  formatters off `packages/*/prompts/`. The README records the measurements against the native pair
-  and the API follow-ups filed with this change. `model.ts`, the API snapshot and the record schema
-  revision are unchanged.
+  fallback. `npm run packages:rehearse` validates the package and rehearses five fixture cases
+  (clean land, fix round, stop at fix, blocked gate, red CI at land) from
+  `packages/rehearsals/merge-down/`; it runs in `npm run check` after the build and in a new Package
+  rehearsals CI job. `npm run typecheck` also checks the package, `durability:check` lints its
+  workflows, and `.prettierignore` keeps formatters off `packages/*/prompts/`. The README records
+  the measurements against the native pair and the API follow-ups filed with this change.
+  `model.ts`, the API snapshot and the record schema revision are unchanged.
 - Seed `quiet-choir/std`, the opt-in standard library (#588, ADR 0063 §3, ADR 0067 §3; see
   [docs/roster.md](docs/roster.md#standard-library-entries)). `std.claude` and `std.codex` hold
   frozen roster entry fragments `Text`, `ReadOnly` and `Edit` with the built-in preset values, to
