@@ -133,6 +133,31 @@ describe('trusted definition registry', { timeout: 30_000 }, () => {
     expect(await readFile(marker, 'utf8')).toBe('x'.repeat(9));
   });
 
+  it('lists decider roster entries under workflow.deciders, fresh and from the cache (#654)', async () => {
+    const root = await project();
+    const marker = join(root, 'imported');
+    await writeFile(
+      join(root, 'triage.workflow.ts'),
+      `import {appendFileSync} from 'node:fs';
+import {defineRoster, defineWorkflow, z} from ${JSON.stringify(join(repository, 'src/index.js'))};
+import {defineDecisionProvider} from ${JSON.stringify(join(repository, 'src/integrations/decision.js'))};
+appendFileSync(${JSON.stringify(marker)}, 'x');
+const jev = defineDecisionProvider({ name: 'jev', revision: 1, capabilities: { kinds: ['noul'], maxOptions: 2, levels: [2, 2], idempotencyKey: false }, transport: () => () => Promise.resolve({ body: {} }) });
+export default defineWorkflow({ name: 'triage', version: '1', input: z.null(), output: z.null(), decisions: [jev],
+  roster: defineRoster({ Triage: { decider: 'jev', model: 'jev-1' }, Clerk: { harness: 'claude' } }),
+  run: async () => null });`,
+    );
+    const engine = executor();
+    const plan = { kind: 'workflow.list-defs' as const, directories: [root] };
+    const first = await engine.execute(plan);
+    const deciders = { Triage: { provider: 'jev', model: 'jev-1', description: null } };
+    expect(first).toMatchObject({ ok: true, definitions: [{ workflow: { deciders } }] });
+    expect(await engine.execute(plan)).toEqual(first);
+    expect(await readFile(marker, 'utf8')).toBe('x');
+    if (first.kind !== 'workflow.list-defs.result') throw new Error(JSON.stringify(first));
+    expect(first.definitions[0]?.workflow.capabilities.profiles).not.toHaveProperty('Triage');
+  });
+
   it('revalidates when the validation key changes and serves the new key afterwards (#345)', async () => {
     const root = await project();
     const marker = join(root, 'imported');

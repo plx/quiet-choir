@@ -1022,8 +1022,10 @@ export interface WorkflowContext<
    * entry's pinned harness client bound to the entry, so its calls take only the prompt, schema,
    * placement and policy, and resolve, fingerprint and record as a `profile: 'Name'` call does.
    * Each read gives agents bound over this context, so `ctx.within(p).roster.Name` keeps the
-   * prefix. Inside an inline child it is the child's own roster. A workflow without `roster` has
-   * no entries; an untyped misspelled name is `undefined`.
+   * prefix. A decider entry (ADR 0066 section 2) gives `{ decide }` instead: `ctx.decide` with
+   * the entry's provider and model fixed, recording the same identity plus a `meta.roster` label.
+   * Inside an inline child it is the child's own roster. A workflow without `roster` has no
+   * entries; an untyped misspelled name is `undefined`.
    */
   readonly roster: RosterAgents<TRoster>;
   /**

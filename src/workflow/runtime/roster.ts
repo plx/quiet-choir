@@ -1,3 +1,5 @@
+import type { WorkflowDecider } from './child-model.js';
+import type { DecisionBinding } from './decisions.js';
 import type { HarnessDeclaration } from './harness-model.js';
 import type { AgentOptions, JsonValue } from './model.js';
 import type { AgentProfile } from './profiles-model.js';
@@ -8,7 +10,9 @@ import { promptOptionsAsText } from '../prompts/prompt.js';
 // ADR 0063 sections 3-4. A roster entry compiles to an ordinary declared profile under its own
 // name, pinned to one harness, so resolution, launch overrides, attempt records, grants and the
 // manifest reuse the profile code. `ctx.roster.Name` is the pinned harness client bound to that
-// profile, so its calls take the path a `profile: 'Name'` call takes.
+// profile, so its calls take the path a `profile: 'Name'` call takes. A decider entry (ADR 0066
+// section 2) is not a role: it compiles to nothing, and `ctx.roster.Name` is `{ decide }` over
+// `ctx.decide` with the entry's provider and model preset.
 
 /** Entry keys: identifiers, so dot access always works, capped to the manifest's name length. */
 const keyPattern = /^[A-Za-z][A-Za-z0-9_]{0,63}$/u;
@@ -49,8 +53,49 @@ const forbiddenKeys: Readonly<Record<string, string>> = {
 /** Limits that compile to top-level profile limits, so `--profile Name.limit=` overrides them. */
 const limitKeys = ['timeoutMs', 'idleTimeoutMs', 'maxTurns', 'maxBudgetUsd'] as const;
 
+/** Decision provider names, as `defineDecisionProvider` requires them. */
+const providerNamePattern = /^[a-z][a-z0-9-]{0,31}$/u;
+/** The only keys a decider entry may set. */
+const deciderKeys: ReadonlySet<string> = new Set(['decider', 'model', 'description']);
+
+/** A validated agent entry as plain JSON data. */
+type AgentEntryData = Readonly<Record<string, JsonValue>> & { readonly harness: string };
+/** A validated decider entry as plain JSON data. */
+interface DeciderEntryData {
+  readonly decider: string;
+  readonly model?: string;
+  readonly description?: string;
+}
 /** A validated entry as plain JSON data. */
-type EntryData = Readonly<Record<string, JsonValue>> & { readonly harness: string };
+type EntryData = AgentEntryData | DeciderEntryData;
+
+/** Whether a validated entry is a decider entry. */
+function isDecider(entry: EntryData): entry is DeciderEntryData {
+  return Object.hasOwn(entry, 'decider');
+}
+
+/** Validate a decider entry (ADR 0066 section 2) and copy it as plain JSON. */
+function checkedDecider(name: string, entry: Readonly<Record<string, unknown>>): DeciderEntryData {
+  if (Object.hasOwn(entry, 'harness'))
+    throw new Error(
+      `Roster entry ${name} cannot set both harness and decider; an entry is an agent or a decider.`,
+    );
+  for (const key of Object.keys(entry))
+    if (!deciderKeys.has(key))
+      throw new Error(
+        `Roster entry ${name} is a decider; it cannot set ${key} (a decider entry takes only decider, model and description).`,
+      );
+  const { decider, model, description } = entry;
+  if (typeof decider !== 'string' || !providerNamePattern.test(decider))
+    throw new Error(
+      `Roster entry ${name} decider must be a decision provider name matching /^[a-z][a-z0-9-]{0,31}$/.`,
+    );
+  if (model !== undefined && (typeof model !== 'string' || !model.trim()))
+    throw new Error(`Roster entry ${name} model must be a nonempty string.`);
+  if (description !== undefined && typeof description !== 'string')
+    throw new Error(`Roster entry ${name} description must be a string.`);
+  return jsonValue(entry, `Roster entry ${name}`) as unknown as DeciderEntryData;
+}
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
@@ -88,11 +133,16 @@ function checkedEntries(
       throw new Error(`Roster entry name ${name} is reserved (a built-in preset or access word).`);
     const entry = value[name];
     if (!isRecord(entry)) throw new TypeError(`Roster entry ${name} must be an object.`);
+    if (Object.hasOwn(entry, 'decider')) {
+      result[name] = checkedDecider(name, entry);
+      continue;
+    }
     for (const key of Object.keys(entry))
       if (Object.hasOwn(forbiddenKeys, key))
         throw new Error(`Roster entry ${name} cannot set ${key}: ${forbiddenKeys[key] ?? ''}.`);
     const harness = entry['harness'];
-    if (typeof harness !== 'string') throw new Error(`Roster entry ${name} must name its harness.`);
+    if (typeof harness !== 'string')
+      throw new Error(`Roster entry ${name} must name its harness or decider.`);
     if (harness !== 'claude' && harness !== 'codex' && !registered.has(harness))
       throw new Error(unknown(name, harness));
     if (entry['description'] !== undefined && typeof entry['description'] !== 'string')
@@ -100,15 +150,16 @@ function checkedEntries(
     if (entry['expectsToolUse'] !== undefined && typeof entry['expectsToolUse'] !== 'boolean')
       throw new Error(`Roster entry ${name} expectsToolUse must be a boolean.`);
     // A standing systemPrompt or appendSystemPrompt may be a rendered Prompt (ADR 0064 section 2).
-    result[name] = jsonValue(promptOptionsAsText(entry), `Roster entry ${name}`) as EntryData;
+    result[name] = jsonValue(promptOptionsAsText(entry), `Roster entry ${name}`) as AgentEntryData;
   }
   return result;
 }
 
 /**
  * Define the workflow inventory: named, concrete agent configurations, each pinned to one harness
- * (ADR 0063 section 3). Pass the result as `roster` to `defineWorkflow`, whose `ctx.roster.Name`
- * is then that harness's client bound to the entry, typed as an `Agent`.
+ * (ADR 0063 section 3), and named deciders (ADR 0066 section 2). Pass the result as `roster` to
+ * `defineWorkflow`, whose `ctx.roster.Name` is then that harness's client bound to the entry, typed
+ * as an `Agent`, or for a decider entry a `RosterDecider`.
  *
  * An entry is `{ harness, description?, expectsToolUse? }` plus that harness's own option type
  * minus the per-call-only keys (`prompt`, the schema, `cwd`, `worktree`, `onError`, `retry` and
@@ -116,6 +167,12 @@ function checkedEntries(
  * workflow must still declare each one in its own `harnesses`. Keys are identifiers
  * (`/^[A-Za-z][A-Za-z0-9_]*$/`, at most 64 characters), PascalCase by convention, and cannot be a
  * built-in preset (`text`, `readonly`, `edit`) or reserved word.
+ *
+ * A decider entry is `{ decider, model?, description? }`: `decider` names one of the workflow's
+ * `decisions` (checked when the workflow loads) and `model` is the requested model, both fixed for
+ * every `ctx.roster.Name.decide` call. It takes no other key, and an entry cannot set both
+ * `harness` and `decider`. A decider entry is not a role: it has no capability profile, grant or
+ * `--profile` override.
  *
  * It validates the names, harnesses and forbidden keys when the module loads and returns a
  * deep-frozen JSON copy. A `Prompt` in `systemPrompt` or `appendSystemPrompt` is stored as its
@@ -148,27 +205,33 @@ export function defineRoster<
   return deepFreeze({ ...checked }) as unknown as Roster<E, H>;
 }
 
-/** The roster profiles of a definition and the harness each one is pinned to. @internal */
+/**
+ * The roster profiles of a definition and the harness each one is pinned to, plus its decider
+ * entries, which are not profiles. @internal
+ */
 export interface CompiledRoster {
-  /** Each entry as a declared profile without `extends`, under the entry's name. */
+  /** Each agent entry as a declared profile without `extends`, under the entry's name. */
   readonly profiles: Readonly<Record<string, AgentProfile>>;
-  /** Entry name to its pinned harness. */
+  /** Agent entry name to its pinned harness. */
   readonly pins: Readonly<Record<string, string>>;
+  /** Decider entry name to its provider, model and description. */
+  readonly deciders: Readonly<Record<string, WorkflowDecider>>;
 }
 
 /**
  * Compile a definition's roster to profiles (ADR 0063 section 4). Each entry becomes a profile with
  * no `extends`, so it layers on the text baseline and workflow `defaults`: `description` and
  * `expectsToolUse` stay top-level, the four limits become profile limits, and every other key goes
- * into the pinned harness's block (`claude`, `codex` or `harnesses.<name>`). The roster is
- * validated again, since a definition need not have come from `defineRoster`. @internal
+ * into the pinned harness's block (`claude`, `codex` or `harnesses.<name>`). Decider entries are
+ * skipped and listed in `deciders`. The roster is validated again, since a definition need not have
+ * come from `defineRoster`. @internal
  */
 export function compileRoster(definition: {
   readonly name?: string;
   readonly roster?: unknown;
   readonly harnesses?: readonly Pick<HarnessDeclaration, 'name'>[];
 }): CompiledRoster {
-  if (definition.roster === undefined) return { profiles: {}, pins: {} };
+  if (definition.roster === undefined) return { profiles: {}, pins: {}, deciders: {} };
   const declared = new Set((definition.harnesses ?? []).map((item) => item.name));
   const entries = checkedEntries(
     definition.roster,
@@ -178,7 +241,16 @@ export function compileRoster(definition: {
   );
   const profiles: Record<string, AgentProfile> = {};
   const pins: Record<string, string> = {};
+  const deciders: Record<string, WorkflowDecider> = {};
   for (const [name, entry] of Object.entries(entries)) {
+    if (isDecider(entry)) {
+      deciders[name] = {
+        provider: entry.decider,
+        model: entry.model ?? null,
+        description: entry.description ?? null,
+      };
+      continue;
+    }
     const options: Record<string, JsonValue> = { ...entry };
     const top: Record<string, JsonValue> = {};
     for (const key of ['description', 'expectsToolUse', ...limitKeys])
@@ -194,7 +266,27 @@ export function compileRoster(definition: {
     profiles[name] = { ...top, ...block };
     pins[name] = entry.harness;
   }
-  return { profiles, pins };
+  return { profiles, pins, deciders };
+}
+
+/**
+ * Check that each decider entry of a roster names one of the workflow's declared decision
+ * providers (ADR 0066 section 2), as the definition loads. Only entries with a string `decider`
+ * are looked at; the full entry validation runs when the roster compiles. @internal
+ */
+export function checkRosterDeciders(
+  roster: unknown,
+  providers: ReadonlySet<string>,
+  workflow: string,
+): void {
+  if (!isRecord(roster)) return;
+  for (const [name, entry] of Object.entries(roster)) {
+    const decider: unknown = isRecord(entry) ? entry['decider'] : undefined;
+    if (typeof decider === 'string' && !providers.has(decider))
+      throw new Error(
+        `Roster entry ${name} names decision provider ${decider}, which workflow ${workflow} does not declare; add it to the workflow's decisions.`,
+      );
+  }
 }
 
 /** A client `ctx.roster` binds an entry's agent from. */
@@ -206,24 +298,37 @@ const noAgents: Readonly<Record<string, unknown>> = Object.freeze(
   Object.create(null) as Record<string, unknown>,
 );
 
+/** A `ctx.decide` with a decider entry's provider and model preset. @internal */
+export type BoundDecide = (id: string, options: unknown) => Promise<unknown>;
+
 /**
- * The agents of `ctx.roster`: each entry's pinned harness client from `clientFor`, bound to the
- * entry's profile, in a frozen null-prototype object so a misspelled untyped name is `undefined`
- * rather than an `Object.prototype` member. @internal
+ * The agents of `ctx.roster`: each agent entry's pinned harness client from `clientFor`, bound to
+ * the entry's profile, and each decider entry a frozen `{ decide }` from `deciderFor`, in a frozen
+ * null-prototype object so a misspelled untyped name is `undefined` rather than an
+ * `Object.prototype` member. @internal
  */
 export function rosterAgents(
   roster: unknown,
   clientFor: (harness: string) => Bindable,
+  deciderFor: (binding: DecisionBinding) => BoundDecide,
 ): Readonly<Record<string, unknown>> {
   if (!isRecord(roster)) return noAgents;
   const agents = Object.create(null) as Record<string, unknown>;
   for (const [name, entry] of Object.entries(roster)) {
-    const harness: unknown = isRecord(entry) ? entry['harness'] : undefined;
-    if (typeof harness !== 'string') continue;
-    Object.defineProperty(agents, name, {
-      value: clientFor(harness).bind({ profile: name }),
-      enumerable: true,
-    });
+    if (!isRecord(entry)) continue;
+    const { harness, decider, model } = entry;
+    let value: unknown;
+    if (typeof decider === 'string')
+      value = Object.freeze({
+        decide: deciderFor({
+          entry: name,
+          provider: decider,
+          ...(model === undefined ? {} : { model: model as string }),
+        }),
+      });
+    else if (typeof harness === 'string') value = clientFor(harness).bind({ profile: name });
+    else continue;
+    Object.defineProperty(agents, name, { value, enumerable: true });
   }
   return Object.freeze(agents);
 }
@@ -236,13 +341,14 @@ export function rosterAgents(
  */
 export function rosterReader(
   clientFor: (harness: string) => Bindable,
+  deciderFor: (binding: DecisionBinding) => BoundDecide,
 ): (roster: unknown) => Readonly<Record<string, unknown>> {
   const cache = new WeakMap<object, Readonly<Record<string, unknown>>>();
   return (roster) => {
     if (!isRecord(roster)) return noAgents;
     let agents = cache.get(roster);
     if (!agents) {
-      agents = rosterAgents(roster, clientFor);
+      agents = rosterAgents(roster, clientFor, deciderFor);
       cache.set(roster, agents);
     }
     return agents;

@@ -6,6 +6,7 @@ import { capabilityManifest } from './profiles.js';
 import { schemaJson } from './schema.js';
 import { checkWorktreePolicy } from './worktree-policy.js';
 import { checkDecisionProviders } from './decision-protocol.js';
+import { checkRosterDeciders, compileRoster } from './roster.js';
 import { checkPromptSets, type PromptSetCheck } from '../prompts/check.js';
 import { promptSetDescriptor, type PromptSetDescriptor } from '../prompts/prompt.js';
 
@@ -67,7 +68,13 @@ export function checkedDefinition(value: unknown): WorkflowDeclaration {
       definition['worktrees'],
       `Workflow ${String(definition['name'])} worktrees`,
     );
-  checkDecisionProviders(definition['decisions'], String(definition['name']));
+  const providers = checkDecisionProviders(definition['decisions'], String(definition['name']));
+  // ADR 0066 section 2: a decider entry names one of this definition's own providers.
+  checkRosterDeciders(
+    roster,
+    new Set(providers.map(({ name }) => name)),
+    String(definition['name']),
+  );
   harnessDefinitions(value as WorkflowDeclaration);
   return value as WorkflowDeclaration;
 }
@@ -132,6 +139,7 @@ export function describeWorkflow(
             return profile ? [[name, profile]] : [];
           }),
         ),
+        deciders: compileRoster(definition).deciders,
         prompts: promptSets(definition),
         children: [],
         recursive: false,

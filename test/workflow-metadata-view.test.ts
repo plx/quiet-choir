@@ -30,6 +30,7 @@ function description(name: string, children: WorkflowDescription[] = []): Workfl
     outputSchema: { type: 'string' },
     capabilities: {},
     profiles: {},
+    deciders: {},
     prompts: [],
     children,
     recursive: false,
