@@ -38,6 +38,8 @@ import {
   ensureLabel,
   findOpenIssueByTitle,
   insertChecklist,
+  issueState,
+  linkSubIssue,
   removeLabel,
   tick,
 } from '../lib/github.js';
@@ -475,6 +477,20 @@ export default defineWorkflow({
             repo,
             title: w.title,
           });
+          if (found !== null) {
+            // An earlier run's slice, perhaps filed before its parent link: only a sub-issue of
+            // the epic is selectable, so link it before the split is recorded.
+            const linked = await linkSubIssue(ctx, id('slice', i + 1, 'link'), {
+              repo,
+              parent: E,
+              number: found.number,
+            });
+            if (linked.conflict !== null)
+              return blocked(
+                'split',
+                `#${String(found.number)} matches slice title but already belongs to ${linked.conflict}`,
+              );
+          }
           const number =
             found?.number ??
             (
@@ -753,15 +769,22 @@ export default defineWorkflow({
           }
           if (draft.duplicateOf > 0) {
             // The scribe's match is a claim: it settles the key only if that issue is open.
-            const seen = await gh.issue.view(
-              id('followups', key, 'duplicate'),
-              { number: draft.duplicateOf },
-              read,
-            );
+            const seen = await issueState(ctx, id('followups', key, 'duplicate'), {
+              repo,
+              number: draft.duplicateOf,
+            });
             filed.push(
-              seen.state === 'OPEN'
-                ? { key, number: seen.number, title: seen.title, action: 'duplicate', error: null }
-                : failed(`claimed duplicate #${String(draft.duplicateOf)} is ${seen.state}`),
+              seen === null
+                ? failed(`claimed duplicate #${String(draft.duplicateOf)} does not exist`)
+                : seen.state === 'OPEN'
+                  ? {
+                      key,
+                      number: seen.number,
+                      title: seen.title,
+                      action: 'duplicate',
+                      error: null,
+                    }
+                  : failed(`claimed duplicate #${String(draft.duplicateOf)} is ${seen.state}`),
             );
             continue;
           }
@@ -770,6 +793,16 @@ export default defineWorkflow({
             title: draft.title,
           });
           if (found !== null) {
+            // A follow-up only has to exist: one under another parent stays where it is.
+            const linked = await linkSubIssue(ctx, id('followups', key, 'link'), {
+              repo,
+              parent,
+              number: found.number,
+            });
+            if (linked.conflict !== null)
+              ctx.log(
+                `Follow-up #${String(found.number)} stays under ${linked.conflict}, not #${String(parent)}`,
+              );
             filed.push({
               key,
               number: found.number,

@@ -1,7 +1,8 @@
 // GitHub mechanics that quiet-choir/github does not offer yet, as versioned steps over raw `gh api`
 // (follow-ups #668 and the label-write issue): the epic checklist tick and insert, label writes,
-// the exact-title lookup before filing, and the local ledger. Each step reads before it writes, so a
-// retry or resume after a crash finds the state the last attempt left and does nothing twice.
+// the sub-issue link, an issue read that tolerates a 404, the exact-title lookup before filing, and
+// the local ledger. Each step reads before it writes, so a retry or resume after a crash finds the
+// state the last attempt left and does nothing twice.
 //
 // GitHub has no conditional update for an issue body: the tick and the insert are check-then-act,
 // and an edit made between the read and the PATCH is overwritten, as with `pr.edit`.
@@ -9,6 +10,7 @@ import { existsSync } from 'node:fs';
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { z, type JsonValue, type StepContext, type WorkflowContext } from 'quiet-choir';
+import { parseGithubRepo } from 'quiet-choir/github';
 import { run } from '../../merge-down.quiet-choir/lib/git.js';
 import { BodyEdit } from '../contracts.js';
 import { insertAfter, tickBody } from './policy.js';
@@ -203,6 +205,140 @@ export function removeLabel(
       if (removed.code === 0) return { changed: true };
       if (notFound(removed)) return { changed: false };
       throw new Error(`gh api -X DELETE ${path}: ${removed.stderr.trim()}`);
+    },
+  });
+}
+
+/** An issue's number, title and uppercased state; a pull request is not an issue. */
+export const IssueState = z.object({
+  number: z.int(),
+  title: z.string(),
+  state: z.enum(['OPEN', 'CLOSED']),
+});
+export type IssueState = z.output<typeof IssueState>;
+
+/** An issue's state, or null when the number does not exist (a 404) or is a pull request. */
+export function issueState(
+  ctx: WorkflowContext,
+  id: string,
+  input: { readonly repo: string; readonly number: number },
+): Promise<IssueState | null> {
+  return ctx.step(id, {
+    identity: 'version',
+    version: 'epic-ticket.issue-state/1',
+    input: { ...input },
+    schema: IssueState.nullable(),
+    ...write,
+    async run(context) {
+      const path = `repos/${input.repo}/issues/${String(input.number)}`;
+      const read = await run(context, [
+        'gh',
+        'api',
+        path,
+        '--jq',
+        '{number,title,state,pull_request}',
+      ]);
+      if (read.code !== 0) {
+        if (notFound(read)) return null;
+        throw new Error(`gh api ${path}: ${read.stderr.trim()}`);
+      }
+      const issue = z
+        .object({
+          number: z.int(),
+          title: z.string(),
+          state: z.string(),
+          pull_request: z.unknown().optional(),
+        })
+        .parse(JSON.parse(read.stdout));
+      if (issue.pull_request !== undefined && issue.pull_request !== null) return null;
+      return IssueState.parse({ ...issue, state: issue.state.toUpperCase() });
+    },
+  });
+}
+
+const LINK_READ_QUERY = `query($owner: String!, $name: String!, $child: Int!, $parent: Int!) { repository(owner: $owner, name: $name) { child: issue(number: $child) { id parent { id number repository { nameWithOwner } } } wanted: issue(number: $parent) { id } } }`;
+const LINK_MUTATION = `mutation($issueId: ID!, $subIssueId: ID!) { addSubIssue(input: { issueId: $issueId, subIssueId: $subIssueId }) { issue { number } subIssue { number } } }`;
+const LinkRead = z.object({
+  data: z.object({
+    repository: z.object({
+      child: z.object({
+        id: z.string(),
+        parent: z
+          .object({
+            id: z.string(),
+            number: z.int(),
+            repository: z.object({ nameWithOwner: z.string() }),
+          })
+          .nullable(),
+      }),
+      wanted: z.object({ id: z.string() }),
+    }),
+  }),
+});
+
+/**
+ * Make `number` a sub-issue of `parent` unless it is one already. `issue.create` links only the
+ * issues it files or finds by its own marker, so an issue found by title is linked here. Like
+ * `issue.create`, it never moves an issue: one under another parent comes back as `conflict`
+ * (`owner/repo#N`) with nothing changed. Check-then-act: a link made between the read and the
+ * mutation makes `addSubIssue` refuse, and the retry reads it.
+ */
+export function linkSubIssue(
+  ctx: WorkflowContext,
+  id: string,
+  input: { readonly repo: string; readonly parent: number; readonly number: number },
+): Promise<{ changed: boolean; conflict: string | null }> {
+  return ctx.step(id, {
+    identity: 'version',
+    version: 'epic-ticket.link-sub-issue/1',
+    input: { ...input },
+    schema: z.object({ changed: z.boolean(), conflict: z.string().nullable() }),
+    ...write,
+    async run(context) {
+      const repo = parseGithubRepo(input.repo);
+      const graphql = (...rest: string[]): [string, ...string[]] => [
+        'gh',
+        'api',
+        ...(repo.host === null ? [] : ['--hostname', repo.host]),
+        'graphql',
+        ...rest,
+      ];
+      const { child, wanted } = (
+        await context.exec.json(
+          graphql(
+            '-f',
+            `query=${LINK_READ_QUERY}`,
+            '-f',
+            `owner=${repo.owner}`,
+            '-f',
+            `name=${repo.name}`,
+            '-F',
+            `child=${String(input.number)}`,
+            '-F',
+            `parent=${String(input.parent)}`,
+          ),
+          { schema: LinkRead },
+        )
+      ).data.repository;
+      const current = child.parent;
+      if (current?.id === wanted.id) return { changed: false, conflict: null };
+      if (current)
+        return {
+          changed: false,
+          conflict: `${current.repository.nameWithOwner}#${String(current.number)}`,
+        };
+      await context.exec(
+        graphql(
+          '-f',
+          `query=${LINK_MUTATION}`,
+          '-f',
+          `issueId=${wanted.id}`,
+          '-f',
+          `subIssueId=${child.id}`,
+          '--silent',
+        ),
+      );
+      return { changed: true, conflict: null };
     },
   });
 }

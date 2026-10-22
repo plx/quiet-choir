@@ -117,11 +117,12 @@ ticket. The landing child uses `<root>/merge-down` when `root` is given, else it
 
 Every mechanical step is a durable effect that costs no model call. There is no Clerk, Copyist or
 Recopyist and no verified relay. GitHub reads, waits and writes go through `quiet-choir/github`,
-except what it lacks: the checklist tick and insert, label writes and the exact-title lookup are
-versioned steps over raw `gh api` in `lib/github.ts`. Git and the check suite run as versioned
-`ctx.step` callbacks (`lib/git.ts`, `lib/checks.ts`). Each reads before it writes, so a retry or
-resume finds the state the last attempt left: a ticked line is not ticked again, a listed slice is
-not listed again, a push that happened is skipped.
+except what it lacks: the checklist tick and insert, label writes, the sub-issue link of an issue
+found by title, an issue read that answers a 404 with null, and the exact-title lookup are versioned
+steps over raw `gh api` in `lib/github.ts`. Git and the check suite run as versioned `ctx.step`
+callbacks (`lib/git.ts`, `lib/checks.ts`). Each reads before it writes, so a retry or resume finds
+the state the last attempt left: a ticked line is not ticked again, a listed slice is not listed
+again, a push that happened is skipped.
 
 Nothing unverified is published. The implementer reports criteria, not `checkPassed` or a head;
 `verify` refuses missing reported commits, a branch with no commits of its own and a dirty tree; the
@@ -195,10 +196,14 @@ without a `ticket` or an unknown `until` fails before the run starts.
 - **No relay.** Every `epic.mjs` subcommand is a durable step or a `quiet-choir/github` call.
 - **Raw `gh api` mechanics** for what `quiet-choir/github` lacks: the checklist tick and the slice
   insert (check-then-act on the epic body; an edit between the read and the PATCH is overwritten,
-  the caveat of #668), and label ensure, add and remove (a missing label on removal is success).
+  the caveat of #668), label ensure, add and remove (a missing label on removal is success), and the
+  sub-issue link (`addSubIssue` after a parent read; an issue under another parent is never moved).
 - **Title lookup before filing.** `issue.create` reconciles only by its run-scoped marker, so a run
   restarted with a new run ID could file again; every slice, follow-up and the follow-up epic is
-  first looked up by exact title among open issues, as the native helper filed.
+  first looked up by exact title among open issues, as the native helper filed. A slice or follow-up
+  found that way is linked as a sub-issue of its epic, since an interrupted run may have filed it
+  before the link; a slice that already belongs to another parent blocks the split, and such a
+  follow-up is kept where it is.
 - **needs-decision stays a return-and-rerun** with `ticket` and `decision`, the native output
   contract, rather than `ctx.ask`: the burn-down orchestrator acts on the returned statuses.
 - **An in-flight ticket with `until` short of `pr`** stops (`would land it`) instead of landing, and
@@ -207,7 +212,7 @@ without a `ticket` or an unknown `until` fails before the run starts.
   become `Refs`, `Closes #N` and `Part of #E` added when missing), and the filed follow-ups are
   listed from a template before the footer.
 - **Slices** are filed as sub-issues of the epic with `issue.create` (an issue found by title is
-  reused as it is), then one checklist step lists them after the parent.
+  reused and linked to the epic), then one checklist step lists them after the parent.
 
 ## Known limitations
 
@@ -295,6 +300,7 @@ section lists the new issues by number), or extending existing issues:
 | ------------------------------------------------------------------------------------------------------- | --------- | ------------------------- |
 | `ctx.worktree` cannot be rehearsed under `--dry-run`, and a handle cannot adopt a branch across runs    | 0063      | filed with #590           |
 | `quiet-choir/github` has no label writes (ensure, add, remove)                                          | 0046      | filed with #590           |
+| `quiet-choir/github` has no sub-issue link write for an issue it did not file                           | 0046      | not filed yet             |
 | `issue.create` reconciles only by a run-scoped marker, so a fresh run refiles without a title lookup    | 0046      | filed with #590           |
 | `nextTicket` has no preferred-ticket option (the native `--prefer`)                                     | 0048      | filed with #590           |
 | Package mechanics (command wrappers, the check-suite runner) are imported across packages, not in `std` | 0063/0065 | filed with #590; see #671 |

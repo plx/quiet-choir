@@ -91,7 +91,17 @@ const { runCheck } = await lib<{
     error: string | null;
   }>;
 }>('checks');
-const { tick, insertChecklist, removeLabel, appendLedger } = await lib<{
+const { tick, insertChecklist, removeLabel, appendLedger, linkSubIssue, issueState } = await lib<{
+  linkSubIssue: (
+    ctx: WorkflowContext,
+    id: string,
+    input: { repo: string; parent: number; number: number },
+  ) => Promise<{ changed: boolean; conflict: string | null }>;
+  issueState: (
+    ctx: WorkflowContext,
+    id: string,
+    input: { repo: string; number: number },
+  ) => Promise<{ number: number; title: string; state: string } | null>;
   tick: (
     ctx: WorkflowContext,
     id: string,
@@ -470,5 +480,86 @@ describe('epic body and label mechanics', () => {
     expect(log.split('\n').filter((l) => l.includes('DELETE'))).toEqual([
       'api -X DELETE repos/acme/widgets/issues/9/labels/needs-decision --silent',
     ]);
+  });
+});
+
+describe('sub-issue links and issue reads', () => {
+  /**
+   * A fake `gh` whose issue #21 has `parent` (null, or the node id and repository of one), whose
+   * epic #7 is node I_7, whose #30 is a pull request and whose other numbers 404.
+   */
+  async function fakeGh(parent: { id: string; number: number; repo: string } | null) {
+    const bin = join(real, 'bin');
+    await mkdir(bin);
+    const log = join(real, 'gh.log');
+    const child = {
+      id: 'I_21',
+      parent: parent && {
+        id: parent.id,
+        number: parent.number,
+        repository: { nameWithOwner: parent.repo },
+      },
+    };
+    const script = [
+      '#!/usr/bin/env node',
+      "const fs = require('node:fs');",
+      `const [log, child] = ${JSON.stringify([log, child])};`,
+      'const args = process.argv.slice(2);',
+      "fs.appendFileSync(log, args.join(' ') + '\\n');",
+      "const query = args.find((a) => a.startsWith('query=')) ?? '';",
+      "if (query.startsWith('query=mutation')) {",
+      "  process.stdout.write('{}');",
+      "} else if (query.startsWith('query=query')) {",
+      "  process.stdout.write(JSON.stringify({ data: { repository: { child, wanted: { id: 'I_7' } } } }));",
+      "} else if (args[1] === 'repos/acme/widgets/issues/21') {",
+      "  process.stdout.write(JSON.stringify({ number: 21, title: 'Registry', state: 'open', pull_request: null }));",
+      "} else if (args[1] === 'repos/acme/widgets/issues/30') {",
+      "  process.stdout.write(JSON.stringify({ number: 30, title: 'A PR', state: 'open', pull_request: { url: 'x' } }));",
+      '} else {',
+      "  process.stderr.write('gh: Not Found (HTTP 404)\\n');",
+      '  process.exit(1);',
+      '}',
+    ].join('\n');
+    await writeFile(join(bin, 'gh'), `${script}\n`);
+    await chmod(join(bin, 'gh'), 0o755);
+    vi.stubEnv('PATH', `${bin}${delimiter}${process.env['PATH'] ?? ''}`);
+    return {
+      mutations: async () =>
+        (await readFile(log, 'utf8')).split('\n').filter((l) => l.includes('query=mutation'))
+          .length,
+    };
+  }
+  const repo = 'acme/widgets';
+  const link = () =>
+    inWorkflow(real, (ctx) => linkSubIssue(ctx, 'link', { repo, parent: 7, number: 21 }));
+
+  it('linkSubIssue changes nothing for an issue already under the parent', async () => {
+    const gh = await fakeGh({ id: 'I_7', number: 7, repo });
+    expect(await link()).toEqual({ changed: false, conflict: null });
+    expect(await gh.mutations()).toBe(0);
+  });
+
+  it('linkSubIssue links an issue without a parent', async () => {
+    const gh = await fakeGh(null);
+    expect(await link()).toEqual({ changed: true, conflict: null });
+    expect(await gh.mutations()).toBe(1);
+    const log = await readFile(join(real, 'gh.log'), 'utf8');
+    expect(log).toContain('issueId=I_7');
+    expect(log).toContain('subIssueId=I_21');
+  });
+
+  it('linkSubIssue never moves an issue under another parent, and reports it', async () => {
+    const gh = await fakeGh({ id: 'I_40', number: 40, repo: 'other/repo' });
+    expect(await link()).toEqual({ changed: false, conflict: 'other/repo#40' });
+    expect(await gh.mutations()).toBe(0);
+  });
+
+  it('issueState reads an issue, and is null for a 404 or a pull request', async () => {
+    await fakeGh(null);
+    const state = (number: number) =>
+      inWorkflow(real, (ctx) => issueState(ctx, 'state', { repo, number }));
+    expect(await state(21)).toEqual({ number: 21, title: 'Registry', state: 'OPEN' });
+    expect(await state(99)).toBeNull();
+    expect(await state(30)).toBeNull();
   });
 });
