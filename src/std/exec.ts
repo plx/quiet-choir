@@ -7,7 +7,7 @@
  */
 import { createHash } from 'node:crypto';
 import { mkdir, realpath, writeFile } from 'node:fs/promises';
-import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { isAbsolute, relative, resolve, sep, win32 } from 'node:path';
 import { z, type ExecOptions, type WorkflowContext, type WriteFileResult } from '../index.js';
 
 /**
@@ -22,11 +22,16 @@ const COMMITTED_ARTIFACT_VERSION = 'committed-artifact/1';
  * Format `value` as two-space indented JSON, the form ports embed in prompts. Prompt text is part
  * of an agent call's identity, so a stable format keeps completed calls replayable.
  *
- * @param value - Any value `JSON.stringify` accepts.
+ * @param value - Any JSON-serializable value.
  * @returns The indented JSON text.
+ * @throws TypeError - `Value is not JSON-serializable` when `JSON.stringify` yields no text, as for
+ * `undefined`, a function or a symbol. Values it cannot serialize (a cycle, a BigInt) throw its own error.
  */
 export function json(value: unknown): string {
-  return JSON.stringify(value, null, 2);
+  // The standard signature says `string`, but it returns undefined for these values.
+  const text = JSON.stringify(value, null, 2) as string | undefined;
+  if (text === undefined) throw new TypeError('Value is not JSON-serializable');
+  return text;
 }
 
 /**
@@ -54,12 +59,18 @@ export async function git(
   return result.stdout;
 }
 
-/** The repository-relative path rule: no leading slash, backslash, NUL, or `.`, `..`, empty or `.git` segment. */
+/**
+ * The repository-relative path rule: not absolute on POSIX or Windows, no drive-letter prefix
+ * (`C:/x`, `C:x`), no backslash or NUL, and no `.`, `..`, empty or `.git` segment.
+ */
 function checkPath(path: string): void {
   const valid =
     path.length > 0 &&
     path.length <= 500 &&
     !path.startsWith('/') &&
+    !isAbsolute(path) &&
+    !win32.isAbsolute(path) &&
+    !/^[A-Za-z]:/u.test(path) &&
     !path.includes('\\') &&
     !path.includes('\0') &&
     path
@@ -85,8 +96,8 @@ function checkPath(path: string): void {
  * @param content - The UTF-8 file content.
  * @returns A receipt: the absolute target under `ctx.cwd`, the content's SHA-256 and byte length,
  * and `previousSha256: null`, since the file did not exist.
- * @throws Error - Before any effect, when `path` is absolute or has a `.`, `..`, empty or `.git`
- * segment, a backslash or a NUL; from the step, when a parent escapes the checkout or the file
+ * @throws Error - Before any effect, when `path` is absolute or starts with a drive letter, or has a
+ * `.`, `..`, empty or `.git` segment, a backslash or a NUL; from the step, when a parent escapes the checkout or the file
  * exists; and from the merge, when it conflicts.
  */
 export async function committedArtifact(

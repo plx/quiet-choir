@@ -87,6 +87,13 @@ it('json pretty-prints with two spaces', () => {
   expect(std.exec.json({ a: [1, 'b'] })).toBe('{\n  "a": [\n    1,\n    "b"\n  ]\n}');
 });
 
+it.each([[undefined], [() => 1], [Symbol('s')]])(
+  'json refuses a value JSON.stringify cannot serialize to text (%s)',
+  (value) => {
+    expect(() => std.exec.json(value)).toThrow(new TypeError('Value is not JSON-serializable'));
+  },
+);
+
 it('git returns complete stdout and refuses truncated output', async () => {
   const head = (await git('rev-parse', 'HEAD')).trim();
   const read = workflow(z.string(), (ctx) => std.exec.git(ctx, 'head', ['rev-parse', 'HEAD']));
@@ -190,6 +197,21 @@ it('committedArtifact refuses an existing file and a parent that escapes the che
     'Artifact parent escapes checkout',
   );
 });
+
+it.each(['C:/outside/file', 'C:outside', 'c:\\x', '/abs/file', 'z:'])(
+  'committedArtifact refuses the absolute or drive-letter path %s before any effect',
+  async (path) => {
+    const refused = workflow(z.null(), async (ctx) => {
+      await std.exec.committedArtifact(ctx, path, 'x');
+      return null;
+    });
+    await expect(runWorkflow(refused, options('drive-path'))).rejects.toThrow(
+      'Use a repository-relative path without dot segments or .git',
+    );
+    expect(await git('worktree', 'list', '--porcelain')).not.toContain('document');
+    expect(await git('branch', '--list')).not.toContain('document');
+  },
+);
 
 it('committedArtifact replays after a tail failure without writing again', async () => {
   const publish = workflow(z.string(), async (ctx) => {
