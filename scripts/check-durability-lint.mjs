@@ -2,7 +2,7 @@
 // workflow, and every workflow module of the packages under packages/, must lint clean, and every
 // suppression must give a reason. It builds one program per
 // tsconfig with the same construction and lint that `workflow validate` uses, so the whole corpus
-// costs three compiles instead of one CLI launch per workflow. Run after `npm run build`: the
+// costs one compile per tsconfig instead of one CLI launch per workflow. Run after `npm run build`: the
 // comparison batches import 'quiet-choir', which resolves to dist.
 import { readdirSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
@@ -32,13 +32,13 @@ const groups = [
   })),
   // A package's workflow modules are plain `<name>.ts` files under workflows/, so they are listed
   // explicitly rather than by the *.workflow.ts suffix; the lint follows their imports into lib/.
-  {
-    config: 'packages/merge-down.quiet-choir/tsconfig.json',
-    files: readdirSync(join(repository, 'packages/merge-down.quiet-choir/workflows'))
+  ...['merge-down.quiet-choir', 'execute-epic-ticket.quiet-choir'].map((pkg) => ({
+    config: `packages/${pkg}/tsconfig.json`,
+    files: readdirSync(join(repository, 'packages', pkg, 'workflows'))
       .filter((name) => name.endsWith('.ts'))
       .sort()
-      .map((name) => join(repository, 'packages/merge-down.quiet-choir/workflows', name)),
-  },
+      .map((name) => join(repository, 'packages', pkg, 'workflows', name)),
+  })),
 ];
 
 const problems = [];
