@@ -6,6 +6,7 @@ import {
   checkItem,
   ciItem,
   deferrable,
+  dirtyTreeLog,
   ensureClosesBody,
   escalationReasons,
   failedStep,
@@ -448,6 +449,26 @@ describe('small rules', () => {
       'typecheck',
     );
     expect(failedStep('no scripts')).toBeNull();
+  });
+
+  it('refuses to check a dirty worktree and lists what HEAD does not hold', () => {
+    expect(dirtyTreeLog('abc123', '')).toBeNull();
+    expect(dirtyTreeLog('abc123', '\n')).toBeNull();
+    const log = dirtyTreeLog('abc123', ' M src/widget.ts\n?? src/widget.test.ts\n');
+    expect(log).toBe(
+      [
+        'The worktree has uncommitted changes, so the suite would not test HEAD abc123. Commit or discard them:',
+        ' M src/widget.ts',
+        '?? src/widget.test.ts',
+        '',
+      ].join('\n'),
+    );
+    const [item] = checkItem(
+      { passed: false, failedStep: 'dirty worktree', log: '/s/fix-1.log', excerptFile: '/s/x.txt' },
+      'fix-1',
+      false,
+    );
+    expect(item?.title).toBe('Local check fails at "dirty worktree"');
   });
 
   it('walks the stack above a branch bottom-up', () => {

@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import type { Settled, StepContext, WorkflowContext } from 'quiet-choir';
 import { Check, type Check as CheckResult } from '../contracts.js';
 import { git, run } from './git.js';
-import { failedStep, stripAnsi, tail } from './policy.js';
+import { dirtyTreeLog, failedStep, stripAnsi, tail } from './policy.js';
 
 const STAMP = '.merge-down-lock-hash';
 const MINUTE = 60_000;
@@ -73,9 +73,12 @@ export interface CheckInput {
 
 /**
  * Run the check suite (`command`, default `npm run check`) at the worktree's HEAD, with its output
- * in `<dir>/<label>.log` and the last 40 lines in `<label>.excerpt.txt` when it fails. Under load
- * (1-minute load above the core count) Vitest is capped at 4 workers. A step failure, such as a
- * command that cannot start, settles as a failed check with its message in `error`.
+ * in `<dir>/<label>.log` and the last 40 lines in `<label>.excerpt.txt` when it fails. The suite
+ * certifies a clean HEAD only: a worktree with uncommitted or untracked changes fails as `dirty
+ * worktree` without running it (the log and excerpt list the changes), and a HEAD that moved while
+ * the suite ran fails as `HEAD moved`. Under load (1-minute load above the core count) Vitest is
+ * capped at 4 workers. A step failure, such as a command that cannot start, settles as a failed
+ * check with its message in `error`.
  */
 export async function runCheck(
   ctx: WorkflowContext,
@@ -84,7 +87,7 @@ export async function runCheck(
 ): Promise<CheckResult> {
   const settled: Settled<CheckResult> = await ctx.step(id, {
     identity: 'version',
-    version: 'merge-down.check/1',
+    version: 'merge-down.check/2',
     input: { ...input },
     schema: Check,
     onError: 'return',
@@ -96,6 +99,28 @@ export async function runCheck(
       const started = performance.now();
       const seconds = (): number => Math.round((performance.now() - started) / 1000);
       const head = await git(context, W, ['rev-parse', 'HEAD']);
+      // Untrimmed: a porcelain line starts with its status columns, which can be a space.
+      const porcelain = ['git', 'status', '--porcelain', '--untracked-files=normal'] as const;
+      const status = await run(context, porcelain, { cwd: W });
+      if (status.code !== 0)
+        throw new Error(`git status failed: ${tail(status.stderr || status.stdout, 20)}`);
+      const dirty = dirtyTreeLog(head, status.stdout);
+      if (dirty !== null) {
+        await writeFile(log, dirty);
+        await writeFile(excerptFile, dirty);
+        return {
+          passed: false,
+          head,
+          failedStep: 'dirty worktree',
+          exitCode: null,
+          seconds: seconds(),
+          installedDependencies: false,
+          maxWorkers: null,
+          log,
+          excerptFile,
+          error: null,
+        };
+      }
       const deps = await provisionDependencies(context, W);
       if (deps.failure !== null) {
         await writeFile(log, deps.failure);
@@ -130,12 +155,20 @@ export async function runCheck(
         },
       );
       const text = stripAnsi((await readText(log)) ?? '');
-      const passed = suite.code === 0;
-      if (!passed) await writeFile(excerptFile, `${tail(text, 40)}\n`);
+      // A suite that commits or checks out leaves a result that certifies neither head.
+      const after = await git(context, W, ['rev-parse', 'HEAD']);
+      const moved = after !== head;
+      const passed = suite.code === 0 && !moved;
+      if (moved)
+        await writeFile(
+          excerptFile,
+          `HEAD moved from ${head} to ${after} while the suite ran.\n${tail(text, 40)}\n`,
+        );
+      else if (!passed) await writeFile(excerptFile, `${tail(text, 40)}\n`);
       return {
         passed,
         head,
-        failedStep: passed ? null : failedStep(text),
+        failedStep: passed ? null : moved ? 'HEAD moved' : failedStep(text),
         exitCode: suite.code,
         seconds: seconds(),
         installedDependencies: deps.installed,

@@ -12,12 +12,13 @@
   steps and commands, so the verified relay (clerks, nonces, FNV hashes) is gone. The stages,
   `until` stops, statuses and ledger record match the native script; its `error` status is the input
   schema's refusal. It uses its own default root and local branch, so the native script remains the
-  fallback. `npm run packages:rehearse` validates the package and rehearses five fixture cases
-  (clean land, fix round, stop at fix, blocked gate, red CI at land) from
-  `packages/rehearsals/merge-down/`; it runs in `npm run check` after the build and in a new Package
-  rehearsals CI job. `npm run typecheck` also checks the package, `durability:check` lints its
-  workflows, and `.prettierignore` keeps formatters off `packages/*/prompts/`. The README records
-  the measurements against the native pair and the API follow-ups filed with this change.
+  fallback. The check suite certifies a clean HEAD only: a dirty worktree, or a HEAD that moves
+  during the suite, fails the check. `npm run packages:rehearse` validates the package and rehearses
+  six fixture cases (clean land, fix round, stop at fix, dirty fix, blocked gate, red CI at land)
+  from `packages/rehearsals/merge-down/`; it runs in `npm run check` after the build and in a new
+  Package rehearsals CI job. `npm run typecheck` also checks the package, `durability:check` lints
+  its workflows, and `.prettierignore` keeps formatters off `packages/*/prompts/`. The README
+  records the measurements against the native pair and the API follow-ups filed with this change.
   `gh.pr.merge` takes an optional `base` and, on every attempt, refuses a pull request retargeted to
   another base with `reason: 'base-changed'`, so the package's land never merges into the wrong
   branch on a resume after a failed merge. The new refusal changes the step's result schema, so its

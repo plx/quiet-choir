@@ -508,6 +508,20 @@ export function failedStep(log: string): string | null {
   return steps.at(-1)?.[1] ?? null;
 }
 
+/**
+ * The log of a check refused because the worktree is dirty: `git status --porcelain` lists changes
+ * the suite would test but HEAD does not hold. Null when it lists nothing.
+ */
+export function dirtyTreeLog(head: string, porcelain: string): string | null {
+  const listed = porcelain.split('\n').filter((line) => line.trim() !== '');
+  if (!listed.length) return null;
+  return [
+    `The worktree has uncommitted changes, so the suite would not test HEAD ${head}. Commit or discard them:`,
+    ...listed,
+    '',
+  ].join('\n');
+}
+
 /** The facts the fallback headline reads when no scribe wrote one. */
 export interface HeadlineFacts {
   readonly kind: 'change' | 'dependency';

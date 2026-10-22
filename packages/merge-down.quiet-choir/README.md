@@ -89,7 +89,11 @@ overwritten, leftovers of a crashed rebase are reset). Agents never write to Git
 The check suite runs inside the workflow (input `checkCommand`, default `npm run check`, with
 `npm ci` when package.json or the lockfile changed) as one step with a 45-minute deadline. Its
 output goes to `state/pr-N/<label>.log`; the step returns a small verdict pinned to its head. Fixers
-run focused checks only; no head is published without a passing suite at that exact head.
+run focused checks only; no head is published without a passing suite at that exact head. The suite
+certifies a clean HEAD only: a worktree with uncommitted or untracked changes (a fixer's unfinished
+edit, or one an interrupted attempt left) fails as `dirty worktree` without running the suite, with
+the changes listed in the log and excerpt so the repair commits or discards them, and a HEAD that
+moves while the suite runs fails as `HEAD moved`.
 
 The local Codex review is a command effect, not an agent call:
 `codex review --base origin/<default>` with the native `-c model`, `review_model`,
@@ -197,12 +201,13 @@ is fingerprinted) with `execute --dry-run --harness fixture:<case>.fixtures.json
 stacked PR retargeted to `main` with nothing to push, noted, merged in round 1), `fix-round` (a
 stacked PR retargeted before the push, a Codex thread fixed with a commit and replied to, a new
 thread that only the gate's refresh read after CI sees triaged, merged in round 2), `stop-at-fix`
-(`until: fix`, with the planned `Addressed in` reply), `blocked-gate` (red CI, a rerun that fails
-again, `maxCiRepairs: 0`) and `land-red-ci` (the gate sees green CI but the land-time wait sees red:
-blocked at `land`, no merge). Every agent call and command is answered by its fixtures
-(`"commands": "fixture"`), no rule may go unused, and a case's `order` lists steps that must start
-in that order (the retarget before the push). It runs in `npm run check` and in the Package
-rehearsals CI job.
+(`until: fix`, with the planned `Addressed in` reply), `dirty-fix` (the fixer leaves uncommitted
+edits, so its check fails as `dirty worktree` and the surgeon's repair is checked instead),
+`blocked-gate` (red CI, a rerun that fails again, `maxCiRepairs: 0`) and `land-red-ci` (the gate
+sees green CI but the land-time wait sees red: blocked at `land`, no merge). Every agent call and
+command is answered by its fixtures (`"commands": "fixture"`), no rule may go unused, and a case's
+`order` lists steps that must start in that order (the retarget before the push). It runs in
+`npm run check` and in the Package rehearsals CI job.
 
 ## Measurements
 
