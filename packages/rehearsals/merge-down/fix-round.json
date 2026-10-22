@@ -1,0 +1,36 @@
+{
+  "input": {
+    "pr": 42,
+    "repo": "acme/widgets",
+    "parentEpic": 7,
+    "codex": "never"
+  },
+  "expect": {
+    "status": "merged",
+    "mergeCommit": "9e8d7c6b5a49382716051f2e3d4c5b6a79881726",
+    "rounds": 2,
+    "ciRepairs": 0,
+    "fixes": [
+      {
+        "key": "thread:PRRT_T1",
+        "status": "fixed",
+        "commit": "abc1234",
+        "summary": "render returns early on an empty list, with a test."
+      }
+    ],
+    "threads": [
+      {
+        "id": "PRRT_T1",
+        "action": "fix",
+        "round": 0
+      },
+      {
+        "id": "PRRT_T2",
+        "action": "reject",
+        "round": 1
+      }
+    ],
+    "localReviews": [],
+    "blocked": null
+  }
+}

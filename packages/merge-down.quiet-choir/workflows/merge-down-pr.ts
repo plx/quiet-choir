@@ -987,7 +987,11 @@ export default defineWorkflow({
         // Red CI on a head we are not about to replace: rerun the failed jobs once before paying an
         // agent to "fix" what may be a flake in code this PR never touched.
         rerunHeads.add(head);
-        const rerun = await gh.checks.rerunFailed(ctx.id('gate', r, 'rerun'), { sha: head }, write);
+        const rerun = await gh.checks.rerunFailed(
+          ctx.id('gate', r, 'rerun-failed'),
+          { sha: head },
+          write,
+        );
         if (rerun.rerun.length) {
           const [again, againReview] = await waitAll('rerun', [codeqlReviewer()]);
           const stuck = blockedIf([again, againReview], 'the re-run CI');

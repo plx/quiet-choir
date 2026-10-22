@@ -1,0 +1,38 @@
+{
+  "input": {
+    "pr": 42,
+    "repo": "acme/widgets",
+    "parentEpic": 7
+  },
+  "expect": {
+    "status": "merged",
+    "kind": "change",
+    "issue": {
+      "number": 41,
+      "state": "CLOSED",
+      "closedManually": false
+    },
+    "mergeCommit": "9e8d7c6b5a49382716051f2e3d4c5b6a79881726",
+    "rebase": {
+      "status": "up-to-date",
+      "forkSource": null,
+      "conflicts": []
+    },
+    "rounds": 1,
+    "ciRepairs": 0,
+    "codexReviewsRequested": 0,
+    "localReviews": [
+      {
+        "round": 0,
+        "sha": "0a1b2c3d4e5f",
+        "findings": 0,
+        "deps": "installed",
+        "error": null
+      }
+    ],
+    "threads": [],
+    "followups": [],
+    "blocked": null,
+    "headline": "Merged #42, which adds the widget for #41."
+  }
+}
