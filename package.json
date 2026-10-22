@@ -132,7 +132,7 @@
     "yaml": "2.9.0"
   },
   "dependencies": {
-    "@oclif/core": "4.13.3",
+    "@oclif/core": "5.1.0",
     "@types/node": "22.13.17",
     "minijinja-js": "3.0.1",
     "smol-toml": "1.9.0",
