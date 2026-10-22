@@ -919,6 +919,8 @@ export default defineWorkflow({
           );
       }
       replies = [];
+      // Before the request, so a review that answers it quickly still counts.
+      const since = await ctx.now(ctx.id('gate', r, 'since'));
       if (wantCodex && !LOCAL)
         await gh.comment(
           ctx.id('gate', r, 'codex-request'),
@@ -927,7 +929,7 @@ export default defineWorkflow({
         );
       if (wantCodex) codexRequests++;
       record.codexReviewsRequested = codexRequests;
-      return { since: await ctx.now(ctx.id('gate', r, 'since')) };
+      return { since };
     };
     const blockedIf = (
       statuses: readonly { status: string; headRefOid: string | null }[],
