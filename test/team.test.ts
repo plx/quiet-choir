@@ -13,7 +13,9 @@ import {
   type HarnessRequest,
   type HarnessResponse,
 } from '../src/index.js';
-import { ReviewTeam } from '../examples/patterns/review-team.js';
+import * as std from '../src/std/index.js';
+
+const { ReviewTeam } = std.patterns;
 
 let root: string;
 beforeEach(async () => {
