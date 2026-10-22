@@ -129,5 +129,7 @@ and served model. See [inspection](inspection.md).
 `decision(ctx, transport).choose(id, { state, question, answers })` is deprecated and emits a
 `DeprecationWarning` with code `QUIET_CHOIR_DECISION_CHOOSE` once per process. Do not write new
 calls. Its completed `decision/1` steps keep replaying without calling the transport. Replacing it
-with `ctx.decide` changes the identity, so a resumed run that already completed the old step runs
-the new decision once.
+with `ctx.decide` changes the identity (`decision/2`), so resuming a run that already completed the
+old step under the same ID is refused with `StepIdentityChangedError` (`run.incompatible`, even with
+`--accept-code-change`). Keep the `choose` call until those runs finish, start a new run, or fork
+(`--fork-from RUN --reuse matching --invalidate <step id>`), which runs the new decision once, live.

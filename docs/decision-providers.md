@@ -351,9 +351,14 @@ const { team } = await ctx.decide('route', {
 const answer = team.choice;
 ```
 
-The new call has a different identity (`decision/2`), so a run that completed the old step and is
-resumed with the new code runs the decision once, live. Keep the old call in place until those runs
-have finished.
+The new call has a different identity (`decision/2`). Resuming a run that already completed the old
+`decision/1` step under the same ID with the migrated code is refused: the changed identity of a
+completed step raises `StepIdentityChangedError` (`run.incompatible`, even with
+`--accept-code-change`), and for a CLI workflow the source fingerprint change refuses the resume
+first. A step the old run had not finished is adopted and runs live as `decision/2`. Keep the old
+call in place until those runs have finished, or start a fresh run. To reuse the other completed
+work, fork the run, for example `--fork-from RUN --reuse matching --invalidate <step id>`, which
+runs the new decision once, live (see [forks](cli-contract.md#next-commands)).
 
 ## Live contract test
 
