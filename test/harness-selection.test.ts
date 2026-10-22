@@ -118,6 +118,79 @@ async function fixtureDirectory() {
   return { cwd, global, third };
 }
 
+describe('decisions.<name> configuration', () => {
+  it('parses strict decision provider entries', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'choir-selection-'));
+    directories.push(cwd);
+    const selection = await readHarnessSelection(
+      'cli',
+      JSON.stringify({
+        decisions: {
+          jev: {
+            baseUrl: 'https://api.example.com',
+            apiKeyEnv: 'JEV_TOKEN',
+            defaultModel: 'jev-1',
+          },
+          other: { defaultModel: 'm' },
+        },
+      }),
+      cwd,
+    );
+    expect(selection.decisions).toEqual({
+      jev: { baseUrl: 'https://api.example.com', apiKeyEnv: 'JEV_TOKEN', defaultModel: 'jev-1' },
+      other: { defaultModel: 'm' },
+    });
+    expect((await readHarnessSelection('cli', '{}', cwd)).decisions).toBeUndefined();
+    for (const invalid of [
+      { decisions: { jev: { token: 'secret' } } },
+      { decisions: { jev: { baseUrl: 'not a url' } } },
+      { decisions: { jev: { baseUrl: 'ftp://host' } } },
+      { decisions: { jev: { apiKeyEnv: 'has space' } } },
+      { decisions: { jev: { defaultModel: '' } } },
+      { decisions: { Jev: {} } },
+      { decisions: [] },
+    ])
+      await expect(readHarnessSelection('cli', JSON.stringify(invalid), cwd)).rejects.toThrow();
+  });
+
+  it('digests decisions only when present, leaving older digests unchanged', () => {
+    const golden = 'd616b1e64ebd1f515febf33486b05d3f4efd5a63b997e6899849ff4389a3b175';
+    expect(harnessConfigDigest(cli({}))).toBe(golden);
+    // Pinned before decisions existed: a selection with binaries and package configurations.
+    const configured = cli(
+      { claudeBinary: '/bin/claude' },
+      { configurations: { acme: { region: 'eu' } } },
+    );
+    expect(harnessConfigDigest(configured)).toBe(
+      'e609495a1ae1d507e39851af1917f93f101c5b3fe022f20b4382322b1196b088',
+    );
+    const withDecisions = harnessConfigDigest(
+      cli({}, { decisions: { jev: { defaultModel: 'jev-1' } } }),
+    );
+    expect(withDecisions).not.toBe(golden);
+    expect(
+      harnessConfigDigest(cli({}, { decisions: { jev: { defaultModel: 'jev-2' } } })),
+    ).not.toBe(withDecisions);
+  });
+
+  it('keeps decisions when a resume inherits the recorded fixtures', async () => {
+    const { cwd } = await fixtureDirectory();
+    const recorded = launchPolicyOf(
+      await readHarnessSelection(['fixture:f.json'], undefined, cwd),
+      'suspend',
+    );
+    if (!recorded) throw new Error('expected a policy');
+    const invocation = await readHarnessSelection(
+      'cli',
+      '{"decisions":{"jev":{"defaultModel":"jev-1"}}}',
+      cwd,
+    );
+    const inherited = await inheritHarnessSelection(invocation, recorded.harness, () => undefined);
+    expect(inherited.decisions).toEqual({ jev: { defaultModel: 'jev-1' } });
+    expect(harnessConfigDigest(inherited)).toBe(harnessConfigDigest(invocation));
+  });
+});
+
 describe('launch policy of a harness selection', () => {
   it('records the fixture files a selection read, by absolute path and content digest', async () => {
     const { cwd, global, third } = await fixtureDirectory();

@@ -850,6 +850,15 @@ describe('deterministic synthesis', () => {
     ).toEqual({ 'dry-run-key-0': 0 });
     expect(synthesizeOutput({ type: ['null', 'string'] }, 'x')).toBe('dry-run:x');
   });
+  it("prefers a schema's valid default and falls back from an invalid one", () => {
+    const pair = z
+      .object({ a: z.number(), b: z.number() })
+      .refine(({ a, b }) => a + b === 1)
+      .meta({ default: { a: 1, b: 0 } });
+    expect(synthesizeOutput(json(z.object({ pair })), 'x')).toEqual({ pair: { a: 1, b: 0 } });
+    expect(synthesizeOutput(json(z.string().default('main')), 'x')).toBe('main');
+    expect(synthesizeOutput({ type: 'number', minimum: 2, default: 1 }, 'x')).toBe(2);
+  });
   it('resolves references and intersections and safely creates unusual property names', () => {
     expect(
       synthesizeOutput(

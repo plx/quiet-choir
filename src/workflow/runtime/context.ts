@@ -68,6 +68,7 @@ export function bindContext(
     log: bind(context.log.bind(context)),
     ask: bind(context.ask.bind(context)),
     now: bind(context.now.bind(context)),
+    decide: bind(context.decide.bind(context)),
     wait: bind(context.wait.bind(context)),
     sleepUntil: bind(context.sleepUntil.bind(context)),
     poll: bind(context.poll.bind(context)),

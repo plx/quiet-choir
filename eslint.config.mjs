@@ -71,9 +71,9 @@ export default defineConfig(
               // A regex, because a gitignore group cannot re-include a file below an excluded
               // directory such as ../workflow/.
               regex:
-                '^(?:\\./(?!github-model\\.js$|github-epic-model\\.js$|github-wait-model\\.js$|github-write-model\\.js$|github-writes\\.js$)|\\.\\./(?!index\\.js$|workflow/runtime/error-brand\\.js$|workflow/runtime/poll-identity\\.js$|workflow/runtime/helper-refinements\\.js$))',
+                '^(?:\\./(?!github-model\\.js$|github-epic-model\\.js$|github-wait-model\\.js$|github-write-model\\.js$|github-writes\\.js$)|\\.\\./(?!index\\.js$|workflow/runtime/error-brand\\.js$|workflow/runtime/poll-identity\\.js$|workflow/runtime/helper-refinements\\.js$|workflow/runtime/decision-protocol\\.js$|workflow/runtime/decision-error\\.js$))',
               message:
-                'Integration helpers must use the public quiet-choir entry point, not runtime internals. The exceptions are their own pure ./github-model.js, ./github-epic-model.js, ./github-wait-model.js and ./github-write-model.js, the writes module ./github-writes.js, the error-brand registry (ADR 0028), the poll-identity key (ADR 0045) and the helper-refinements key (ADR 0016): cross-instance contracts, not runtime state.',
+                'Integration helpers must use the public quiet-choir entry point, not runtime internals. The exceptions are their own pure ./github-model.js, ./github-epic-model.js, ./github-wait-model.js and ./github-write-model.js, the writes module ./github-writes.js, the error-brand registry (ADR 0028), the poll-identity key (ADR 0045), the helper-refinements key (ADR 0016), and the pure decision protocol and DecisionError shared with ctx.decide (ADR 0066): cross-instance contracts, not runtime state.',
             },
           ],
         },
@@ -166,6 +166,42 @@ export default defineConfig(
         'error',
         { name: 'process', message: 'The GitHub epic model must not read the process.' },
         { name: 'Date', message: 'The GitHub epic model must not read the clock.' },
+      ],
+    },
+  },
+  {
+    // The shared decision protocol (ADR 0066): constructors, declarations, checks, the wire request
+    // and response validation, shared by ctx.decide and quiet-choir/decision. No I/O, clock,
+    // process or runner state.
+    files: ['src/workflow/runtime/decision-protocol.ts', 'src/workflow/runtime/decision-error.ts'],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: [
+                'node:*',
+                ...builtinModules,
+                './**',
+                '../**',
+                '!./configuration-error.js',
+                '!./decision-error.js',
+                '!./error-brand.js',
+                '!./helper-refinements.js',
+              ],
+              allowTypeImports: true,
+              message:
+                'The decision protocol must stay free of I/O and runner state: import values only from ./configuration-error.js, ./decision-error.js, ./error-brand.js and ./helper-refinements.js; everything else must be import type.',
+            },
+          ],
+        },
+      ],
+      'no-restricted-globals': [
+        'error',
+        { name: 'process', message: 'The decision protocol must not read the process.' },
+        { name: 'Date', message: 'The decision protocol must not read the clock.' },
+        { name: 'fetch', message: 'The decision protocol must not perform requests.' },
       ],
     },
   },

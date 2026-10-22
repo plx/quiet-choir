@@ -5,6 +5,7 @@ import { jsonValue } from './json.js';
 import { capabilityManifest } from './profiles.js';
 import { schemaJson } from './schema.js';
 import { checkWorktreePolicy } from './worktree-policy.js';
+import { checkDecisionProviders } from './decision-protocol.js';
 import { checkPromptSets, type PromptSetCheck } from '../prompts/check.js';
 import { promptSetDescriptor, type PromptSetDescriptor } from '../prompts/prompt.js';
 
@@ -66,6 +67,7 @@ export function checkedDefinition(value: unknown): WorkflowDeclaration {
       definition['worktrees'],
       `Workflow ${String(definition['name'])} worktrees`,
     );
+  checkDecisionProviders(definition['decisions'], String(definition['name']));
   harnessDefinitions(value as WorkflowDeclaration);
   return value as WorkflowDeclaration;
 }

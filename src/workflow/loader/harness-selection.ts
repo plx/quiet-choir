@@ -14,6 +14,10 @@ import { resolve } from 'node:path';
 import { z } from 'zod';
 import { CliHarness, type CliHarnessOptions } from '../../harnesses/cli.js';
 import { digest } from '../runtime/json.js';
+import {
+  decisionConfigurationsSchema,
+  type DecisionConfigurations,
+} from '../runtime/decision-protocol.js';
 import { parseHarnessFixtures, type HarnessFixtures } from '../../harnesses/fixture.js';
 
 /** One fixture file a selection read: absolute path and SHA-256 of its bytes. @internal */
@@ -25,6 +29,8 @@ export interface HarnessSelection {
   readonly config: CliHarnessOptions;
   readonly fixtures?: HarnessFixtures;
   readonly configurations?: HarnessConfigurations;
+  /** `decisions.<name>` operator configurations for declared decision providers (ADR 0066). */
+  readonly decisions?: DecisionConfigurations;
   readonly named?: Readonly<Record<string, HarnessFixtures>>;
   /**
    * The fixture files read for `fixtures` (unnamed) and `named`, recorded as the run's launch
@@ -134,9 +140,14 @@ export async function readHarnessSelection(
             ? await readFile(resolve(cwd, configSource.slice(1)), 'utf8')
             : configSource,
         );
-  const { harnesses: parsed, ...legacy } = configSchema
+  const {
+    harnesses: parsed,
+    decisions,
+    ...legacy
+  } = configSchema
     .extend({
       harnesses: z.record(z.string().regex(/^[a-z][a-z0-9-]{0,31}$/u), z.json()).optional(),
+      decisions: decisionConfigurationsSchema.optional(),
     })
     .parse(raw);
   // Built-in binary paths follow the legacy fields: resolve against the command cwd now, because
@@ -172,6 +183,7 @@ export async function readHarnessSelection(
     ...(await readFixtureSelection(specifiers, cwd)),
     config: resolved,
     ...(configurations === undefined ? {} : { configurations }),
+    ...(decisions === undefined ? {} : { decisions: decisions as DecisionConfigurations }),
   };
 }
 
@@ -250,6 +262,7 @@ export async function inheritHarnessSelection(
     ...(selection?.configurations === undefined
       ? {}
       : { configurations: selection.configurations }),
+    ...(selection?.decisions === undefined ? {} : { decisions: selection.decisions }),
     ...fixturePart,
   };
 }
@@ -258,7 +271,8 @@ export async function inheritHarnessSelection(
  * SHA-256 of the CLI harness configuration a selection applies, recorded as
  * `RunRecord.harness.configDigest` and compared on resume. It covers the legacy `CliHarnessOptions`
  * fields (binary paths as `readHarnessSelection` resolved them, output limits, `scrubEnv`) and the
- * `harnesses.<name>` configurations. It excludes `killGraceMs` (termination policy, not output),
+ * `harnesses.<name>` configurations, and the `decisions.<name>` configurations only when the
+ * selection has them, so digests recorded before decision providers are unchanged. It excludes `killGraceMs` (termination policy, not output),
  * the selection kind (recorded and checked separately), and fixtures. An absent selection digests
  * like the default `{ kind: 'cli', config: {} }`; key order never matters. Uses the same canonical
  * `digest()` as environment summaries and step identities. @internal
@@ -268,6 +282,7 @@ export function harnessConfigDigest(selection?: HarnessSelection): string {
   return digest({
     config: { ...selection?.config, killGraceMs: undefined },
     configurations: selection?.configurations ?? {},
+    ...(selection?.decisions === undefined ? {} : { decisions: selection.decisions }),
   });
 }
 

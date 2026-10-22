@@ -96,7 +96,8 @@ export default class WorkflowResume extends WorkflowCommand {
     }),
     'harness-config': Flags.string({
       env: 'QUIET_CHOIR_HARNESS_CONFIG',
-      description: 'Adapter configuration JSON or @file (harnesses.<name> for packages)',
+      description:
+        'Adapter configuration JSON or @file (harnesses.<name> for packages, decisions.<name> for decision providers)',
     }),
   };
   public static override readonly summary =

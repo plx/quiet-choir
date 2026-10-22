@@ -47,12 +47,26 @@ export interface UsageTotals {
   readonly unknownTokens: Readonly<Record<keyof TokenCounts, number>>;
 }
 
+/** One decision provider's reported usage, with totals per served model. */
+export interface ProviderUsageTotals extends UsageTotals {
+  /**
+   * Totals by the single served (effective) model; `'(unknown)'` when the provider reported none.
+   * Never keyed by a requested alias.
+   */
+  readonly byModel: Readonly<Record<string, UsageTotals>>;
+}
+
 /** Computed run-wide usage, never a separately persisted ledger or replay-sensitive effect. */
 export interface UsageSummary extends UsageTotals {
   /** Local helper attempts with explicit usage reports, excluded from agent attempt counts. */
   readonly integrationUsage: UsageTotals;
   /** Reported local usage by StepDefinition.meta.integration (or local when unlabelled). */
   readonly byIntegration: Readonly<Record<string, UsageTotals>>;
+  /**
+   * Local helper usage that names a provider, such as `ctx.decide` attempts (ADR 0066), by provider
+   * and served model. These attempts are also in `byIntegration` and never in the agent totals.
+   */
+  readonly byProvider: Readonly<Record<string, ProviderUsageTotals>>;
   /** Groups by the harness on each attempt, including earlier redefined effects. */
   readonly byHarness: Readonly<Record<string, UsageTotals>>;
   /** Effective-model groups; the '(unknown)' bucket is never inferred from a requested alias. */

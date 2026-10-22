@@ -370,19 +370,23 @@ fixture harness in a temporary repository. A branch that depends on a captured c
 
 ## Synthesis and report
 
-Enums take the first value. Strings use `dry-run:<stepId><json-pointer>`, adjusted for length
-bounds; numeric samples start at their lower bound (otherwise zero, adjusted for upper bounds),
-booleans use false, nullable values prefer a populated branch, and arrays contain `max(minItems, 1)`
-items. Objects fill their declared fields, including optional fields; union order determines the
-first satisfiable populated branch. Local references and object intersections are supported. Samples
-are bounded to avoid unbounded recursive schemas or oversized allocations.
+A schema's JSON Schema `default` (from `.default()` or `.meta({ default })`) is the sample when it
+validates; otherwise synthesis follows the type. Enums take the first value. Strings use
+`dry-run:<stepId><json-pointer>`, adjusted for length bounds; numeric samples start at their lower
+bound (otherwise zero, adjusted for upper bounds), booleans use false, nullable values prefer a
+populated branch, and arrays contain `max(minItems, 1)` items. Objects fill their declared fields,
+including optional fields; union order determines the first satisfiable populated branch. Local
+references and object intersections are supported. Samples are bounded to avoid unbounded recursive
+schemas or oversized allocations.
 
 Unsatisfied constraints, including patterns/formats, fail with a step ID, output JSON pointer, and
 fixture guidance. This is a deterministic sampler, not a solver for every schema. Original Zod
 validation remains authoritative. Custom refinements warn because JSON Schema cannot represent their
 code: a workflow's refinements produce one warning listing the affected step IDs (the first ten,
-then a count), while the built-in `quiet-choir/github` completeness checks, which synthesized
-responses satisfy, raise none. Transforms and non-JSON schema types still fail at their call site.
+then a count), while the built-in `quiet-choir/github` completeness checks and the `ctx.decide`
+answer checks, which synthesized responses satisfy, raise none; a choice or score answer's default
+is a one-hot distribution on its first option or level, with confidence 1. Transforms and non-JSON
+schema types still fail at their call site.
 
 Successful `--dry-run --json` output is `{kind:"workflow.rehearsal", ok:true, ...report, run}`. The
 report contains:

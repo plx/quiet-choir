@@ -283,6 +283,61 @@ export default defineWorkflow({
     expect(log).toHaveBeenCalledWith('warn', expect.stringContaining('third'));
   });
 
+  it('passes decisions.<name> configuration to a provider declared in its own module instance', async () => {
+    const { file, root } = await fixture(`${imports}
+import { defineDecisionProvider, noul } from ${JSON.stringify(join(projectRoot, 'src/workflow/runtime/decision-protocol.js'))};
+const local = defineDecisionProvider({
+  name: 'local',
+  revision: 1,
+  capabilities: { kinds: ['noul'], maxOptions: 1, levels: [2, 2], idempotencyKey: false },
+  defaultModel: 'declared-model',
+  transport: (configuration) => async (request) => ({
+    body: { model: String(request.model) + '@' + String(configuration.baseUrl), answers: { ok: { type: 'noul', noul: 1 } } },
+  }),
+});
+export default defineWorkflow({
+  name: 'decide', version: '1', input: z.null(), output: z.number(),
+  decisions: [local],
+  async run(ctx) {
+    const answers = await ctx.decide('ask', { state: null, questions: { ok: noul({ instructions: 'ok?' }) } });
+    return answers.ok.noul;
+  },
+});`);
+    const log = vi.fn();
+    const runner = new WorkflowExecutor({ typecheckCache, logger: { log } });
+    const executed = await runner.execute({
+      ...plan(file),
+      kind: 'workflow.execute',
+      runId: 'decision-config',
+      stateDir: join(root, 'state'),
+      cwd: root,
+      resume: false,
+      input: null,
+      harness: {
+        kind: 'cli',
+        config: {},
+        decisions: {
+          local: { defaultModel: 'configured-model', baseUrl: 'https://decide.example' },
+          ghost: {},
+        },
+      },
+    });
+    expect(executed).toMatchObject({
+      kind: 'workflow.run.result',
+      ok: true,
+      run: {
+        status: 'completed',
+        output: 1,
+        steps: { ask: { output: { model: 'configured-model@https://decide.example' } } },
+      },
+    });
+    expect(log).toHaveBeenCalledWith(
+      'warn',
+      expect.stringContaining('Decision provider ghost is not declared'),
+    );
+    expect(log).not.toHaveBeenCalledWith('warn', expect.stringContaining('provider local'));
+  });
+
   it('rejects invalid inputs and reports missing run metadata', async () => {
     const { file, root } = await fixture(validSource);
     const executed = await executor().execute({

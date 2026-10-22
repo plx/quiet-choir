@@ -1099,6 +1099,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
       }
       const adapters = plan.dryRun ? {} : selectedAdapters(selection, harness);
       const declaredNames = new Set<string>(['claude', 'codex']);
+      const declaredDecisions = new Set<string>();
       const pendingDeclarations = [definition as unknown as WorkflowDeclaration];
       const visitedDeclarations = new Set<object>();
       while (pendingDeclarations.length) {
@@ -1106,6 +1107,7 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         if (!declared || visitedDeclarations.has(declared)) continue;
         visitedDeclarations.add(declared);
         for (const item of declared.harnesses ?? []) declaredNames.add(item.name);
+        for (const item of declared.decisions ?? []) declaredDecisions.add(item.name);
         pendingDeclarations.push(...(declared.children ?? []));
       }
       for (const name of [
@@ -1116,6 +1118,12 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
           this.#options.logger.log(
             'warn',
             `Harness ${name} is not declared in the static workflow tree; this setting only applies if a child invoked dynamically (via ctx.workflow) declares it.`,
+          );
+      for (const name of Object.keys(selection?.decisions ?? {}))
+        if (!declaredDecisions.has(name))
+          this.#options.logger.log(
+            'warn',
+            `Decision provider ${name} is not declared in the static workflow tree; this setting only applies if a child invoked dynamically (via ctx.workflow) declares it.`,
           );
       const policy = launchPolicyOf(selection, waitMode ?? 'suspend', worktreeFlags);
       // A selection built from data (a fixture with no source file, a named selection without
@@ -1172,6 +1180,9 @@ export class WorkflowExecutor implements Executor<WorkflowExecutorPlan, Workflow
         ...(selection?.configurations === undefined
           ? {}
           : { harnessConfigurations: selection.configurations }),
+        ...(selection?.decisions === undefined
+          ? {}
+          : { decisionConfigurations: selection.decisions }),
         stateDir: previewState?.stateDir ?? plan.stateDir,
         // Under --dry-run, commands go to the rehearsal's synthesizing execRunner, as fixture exec
         // rules do under --harness fixture, while the real runner serves worktree Git (#148, #308).

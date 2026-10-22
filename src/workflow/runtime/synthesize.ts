@@ -55,6 +55,15 @@ export function synthesizeOutput(schema: JsonValue, stepId: string): JsonValue {
       }
       return value;
     };
+    // A schema's own example (the `default` that `.default()` and `.meta({ default })` emit) wins
+    // when it validates, so a schema can name a sample that meets a refinement JSON Schema lacks.
+    if (Object.hasOwn(node, 'default')) {
+      try {
+        return accept(node['default'] as JsonValue);
+      } catch {
+        // An invalid default falls back to type-based synthesis.
+      }
+    }
     if (typeof node['$ref'] === 'string') {
       const ref = node['$ref'];
       if (ref !== '#' && !ref.startsWith('#/'))

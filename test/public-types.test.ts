@@ -138,7 +138,17 @@ describe('published declarations', () => {
           'promptedStructuredOutput',
         ]),
       );
-      expect(entries[2]?.names).toContain('decision');
+      expect(entries[2]?.names).toEqual(
+        expect.arrayContaining([
+          'decision',
+          'noul',
+          'choice',
+          'score',
+          'defineDecisionProvider',
+          'jevCompatible',
+          'DecisionError',
+        ]),
+      );
       expect(entries[3]?.names).toEqual(
         expect.arrayContaining([
           'github',

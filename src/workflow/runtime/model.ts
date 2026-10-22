@@ -50,6 +50,12 @@ import type { MapStepError } from './fan-out.js';
 import type { ModelUsage, TokenCounts } from './usage-model.js';
 import type { ChildOptions, WorkflowDeclaration, WorkflowPhase } from './child-model.js';
 import type { AnyRoster, EmptyRoster, RosterAgents } from './roster-model.js';
+import type {
+  DecideOptions,
+  DecisionAnswers,
+  DecisionProviderDeclaration,
+  DecisionQuestions,
+} from './decision-model.js';
 
 /** A value that survives checkpoint serialization without changing its meaning. */
 export type JsonValue =
@@ -920,6 +926,25 @@ export interface WorkflowContext<
   /** Record the current clock once and replay it as a stable deadline anchor. */
   now(id: string): Promise<number>;
   /**
+   * Ask a declared decision provider (ADR 0066) typed questions about a JSON state, as one durable
+   * step with identity `decision/2` plus the provider name and revision, the requested model, the
+   * state and the questions. Answers are typed by the questions: `choice` options type `choice` and
+   * `probabilities`, `score` levels type `legend`, and `noul` answers have no confidence. `provider`
+   * may be omitted when the workflow declares exactly one. Questions are checked against the
+   * provider's capabilities before any request, and the response is validated before it is
+   * recorded; replay returns the saved answers without a request. With `onError: 'return'`, a
+   * final failure is saved and returned as `Settled`.
+   */
+  decide<const Q extends DecisionQuestions>(
+    id: string,
+    options: DecideOptions<Q> & { readonly onError: 'return' },
+  ): Promise<Settled<DecisionAnswers<Q>>>;
+  /** Ask a decision provider with an inferred or dynamic error mode. */
+  decide<const Q extends DecisionQuestions, TMode extends ErrorMode = 'throw'>(
+    id: string,
+    options: DecideOptions<Q> & { readonly onError?: TMode | undefined },
+  ): Promise<EffectResult<DecisionAnswers<Q>, TMode>>;
+  /**
    * Choose and persist one signal, poll, or deadline outcome. Never race durable operations yourself.
    * A poll source's `noteSchema` types its `previous.note`, as in `ctx.poll`.
    */
@@ -1074,6 +1099,12 @@ export interface WorkflowDefinition<
 > {
   /** Explicit agent registrations; Claude and Codex remain implicitly available. */
   readonly harnesses?: H;
+  /**
+   * Decision providers (`defineDecisionProvider` or `jevCompatible` from `quiet-choir/decision`)
+   * that `ctx.decide` may call, with unique names; checked when the definition loads. A provider's
+   * name and revision are part of each decision's identity. Inline children declare their own.
+   */
+  readonly decisions?: readonly DecisionProviderDeclaration[];
   /** Human purpose, outside runtime replay identity. */
   readonly description?: string;
   /** Guidance for choosing this workflow, outside runtime replay identity. */
