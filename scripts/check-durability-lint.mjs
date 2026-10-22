@@ -1,5 +1,6 @@
 // Corpus gate for the static durability lint (ADR 0041): every examples/ and Workflow Lab ported
-// workflow must lint clean, and every suppression must give a reason. It builds one program per
+// workflow, and every workflow module of the packages under packages/, must lint clean, and every
+// suppression must give a reason. It builds one program per
 // tsconfig with the same construction and lint that `workflow validate` uses, so the whole corpus
 // costs three compiles instead of one CLI launch per workflow. Run after `npm run build`: the
 // comparison batches import 'quiet-choir', which resolves to dist.
@@ -29,6 +30,15 @@ const groups = [
     config: `comparisons/batches/${batch}/tsconfig.json`,
     files: workflows(`comparisons/batches/${batch}/ported`),
   })),
+  // A package's workflow modules are plain `<name>.ts` files under workflows/, so they are listed
+  // explicitly rather than by the *.workflow.ts suffix; the lint follows their imports into lib/.
+  {
+    config: 'packages/merge-down.quiet-choir/tsconfig.json',
+    files: readdirSync(join(repository, 'packages/merge-down.quiet-choir/workflows'))
+      .filter((name) => name.endsWith('.ts'))
+      .sort()
+      .map((name) => join(repository, 'packages/merge-down.quiet-choir/workflows', name)),
+  },
 ];
 
 const problems = [];
@@ -37,7 +47,7 @@ const location = (file, line, column) =>
 let checked = 0;
 for (const group of groups) {
   if (group.files.length === 0) {
-    problems.push(`${group.config}: no *.workflow.ts files found`);
+    problems.push(`${group.config}: no workflow files found`);
     continue;
   }
   const configured = configuredProgram(group.files, join(repository, group.config));
