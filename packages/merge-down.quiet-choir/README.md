@@ -214,14 +214,15 @@ stacked PR retargeted before the push, a Codex thread fixed with a commit and re
 thread that only the gate's refresh read after CI sees triaged, merged in round 2), `stop-at-fix`
 (`until: fix`, with the planned `Addressed in` reply), `dirty-fix` (the fixer leaves uncommitted
 edits, so its check fails as `dirty worktree` and the surgeon's repair is checked instead),
-`blocked-gate` (red CI, a rerun that fails again, `maxCiRepairs: 0`), `land-red-ci` (the gate sees
-green CI but the land-time wait sees red: blocked at `land`, no merge) and `land-retry` (the first
-merge attempt passes its guards but its PUT fails; the retry rereads them, finds a new unanswered
-thread and blocks at `land` without a second PUT). Every agent call and command is answered by its
-fixtures (`"commands": "fixture"`), no rule may go unused, no command may fail except the
-simulations a case lists in `failures`, and a case's `order` lists steps that must start in that
-order (the retarget before the push). It runs in `npm run check` and in the Package rehearsals CI
-job.
+`blocked-gate` (red CI, a rerun that fails again, `maxCiRepairs: 0`), `rerun-reconciled` (red CI
+whose failed jobs were already re-run: the gate still waits, records the flake and calls no fixer),
+`land-red-ci` (the gate sees green CI but the land-time wait sees red: blocked at `land`, no merge)
+and `land-retry` (the first merge attempt passes its guards but its PUT fails; the retry rereads
+them, finds a new unanswered thread and blocks at `land` without a second PUT). Every agent call and
+command is answered by its fixtures (`"commands": "fixture"`), no rule may go unused, no command may
+fail except the simulations a case lists in `failures`, and a case's `order` lists steps that must
+start in that order (the retarget before the push). It runs in `npm run check` and in the Package
+rehearsals CI job.
 
 ## Measurements
 

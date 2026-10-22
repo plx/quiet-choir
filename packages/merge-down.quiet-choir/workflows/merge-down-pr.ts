@@ -1028,28 +1028,30 @@ export default defineWorkflow({
           { sha: head },
           write,
         );
-        if (rerun.rerun.length) {
-          const [again, againReview] = await waitAll('rerun', [codeqlReviewer()]);
-          const stuck =
-            blockedIf([again, againReview], 'the re-run CI') ??
-            unregisteredRequired(again, A.requiredChecks);
-          if (stuck) return blocked('gate', stuck);
-          const flaky = again.status === 'success' || again.status === 'no-checks';
-          record.notes.push(
-            `CI failed on ${failedChecks.join(', ')}; re-ran the failed jobs: ${flaky ? 'passed (flaky)' : 'failed again'}`,
+        // Wait whatever the rerun did: when it found the failed jobs already re-run (a reconciled
+        // rerun), the CI it left behind may have passed since the gate read it, and when nothing
+        // changed the wait returns at once with the same failure.
+        const [again, againReview] = await waitAll('rerun', [codeqlReviewer()]);
+        const stuck =
+          blockedIf([again, againReview], 'the re-run CI') ??
+          unregisteredRequired(again, A.requiredChecks);
+        if (stuck) return blocked('gate', stuck);
+        const flaky = again.status === 'success' || again.status === 'no-checks';
+        const action = rerun.rerun.length ? 're-ran' : 'found already re-run';
+        record.notes.push(
+          `CI failed on ${failedChecks.join(', ')}; ${action} the failed jobs: ${flaky ? 'passed (flaky)' : 'failed again'}`,
+        );
+        if (flaky) {
+          record.flakyChecks = [...(record.flakyChecks ?? []), ...failedChecks];
+          ciFailed = false;
+        } else failedChecks = again.failed.map((f) => f.name);
+        // Threads can arrive while the re-run is pending.
+        const lateAttention = againReview.untriagedThreads.length + againReview.openAlerts.length;
+        if (lateAttention) {
+          needsTriage = true;
+          ctx.log(
+            `Round ${String(r)}: ${String(lateAttention)} thread(s)/alert(s) arrived during the CI re-run`,
           );
-          if (flaky) {
-            record.flakyChecks = [...(record.flakyChecks ?? []), ...failedChecks];
-            ciFailed = false;
-          } else failedChecks = again.failed.map((f) => f.name);
-          // Threads can arrive while the re-run is pending.
-          const lateAttention = againReview.untriagedThreads.length + againReview.openAlerts.length;
-          if (lateAttention) {
-            needsTriage = true;
-            ctx.log(
-              `Round ${String(r)}: ${String(lateAttention)} thread(s)/alert(s) arrived during the CI re-run`,
-            );
-          }
         }
       }
       if (!ciFailed && !needsTriage && !localFindings) {
