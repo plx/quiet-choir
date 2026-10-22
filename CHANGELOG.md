@@ -2,6 +2,25 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Decision steps in inspect and on their completion events (#653,
+  [ADR 0066](docs/decisions/0066-decision-providers.md) §5; see
+  [docs/observability.md](docs/observability.md)). `workflow inspect` now lists a completed
+  `ctx.decide` step (and a legacy `decision(ctx, transport).choose` step): the summary's `steps[]`
+  (text and `inspect --json --summary`) gains `decision`,
+  `{ op, provider, requestedModel, servedModel, questions, usage }` (null on every other step), with
+  each question's kind, headline answer, `level` for a score and `confidence` where the kind has one
+  (never for `noul`); a token total is null when any attempt reported no count. The provider and
+  requested model come from the latest attempt, and `usage` spans every attempt, including any
+  before a redefinition; a fork-reused step reports zero usage and its source run as `reusedFrom`. A
+  step redefined on resume now takes the new definition's `meta`, so a step redefined into or out of
+  `ctx.decide` is classified by its current definition. Text prints one line per decision step and
+  one indented line per question. Completed decision steps are listed without a cap, like completed
+  commands. The `step.completed` event line of a decision step carries the summary as `msg`
+  (`decision PROVIDER MODEL->SERVED IN/OUT tok N att: NAME=HEADLINE, ...`), within the existing
+  200-byte `msg` and 512-byte line limits, and `workflow events` derives the same text from the
+  record. `WorkflowEvent` gains the optional `decision` field on `step.completed`, and the new
+  public types `DecisionStepSummary` and `DecisionQuestionSummary` describe it. No new event line
+  keys, record fields or schema revision; `model.ts` is untouched.
 - Decision fixtures (#652, [ADR 0066](docs/decisions/0066-decision-providers.md) §5; see
   [docs/rehearsal.md](docs/rehearsal.md#decision-fixtures)). `HarnessFixtures` gains `decisions`,
   keyed by exact fully qualified step ID, whose entries are `{ answers, model?, usage? }` (answers

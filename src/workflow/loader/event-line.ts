@@ -1,3 +1,4 @@
+import type { DecisionStepSummary } from '../runtime/decision-summary.js';
 import type { ErrorKind, JsonValue } from '../runtime/model.js';
 import { failureKind } from './failure-kind.js';
 
@@ -80,8 +81,9 @@ export interface EventLine {
   readonly phase?: string;
   /**
    * Truncated message: the run error, the step error on `step.failed` and `step.settled`, the
-   * step's warnings on `step.completed` (`no-tool-use:` first, joined with `; `), phase title, log
-   * text plus data, the open question, or the tolerated poll error with its count.
+   * step's warnings on `step.completed` (`no-tool-use:` first, joined with `; `) or, for a
+   * completed decision step, its {@link decisionMessage}, phase title, log text plus data, the open
+   * question, or the tolerated poll error with its count.
    */
   readonly msg?: string;
 }
@@ -199,12 +201,41 @@ export function warningsMessage(warnings: readonly string[] | undefined): string
   );
 }
 
+/** A number as two decimals, or `?` when it is not finite. */
+function decimals(value: number): string {
+  return Number.isFinite(value) ? value.toFixed(2) : '?';
+}
+
+/**
+ * A completed decision step as one `msg`: a header, `decision PROVIDER MODEL->SERVED IN/OUT tok N
+ * att` (`-` for an absent provider, requested or served model, `?` for an unknown token total),
+ * then `: ` and the questions joined with `, `, each `NAME=HEADLINE` followed by ` cC` when it has a
+ * confidence. A score's headline is its value and level, as in `grade=2.10 good c0.70`. The header
+ * comes first so it survives the `msg` truncation. @internal
+ */
+export function decisionMessage(summary: DecisionStepSummary): string {
+  const tokens = (count: number | null): string => (count === null ? '?' : String(count));
+  const { usage } = summary;
+  const header = `decision ${summary.provider ?? '-'} ${summary.requestedModel ?? '-'}->${summary.servedModel ?? '-'} ${tokens(usage.inputTokens)}/${tokens(usage.outputTokens)} tok ${String(usage.attempts)} att`;
+  const questions = summary.questions.map((question) => {
+    const answer =
+      typeof question.answer === 'number' ? decimals(question.answer) : (question.answer ?? '?');
+    const headline =
+      question.kind === 'score' && question.level !== undefined
+        ? `${answer} ${question.level}`
+        : answer;
+    return `${question.name}=${headline}${question.confidence === undefined ? '' : ` c${decimals(question.confidence)}`}`;
+  });
+  return questions.length ? `${header}: ${questions.join(', ')}` : header;
+}
+
 /**
  * The untruncated `msg` of an event: the compact JSON of `question` in a `wait.opened` payload,
  * the message plus the compact JSON of non-null data for `log`, `tolerated N/LIMIT: message` (with
  * ` [code]` after LIMIT when the error had a code) for `wait.tolerated`, the bounded step `error`
- * (or nothing) for `step.failed` and `step.settled`, the step's {@link warningsMessage} (or nothing)
- * for `step.completed`, and the message otherwise.
+ * (or nothing) for `step.failed` and `step.settled`, the {@link decisionMessage} of a completed
+ * decision step, else the step's {@link warningsMessage} (or nothing) for `step.completed`, and the
+ * message otherwise.
  * A `wait.tolerated` entry whose data lacks the counts falls back to its message.
  * @internal
  */
@@ -214,10 +245,14 @@ export function eventMessage(event: {
   readonly error?: string | null | undefined;
   readonly data?: JsonValue | undefined;
   readonly warnings?: readonly string[] | undefined;
+  readonly decision?: DecisionStepSummary | undefined;
 }): string | undefined {
   if (event.type === 'step.failed' || event.type === 'step.settled')
     return event.error ?? undefined;
-  if (event.type === 'step.completed') return warningsMessage(event.warnings);
+  if (event.type === 'step.completed')
+    return event.decision === undefined
+      ? warningsMessage(event.warnings)
+      : decisionMessage(event.decision);
   if (event.type === 'wait.opened') {
     const data = event.data;
     const question =

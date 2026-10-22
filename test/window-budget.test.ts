@@ -696,8 +696,9 @@ describe('the gate in a run', () => {
 describe('tick', () => {
   const logger = new ThresholdLogger('silent', () => undefined);
 
-  // measured: 0.9 s alone, 2.5 s in a full local coverage run, 5.0 s on the Node 22.13 CI leg and
-  // 4.5 s on Node 26 (typecheck analysis and tsImport compiles of the workflow).
+  // measured: 1.9 s alone, 2.5 s in a full local coverage run, 5.0 s on the Node 22.13 CI leg, 4.5 s
+  // on Node 26, 12.9 s on the Node 24 coverage shard and over 15 s on a contended run of that shard
+  // (#658) (typecheck analysis and tsImport compiles of the workflow).
   it('leaves a gated run until its reset, then resumes and completes it', async () => {
     const root = await directory();
     await symlink(join(project, 'node_modules'), join(root, 'node_modules'));
@@ -757,7 +758,7 @@ export default defineWorkflow({ name: 'window', version: '1', input: z.null(), o
     const done = await readRun({ stateDir, runId: 'run' });
     expect(done.status).toBe('completed');
     expect(done.steps['two']?.attempts).toBe(1);
-  }, 15_000);
+  }, 45_000);
 });
 
 // The gate keeps the latest report per harness as attempts settle instead of rescanning the step

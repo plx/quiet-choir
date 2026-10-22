@@ -32,6 +32,42 @@ calls; `-v` restores the two-line command form, with absolute argv and cwd, and 
 row. Failed, running and waiting commands always print in full. Older records lack some
 measurements; inspection leaves those fields unknown rather than reconstructing execution.
 
+A completed `ctx.decide` step ([ADR 0066](decisions/0066-decision-providers.md)) is listed in
+`steps` with a `decision` object, which is null on every other step. `decision` is
+`{ op, provider, requestedModel, servedModel, questions, usage }`, plus `reusedFrom` on a
+fork-reused step: `op` is `decide` (or `choose` for a legacy `decision/1` step), `provider` and
+`requestedModel` come from the latest attempt's usage, falling back to the step's `meta` when that
+attempt recorded none (a recorded null `requestedModel` means the host chose, and does not fall
+back), `servedModel` from the recorded output (null when the provider reported none), and `usage` is
+`{ attempts, inputTokens, outputTokens }`, where a token total is null when any attempt reported no
+count, so a partial sum never looks complete. `usage` spans every attempt of the step, including any
+made before a redefinition, while a redefinition replaces `meta` with the new definition's. A step a
+fork reused from another run (`reusedFrom` is that run's id) made no attempts here: it keeps its
+provider, models and answers, but its `usage` is `{ attempts: 0, inputTokens: 0, outputTokens: 0 }`
+and text prints `reused from RUN` in place of the attempts and tokens. `questions` has one entry per
+answer, in the record's key order (sorted by name), as
+`{ name, kind, answer, level?, confidence? }`. The record keeps no question definitions, so `kind`
+follows the answer's shape: `noul` (`answer` is the probability of yes, and no `confidence`),
+`choice` (`answer` is the option, with `confidence`), `score` (`answer` is the probability-weighted
+level index, `level` the legend entry at the nearest level, clamped to the legend, with
+`confidence`), or `unknown` (`answer` null) for a record of no recognized shape. A legacy
+`decision(ctx, transport).choose` step has one `choice` question named `answer` without a
+confidence, the provider and requested model from its last attempt's usage when it reported them,
+and no served model. The summary never throws on a malformed record. Text prints one line per
+decision step and one indented line per question:
+
+```text
+completed ask  decision jev jev-latest -> jev-1.2  1 attempts, 120 in / 15 out tokens  2s
+  grade score 1.90 (good) confidence 0.70
+  refund noul 0.25
+  team choice a confidence 0.80
+```
+
+with `(provider default)` for an absent requested model, `unknown` for an absent served model and
+`?` for an unknown token total. Completed decision steps are always listed, like completed commands,
+so a run with very many `ctx.decide` calls lists them all. Failed and settled decision steps are not
+summarized: they print on the generic step line, labelled `decision.decide`.
+
 A saved `running` run with no lock or a dead/released owner is shown as `stale`, and
 [`workflow tick`](waits.md#suspension-and-tick) recovers it unless live or unverified children
 remain, up to its crash-loop cap. Remote or unverifiable ownership remains `running` with its
@@ -115,21 +151,21 @@ tail -n +1 -F /abs/review-42.events.jsonl | grep --line-buffered '"ev":"step.fai
 }
 ```
 
-| Field       | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `t`         | ISO event time                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `run`       | Run ID                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `ev`        | Event type                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `step`      | Full step ID; on `run.failed`, the root effect when known; on `wait.tolerated`, the wait ID                                                                                                                                                                                                                                                                                                                                                           |
-| `attempt`   | Persisted attempt count, on `step.failed` and `step.settled` only                                                                                                                                                                                                                                                                                                                                                                                     |
-| `errorKind` | The recorded failure kind, on `step.failed` and on `run.failed` that names a root effect (`step`); null on `step.failed` when the attempt recorded none. On `run.failed` it is `configuration` for a configuration refusal raised before the effect's attempt. Absent on every other line                                                                                                                                                             |
-| `retryable` | Whether `errorKind` is a transient kind (`rate-limit`, `overloaded`, `timeout`, `idle-timeout`), as in failure documents; present exactly when `errorKind` is. It does not promise that the runtime retries the step                                                                                                                                                                                                                                  |
-| `harness`   | The event's harness, or the one last seen on an agent event for this step in this process                                                                                                                                                                                                                                                                                                                                                             |
-| `ms`        | Step events: time since the step's latest start in this process. Terminal run events: time since this execution's `run.started`. Omitted when no start was seen in this process                                                                                                                                                                                                                                                                       |
-| `costUsd`   | Reported cost of a completed agent step, when known                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `toolUses`  | The attempt's reported tool-call count (`diagnostics.toolUses`), on the `step.completed`, `step.failed` and `step.settled` lines of an agent step. Omitted when the count is unknown (`null`) or missing, as for registered adapters, rehearsal and fixtures                                                                                                                                                                                          |
-| `phase`     | Phase at the call site                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `msg`       | The run error, phase title or lifecycle message; on `step.failed` and `step.settled`, the step's error text (single line, no stack); on `step.completed`, the step's warnings, `no-tool-use:` first, joined with `; `; for `log`, the message plus the compact JSON of its data; for `wait.opened`, the compact JSON of the question; for `wait.tolerated`, `tolerated N/LIMIT: message`, with ` [code]` after LIMIT when the error had a string code |
+| Field       | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `t`         | ISO event time                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `run`       | Run ID                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `ev`        | Event type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `step`      | Full step ID; on `run.failed`, the root effect when known; on `wait.tolerated`, the wait ID                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `attempt`   | Persisted attempt count, on `step.failed` and `step.settled` only                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `errorKind` | The recorded failure kind, on `step.failed` and on `run.failed` that names a root effect (`step`); null on `step.failed` when the attempt recorded none. On `run.failed` it is `configuration` for a configuration refusal raised before the effect's attempt. Absent on every other line                                                                                                                                                                                                                       |
+| `retryable` | Whether `errorKind` is a transient kind (`rate-limit`, `overloaded`, `timeout`, `idle-timeout`), as in failure documents; present exactly when `errorKind` is. It does not promise that the runtime retries the step                                                                                                                                                                                                                                                                                            |
+| `harness`   | The event's harness, or the one last seen on an agent event for this step in this process                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `ms`        | Step events: time since the step's latest start in this process. Terminal run events: time since this execution's `run.started`. Omitted when no start was seen in this process                                                                                                                                                                                                                                                                                                                                 |
+| `costUsd`   | Reported cost of a completed agent step, when known                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `toolUses`  | The attempt's reported tool-call count (`diagnostics.toolUses`), on the `step.completed`, `step.failed` and `step.settled` lines of an agent step. Omitted when the count is unknown (`null`) or missing, as for registered adapters, rehearsal and fixtures                                                                                                                                                                                                                                                    |
+| `phase`     | Phase at the call site                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `msg`       | The run error, phase title or lifecycle message; on `step.failed` and `step.settled`, the step's error text (single line, no stack); on `step.completed`, the step's warnings, `no-tool-use:` first, joined with `; `, or for a completed decision step its summary (see below); for `log`, the message plus the compact JSON of its data; for `wait.opened`, the compact JSON of the question; for `wait.tolerated`, `tolerated N/LIMIT: message`, with ` [code]` after LIMIT when the error had a string code |
 
 Fields are written in this order (`t`, `run`, `ev`, `step`, `attempt`, `errorKind`, `retryable`,
 `harness`, `ms`, `costUsd`, `toolUses`, `phase`, `msg`), and absent or null fields are omitted, with
@@ -169,6 +205,18 @@ running `inspect` afterwards. An agent step's terminal line carries the count of
 200-byte budget never cuts it away. No extra line is written for an agent attempt. The sink reads
 both from the step's `agent.finished` event in its own process, as it does `harness`, so a
 `step.failed` line has a count but no warnings, because only a completed attempt warns.
+
+A completed decision step writes its summary, in place of warnings (a decision step has none), as
+the `step.completed` line's `msg`: `decision PROVIDER MODEL->SERVED IN/OUT tok N att`, then `: ` and
+the questions joined with `, `, each `NAME=HEADLINE` with ` cC` appended when it has a confidence.
+`MODEL` is the requested model and `SERVED` the served one (`-` when absent), `IN/OUT` are the token
+totals (`?` when unknown) and `N` is the attempt count. A headline is the probability (`noul`), the
+option (`choice`) or the score and its level (`score`), with numbers at two decimals, for example
+`decision jev jev-latest->jev-1.2 120/15 tok 1 att: grade=1.90 good c0.70, refund=0.25, team=a c0.80`.
+The header comes first, so the usual 200-byte `msg` budget and 512-byte line cap cut the question
+list, ending in `…`, never the header. The runner puts the same summary on the in-process
+`WorkflowEvent.decision` of that `step.completed`, which is how the live sink knows it; the
+structured form with every question is `steps[].decision` in `inspect --json --summary`.
 
 ```json
 {
@@ -231,12 +279,15 @@ imports the workflow, and derives each line from what the record keeps:
   its recorded `diagnostics.toolUses` as `toolUses` (omitted unless a non-negative integer).
   Warnings are kept per step and reset on every attempt, so a `step.completed` line takes the step's
   warnings as `msg` only for the step's latest attempt, and an earlier completed attempt of the same
-  step omits them rather than guessing. With `transcripts: 'on-failure'` the runner saves a
-  completion before removing its transcript, then saves any `Could not remove successful transcript`
-  warning, and emits `step.completed` only after that; the follower likewise holds that line until a
-  read shows the cleanup done (the transcript no longer retained, the warning recorded, the
-  execution no longer running, or the run stale because its owner is gone), so the line keeps its
-  warning. Questions and waits, which have no attempt history, settle from the step itself.
+  step omits them rather than guessing. A completed decision step's latest `step.completed` line
+  carries its `decision ...` summary as `msg` instead, derived from the record by the same function
+  the live event and `inspect` use, so the three agree. With `transcripts: 'on-failure'` the runner
+  saves a completion before removing its transcript, then saves any
+  `Could not remove successful transcript` warning, and emits `step.completed` only after that; the
+  follower likewise holds that line until a read shows the cleanup done (the transcript no longer
+  retained, the warning recorded, the execution no longer running, or the run stale because its
+  owner is gone), so the line keeps its warning. Questions and waits, which have no attempt history,
+  settle from the step itself.
 - **Questions.** A question whose notification was recorded becomes `wait.opened` at that time, with
   the question as `msg`.
 

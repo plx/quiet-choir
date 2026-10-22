@@ -24,6 +24,7 @@ import { latestRateLimits, type RateLimitSummary } from '../runtime/rate-limit.j
 import type { RunBudgetStop } from '../runtime/run-budget.js';
 import { recordWarnings } from '../runtime/record-warnings.js';
 import { classifyRecovery } from '../runtime/recovery-decision.js';
+import { summarizeDecisionStep, type DecisionStepSummary } from '../runtime/decision-summary.js';
 import { brandError, isBranded } from '../runtime/error-brand.js';
 import { RunRefusedError, type CliErrorCode } from '../runtime/run-errors.js';
 import type { RequestSummary, RunEvent, UsageSummary } from '../runtime/observability-model.js';
@@ -170,6 +171,12 @@ export interface RunSummary {
     readonly worktree:
       (WorktreeStep & { readonly directoryState: 'present' | 'missing' | 'removed' }) | null;
     readonly merge: StepRecord['merge'] | null;
+    /**
+     * A completed `ctx.decide` (or legacy `decision/1` choose) step's provider, requested and
+     * served model, per-question kind and headline answer, and usage; null for every other step.
+     * Completed decision steps are listed in full, as completed exec steps are.
+     */
+    readonly decision: DecisionStepSummary | null;
     readonly error: string | null;
     /** Kind of the step's last attempt failure; null without a failed attempt. */
     readonly errorKind: ErrorKind | null;
@@ -569,6 +576,7 @@ export function summarizeRun(
           step.kind === 'exec' ||
           step.worktree !== undefined ||
           step.merge !== undefined ||
+          summarizeDecisionStep(step) !== null ||
           ['running', 'failed', 'cancelled', 'settled-failed', 'waiting'].includes(step.status),
       )
       .map(([id, step]) => ({
@@ -596,6 +604,7 @@ export function summarizeRun(
             }
           : null,
         merge: step.merge ?? null,
+        decision: summarizeDecisionStep(step),
         error: step.error,
         errorKind: stepErrorKind(step),
         rootCause: run.rootCause?.stepId === id,

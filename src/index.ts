@@ -257,6 +257,10 @@ export type {
   RunEvent,
   UsageSummary,
 } from './workflow/runtime/observability-model.js';
+export type {
+  DecisionQuestionSummary,
+  DecisionStepSummary,
+} from './workflow/runtime/decision-summary.js';
 
 export { FixtureHarness, parseHarnessFixtures } from './harnesses/fixture.js';
 export type {
