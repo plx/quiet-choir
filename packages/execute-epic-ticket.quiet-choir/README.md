@@ -82,6 +82,9 @@ node bin/run.js workflow execute packages/execute-epic-ticket.quiet-choir \
 node bin/run.js workflow inspect execute-epic-ticket-576-591
 ```
 
+Recorded run: `execute-epic-ticket-576-591-b` ended `landed`; it merged #591 as PR #689 (merge
+commit `14dbf3e`), and its `workflow inspect` shows `land: merge-down-pr@1 completed`.
+
 `inspect` should show status `completed` with output status `landed`, and the workflow tree line
 `land: merge-down-pr@1 completed`. The criterion is met when #591's PR is merged by that run and its
 line in #576 is ticked. Then land #590's own PR the same way (it is in flight, so the run goes
@@ -293,15 +296,16 @@ the follow-up epic body and section) and by the headless shell rules every agent
 
 ## API follow-ups
 
-Awkwardness met in the port, filed with this change under the follow-up epic (the PR's follow-ups
-section lists the new issues by number), or extending existing issues:
+Awkwardness met in the port, filed with this change under the follow-up epic, or extending existing
+issues:
 
-| Gap                                                                                                     | ADR       | Issue                     |
-| ------------------------------------------------------------------------------------------------------- | --------- | ------------------------- |
-| `ctx.worktree` cannot be rehearsed under `--dry-run`, and a handle cannot adopt a branch across runs    | 0063      | filed with #590           |
-| `quiet-choir/github` has no label writes (ensure, add, remove)                                          | 0046      | filed with #590           |
-| `quiet-choir/github` has no sub-issue link write for an issue it did not file                           | 0046      | not filed yet             |
-| `issue.create` reconciles only by a run-scoped marker, so a fresh run refiles without a title lookup    | 0046      | filed with #590           |
-| `nextTicket` has no preferred-ticket option (the native `--prefer`)                                     | 0048      | filed with #590           |
-| Package mechanics (command wrappers, the check-suite runner) are imported across packages, not in `std` | 0063/0065 | filed with #590; see #671 |
-| Epic body edits (checklist tick and insert-after) need an `issue.edit` with a conditional body update   | 0046/0047 | #668                      |
+| Gap                                                                                                     | ADR       | Issue          |
+| ------------------------------------------------------------------------------------------------------- | --------- | -------------- |
+| `ctx.worktree` cannot be rehearsed under `--dry-run`, and a handle cannot adopt a branch across runs    | 0063      | #681           |
+| `quiet-choir/github` has no label writes (ensure, add, remove)                                          | 0046      | #682           |
+| `quiet-choir/github` has no sub-issue link write for an issue it did not file                           | 0046      | not filed yet  |
+| `issue.create` reconciles only by a run-scoped marker, so a fresh run refiles without a title lookup    | 0046      | #683           |
+| `nextTicket` has no preferred-ticket option (the native `--prefer`)                                     | 0048      | #684           |
+| Package mechanics (command wrappers, the check-suite runner) are imported across packages, not in `std` | 0063/0065 | #685; see #671 |
+| The dry-run rehearsal report has no `RunSummary`, so the rehearsal renders it from `dist/`              | 0065      | #686           |
+| Epic body edits (checklist tick and insert-after) need an `issue.edit` with a conditional body update   | 0046/0047 | #668           |
