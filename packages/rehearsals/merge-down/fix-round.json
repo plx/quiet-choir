@@ -32,5 +32,6 @@
     ],
     "localReviews": [],
     "blocked": null
-  }
+  },
+  "order": ["gate/1/retarget", "gate/1/push"]
 }

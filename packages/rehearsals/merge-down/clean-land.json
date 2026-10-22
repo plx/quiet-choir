@@ -33,6 +33,10 @@
     "threads": [],
     "followups": [],
     "blocked": null,
+    "notes": [
+      "retargeted to main with no new head to push, so CI was not re-triggered against the new base"
+    ],
     "headline": "Merged #42, which adds the widget for #41."
-  }
+  },
+  "order": ["gate/1/retarget", "gate/1/push"]
 }

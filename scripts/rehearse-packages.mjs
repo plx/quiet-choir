@@ -3,8 +3,9 @@
 // the authoring rules the port must keep (no raw harness calls in the package, no multi-line
 // literals in workflows/), and rehearses every case in packages/rehearsals/merge-down/ with
 // `execute --dry-run --harness fixture:<case>.fixtures.json`: the run must complete with the
-// expected ledger subset, answer every agent call and command from the fixtures, and leave no
-// fixture rule unused. Run after `npm run build`; the CLI runs from dist.
+// expected ledger subset, answer every agent call and command from the fixtures, leave no
+// fixture rule unused, and start the steps a case lists in `order` in that order (by their first
+// command). Run after `npm run build`; the CLI runs from dist.
 //
 //   node scripts/rehearse-packages.mjs [case ...]
 import { execFile } from 'node:child_process';
@@ -158,7 +159,11 @@ function subset(actual, expected, path, mismatches) {
 }
 
 async function rehearse(name) {
-  const { input, expect } = JSON.parse(await readFile(join(cases, `${name}.json`), 'utf8'));
+  const {
+    input,
+    expect,
+    order = [],
+  } = JSON.parse(await readFile(join(cases, `${name}.json`), 'utf8'));
   const root = await mkdtemp(join(tmpdir(), `merge-down-${name}-`));
   try {
     const inputFile = join(root, 'input.json');
@@ -196,6 +201,12 @@ async function rehearse(name) {
         fail(
           `${where}: command ${JSON.stringify(command.command)} of ${command.stepId}: ${command.error ?? command.outputSource}`,
         );
+    const first = order.map((step) => (report.commands ?? []).findIndex((c) => c.stepId === step));
+    order.forEach((step, index) => {
+      if (first[index] === -1) fail(`${where}: step ${step} ran no command`);
+      else if (index > 0 && first[index] < first[index - 1])
+        fail(`${where}: step ${step} ran before ${order[index - 1]}`);
+    });
     console.log(
       `Rehearsed ${name}: ${report.run.output.status}, ${String(report.calls?.length ?? 0)} agent call(s), ${String(report.commands?.length ?? 0)} command(s).`,
     );

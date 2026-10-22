@@ -63,7 +63,7 @@
               "mergeStateStatus": "CLEAN",
               "headRefOid": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
               "headRefName": "feature/41-widget",
-              "baseRefName": "main",
+              "baseRefName": "feature/40-base",
               "closingIssuesReferences": {
                 "pageInfo": {
                   "hasNextPage": false
@@ -124,6 +124,36 @@
           }
         }
       }
+    },
+    {
+      "step": "parent/42",
+      "json": [
+        {
+          "data": {
+            "repository": {
+              "pullRequests": {
+                "pageInfo": {
+                  "hasNextPage": false,
+                  "endCursor": null
+                },
+                "nodes": [
+                  {
+                    "number": 40,
+                    "title": "Add the widget base",
+                    "state": "MERGED",
+                    "isDraft": false,
+                    "headRefName": "feature/40-base",
+                    "baseRefName": "main",
+                    "headRefOid": "40b40b40b40b40b40b40b40b40b40b40b40b40b4",
+                    "url": "https://github.com/acme/widgets/pull/40",
+                    "body": "Closes #40."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
     },
     {
       "step": "issue-kind/41",
@@ -202,7 +232,7 @@
                     "state": "OPEN",
                     "isDraft": false,
                     "headRefName": "feature/41-widget",
-                    "baseRefName": "main",
+                    "baseRefName": "feature/40-base",
                     "headRefOid": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
                     "url": "https://github.com/acme/widgets/pull/42",
                     "body": "Closes #41."
@@ -276,6 +306,11 @@
       "step": "sync",
       "argvPrefix": ["git", "clean"],
       "stdout": ""
+    },
+    {
+      "step": "sync",
+      "argvPrefix": ["git", "rev-parse", "--verify", "--quiet", "refs/merge-down/fork-point/42"],
+      "stdout": "40b40b40b40b40b40b40b40b40b40b40b40b40b4\n"
     },
     {
       "step": "sync",
@@ -388,6 +423,34 @@
       "step": "codex/r0/0a1b2c3d4e5f60718293a4b5c6d7e8f901234567/gpt-6-astra/default/teardown",
       "argvPrefix": ["git", "worktree", "prune"],
       "stdout": ""
+    },
+    {
+      "step": "gate/1/retarget",
+      "argvPrefix": ["gh", "api", "repos/acme/widgets/pulls/42"],
+      "json": {
+        "number": 42,
+        "html_url": "https://github.com/acme/widgets/pull/42",
+        "node_id": "PR_kwDOexample",
+        "state": "open",
+        "merged": false,
+        "merge_commit_sha": null,
+        "title": "Add the widget",
+        "body": "Adds the widget.\n\nCloses #41.",
+        "head": {
+          "ref": "feature/41-widget",
+          "sha": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567"
+        },
+        "base": {
+          "ref": "feature/40-base"
+        }
+      }
+    },
+    {
+      "step": "gate/1/retarget",
+      "argvPrefix": ["gh", "api", "-X", "PATCH", "repos/acme/widgets/pulls/42", "--input", "-"],
+      "json": {
+        "number": 42
+      }
     },
     {
       "step": "gate/1/push",
