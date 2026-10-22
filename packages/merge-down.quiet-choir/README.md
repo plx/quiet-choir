@@ -174,7 +174,7 @@ invalid input fails before the run starts.
 - `summarizeChecks` counts every run of a check in the rollup, including a run that a concurrency
   group cancelled for a newer duplicate, as the native script did before #645. This repository's CI
   uses `cancel-in-progress`, so a live gate can read a cancelled duplicate as a failure and spend a
-  repair round or block. Filed as a follow-up; not reimplemented here.
+  repair round or block. Filed as #665; not reimplemented here.
 - Claude Code runs headless with the roster's `allowedTools` shell patterns; a command a prompt does
   not anticipate is denied rather than prompted. The roster limits (for example `Surgeon` at 200
   turns, USD 25 and two hours) can be raised on resume with `--profile Surgeon.maxTurns=…`.
@@ -230,19 +230,19 @@ TypeScript. The prose moved out of the control flow nearly unchanged in size.
 
 ## API follow-ups
 
-Awkwardness met in the port, filed against the ADRs rather than worked around here (issue numbers
-are added when they are filed with this PR):
+Awkwardness met in the port, filed against the ADRs rather than worked around here, under the
+follow-up epic #594:
 
-| Gap                                                                                       | ADR       |
-| ----------------------------------------------------------------------------------------- | --------- |
-| `summarizeChecks` counts cancelled duplicate runs and superseded attempts of a check      | 0045      |
-| Waits accept only an ancestor as a stale head, not the head a rebase push leased against  | 0045      |
-| `pr.view` returns no author, so a Dependabot PR is recognized by its branch               | 0044      |
-| No `issue.edit` (follow-up epic checklist) and no `pr.close` (Dependabot close fallback)  | 0046/0047 |
-| No timeline read, and `issue.view` cannot tell an issue from a pull request number        | 0044      |
-| The Codex harness has no review mode, so `codex review` is a command effect               | 0063      |
-| `std` has no shell-capable roster fragment and no limits sized for long fix rounds        | 0063      |
-| `identity: 'version'` is internal, but package mechanics need source-independent identity | 0063/0065 |
-| Wall-clock settle windows in waits cannot be rehearsed (CodeQL settle, `graceMs`)         | 0045      |
-| Nothing keeps formatters off a package's prompt templates                                 | 0064/0065 |
-| Fixtures for multi-read waits must spell full GraphQL argv                                | 0065      |
+| Gap                                                                                       | ADR       | Issue |
+| ----------------------------------------------------------------------------------------- | --------- | ----- |
+| `summarizeChecks` counts cancelled duplicate runs and superseded attempts of a check      | 0045      | #665  |
+| Waits accept only an ancestor as a stale head, not the head a rebase push leased against  | 0045      | #666  |
+| `pr.view` returns no author, so a Dependabot PR is recognized by its branch               | 0044      | #667  |
+| No `issue.edit` (follow-up epic checklist) and no `pr.close` (Dependabot close fallback)  | 0046/0047 | #668  |
+| No timeline read, and `issue.view` cannot tell an issue from a pull request number        | 0044      | #669  |
+| The Codex harness has no review mode, so `codex review` is a command effect               | 0063      | #670  |
+| `std` has no shell-capable roster fragment and no limits sized for long fix rounds        | 0063      | #671  |
+| `identity: 'version'` is internal, but package mechanics need source-independent identity | 0063/0065 | #672  |
+| Wall-clock settle windows in waits cannot be rehearsed (CodeQL settle, `graceMs`)         | 0045      | #673  |
+| Nothing keeps formatters off a package's prompt templates                                 | 0064/0065 | #674  |
+| Fixtures for multi-read waits must spell full GraphQL argv                                | 0065      | #675  |
