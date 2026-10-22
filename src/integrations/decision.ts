@@ -69,7 +69,9 @@ export interface JevCompatibleOptions {
   /**
    * Environment variable holding the bearer token, read at request time and never recorded: a
    * response that echoes it, literally or JSON-escaped, is redacted before its text reaches an error
-   * message, evidence or validation. `decisions.<name>.apiKeyEnv` replaces it.
+   * message, evidence or validation, and a body that is not parsed (an oversized prefix or non-JSON
+   * text) that still carries it `\u`-escaped is withheld as evidence. `decisions.<name>.apiKeyEnv`
+   * replaces it.
    */
   readonly apiKeyEnv?: string;
   /** Model requested when a call names none; `decisions.<name>.defaultModel` replaces it. */
@@ -149,6 +151,42 @@ function redactText(text: string, token: string): string {
   return redacted;
 }
 
+const jsonEscapes: Readonly<Record<string, string>> = {
+  '"': '"',
+  '\\': '\\',
+  '/': '/',
+  b: '\b',
+  f: '\f',
+  n: '\n',
+  r: '\r',
+  t: '\t',
+};
+
+/**
+ * The text with every JSON string escape decoded in one pass, without needing a complete document:
+ * `\uXXXX` (a surrogate pair decodes as its two halves), `\"`, `\\`, `\/` and the letter escapes.
+ */
+function unescapeJson(text: string): string {
+  return text.replace(
+    /\\(?:u([0-9a-fA-F]{4})|(["\\/bfnrt]))/gu,
+    (_match, hex: string | undefined, letter: string | undefined) =>
+      hex === undefined
+        ? (jsonEscapes[letter ?? ''] ?? '')
+        : String.fromCharCode(Number.parseInt(hex, 16)),
+  );
+}
+
+const withheldMark = '[withheld: the response echoes the bearer token]';
+
+/**
+ * Redacted text that is never parsed, such as a truncated prefix or a body that is not JSON, so
+ * has no decoded strings to redact. When it still carries the token escaped another way (such as
+ * with `\u` sequences), it is withheld whole.
+ */
+function withholdEscapedEcho(redacted: string, token: string): string {
+  return unescapeJson(redacted).includes(token) ? withheldMark : redacted;
+}
+
 /**
  * A response body with the token redacted from its text and, when the text is JSON, from every
  * decoded string and key. When a decoded string still held the token (escaped another way, such as
@@ -160,7 +198,7 @@ function redactBody(raw: string, token: string): { text: string; decoded?: { val
   try {
     value = JSON.parse(text);
   } catch {
-    return { text };
+    return { text: withholdEscapedEcho(text, token) };
   }
   const found = { token: false };
   const redactString = (item: string): string => {
@@ -203,7 +241,8 @@ function httpUrl(value: string, label: string): string {
  * only when `capabilities.idempotencyKey` is true. HTTP 429 fails with kind `rate-limit`, 5xx with
  * `overloaded` (both transient), 401 with `authentication`, 403 with `permission` and other 4xx
  * with `invalid-request`. A response body over 1 MiB is cancelled unread past that point and fails
- * with its status's kind (`schema` for a 2xx), keeping the prefix as evidence. A missing base URL
+ * with its status's kind (`schema` for a 2xx), keeping the prefix as evidence (withheld when it
+ * echoes the token `\u`-escaped). A missing base URL
  * or token variable, or a token that is not a valid
  * header value, is a configuration failure: the step stays unfinished, and resuming after fixing it
  * runs the decision live.
@@ -270,9 +309,11 @@ export function jevCompatible(options: JevCompatibleOptions): DecisionProviderDe
           });
         }
         // A host may echo the Authorization header, also JSON-escaped; every record below derives
-        // from this redacted text and body. A truncated prefix is never parsed.
+        // from this redacted text and body. A truncated prefix is never parsed, so it is withheld
+        // when it still carries the token escaped another way. A token cut off at the read cap lies
+        // past the 256 KiB a DecisionError keeps, so no part of it reaches the evidence.
         const { text, decoded } = exceeded
-          ? { text: redactText(raw, token) }
+          ? { text: withholdEscapedEcho(redactText(raw, token), token) }
           : redactBody(raw, token);
         if (exceeded)
           throw new DecisionError({

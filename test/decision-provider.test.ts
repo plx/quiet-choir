@@ -957,6 +957,42 @@ describe('ctx.decide', () => {
     }
   });
 
+  it('withholds an unparsed body that echoes the token \\u-escaped', async () => {
+    const unicode = TOKEN.replace(
+      /./gu,
+      (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`,
+    );
+    const withheld = '[withheld: the response echoes the bearer token]';
+    for (const [index, [kind, text]] of [
+      // Oversized: the prefix past the read cap is never parsed.
+      [
+        'authentication',
+        `{"detail":"bad Bearer ${unicode}","pad":"${'x'.repeat(1024 * 1024)}"}`,
+      ] as const,
+      // Not JSON: no decoded strings to redact.
+      ['schema', `not json, Bearer ${unicode}`] as const,
+    ].entries()) {
+      server.script({ status: kind === 'schema' ? 200 : 401, text });
+      const runId = `withheld${String(index)}`;
+      const error: unknown = await runWorkflow(
+        workflow([jev()], (ctx) => ctx.decide('ask', { state: null, questions: { refund } })),
+        options({ runId }),
+      ).catch((caught: unknown) => caught);
+      const cause = error instanceof Error ? (error.cause as DecisionError) : undefined;
+      expect(cause).toBeInstanceOf(DecisionError);
+      expect(cause?.kind).toBe(kind);
+      expect(cause?.rawText).toBe(withheld);
+      for (const form of [TOKEN, unicode]) {
+        expect(cause?.message).not.toContain(form);
+        expect((error as Error).message).not.toContain(form);
+      }
+      const run = await readRun({ stateDir, runId });
+      expect(run.steps['ask']?.attemptHistory?.[0]?.response).toBe(withheld);
+      for (const form of [TOKEN, unicode, unicode.slice(0, 12)])
+        expect(JSON.stringify(run)).not.toContain(form);
+    }
+  });
+
   it('cancels an unending response body at the cap and keeps truncated evidence', async () => {
     for (const [status, kind, message] of [
       [200, 'schema', /jev: response exceeds 1048576 bytes/u],
