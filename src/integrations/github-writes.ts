@@ -263,7 +263,7 @@ const VERSIONS = {
   'alert.dismiss': 'github.alert.dismiss/1',
   'pr.create': 'github.pr.create/1',
   'pr.edit': 'github.pr.edit/1',
-  'pr.merge': 'github.pr.merge/1',
+  'pr.merge': 'github.pr.merge/2',
   'checks.rerunFailed': 'github.checks.rerunFailed/2',
 } as const;
 

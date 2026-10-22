@@ -674,7 +674,7 @@ policy: an unfinished write runs again and reconciles.
 
 A write's identity is a version constant (`github.comment/1`, `github.thread.reply/1`,
 `github.issue.create/1`, `github.issue.close/1`, `github.issue.reopen/1`, `github.alert.dismiss/1`,
-`github.pr.create/1`, `github.pr.edit/1`, `github.pr.merge/1` and `github.checks.rerunFailed/2`),
+`github.pr.create/1`, `github.pr.edit/1`, `github.pr.merge/2` and `github.checks.rerunFailed/2`),
 its input (the repository and the normalized arguments, bodies included) and its result schema,
 never the callback's source text or the policy. Changing a body or title under the ID of a completed
 write refuses the resume like any changed step input; use a new ID. A later quiet-choir version that

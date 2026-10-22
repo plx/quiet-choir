@@ -22,7 +22,7 @@ these after a crash has none of the relay's protection.
 
 Add `pr.create`, `pr.edit`, `pr.merge` and `checks.rerunFailed` to the client, built the way 0046
 built its writes: each op is one `ctx.step` with the internal `identity: 'version'`, a version
-constant (`github.pr.create/1`, `github.pr.edit/1`, `github.pr.merge/1`,
+constant (`github.pr.create/1`, `github.pr.edit/1`, `github.pr.merge/2`, bumped from `/1` by #589,
 `github.checks.rerunFailed/2`, bumped from `/1` by #356), the repository and normalized arguments as
 input, `meta` `{ integration: 'github', op }`, and every gh command through `StepContext.exec`, so
 `--dry-run` lists them. They use only `gh api`; no op runs `gh pr` or `gh run`.

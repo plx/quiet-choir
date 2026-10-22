@@ -889,13 +889,14 @@ describe('quiet-choir/github write identity', () => {
     // Captured on #162 (ADR 0047).
     'pr.create': '61f095f57bb63648a36a8c6cc90a5a75e34efa360786cc7d418e1e190c58a193',
     'pr.edit': 'de1056d379fe5c7a7a41809716c30b17e3bd5568179eed0859d9ed99a02e2602',
-    'pr.merge': 'dbe9a73da34977b8ac79e022071a14f89cde30975b4d2740d1f0cd6ecb5674bb',
+    // Recaptured on #589 (github.pr.merge/2: the base-changed refusal).
+    'pr.merge': '8fb130b7dba3f9b79f64e78e4d7cf6b0e1489f341d1f0460ffcefa0c47417075',
     // Recaptured on #356 (github.checks.rerunFailed/2).
     'checks.rerunFailed': 'dd4d4c5fa9ff65da339c3165d55c730a090b7cff22b5d0fb48d375efd08458f3',
   };
   // Every op is at /1 except those a later change bumped.
   const versionOf = (name: string): string =>
-    name === 'checks.rerunFailed' ? `github.${name}/2` : `github.${name}/1`;
+    name === 'checks.rerunFailed' || name === 'pr.merge' ? `github.${name}/2` : `github.${name}/1`;
 
   async function identityOfWrite(
     runId: string,
