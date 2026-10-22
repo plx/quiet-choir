@@ -31,9 +31,10 @@ never spawn: they are synthesized from their schema unless the fixture file has 
 observer runs through `context.exec`, and for each check of a
 [command poll](waits.md#command-polls), whose output is synthesized from its `output` schema, except
 that an observer or a command poll may pass `live: true` to keep a read-only check real, such as the
-CI status read in each check of a wait. `live` is refused in a step callback. Durable sleeps
-complete immediately. Rehearsal preserves capability/profile validation and, under `requireGrants`,
-still requires declared grants.
+CI status read in each check of a wait. `live` is refused in a step callback. Decisions
+(`ctx.decide`) never call their provider (see [decision fixtures](#decision-fixtures)). Durable
+sleeps complete immediately. Rehearsal preserves capability/profile validation and, under
+`requireGrants`, still requires declared grants.
 
 ## Fixtures
 
@@ -72,8 +73,8 @@ fixture run records its fixture files by absolute path and digest, so `resume`, 
 and `tick` without `--harness` continue it with the same files (see
 [launch policy](cli-contract.md#launch-policy)).
 
-Export successful agent outputs and command results from a completed run without importing its
-workflow or acquiring its lock:
+Export successful agent outputs, command results and decisions from a completed run without
+importing its workflow or acquiring its lock:
 
 ```sh
 node bin/run.js workflow fixtures duet --json > fixtures.json
@@ -172,6 +173,17 @@ omitted command that meets a retained rule's filters fails as unmatched at its p
 reusing that rule's answer. A parent with any recorded inner command sets `"commands": "fixture"`,
 even when no rule came from it, so a replay that drifts or reaches an unexported command fails at
 its parent. Runs recorded before schema revision 15 have no inner command records.
+
+Completed `ctx.decide` steps export as `decisions` entries keyed by full step ID, with their
+`answers`, the served `model` when one was recorded and the last attempt's known token counts as
+`usage`. A settled (`onError: 'return'`) or absorbed decision failure exports as `{ error, kind }`:
+the message without its `Decision provider <name>: ` prefix, which the replay adds again, and the
+kind except `unknown` and `cancelled`, so export, replay and export give the same file. The legacy
+`decision().choose` helper's steps are not exported. Some edges are lossy: a failure that was not a
+`DecisionError` (such as a custom transport's plain `Error`) replays with the prefix added; a
+replayed `schema` failure keeps its kind and message but not the original raw body or issues; and a
+failed attempt's token counts and served model, the provider's other `usage` fields and the attempt
+count are not kept. A run without decisions exports no `decisions` key.
 
 ## Command fixtures
 
@@ -307,6 +319,73 @@ is the `execRunner`, and the real runner serves only the read-only Git described
 per-harness: a named `--harness name=fixture:FILE` file with `exec` or `commands` is refused; put
 them in the global `--harness fixture:FILE`.
 
+## Decision fixtures
+
+A `ctx.decide` call never reaches its provider under `--dry-run` or `--harness fixture`, so a
+workflow that decides rehearses without a base URL, a token or any `decisions.<name>` configuration:
+the provider's transport factory is never called. The global fixture file answers decisions in an
+optional `decisions` object keyed by exact, fully qualified step ID (not a glob); the same entry
+answers every attempt of its step:
+
+```json
+{
+  "version": 1,
+  "calls": [],
+  "decisions": {
+    "triage/route": {
+      "answers": {
+        "refund": { "noul": 0.2 },
+        "team": {
+          "choice": "billing",
+          "probabilities": { "billing": 0.9, "support": 0.1 },
+          "confidence": 0.8
+        },
+        "urgency": {
+          "score": 1.4,
+          "probabilities": [0.1, 0.4, 0.5],
+          "legend": ["low", "mid", "high"],
+          "confidence": 0.7
+        }
+      },
+      "model": "jev-1.13.0",
+      "usage": { "inputTokens": 120, "outputTokens": 12 }
+    },
+    "triage/escalate": { "error": "busy", "kind": "rate-limit" }
+  }
+}
+```
+
+An entry is either `answers` by question name, in the shape the step records and returns
+(`{ noul }`, `{ choice, probabilities, confidence }` or
+`{ score, probabilities, legend, confidence }`), with an optional served `model` and token `usage`,
+or `error` with an optional `kind`; anything else is refused when the file is read. Answers go
+through the same validation as a live response. The step translates them to the wire shape,
+inferring each answer's `type` from the one headline field it carries (`noul`, `choice` or `score`),
+and checks that every question is answered, choices are among the options, probabilities are
+complete and sum to one, legends equal the levels and each answer's type matches its question. A
+stale entry, such as an option that no longer exists or a question that changed kind, therefore
+fails its step with a `DecisionError` of kind `schema`, with the issues and the translated body on
+the attempt, like a live rejection. The recorded output's `model` is the entry's (null when absent),
+and the attempt's usage is reported under the provider and that model, as a live attempt's is. An
+`error` entry fails every attempt with a `DecisionError` of that `kind` (default `unknown`) and the
+message `Decision provider <name>: <error>`, so `retry.on`, `onError: 'return'` and a `try/catch` on
+`error.kind` behave as they do for a live failure; each failed attempt counts in usage with unknown
+tokens.
+
+Under `--harness fixture`, a decision without an entry fails the run with a configuration error
+naming the step, provider and attempt. It is never retried or settled, even under
+`onError: 'return'`, and never falls through to the live provider. With `"unmatched": "synthesize"`
+it is synthesized instead. Under `--dry-run` every decision without an entry is synthesized,
+whatever the file says: the step schema's one-hot defaults pick the first option and the lowest
+level with confidence 1, a noul answer is 0 and the model is null, and a warning notes that a branch
+on the answers can differ from a real run. A `--stub-steps` match on a decision step still wins: the
+step is listed in `stubbedSteps`, not in `decisions`, and its entry is reported stale. Decisions are
+keyed by step, not by harness, so a named `--harness NAME=fixture:FILE` file with `decisions` is
+refused; put them in the global `--harness fixture:FILE`. A fixture run records harness kind
+`fixture`, so a live resume still needs `--allow-harness-change` before it reuses fixture-answered
+decisions. A decision's identity (`decision/2`) is the same whether a fixture or the provider
+answered it.
+
 ## Repeated poll checks
 
 A dry run checks each poll, observer or command form, back to back in one process until a check is
@@ -430,9 +509,11 @@ fixture guidance. This is a deterministic sampler, not a solver for every schema
 validation remains authoritative. Custom refinements warn because JSON Schema cannot represent their
 code: a workflow's refinements produce one warning listing the affected step IDs (the first ten,
 then a count), while the built-in `quiet-choir/github` completeness checks and the `ctx.decide`
-answer checks, which synthesized responses satisfy, raise none; a choice or score answer's default
-is a one-hot distribution on its first option or level, with confidence 1. Transforms and non-JSON
-schema types still fail at their call site.
+answer checks, which synthesized answers satisfy, raise none (a decision is synthesized when
+`--stub-steps` matches it, or without an entry under `--dry-run`; see
+[decision fixtures](#decision-fixtures)); a choice or score answer's default is a one-hot
+distribution on its first option or level, with confidence 1. Transforms and non-JSON schema types
+still fail at their call site.
 
 Successful `--dry-run --json` output is `{kind:"workflow.rehearsal", ok:true, ...report, run}`. The
 report contains:
@@ -467,6 +548,12 @@ report contains:
   file. This differs from `calls[].fixtureIndex`, which indexes the rules of all files combined
   (named files first, then the global one). As with exec rules, rules for steps replayed from a
   checkpoint are always stale, so a resume preview reports them.
+- `decisions`: `ctx.decide` attempts answered without the provider, with step ID, cumulative
+  attempt, provider, requested model, output source (`fixture` or `synthesized`) and `error` (a
+  matched error entry's message, or null).
+- `staleDecisionFixtures`: step IDs of `decisions` entries that answered no attempt, with a warning
+  when any exist. Entries for steps replayed from a checkpoint or stubbed with `--stub-steps` are
+  always stale.
 - `harnessCounts` (`providerCounts` retains built-in compatibility counts),
   `nominalClaudeCeilingUsd`, `stubbedSteps`, `skippedSleeps`, and `warnings`.
 
@@ -544,9 +631,11 @@ belongs under `harnesses.<name>` in the same JSON config.
 ## Embedding and native protocol tests
 
 The root entry point exports `FixtureHarness`, `parseHarnessFixtures`, `HarnessFixtures`,
-`FixtureCall`, `FixtureExecCall`, and `synthesizeOutput`. Supply `new FixtureHarness(fixtures)` to
-`runWorkflow` for durable fixture execution; `FixtureHarness` answers agent calls only. To answer
-commands, pass your own `ProcessRunner` as `RunOptions.execRunner`, which `ctx.exec` and
+`FixtureCall`, `FixtureExecCall`, `FixtureDecision`, and `synthesizeOutput`. Supply
+`new FixtureHarness(fixtures)` to `runWorkflow` for durable fixture execution; `FixtureHarness`
+answers agent calls only. Its `decisions` apply under the CLI, which connects them to `ctx.decide`;
+an embedder tests decisions with a provider whose transport returns canned response bodies. To
+answer commands, pass your own `ProcessRunner` as `RunOptions.execRunner`, which `ctx.exec` and
 `context.exec` use instead of `processRunner` while worktree Git keeps `processRunner`. A
 `context.exec` request, including a command poll's check, has `nested: true`; under
 `RunOptions.rehearsal` an observer's or command poll's `live: true` command goes to `processRunner`.

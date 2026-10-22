@@ -2,6 +2,31 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Decision fixtures (#652, [ADR 0066](docs/decisions/0066-decision-providers.md) §5; see
+  [docs/rehearsal.md](docs/rehearsal.md#decision-fixtures)). `HarnessFixtures` gains `decisions`,
+  keyed by exact fully qualified step ID, whose entries are `{ answers, model?, usage? }` (answers
+  in the recorded shape) or `{ error, kind? }`; the new public `FixtureDecision` type describes
+  them, and `parseHarnessFixtures` refuses glob or `__proto__` keys, `model` or `usage` on an error
+  entry, `kind` without `error` and unknown fields. Under `--dry-run` and `--harness fixture`,
+  `ctx.decide` never calls its provider's transport factory, so no `baseUrl`, token or
+  `decisions.<name>` configuration is needed: an entry's answers go through the same wire validation
+  as a live response (a stale entry fails its step with kind `schema`), its model and usage are
+  recorded and reported as a live attempt's, and an error entry fails each attempt with a
+  `DecisionError` of its kind (default `unknown`), so `retry.on` and `onError: 'return'` rehearse. A
+  decision without an entry is synthesized from the one-hot schema defaults under `--dry-run`
+  (whatever the file's `unmatched` says) and under `--harness fixture` with
+  `unmatched: 'synthesize'`. **Behavior change:** a `--harness fixture` run that reaches
+  `ctx.decide` without a matching entry now fails with a `ConfigurationError` naming the step,
+  provider and attempt (never settled or retried), where before it called the real provider. A named
+  `--harness NAME=fixture:FILE` file with `decisions` is refused. The rehearsal report gains
+  `decisions` (step ID, attempt, provider, requested model, output source, error) and
+  `staleDecisionFixtures`, with warnings for stale and synthesized decisions and a decision count in
+  the `Rehearsal:` stderr line; a `--stub-steps` match still wins. `workflow fixtures` exports
+  completed decision steps (answers, served model, last attempt's token counts) and settled or
+  absorbed failures as `{ error, kind }` with the `Decision provider <name>: ` prefix stripped, so
+  export, replay and export give the same file; runs without decisions export unchanged. The
+  `decision/2` identity, the recorded output and the run record revision are unchanged, and
+  `model.ts` is untouched.
 - Decision providers and `ctx.decide` (#586, [ADR 0066](docs/decisions/0066-decision-providers.md)
   §1–4). `quiet-choir/decision` exports the `noul`, `choice` (at most 255 options) and `score` (2 to
   10 unique levels) question constructors,
@@ -41,9 +66,9 @@
   unchanged. `UsageSummary` gains `byProvider` (per provider and served model; also in
   `byIntegration.decision`, never in agent totals), where an attempt counts from dispatch with
   unknown tokens until its response reports them, so one a crash interrupts stays attributed; and
-  `inspect` prints a provider/model usage line. Under `--dry-run`, `ctx.decide` runs live like a
-  local step until decision fixtures arrive (#587); `--stub-steps` can synthesize it: choice and
-  score answer schemas carry a one-hot `default`, and synthesis now uses any schema's valid JSON
+  `inspect` prints a provider/model usage line. Under `--dry-run`, `ctx.decide` then ran live like a
+  local step until decision fixtures arrived (#652, above); `--stub-steps` can synthesize it: choice
+  and score answer schemas carry a one-hot `default`, and synthesis now uses any schema's valid JSON
   Schema `default` as its sample. `model.ts` changed, so both Workflow Lab `apiSnapshot` hashes are
   bumped; the run record revision is unchanged.
 - Packages in the registry, whole-directory fingerprints and the validate package section (#585,
