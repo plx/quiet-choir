@@ -850,10 +850,15 @@ export default defineWorkflow({
         record.notes.push(
           `GitHub still showed an older head 3 minutes after the push of ${head.slice(0, 7)}`,
         );
+      // The body as it is now, not as Prepare saw it: someone may have edited it since.
+      const current =
+        closesIssue || keepsIssueOpen
+          ? (await gh.pr.view(ctx.id('gate', r, 'body'), { number: A.pr }, write)).body
+          : PR.body;
       const body = closesIssue
-        ? ensureClosesBody(PR.body, ISSUE.number)
+        ? ensureClosesBody(current, ISSUE.number)
         : keepsIssueOpen
-          ? keepOpenBody(PR.body, ISSUE.number, info.nameWithOwner)
+          ? keepOpenBody(current, ISSUE.number, info.nameWithOwner)
           : null;
       if (PR.baseRefName !== DEF || body !== null) {
         const edited = await gh.pr.edit(

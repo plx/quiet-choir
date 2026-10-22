@@ -346,6 +346,65 @@
       }
     },
     {
+      "step": "gate/1/body",
+      "json": {
+        "data": {
+          "repository": {
+            "pullRequest": {
+              "number": 42,
+              "title": "Add the widget",
+              "url": "https://github.com/acme/widgets/pull/42",
+              "body": "Adds the widget.\n\nCloses #41.",
+              "state": "OPEN",
+              "isDraft": false,
+              "mergeable": "MERGEABLE",
+              "mergeStateStatus": "CLEAN",
+              "headRefOid": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+              "headRefName": "feature/41-widget",
+              "baseRefName": "main",
+              "closingIssuesReferences": {
+                "pageInfo": { "hasNextPage": false },
+                "nodes": [{ "number": 41, "repository": { "nameWithOwner": "acme/widgets" } }]
+              },
+              "commits": {
+                "nodes": [
+                  {
+                    "commit": {
+                      "oid": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+                      "statusCheckRollup": {
+                        "state": "SUCCESS",
+                        "contexts": {
+                          "pageInfo": { "hasNextPage": false },
+                          "nodes": [
+                            {
+                              "__typename": "CheckRun",
+                              "name": "Quality and package",
+                              "status": "COMPLETED",
+                              "conclusion": "SUCCESS",
+                              "detailsUrl": "https://github.com/acme/widgets/actions/runs/555",
+                              "checkSuite": { "workflowRun": { "databaseId": 555 } }
+                            },
+                            {
+                              "__typename": "CheckRun",
+                              "name": "test (22)",
+                              "status": "COMPLETED",
+                              "conclusion": "SUCCESS",
+                              "detailsUrl": "https://github.com/acme/widgets/actions/runs/555",
+                              "checkSuite": { "workflowRun": { "databaseId": 555 } }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
       "step": "gate/1/linked",
       "json": {
         "closingIssuesReferences": [
