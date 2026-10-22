@@ -29,7 +29,7 @@ export interface EpicItem {
 }
 
 /** The pick of `nextTicket`. */
-export interface Pick {
+export interface TicketPick {
   readonly number: number;
   readonly title: string;
   readonly status: 'in-flight' | 'close-split' | 'ready';
@@ -49,7 +49,7 @@ export interface Skip {
 
 /** What `nextTicket` decided. */
 export interface Selection {
-  readonly pick: Pick | null;
+  readonly pick: TicketPick | null;
   readonly skipped: readonly Skip[];
   readonly done: boolean;
 }
@@ -85,7 +85,7 @@ const SKIP_STATUSES = new Set<string>([
 ]);
 
 function candidate(
-  entry: Pick | Skip,
+  entry: TicketPick | Skip,
   status: CandidateStatus,
   items: readonly EpicItem[],
 ): Candidate {
@@ -152,6 +152,17 @@ export function candidates(
     .filter((s) => s.reason === 'ready' && s.number !== first.number)
     .map((s) => candidate(s, 'ready', items));
   return [first, ...ready].slice(0, Math.max(1, maxCandidates));
+}
+
+/**
+ * Whether a held candidate stays held: it does unless it waits on a maintainer decision (the
+ * `needs-decision` label) and the run brings one.
+ */
+export function stillHeld(
+  c: Pick<Candidate, 'status' | 'labels'>,
+  decision: string | null,
+): boolean {
+  return c.status === 'held' && !(c.labels.includes(DECISION_LABEL) && decision !== null);
 }
 
 /** Item counts of a survey, in the native shape. */

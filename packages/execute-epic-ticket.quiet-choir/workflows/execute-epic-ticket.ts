@@ -57,6 +57,7 @@ import {
   plain,
   prBody,
   shaCommits,
+  stillHeld,
   unsettled,
   waitingHeadline,
   withDependency,
@@ -256,7 +257,7 @@ export default defineWorkflow({
         });
       }
       const decisionPending = c.labels.includes(DECISION_LABEL);
-      if (c.status === 'held' && !(decisionPending && A.decision !== undefined))
+      if (stillHeld(c, A.decision ?? null))
         return finish('held', {
           headline: `#${String(n)} is held (${c.labels.join(', ')})${decisionPending ? '; rerun with decision once the question on it is answered' : ''}.`,
         });
