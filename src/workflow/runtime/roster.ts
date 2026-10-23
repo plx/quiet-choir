@@ -1,7 +1,7 @@
 import type { WorkflowDecider } from './child-model.js';
 import type { DecisionBinding } from './decisions.js';
 import type { HarnessDeclaration } from './harness-model.js';
-import type { AgentOptions, JsonValue } from './model.js';
+import type { JsonValue } from './model.js';
 import type { AgentProfile } from './profiles-model.js';
 import type { CheckedRosterEntries, Roster, RosterEntries, RosterOptions } from './roster-model.js';
 import { jsonValue } from './json.js';
@@ -10,9 +10,10 @@ import { promptOptionsAsText } from '../prompts/prompt.js';
 // ADR 0063 sections 3-4. A roster entry compiles to an ordinary declared profile under its own
 // name, pinned to one harness, so resolution, launch overrides, attempt records, grants and the
 // manifest reuse the profile code. `ctx.roster.Name` is the pinned harness client bound to that
-// profile, so its calls take the path a `profile: 'Name'` call takes. A decider entry (ADR 0066
-// section 2) is not a role: it compiles to nothing, and `ctx.roster.Name` is `{ decide }` over
-// `ctx.decide` with the entry's provider and model preset.
+// entry through the internal role channel (`bindRole`), not a public option, and the runner
+// resolves its calls as the entry's. A decider entry (ADR 0066 section 2) is not a role: it
+// compiles to nothing, and `ctx.roster.Name` is `{ decide }` over `ctx.decide` with the entry's
+// provider and model preset.
 
 /** Entry keys: identifiers, so dot access always works, capped to the manifest's name length. */
 const keyPattern = /^[A-Za-z][A-Za-z0-9_]{0,63}$/u;
@@ -289,11 +290,6 @@ export function checkRosterDeciders(
   }
 }
 
-/** A client `ctx.roster` binds an entry's agent from. */
-interface Bindable {
-  readonly bind: (options: Pick<AgentOptions, 'profile'>) => unknown;
-}
-
 const noAgents: Readonly<Record<string, unknown>> = Object.freeze(
   Object.create(null) as Record<string, unknown>,
 );
@@ -302,14 +298,14 @@ const noAgents: Readonly<Record<string, unknown>> = Object.freeze(
 export type BoundDecide = (id: string, options: unknown) => Promise<unknown>;
 
 /**
- * The agents of `ctx.roster`: each agent entry's pinned harness client from `clientFor`, bound to
- * the entry's profile, and each decider entry a frozen `{ decide }` from `deciderFor`, in a frozen
- * null-prototype object so a misspelled untyped name is `undefined` rather than an
- * `Object.prototype` member. @internal
+ * The agents of `ctx.roster`: each agent entry's agent from `agentFor`, its pinned harness client
+ * bound to the entry through the internal role channel, and each decider entry a frozen
+ * `{ decide }` from `deciderFor`, in a frozen null-prototype object so a misspelled untyped name is
+ * `undefined` rather than an `Object.prototype` member. @internal
  */
 export function rosterAgents(
   roster: unknown,
-  clientFor: (harness: string) => Bindable,
+  agentFor: (harness: string, entry: string) => unknown,
   deciderFor: (binding: DecisionBinding) => BoundDecide,
 ): Readonly<Record<string, unknown>> {
   if (!isRecord(roster)) return noAgents;
@@ -326,7 +322,7 @@ export function rosterAgents(
           ...(model === undefined ? {} : { model: model as string }),
         }),
       });
-    else if (typeof harness === 'string') value = clientFor(harness).bind({ profile: name });
+    else if (typeof harness === 'string') value = agentFor(harness, name);
     else continue;
     Object.defineProperty(agents, name, { value, enumerable: true });
   }
@@ -340,7 +336,7 @@ export function rosterAgents(
  * share a roster is sound. @internal
  */
 export function rosterReader(
-  clientFor: (harness: string) => Bindable,
+  agentFor: (harness: string, entry: string) => unknown,
   deciderFor: (binding: DecisionBinding) => BoundDecide,
 ): (roster: unknown) => Readonly<Record<string, unknown>> {
   const cache = new WeakMap<object, Readonly<Record<string, unknown>>>();
@@ -348,7 +344,7 @@ export function rosterReader(
     if (!isRecord(roster)) return noAgents;
     let agents = cache.get(roster);
     if (!agents) {
-      agents = rosterAgents(roster, clientFor, deciderFor);
+      agents = rosterAgents(roster, agentFor, deciderFor);
       cache.set(roster, agents);
     }
     return agents;

@@ -206,7 +206,7 @@ import { createMap, settledMapChange } from './map.js';
 import { ExecutionScopes } from './scopes.js';
 import { NameScopes } from './names.js';
 import { bindContext, type DecideCall } from './context.js';
-import { bindAgent, type BindHooks } from './bound-agent.js';
+import { bindAgent, bindRole, roleOf, type BindHooks } from './bound-agent.js';
 import { rosterReader } from './roster.js';
 import { execFailureFields, stepError, errorKind, rootCauseKind } from './step-error.js';
 import { stepEventError } from './step-event-error.js';
@@ -2911,14 +2911,19 @@ export async function runWorkflow<
           const saved = record.steps[id];
           const replayOnly = saved !== undefined && isTerminalStep(saved);
           let adapter: Harness | undefined;
+          // A roster call names its entry through the internal role channel, and the request
+          // spells it as `profile`, so its identity, fingerprints and records are those of a
+          // `profile: 'Name'` call.
+          const role = roleOf(agentOptions);
+          const authored = role === undefined ? agentOptions : { profile: role, ...agentOptions };
           // The template name is observational (ADR 0064 section 5): it goes to the request
           // summary only, never into identity.
-          const promptTemplate = promptTemplateOf(agentOptions);
+          const promptTemplate = promptTemplateOf(authored);
           try {
             // A Prompt becomes its text here, before identity, so it fingerprints, records and
             // replays exactly like the same string (ADR 0064 section 2).
             const data = jsonValue(
-              { options: optionData(promptOptionsAsText(agentOptions), structured) },
+              { options: optionData(promptOptionsAsText(authored), structured) },
               `Step "${id}" agent request`,
             ) as {
               options: TOptions & JsonValue;
@@ -3812,14 +3817,18 @@ export async function runWorkflow<
         return settled.ok ? { ok: true, value: settled.value.answers } : settled;
       });
     };
-    // Roster agents are bound over the context's own clients, so they share its bind hooks.
+    // Roster agents are bound over the context's own clients, with the bind hooks those use.
     const readRoster = rosterReader(
-      (harness) =>
-        harness === 'claude'
-          ? context.claude
-          : harness === 'codex'
-            ? context.codex
-            : (context.agent as (name: string) => AgentClient<AgentOptions>)(harness),
+      (harness, entry) =>
+        bindRole(
+          harness === 'claude'
+            ? context.claude
+            : harness === 'codex'
+              ? context.codex
+              : (context.agent as (name: string) => AgentClient<AgentOptions>)(harness),
+          entry,
+          bindHooks(harness),
+        ),
       (binding) => (leaf, settings) => decideCall(leaf, settings, binding),
     );
     const context: WorkflowContext = {

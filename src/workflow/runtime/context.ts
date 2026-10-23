@@ -1,5 +1,5 @@
 import type { AgentClient, AgentOptions, WorkflowContext } from './model.js';
-import { bindAgent, type BindHooks } from './bound-agent.js';
+import { bindAgent, bindRole, type BindHooks } from './bound-agent.js';
 import type { DecisionBinding } from './decisions.js';
 import type { NameFrame, NameScopes } from './names.js';
 import { rosterReader } from './roster.js';
@@ -33,17 +33,18 @@ export function bindContext(
     // This transparent wrapper forwards the same arguments/result, including generic overloads.
     return ((...args: never[]) => names.bound(frame, () => method(...args))) as T;
   }
+  /** The runtime's hooks for `harness`, with a rejected bound call launched under the prefix. */
+  function scopedHooks(harness: string): BindHooks {
+    const { markFatal, reject } = hooks(harness);
+    return { markFatal, reject: reject && bind(reject) };
+  }
   // A bound agent wraps this prefixed client, never the inner one, so it keeps the prefix; a
   // rejected bound call launches under the prefix too.
   function client<TOptions extends AgentOptions>(
     inner: AgentClient<TOptions>,
     harness: string,
   ): AgentClient<TOptions> {
-    const { markFatal, reject } = hooks(harness);
-    const scoped: BindHooks = {
-      markFatal,
-      reject: reject && bind(reject),
-    };
+    const scoped = scopedHooks(harness);
     const wrapped: AgentClient<TOptions> = {
       value: bind(inner.value.bind(inner)),
       text: bind(inner.text.bind(inner)),
@@ -55,12 +56,16 @@ export function bindContext(
   const claude = client(context.claude, 'claude');
   const codex = client(context.codex, 'codex');
   const readRoster = rosterReader(
-    (harness) =>
-      harness === 'claude'
-        ? claude
-        : harness === 'codex'
-          ? codex
-          : client(context.agent(harness as Parameters<WorkflowContext['agent']>[0]), harness),
+    (harness, entry) =>
+      bindRole(
+        harness === 'claude'
+          ? claude
+          : harness === 'codex'
+            ? codex
+            : client(context.agent(harness as Parameters<WorkflowContext['agent']>[0]), harness),
+        entry,
+        scopedHooks(harness),
+      ),
     // Bound like ctx.decide, so `ctx.within(p).roster.Name.decide('t', …)` records `p/t`.
     (binding) => bind((id: string, options: unknown) => decide(id, options, binding)),
   );
