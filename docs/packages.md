@@ -312,4 +312,4 @@ directory ([installing the plugins](plugins.md)).
 
 ## What comes next
 
-- #592 removes profiles and the native scripts.
+- #592 removes profiles.

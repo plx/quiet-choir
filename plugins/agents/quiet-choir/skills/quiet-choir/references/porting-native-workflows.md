@@ -171,9 +171,10 @@ cost cap, so pair it with the attempt cap.
 
 ## Porting the reference workflows
 
-This repository's
-[merge-down-pr.js](https://github.com/plx/quiet-choir/blob/main/.claude/workflows/merge-down-pr.js)
-lands one pull request, and its execute-epic-ticket workflow takes one epic ticket to a merge. The
+This repository's native
+[merge-down-pr.js](https://github.com/plx/quiet-choir/blob/657334c8b994ba6c0166347c4e61cefef4a54a50/.claude/workflows/merge-down-pr.js)
+landed one pull request, and its execute-epic-ticket workflow took one epic ticket to a merge. Both
+native scripts were retired in favor of packages (the link shows the last version of the first). The
 first is ported: `packages/merge-down.quiet-choir` is a [package](packages.md) whose
 [worked example](packages.md#worked-example-merge-down) shows the layout and measures the result.
 Its native steps became:
@@ -189,8 +190,10 @@ Its native steps became:
 - stage stops and the state root, the `until` and `root` inputs;
 - a rehearsal case per path, run by `npm run packages:rehearse`.
 
-The execute-epic-ticket workflow is still a native script and keeps the same map. Its clerk agents
-exist only because a native script cannot run commands;
+The execute-epic-ticket workflow is ported too, as `packages/execute-epic-ticket.quiet-choir` (the
+native original is
+[execute-epic-ticket.js](https://github.com/plx/quiet-choir/blob/657334c8b994ba6c0166347c4e61cefef4a54a50/.claude/workflows/execute-epic-ticket.js)),
+with the same map. Its clerk agents existed only because a native script cannot run commands;
 [`quiet-choir/github`](extensions.md#service-helper-pattern) replaces most of them with typed
 effects.
 

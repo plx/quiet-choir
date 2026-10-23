@@ -1,7 +1,7 @@
 // The execute-epic-ticket package (ADR 0065): execute-epic-ticket ported from the native Claude
-// Code workflow script .claude/workflows/execute-epic-ticket.js and its helper CLI. It lands each
-// ticket's pull request through the merge-down package's workflow as a typed inline child. See
-// README.md.
+// Code workflow script execute-epic-ticket.js (removed in #693; last at commit 657334c) and its
+// helper CLI. It lands each ticket's pull request through the merge-down package's workflow as a
+// typed inline child. See README.md.
 import { definePackage } from 'quiet-choir';
 import { prompts } from './prompts.js';
 import executeEpicTicket from './workflows/execute-epic-ticket.js';

@@ -187,7 +187,7 @@ export default defineWorkflow({
     if (selection === null)
       return blocked(
         'survey',
-        `epic #${String(E)} has no sub-issues; execute-epic-ticket.quiet-choir surveys sub-issue epics only (attach the tickets as sub-issues, or use the native script)`,
+        `epic #${String(E)} has no sub-issues; execute-epic-ticket.quiet-choir surveys sub-issue epics only (attach the tickets as sub-issues)`,
       );
     const surveyCounts = counts(snap.items, selection);
     record.remaining = surveyCounts;

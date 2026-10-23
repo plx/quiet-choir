@@ -9,7 +9,7 @@
     "ticket": null,
     "blocked": {
       "stage": "survey",
-      "reason": "epic #7 has no sub-issues; execute-epic-ticket.quiet-choir surveys sub-issue epics only (attach the tickets as sub-issues, or use the native script)"
+      "reason": "epic #7 has no sub-issues; execute-epic-ticket.quiet-choir surveys sub-issue epics only (attach the tickets as sub-issues)"
     }
   }
 }
