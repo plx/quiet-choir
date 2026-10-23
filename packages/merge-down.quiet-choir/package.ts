@@ -1,5 +1,6 @@
 // The merge-down package (ADR 0065): merge-down-pr ported from the native Claude Code workflow
-// script .claude/workflows/merge-down-pr.js and its helper CLI. See README.md.
+// script merge-down-pr.js (removed in #693; last at commit 657334c) and its helper CLI. See
+// README.md.
 import { definePackage } from 'quiet-choir';
 import { prompts } from './prompts.js';
 import mergeDownPr from './workflows/merge-down-pr.js';

@@ -3,10 +3,14 @@
 A quiet-choir [package](../../docs/packages.md) with one workflow, `execute-epic-ticket`, that takes
 **one** ticket of an epic from "open issue" to "merged". It is the second dog-food port of a native
 Claude Code workflow script ([#590](https://github.com/plx/quiet-choir/issues/590)): it replaces
-[`.claude/workflows/execute-epic-ticket.js`](../../.claude/workflows/execute-epic-ticket.js) and its
-helper CLI [`epic.mjs`](../../.claude/workflows/execute-epic-ticket/epic.mjs), whose
-[README](../../.claude/workflows/execute-epic-ticket/README.md) documents the behavior this port
-keeps. The native script stays as the fallback until #592 closes.
+[`.claude/workflows/execute-epic-ticket.js`](https://github.com/plx/quiet-choir/blob/657334c8b994ba6c0166347c4e61cefef4a54a50/.claude/workflows/execute-epic-ticket.js)
+and its helper CLI
+[`epic.mjs`](https://github.com/plx/quiet-choir/blob/657334c8b994ba6c0166347c4e61cefef4a54a50/.claude/workflows/execute-epic-ticket/epic.mjs),
+whose
+[README](https://github.com/plx/quiet-choir/blob/657334c8b994ba6c0166347c4e61cefef4a54a50/.claude/workflows/execute-epic-ticket/README.md)
+documents the behavior this port keeps. The native script was removed in
+[#693](https://github.com/plx/quiet-choir/issues/693); these links point at its last version on main
+(commit 657334c).
 
 It surveys the epic and picks the next ready ticket, checks that the ticket still describes real
 work and plans it, implements it in a dedicated worktree, opens a PR, and lands the PR by running
@@ -225,7 +229,7 @@ without a `ticket` or an unknown `until` fails before the run starts.
 - Only epics with native sub-issues are surveyed. For a task-list epic `gh.epic.snapshot` has only
   the checkboxes (no labels, dependencies, split markers or issue states), so selecting from it
   would bypass the held, waiting and closed checks; the run blocks at survey instead. Attach the
-  tickets as sub-issues, or use the native script, which reads each item.
+  tickets as sub-issues.
 
 - One root serves one unfinished run at a time: every run checks out its ticket's branch in the same
   `worktree/`. The check suite and the push refuse a worktree that is not on the ticket branch, but
@@ -270,7 +274,7 @@ summary that `workflow inspect` prints (`summarizeRun` and `formatRunSummary` fr
 
 ## Measurements
 
-Measured on this branch with the commands below, against the native originals.
+Measured on this branch with the commands below, against the native originals at commit 657334c.
 
 | Measure                                                  | Package                                                      | Native                                                                                       |
 | -------------------------------------------------------- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
@@ -290,9 +294,11 @@ cat packages/execute-epic-ticket.quiet-choir/workflows/*.ts | wc -l
 cat packages/execute-epic-ticket.quiet-choir/lib/*.ts | wc -l
 wc -l packages/execute-epic-ticket.quiet-choir/lib/policy.ts
 grep -nE '\.value\(' packages/execute-epic-ticket.quiet-choir/workflows/*.ts
-wc -l .claude/workflows/execute-epic-ticket.js .claude/workflows/execute-epic-ticket/*.mjs
-grep -n 'agent(' .claude/workflows/execute-epic-ticket.js
-grep -nE 'await (clerk|one)\(' .claude/workflows/execute-epic-ticket.js
+git show 657334c8b994ba6c0166347c4e61cefef4a54a50:.claude/workflows/execute-epic-ticket.js | wc -l
+git show 657334c8b994ba6c0166347c4e61cefef4a54a50:.claude/workflows/execute-epic-ticket/epic.mjs | wc -l
+git show 657334c8b994ba6c0166347c4e61cefef4a54a50:.claude/workflows/execute-epic-ticket/rehearse.mjs | wc -l
+git show 657334c8b994ba6c0166347c4e61cefef4a54a50:.claude/workflows/execute-epic-ticket.js | grep -n 'agent('
+git show 657334c8b994ba6c0166347c4e61cefef4a54a50:.claude/workflows/execute-epic-ticket.js | grep -nE 'await (clerk|one)\('
 ```
 
 The prose figures count bytes in thousands. The script's template literals were measured as

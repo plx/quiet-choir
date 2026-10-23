@@ -7,10 +7,8 @@ import tseslint from 'typescript-eslint';
 
 export default defineConfig(
   {
-    // Comparison snapshots use their own migration tsconfig and fixture checks. Claude Code
-    // workflow scripts are bodies of an async function (top-level `return`), not modules.
+    // Comparison snapshots use their own migration tsconfig and fixture checks.
     ignores: [
-      '.claude/workflows/*.js',
       '.quiet-choir/**',
       '.context/**',
       'coverage/**',

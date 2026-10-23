@@ -3,10 +3,14 @@
 A quiet-choir [package](../../docs/packages.md) with one workflow, `merge-down-pr`, that lands
 **one** pull request the way a careful maintainer would. It is the first dog-food port of a native
 Claude Code workflow script ([#589](https://github.com/plx/quiet-choir/issues/589)): it replaces
-[`.claude/workflows/merge-down-pr.js`](../../.claude/workflows/merge-down-pr.js) and its helper CLI
-[`merge-down.mjs`](../../.claude/workflows/merge-down-pr/merge-down.mjs), whose
-[README](../../.claude/workflows/merge-down-pr/README.md) documents the behavior this port keeps.
-The native script stays as the fallback.
+[`.claude/workflows/merge-down-pr.js`](https://github.com/plx/quiet-choir/blob/657334c8b994ba6c0166347c4e61cefef4a54a50/.claude/workflows/merge-down-pr.js)
+and its helper CLI
+[`merge-down.mjs`](https://github.com/plx/quiet-choir/blob/657334c8b994ba6c0166347c4e61cefef4a54a50/.claude/workflows/merge-down-pr/merge-down.mjs),
+whose
+[README](https://github.com/plx/quiet-choir/blob/657334c8b994ba6c0166347c4e61cefef4a54a50/.claude/workflows/merge-down-pr/README.md)
+documents the behavior this port keeps. The native script was removed in
+[#693](https://github.com/plx/quiet-choir/issues/693); these links point at its last version on main
+(commit 657334c).
 
 It rebases the PR onto the default branch in a dedicated worktree, reviews it against its issue
 (with a local `codex review`), triages its review threads, fixes what is in scope, files follow-ups
@@ -66,8 +70,8 @@ node bin/run.js workflow execute packages/merge-down.quiet-choir \
 
 The worktree and state live under `<main checkout>-merge-down-package/` by default (`root` overrides
 it): `worktree/` and `state/pr-N/`. The local branch is `merge-down/package/pr-N`. Both differ from
-the native script's (`-merge-down/`, `merge-down/pr-N`), so falling back to `merge-down-pr.js` never
-collides with a package run. The fork-point refs (`refs/merge-down/fork-point/<pr>`) are
+the native script's (`-merge-down/`, `merge-down/pr-N`), so a package run never collided with the
+native script while both existed. The fork-point refs (`refs/merge-down/fork-point/<pr>`) are
 deliberately shared, so a stack recorded by either tool is honored by both.
 
 One root serves one unfinished run at a time: every run checks out its own PR's branch in the same
@@ -243,7 +247,7 @@ rehearsals CI job.
 
 ## Measurements
 
-Measured on this branch with the commands below, against the native originals.
+Measured on this branch with the commands below, against the native originals at commit 657334c.
 
 | Measure                                                  | Package                                       | Native                                                               |
 | -------------------------------------------------------- | --------------------------------------------- | -------------------------------------------------------------------- |
@@ -260,9 +264,10 @@ find packages/merge-down.quiet-choir/prompts -name '*.md' -print0 | xargs -0 cat
 cat packages/merge-down.quiet-choir/workflows/*.ts | wc -l
 cat packages/merge-down.quiet-choir/lib/*.ts | wc -l
 grep -nE '\.value\(' packages/merge-down.quiet-choir/workflows/*.ts
-wc -l .claude/workflows/merge-down-pr.js .claude/workflows/merge-down-pr/merge-down.mjs
-grep -n 'agent(' .claude/workflows/merge-down-pr.js
-grep -nE 'clerk\(' .claude/workflows/merge-down-pr.js
+git show 657334c8b994ba6c0166347c4e61cefef4a54a50:.claude/workflows/merge-down-pr.js | wc -l
+git show 657334c8b994ba6c0166347c4e61cefef4a54a50:.claude/workflows/merge-down-pr/merge-down.mjs | wc -l
+git show 657334c8b994ba6c0166347c4e61cefef4a54a50:.claude/workflows/merge-down-pr.js | grep -n 'agent('
+git show 657334c8b994ba6c0166347c4e61cefef4a54a50:.claude/workflows/merge-down-pr.js | grep -nE 'clerk\('
 ```
 
 The package is about 38% longer than the native pair. The relay protocol is gone, but the port

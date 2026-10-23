@@ -442,7 +442,11 @@ What each native construct became:
 The package keeps the ledger record's field names, so the `blocked`, `stopped`, `deferred` and
 `skipped` results read as before, and it runs as
 `workflow execute packages/merge-down.quiet-choir --run-id merge-down-pr-N --input '{"pr":N,"repo":"OWNER/REPO"}'`.
-Its README measures the port against the native pair (measured on its branch under issue #589):
+Its README measures the port against the native pair,
+[merge-down-pr.js](https://github.com/plx/quiet-choir/blob/657334c8b994ba6c0166347c4e61cefef4a54a50/.claude/workflows/merge-down-pr.js)
+and
+[merge-down.mjs](https://github.com/plx/quiet-choir/blob/657334c8b994ba6c0166347c4e61cefef4a54a50/.claude/workflows/merge-down-pr/merge-down.mjs)
+(removed in #693; measured on its branch under issue #589):
 
 | Measure                                                  | Package                                       | Native                                                               |
 | -------------------------------------------------------- | --------------------------------------------- | -------------------------------------------------------------------- |

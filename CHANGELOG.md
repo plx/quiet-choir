@@ -2,6 +2,13 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Retire the native Claude Code workflow scripts `merge-down-pr` and `execute-epic-ticket`, with
+  their helper CLIs `merge-down.mjs`, `epic.mjs` and `rehearse.mjs` (#693). The packages
+  `packages/merge-down.quiet-choir` and `packages/execute-epic-ticket.quiet-choir` are the
+  documented path. Package READMEs and skill references now link to the originals at commit 657334c,
+  and the measurement commands read them with `git show`. The slugify parity test checks a literal
+  table instead of importing `epic.mjs`, ESLint no longer ignores `.claude/workflows`, and the
+  task-list survey refusal no longer suggests the native script.
 - Port `execute-epic-ticket` from a native Workflow script to the package
   [`packages/execute-epic-ticket.quiet-choir`](packages/execute-epic-ticket.quiet-choir/README.md)
   (#590, ADRs 0063-0065 and 0067). It surveys the epic with `gh.epic.snapshot` and `nextTicket`,
