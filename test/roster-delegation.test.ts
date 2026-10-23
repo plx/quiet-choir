@@ -279,8 +279,8 @@ describe('unit delegation ceilings', () => {
 
     // Under requireGrants, the same delegation is refused as before.
     expect(() =>
-      delegateCapabilities(child, root, ['all'], {}, [], { profiles: { Builder: 'edit' } }, true),
-    ).toThrow('Child profile child.Builder exceeds parent profile edit: tools.');
+      delegateCapabilities(child, root, ['all'], {}, [], { profiles: { Builder: 'text' } }, true),
+    ).toThrow('Child profile child.Builder exceeds parent profile text: tools.');
     expect(() =>
       delegateCapabilities(child, root, ['all'], {}, [], { profiles: { Builder: 'Runner' } }, true),
     ).toThrow('Child profile child.Builder exceeds parent profile Runner: tools.');
@@ -329,13 +329,13 @@ describe('inline child delegation', () => {
         return null;
       },
     });
-    // The root never granted edit, so the nested workflow holds no edit role.
+    // The root passes the nested workflow no Editor role, so it cannot map Author onto one.
     const nested = defineWorkflow({
       name: 'nested',
       ...base,
       children: [writer],
       async run(ctx) {
-        return ctx.workflow('writer', writer, null, { profiles: { Author: 'edit' } });
+        return ctx.workflow('writer', writer, null, { profiles: { Author: 'Editor' } });
       },
     });
     const root = defineWorkflow({
@@ -479,20 +479,24 @@ describe('inline child delegation', () => {
       ...base,
       requireGrants: true,
       children: [builder],
+      roster: defineRoster({
+        Editor: { harness: 'claude', tools: ['Read', 'Grep', 'Glob', 'Edit', 'Write'] },
+      }),
       async run(ctx) {
-        return ctx.workflow('builder', builder, null, { profiles: { Runner: 'edit' } });
+        return ctx.workflow('builder', builder, null, { profiles: { Runner: 'Editor' } });
       },
     });
+    // Editor is pinned, so its pin check (Bash needs exec) refuses before the tools subset check.
     await expect(
       runs.run(mapped, { stateDir, runId: 'mapped', input: null, grants: ['all'], harness }),
-    ).rejects.toThrow('Child profile builder.Runner exceeds parent profile edit: tools.');
+    ).rejects.toThrow('Child profile builder.Runner exceeds parent profile Editor: access.');
     // The run-level flag turns the same layer on for a root that does not declare it.
     await expect(
       runs.run(
         { ...mapped, requireGrants: false },
         { stateDir, runId: 'flagged', input: null, grants: ['all'], requireGrants: true, harness },
       ),
-    ).rejects.toThrow('Child profile builder.Runner exceeds parent profile edit: tools.');
+    ).rejects.toThrow('Child profile builder.Runner exceeds parent profile Editor: access.');
     expect(tools).toHaveLength(2);
   });
 
