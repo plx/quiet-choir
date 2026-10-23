@@ -98,33 +98,32 @@ policy, outside identity; `execute --policy-reset` restores the default before e
 
 By default a child's roster is its own: its entries are resolved from the child's declaration, no
 role is compared to the parent's, `options.profiles` is accepted and ignored, and the parent's
-`--profile` limit rules still apply by name. The child's own `strictProfiles` governs its call sites,
-and a child definition's `requireGrants` is ignored: only the root's setting, or the run's
+`--profile` limit rules still apply by name. The child's own `strictProfiles` governs its call
+sites, and a child definition's `requireGrants` is ignored: only the root's setting, or the run's
 `--require-grants`, counts ([ADR 0063](decisions/0063-bound-agents-and-typed-rosters.md) §5).
 
 ### requireGrants: delegation ceilings
 
 Under `requireGrants`, child roles map to parent roles of the same name by default, and
 `options.profiles` maps a child's role to a differently named parent role (an unknown child role in
-it is an error). Child roster entries are checked before child effects. Tools,
-permissions, sandbox and native escape controls cannot exceed the delegated role; opaque controls
-require matching configuration. A child call's directories must be listed by the parent role
-(`claude.addDirs`, `codex.addDirs`): directory membership is literal. Missing or insufficient roles
-fail explicitly. Raw call-site capabilities are checked too, even with `strictProfiles: false`. A
-parent role that is elevated still needs the run's grant before the child uses it. A parent
-[roster entry](roster.md) delegates on its pinned harness only: the child role must be an entry
-pinned to the same harness at no higher access, or delegation fails with
-`Child profile … exceeds parent profile …: harness (…)` (or `: access`). Restrictions on a harness a
-child entry cannot run on, such as a parent's Claude `disallowedTools` for a Codex entry, do not
-bind it.
+it is an error). Child roster entries are checked before child effects. Tools, permissions, sandbox
+and native escape controls cannot exceed the delegated role; opaque controls require matching
+configuration. A child call's directories must be listed by the parent role (`claude.addDirs`,
+`codex.addDirs`): directory membership is literal. Missing or insufficient roles fail explicitly.
+Raw call-site capabilities are checked too, even with `strictProfiles: false`. A parent role that is
+elevated still needs the run's grant before the child uses it. A parent [roster entry](roster.md)
+delegates on its pinned harness only: the child role must be an entry pinned to the same harness at
+no higher access, or delegation fails with `Child profile … exceeds parent profile …: harness (…)`
+(or `: access`). Restrictions on a harness a child entry cannot run on, such as a parent's Claude
+`disallowedTools` for a Codex entry, do not bind it.
 
 Under `requireGrants`, child models/effort inherit the mapped parent's values when omitted. Parent
 `--profile` limit overrides pass through role mappings, and child call limits are bounded by the
-delegated parent limits. The child's entries remain the source of its requested tools; mapping
-never promotes it to additional parent tools. A delegated role that fails on permission denials
-stays failing: a child role that omits `onPermissionDenied` inherits `fail`, and an explicit child
-entry or Claude call `warn` is refused. Workflow JavaScript remains trusted operator code, not a
-security sandbox.
+delegated parent limits. The child's entries remain the source of its requested tools; mapping never
+promotes it to additional parent tools. A delegated role that fails on permission denials stays
+failing: a child role that omits `onPermissionDenied` inherits `fail`, and an explicit child entry
+or Claude call `warn` is refused. Workflow JavaScript remains trusted operator code, not a security
+sandbox.
 
 ### Observation
 
@@ -152,10 +151,10 @@ ordinary successful output and should not replace input validation.
 `workflow validate FILE --json` includes input/output JSON Schemas, descriptions, phases,
 capabilities and a declared child tree, in a compact form: no harness option JSON Schemas, no
 `capabilities.defaults` (use `profiles[defaultProfile]`), a shared `capabilities.environment` with
-per-entry differences only, `workflow.profiles` as a field that does not list roster entries, and no root `entrypoint` (it equals the
-document's own). Pass `--harness-schemas` for the complete document; `list-defs --json` follows the
-same rules. Recursive declarations end in `recursive: true` reference nodes. Inline children have
-`entrypoint: null` when no source entrypoint is known.
+per-entry differences only, `workflow.profiles` as a field that does not list roster entries, and no
+root `entrypoint` (it equals the document's own). Pass `--harness-schemas` for the complete
+document; `list-defs --json` follows the same rules. Recursive declarations end in `recursive: true`
+reference nodes. Inline children have `entrypoint: null` when no source entrypoint is known.
 
 ```sh
 quiet-choir workflow list-defs ./examples/patterns --json

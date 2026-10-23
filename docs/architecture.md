@@ -30,12 +30,12 @@ definitions to a particular agent harness.
   I/O, the clock, the process and runner state; `jevCompatible` (the `fetch` transport) lives in the
   subpath.
 - `src/std/` is `quiet-choir/std`, the opt-in standard library: per-harness roster entry fragments
-  with the preset values, model tiers, the `json`, `git` and `committedArtifact` exec helpers, and
-  the team-taking `reviewRevise` and `tolerantPanel` patterns. Its modules import only the public
-  entry point (`../index.js`), their siblings and Node built-ins, never runtime internals, which an
-  ESLint rule enforces; `committedArtifact`'s write step is version-identified
-  (`committed-artifact/1`) through the step definition's internal `identity` field, as the built-in
-  helpers are, so its identity does not follow the library's callback text.
+  with the text, read-only and edit configurations, model tiers, the `json`, `git` and
+  `committedArtifact` exec helpers, and the team-taking `reviewRevise` and `tolerantPanel` patterns.
+  Its modules import only the public entry point (`../index.js`), their siblings and Node built-ins,
+  never runtime internals, which an ESLint rule enforces; `committedArtifact`'s write step is
+  version-identified (`committed-artifact/1`) through the step definition's internal `identity`
+  field, as the built-in helpers are, so its identity does not follow the library's callback text.
 - `src/application/` contains framework-independent execution contracts and small executors.
 - `src/workflow/` contains workflow-specific plans, results, analysis, and executors.
 - `src/workflow/runtime/` defines the typed workflow API and local checkpoint/replay engine.
@@ -100,12 +100,11 @@ overrides before invoking the adapter, and records per-attempt limits and proven
 and `readRun` share working-directory and storage resolution.
 
 The plain-data roster publishes a capability manifest without running the body. Strict call sites,
-an opt-in (`strictProfiles: true`), prohibit raw capability replacements. Under the
-opt-in `requireGrants` layer the core preflights write/exec grants for roster entries,
-checks elevated raw calls before invocation and bounds child roles by their parent's; named
-grants are pinned to tools/permissions/sandbox and saved for resume. Entry names and limits are
-policy; resolved semantic controls remain identity. See
-[ADR 0010](decisions/0010-agent-profiles-and-grants.md), as amended by
+an opt-in (`strictProfiles: true`), prohibit raw capability replacements. Under the opt-in
+`requireGrants` layer the core preflights write/exec grants for roster entries, checks elevated raw
+calls before invocation and bounds child roles by their parent's; named grants are pinned to
+tools/permissions/sandbox and saved for resume. Entry names and limits are policy; resolved semantic
+controls remain identity. See [ADR 0010](decisions/0010-agent-profiles-and-grants.md), as amended by
 [ADR 0063](decisions/0063-bound-agents-and-typed-rosters.md) §5.
 
 The core resolves configuration isolation before agent identity, defaulting to `restricted`.
@@ -219,12 +218,12 @@ See [ADR 0015](decisions/0015-observe-runs-without-changing-effect-identity.md) 
 ## CLI execution boundary
 
 Inline `ctx.workflow` enters a named child frame in the same run, with schema-validated I/O and
-explicit delegation ceilings under `requireGrants`. Frames share admission, budgets and cancellation, retain their own
-identity/status, and use compact namespaces for deep nesting. Settled map ownership includes child
-frames; declared child identity is checked even when a committed mapper is skipped. Descriptive
-metadata stays outside runtime fingerprints. The loader publishes schemas and declared trees, and
-the directory registry caches plain metadata only; execution reimports the selected definition. See
-[ADR 0026](decisions/0026-inline-children-and-definition-registry.md) and
+explicit delegation ceilings under `requireGrants`. Frames share admission, budgets and
+cancellation, retain their own identity/status, and use compact namespaces for deep nesting. Settled
+map ownership includes child frames; declared child identity is checked even when a committed mapper
+is skipped. Descriptive metadata stays outside runtime fingerprints. The loader publishes schemas
+and declared trees, and the directory registry caches plain metadata only; execution reimports the
+selected definition. See [ADR 0026](decisions/0026-inline-children-and-definition-registry.md) and
 [child workflows](child-workflows.md).
 
 Commands follow the plan-execute pattern recorded in [ADR 0001](decisions/0001-plan-execute-cli.md):

@@ -2,11 +2,11 @@
 
 ## Unreleased — 0.0.0 prototype
 
-- Document rosters as the only agent inventory (#694, ADR 0063 §4). The "Appendix: requireGrants
-  and legacy profiles" in `docs/roster.md` is gone: `requireGrants: launch grants and pins` is now
-  its own section, with a short "Strict call sites" subsection for the opt-in `strictProfiles`.
-  The docs, README and both skill copies no longer teach declaring `profiles`, `defaults.profile`,
-  the call-site `profile:` option, `extends`, the preset names as selectable roles or the rooted
+- Document rosters as the only agent inventory (#694, ADR 0063 §4). The "Appendix: requireGrants and
+  legacy profiles" in `docs/roster.md` is gone: `requireGrants: launch grants and pins` is now its
+  own section, with a short "Strict call sites" subsection for the opt-in `strictProfiles`. The
+  docs, README and both skill copies no longer teach declaring `profiles`, `defaults.profile`, the
+  call-site `profile:` option, `extends`, the preset names as selectable roles or the rooted
   call-site directories of ADRs 0054 and 0062. Still documented: the `--profile Name.limit=`
   override over roster entry names or `*`, the attempt `profile` field, requireGrants grants and
   delegation ceilings with the `options.profiles` remap, and opt-in strict call sites. The Workflow

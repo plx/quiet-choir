@@ -190,8 +190,8 @@ module. Beside it, `package` describes the whole package and is not compacted:
   or null.
 - `workflows` lists every declared workflow in declaration order, with its own module as
   `entrypoint`, its input JSON Schema, and `roster`: the workflow's [roster](roster.md) entries (the
-  entries listed under `capabilities.profiles`) in key order, each with the pinned harness's `access` and
-  the entry's `model` for that harness (null when it sets none).
+  entries listed under `capabilities.profiles`) in key order, each with the pinned harness's
+  `access` and the entry's `model` for that harness (null when it sets none).
 - `prompts` lists the package's prompt sets and every set in each workflow's static tree, one per
   root, first seen first (package sets before workflow sets). `params` are the sorted keys of the
   entry's params schema, and `variables` the top-level variables the template reads. An entry that

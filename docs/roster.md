@@ -141,7 +141,7 @@ The Codex fragments carry no `maxTurns` or `maxBudgetUsd`: those are Claude-only
 `std.tiers` holds the model tiers of the native epic scripts. Each fixes only a Claude model and
 effort: `Clerk` (haiku, low), `Copyist` (sonnet, low), `Scribe` (sonnet, medium), `Mechanic`
 (sonnet, high), `Planner` (opus, high), `Skeptic` (opus, medium) and `Surgeon` (opus, high).
-Capability comes from the preset fragments, so the two axes compose by spread,
+Capability comes from the `std.claude` and `std.codex` fragments, so the two axes compose by spread,
 `{ ...std.claude.Edit, ...std.tiers.Mechanic }`, rather than as one entry per combination; a tier
 spread last also supplies the description. A tier alone is a valid entry at the text baseline.
 

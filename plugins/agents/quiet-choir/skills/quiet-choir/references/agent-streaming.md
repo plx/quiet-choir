@@ -91,7 +91,7 @@ reported, turns, duration, terminal/stop reasons, denied tools/count, selected i
 subagent counts, warnings, stderr tail, skipped-line count, and transcript receipt. Full native init
 paths/socket details stay out of these selected diagnostics but may appear in the raw file. Claude
 `onPermissionDenied: 'fail'` rejects reported denials and names the tools; default `warn` records
-them and prints a CLI warning. Per-call policy overrides its profile and changes identity.
+them and prints a CLI warning. Per-call policy overrides its entry and changes identity.
 
 **Upgrade boundary:** adding result diagnostics changes agent result-schema fingerprints once.
 In-flight runs with older completed agent calls require a new run or fork invalidation of those

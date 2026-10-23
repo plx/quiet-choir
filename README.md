@@ -15,8 +15,9 @@ bundles a concise skill with topic-specific references for authoring, harness op
 inspection, and extensions; the runtime is installed separately.
 
 Use [inline child workflows](docs/child-workflows.md) to compose typed workflows in one run with
-recorded identities, delegation ceilings under `requireGrants` and a visible tree. `workflow validate --json` publishes
-schemas and descriptions; `workflow list-defs` discovers trusted definitions for execution by name.
+recorded identities, delegation ceilings under `requireGrants` and a visible tree.
+`workflow validate --json` publishes schemas and descriptions; `workflow list-defs` discovers
+trusted definitions for execution by name.
 
 ## Try it without an agent subscription
 
@@ -292,15 +293,15 @@ without changing their source fingerprint. Globs use `*` within segments and `**
 
 The text baseline that raw calls start from supplies a five-minute deadline, 10 Claude turns and a
 $0.50 per-call budget. The `std.claude.*` and `std.codex.*` roster entries supply the read-only and
-edit limits. Custom harnesses receive those resolved options,
-must enforce them, and can report adapter-specific defaults through `policyDefaults(harness)`. See
-[the roster guide](docs/roster.md) for roster entries, bound agents, `--profile` recovery, opt-in
-strict capability checks and opt-in launch grants. `inspect --json` exposes saved rules and each
-step's `attemptHistory`, including resolved policy and its sources. New runs use storage format 7
-with replay contract 6. Flat format-6 runs migrate on resume and can seed forks. Format 1 resumes
-(migrating) but must be resumed before it can seed a fork. Formats 2-5 remain inspectable but cannot
-resume or supply fork reuse with this runtime; retain the original runtime or choose a new run ID.
-See [the policy decision](docs/decisions/0005-step-identity-and-policy.md) and
+edit limits. Custom harnesses receive those resolved options, must enforce them, and can report
+adapter-specific defaults through `policyDefaults(harness)`. See [the roster guide](docs/roster.md)
+for roster entries, bound agents, `--profile` recovery, opt-in strict capability checks and opt-in
+launch grants. `inspect --json` exposes saved rules and each step's `attemptHistory`, including
+resolved policy and its sources. New runs use storage format 7 with replay contract 6. Flat format-6
+runs migrate on resume and can seed forks. Format 1 resumes (migrating) but must be resumed before
+it can seed a fork. Formats 2-5 remain inspectable but cannot resume or supply fork reuse with this
+runtime; retain the original runtime or choose a new run ID. See
+[the policy decision](docs/decisions/0005-step-identity-and-policy.md) and
 [legacy records](docs/storage.md#legacy-records).
 
 To recover after editing workflow code, choose an explicit reuse path:
@@ -552,17 +553,17 @@ only in this repository; exclude chosen storage in other projects too.
 
 The core resolves [roster entries](docs/roster.md) before invoking a harness. The text baseline is
 tool-less for Claude, read-only for Codex, and limited to five minutes, 10 Claude turns and $0.50
-per Claude call; `std.claude.ReadOnly` grants file-reading tools and `std.claude.Edit` adds
-writing. Raw call sites may also pass tools or a sandbox unless the workflow sets
-`strictProfiles: true`. Operator grants are opt-in: with `requireGrants: true` or
-`--require-grants`, write and exec entries need `--grant Entry` at launch and child roles are
-bounded by their parent's. `tools` implies `allowedTools` unless explicitly
-narrowed. Claude defaults to `dontAsk`; allowed rules add to applicable native permissions. Codex
-uses approval policy `never`. Restricted Claude calls suppress inherited hooks/MCP; explicit opt-ins
-and managed policy still apply. Retained protocol data is capped at 8 MiB; Codex has no per-call USD
-cap here. Model selection is explicit or uses the selected configuration mode’s native defaults.
-Both providers accept `effort: 'low' | 'medium' | 'high' | 'xhigh' | 'max'`; Codex `effort`
-additionally accepts `none` and `minimal`. Omission uses the selected mode’s native defaults.
+per Claude call; `std.claude.ReadOnly` grants file-reading tools and `std.claude.Edit` adds writing.
+Raw call sites may also pass tools or a sandbox unless the workflow sets `strictProfiles: true`.
+Operator grants are opt-in: with `requireGrants: true` or `--require-grants`, write and exec entries
+need `--grant Entry` at launch and child roles are bounded by their parent's. `tools` implies
+`allowedTools` unless explicitly narrowed. Claude defaults to `dontAsk`; allowed rules add to
+applicable native permissions. Codex uses approval policy `never`. Restricted Claude calls suppress
+inherited hooks/MCP; explicit opt-ins and managed policy still apply. Retained protocol data is
+capped at 8 MiB; Codex has no per-call USD cap here. Model selection is explicit or uses the
+selected configuration mode’s native defaults. Both providers accept
+`effort: 'low' | 'medium' | 'high' | 'xhigh' | 'max'`; Codex `effort` additionally accepts `none`
+and `minimal`. Omission uses the selected mode’s native defaults.
 [Harness controls](docs/harness-controls.md) describes role prompts, agents, MCP, native
 profiles/config, directories, image attachments and the fingerprinted `extraArgs`/`env` escape
 hatch. `configuration doctor --json` verifies installed CLI contracts with zero-inference rejection
@@ -636,7 +637,7 @@ next ticket and says why every other open one was skipped; see
 
 `quiet-choir/std` is the opt-in standard library, built only on the public entry point. A roster
 entry can spread one of its per-harness entries, `{ ...std.claude.ReadOnly, description: '...' }`:
-`std.claude` and `std.codex` carry the `text`, `readonly` and `edit` preset values as `Text`,
+`std.claude` and `std.codex` carry the runtime's text, read-only and edit configurations as `Text`,
 `ReadOnly` and `Edit`, and `std.tiers` adds model and effort tiers such as `Mechanic`. `std.exec`
 has `json`, `git` (complete stdout or throw) and `committedArtifact` (publish a new file through a
 managed worktree), and `std.patterns` has `reviewRevise` and `tolerantPanel`, which take the context

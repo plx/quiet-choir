@@ -212,8 +212,8 @@ Before using a custom harness, verify this contract with fake responses/processe
 
 - Settle promptly when `invocation.signal` aborts; otherwise draining holds the run lock
   indefinitely.
-- Enforce resolved `timeoutMs` and every supported harness limit yourself. Core profile resolution
-  supplies defaults but does not supervise an arbitrary adapter's internal transport.
+- Enforce resolved `timeoutMs` and every supported harness limit yourself. Core roster-entry
+  resolution supplies defaults but does not supervise an arbitrary adapter's internal transport.
 - Use absolute `request.cwd`, not unresolved `request.options.cwd`.
 - Return `sessionId` as a value or null. Usage may be missing or partial; the runtime normalizes
   missing measurements to null and preserves JSON-compatible extra fields.
@@ -257,11 +257,11 @@ to, and a rejection only adds a warning. Registry failures abort as
 a `ProcessSupervisor` to `runWorkflow` and call its `forceKill()` from their own second-signal
 handler. CLI signal handlers are not installed by the core. See [durability](durability.md).
 
-The core resolves profile limits (text: five minutes, 10 Claude turns, $0.50) and tool/sandbox
-defaults. Optional `Harness.policyDefaults(harness)` reports adapter-owned execution limits
-(including binary/output cap/kill grace) without side effects. The core records reported limits,
-overlays profiles, call-site fields and sticky rules, and sends the resolved limit values to
-`invoke`. It does not invent adapter-specific defaults. Unknown adapter fields stay absent from
+The core resolves entry limits (text baseline: five minutes, 10 Claude turns, $0.50) and
+tool/sandbox defaults. Optional `Harness.policyDefaults(harness)` reports adapter-owned execution
+limits (including binary/output cap/kill grace) without side effects. The core records reported
+limits, overlays the entry, call-site fields and sticky rules, and sends the resolved limit values
+to `invoke`. It does not invent adapter-specific defaults. Unknown adapter fields stay absent from
 attempt policy; `requestedModel: null` means the native configuration chooses. Custom
 implementations must enforce the supplied limits and settle on abort; otherwise draining can hang
 while the run holds its lock. The core owns retries and removes `retry` and `onError` from the
@@ -287,10 +287,10 @@ is reliable in workflow code, including for errors the runtime throws, such as `
 Register a third harness with
 `defineHarness({ name, revision, options, capabilities, createAdapter })` and
 `defineWorkflow({ harnesses: [definition], ... })`. The strict Zod object schema owns its option
-names, and its object-level refinements check each complete call after profile merging (profile
-entries are checked field by field); `ctx.agent(name)` infers options and removes structured methods
-when `structuredOutput: 'none'`. Claude/Codex shorthands remain available. A model-service option
-may be called `provider`; the request's harness name identifies the adapter instead.
+names, and its object-level refinements check each complete call after entry and default merging
+(roster entries are checked field by field); `ctx.agent(name)` infers options and removes structured
+methods when `structuredOutput: 'none'`. Claude/Codex shorthands remain available. A model-service
+option may be called `provider`; the request's harness name identifies the adapter instead.
 
 `HarnessAdapter.invoke(request, signal, invocation?)` performs one attempt. Runtime calls supply the
 optional ownership context. Lookup is `RunOptions.adapters[name]`, then the legacy catch-all
@@ -302,22 +302,23 @@ still be declared. Increment revision when recorded options change meaning. New 
 `kind: 'agent'`, harness and revision; preceding built-in records normalize on read, and their
 revision-one fingerprint hashes remain stable.
 
-Package profiles use `profiles.<role>.harnesses.<name>`. Declare `capabilityKeys` and a pure
-`access` classifier accepting partial profile options; without a classifier access defaults to exec.
-Strict profiles own capability controls: `defineHarness` keeps a literal `capabilityKeys` list as a
-tuple type, so a strict workflow's `ctx.agent(name)` options omit those keys and a raw call fails
-typecheck (a widened `string[]` list, an omitted list or explicit `<N, O, C>` type arguments stay
-permissive at type level; the runtime still rejects the keys). Child calls cannot exceed delegated
-roles. `policy` lists option keys excluded from semantic identity; adapter defaults and operator
-configuration are also outside identity. `sensitiveOptions` lists option keys (tokens, headers,
-connection strings) that checkpoints, `workflow validate --json` and `check-resume --json` show only
-as `redacted.harnesses.<name>.<key>` (`{ sha256, keys? }`, `keys` for objects); live calls, grant
-pins and step identity keep the raw values. `defineHarness` rejects unknown and duplicate keys and
-those that never reach a manifest: `prompt`, `model`, `env` and call options profiles cannot set.
-Step records, prompts and argv are not redacted. Custom adapters must enforce the resolved policy
+A registered harness entry is `{ harness: '<name>', …options }` on a roster entry. Declare
+`capabilityKeys` and a pure `access` classifier accepting partial options; without a classifier
+access defaults to exec. Strict call sites own capability controls (entry values carry them):
+`defineHarness` keeps a literal `capabilityKeys` list as a tuple type, so a strict workflow's
+`ctx.agent(name)` options omit those keys and a raw call fails typecheck (a widened `string[]` list,
+an omitted list or explicit `<N, O, C>` type arguments stay permissive at type level; the runtime
+still rejects the keys). Child calls cannot exceed delegated roles. `policy` lists option keys
+excluded from semantic identity; adapter defaults and operator configuration are also outside
+identity. `sensitiveOptions` lists option keys (tokens, headers, connection strings) that
+checkpoints, `workflow validate --json` and `check-resume --json` show only as
+`redacted.harnesses.<name>.<key>` (`{ sha256, keys? }`, `keys` for objects); live calls, grant pins
+and step identity keep the raw values. `defineHarness` rejects unknown and duplicate keys and those
+that never reach a manifest: `prompt`, `model`, `env` and call options entries cannot set. Step
+records, prompts and argv are not redacted. Custom adapters must enforce the resolved policy
 supplied in the invocation context. `maxTurns` and `maxBudgetUsd` reach a registered harness, in its
 attempt policy record, `invocation.policy` and request options, only when its options schema
-declares them; otherwise profile, override and delegated values for them are not applied or recorded
+declares them; otherwise entry, override and delegated values for them are not applied or recorded
 (and `--dry-run` does not warn about them). `timeoutMs` and the other limits are unaffected.
 
 Import `runProcess`, `createFakeBinary`, and `assertHarnessConformance` from
@@ -399,9 +400,9 @@ registry can lose structured-client inference; prefer a concrete registry or a n
 ## Reuse workflow logic
 
 Use `ctx.workflow(id, childDefinition, input)` for a typed child with recorded name/version,
-validated I/O, a scoped namespace and delegated profiles. Declare `children` for name dispatch and
-for any child used inside a settled map. The root run owns its waits, budgets and concurrency; see
-[child workflows and discovery](child-workflows.md).
+validated I/O, a scoped namespace and requireGrants delegation. Declare `children` for name dispatch
+and for any child used inside a settled map. The root run owns its waits, budgets and concurrency;
+see [child workflows and discovery](child-workflows.md).
 
 Ordinary async functions taking `WorkflowContext` are the extension mechanism for multi-step
 helpers. Call them at the workflow level inside `ctx.scope('review', () => helper(ctx))`, or pass

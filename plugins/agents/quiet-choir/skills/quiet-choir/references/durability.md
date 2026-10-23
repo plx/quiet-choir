@@ -395,8 +395,8 @@ over adapter defaults. `retry` fields merge individually. `--policy-reset` (embe
 `policyReset: true`) clears saved rules before adding new ones. A bare resume keeps saved rules.
 Globs use `*` within a slash segment and `**` across segments; `verify/**/skeptic-*` includes zero
 or more intervening segments. `kind` filters `claude`, `codex`, or `step`; sleep has no overrides.
-Provider-specific fields on a rule without `kind` apply only to that provider. Profiles are deferred
-to the profile API; `profile` is not an accepted rule field yet.
+Provider-specific fields on a rule without `kind` apply only to that provider. `profile` is not a
+rule field; use `--profile` for limits.
 
 All rules are validated before effects. Unmatched rules produce saved `policyWarnings` for the
 visited path, also returned/printed as warnings on successful execution. `model` and `effort`

@@ -29,14 +29,14 @@ size cannot be measured; inspect and watch do not compute it. The text view show
 column (B, KiB, MiB or GiB). `validate --json` and `list-defs --json` print a compact document that
 states each capability fact once, at every depth of `children`: no `harnesses[].options` JSON
 Schema; no `capabilities.defaults` (read `capabilities.profiles[defaultProfile]`); the default
-entry's environment summaries once as `capabilities.environment`, with an entry's own
-`environment` listing only the harnesses (`claude`, `codex`) that differ from it (read
+entry's environment summaries once as `capabilities.environment`, with an entry's own `environment`
+listing only the harnesses (`claude`, `codex`) that differ from it (read
 `entry.environment?.[h] ?? capabilities.environment[h]`); `workflow.profiles`, a manifest field that
-does not list roster entries, because `capabilities.profiles` holds each roster entry under
-its name with the `harness` it is pinned to ([roster](roster.md#manifest-and-validate-output)); and
-no root `workflow.entrypoint`, which equals the top-level `entrypoint` (children keep theirs).
-`--harness-schemas` prints the complete document instead: option schemas, `defaults`, every
-entry's environment, the `workflow.profiles` map and both entrypoint copies. The golden-path
+does not list roster entries, because `capabilities.profiles` holds each roster entry under its name
+with the `harness` it is pinned to ([roster](roster.md#manifest-and-validate-output)); and no root
+`workflow.entrypoint`, which equals the top-level `entrypoint` (children keep theirs).
+`--harness-schemas` prints the complete document instead: option schemas, `defaults`, every entry's
+environment, the `workflow.profiles` map and both entrypoint copies. The golden-path
 `validate --json` is about 2.7 KB. Run records and checkpoints keep the full manifest. `list-defs`
 discovers `*.workflow.ts`, `*.workflow.mts` and `*.workflow.cts` files (not `.d.ts` or `.tsx`). The
 `configuration` topic has one command, `configuration doctor`. `list --all` discovers registered XDG
@@ -907,9 +907,9 @@ policy, as resume entries do; `--grant` is saved with the run, so later resumes 
 A grant cause arises only under `requireGrants`, whose run-level flag the record also keeps, so the
 grant entry does not repeat `--require-grants`. The grant entry uses `execute --resume` because
 `workflow resume` takes no `--grant`. A call with call-site capability overrides (under
-`strictProfiles: false`) ignores named-entry grants, so its grant cause carries `classOnly` and
-its entry grants the access class (`write` or `exec`) instead of the entry. A
-`workflow.interrupted` or `start.timeout` document whose saved run failed gets the same entries.
+`strictProfiles: false`) ignores named-entry grants, so its grant cause carries `classOnly` and its
+entry grants the access class (`write` or `exec`) instead of the entry. A `workflow.interrupted` or
+`start.timeout` document whose saved run failed gets the same entries.
 
 `run.locked` refusals from `resume`, `execute`, `start`, `tick`, `clean`, `rm`, `cancel` and
 `unlock` build the unlock entry once, in the runtime, and render both the prose and
@@ -975,9 +975,9 @@ passes null for a selection built from data, which a later resume could not repr
   `execute --resume`, `answer --resume`, `tick` and emitted commands keep it without repeating it,
   and it cannot be turned off. A fork does not inherit it; `--fork-from … --require-grants` sets it
   on the fork. `--grant` is accepted and saved either way.
-- `--profile Name.limit=value` (repeatable, sticky on resume) takes a roster entry name or `*` (every
-  role, raw calls included); for example `--profile Reviewer.maxTurns=60` raises a
-  roster entry's turn cap ([recovery](roster.md#recovery-and-diagnostics)).
+- `--profile Name.limit=value` (repeatable, sticky on resume) takes a roster entry name or `*`
+  (every role, raw calls included); for example `--profile Reviewer.maxTurns=60` raises a roster
+  entry's turn cap ([recovery](roster.md#recovery-and-diagnostics)).
 - A recorded fixture file that is missing or unreadable fails the resume with `usage.flag`, naming
   the path; pass `--harness` explicitly. A fixture whose content changed is used with a warning that
   names the file and both digests, and its new digest is recorded.

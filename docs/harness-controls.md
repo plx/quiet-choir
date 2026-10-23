@@ -15,22 +15,20 @@ using `"inherited"` for omissions.
 | Claude   | `disallowedTools`, `permissionMode` (`dontAsk`, `acceptEdits`, `plan`), `systemPrompt`, `appendSystemPrompt`, `agent`, `agents`, `mcpServers`, `strictMcpConfig`, `settings`, `plugins`, `fallbackModel`, `onPermissionDenied` |
 | Codex    | `networkAccess`, `harnessProfile`, `config`, `images`, `instructions`                                                                                                                                                          |
 
-`harnessProfile` selects Codex's native configuration
-profile (`--profile`). Native profile names contain letters, numbers, underscores or hyphens and
-start with a letter or number. `networkAccess` requires `workspace-write`, even when false.
-`addDirs` resolves against the effect's cwd; Codex makes those directories **writable**. Codex `instructions: 'none'` runs the
-child against a private temporary `CODEX_HOME` holding only a copy of `auth.json`, adds
-`--config project_doc_max_bytes=0`, and writes a refreshed `auth.json` back under a lock; it
-requires restricted isolation and owns the `project_doc_max_bytes` config key. It removes context
-and grants nothing, so it is not a capability control. See
-[harness isolation](harness-isolation.md).
+`harnessProfile` selects Codex's native configuration profile (`--profile`). Native profile names
+contain letters, numbers, underscores or hyphens and start with a letter or number. `networkAccess`
+requires `workspace-write`, even when false. `addDirs` resolves against the effect's cwd; Codex
+makes those directories **writable**. Codex `instructions: 'none'` runs the child against a private
+temporary `CODEX_HOME` holding only a copy of `auth.json`, adds `--config project_doc_max_bytes=0`,
+and writes a refreshed `auth.json` back under a lock; it requires restricted isolation and owns the
+`project_doc_max_bytes` config key. It removes context and grants nothing, so it is not a capability
+control. See [harness isolation](harness-isolation.md).
 
-Declare capability controls on [roster entries](roster.md), including tools,
-permissions, MCP/settings, native agents/profiles/config, additional directories, environment and
-escape args. `strictProfiles: true` (opt-in; the default is `false`) rejects those fields at raw
-call sites and in `bind`, so they belong on a roster entry; see
-[strict call sites](roster.md#strict-call-sites). Role prompts, models,
-effort, fallbacks and image attachments can be supplied per call. Native
+Declare capability controls on [roster entries](roster.md), including tools, permissions,
+MCP/settings, native agents/profiles/config, additional directories, environment and escape args.
+`strictProfiles: true` (opt-in; the default is `false`) rejects those fields at raw call sites and
+in `bind`, so they belong on a roster entry; see [strict call sites](roster.md#strict-call-sites).
+Role prompts, models, effort, fallbacks and image attachments can be supplied per call. Native
 configuration/agent/escape/env controls and enabled network access are conservatively classified as
 **exec** access, and Codex additional writable directories as write access; Claude directories alone
 grant no tools. Under [`requireGrants`](roster.md#requiregrants-launch-grants-and-pins) those
@@ -84,13 +82,13 @@ Public manifests (the checkpoint's `capabilities`, `workflow validate --json` an
 `check-resume` prints; checkpoints and `check-resume` keep the full shape, while `validate` and
 `list-defs` print the [compact view](cli-contract.md)) reduce every free-form native control to a
 digest. Claude `settings`, `mcpServers`, `agents` (descriptions and prompts), `systemPrompt`,
-`appendSystemPrompt` and Codex `config` are removed from the entry's `claude`/`codex` in the manifest and listed
-under `redacted` as `{ sha256, keys? }`: `keys` are the top-level settings keys, MCP server names,
-subagent names or dotted config keys, and the two prompts have only `sha256`. An entry that sets
-none of them has no `redacted` member. Live calls, grant pins and step identity still use the raw
-values, so a changed value invalidates a pin or a completed step even though the manifest shows only
-a new digest. Reviewable controls stay plaintext: tools, permission mode, `agent`, plugins,
-`addDirs`, `extraArgs`, models, limits, isolation and sandbox. Never put secret
+`appendSystemPrompt` and Codex `config` are removed from the entry's `claude`/`codex` in the
+manifest and listed under `redacted` as `{ sha256, keys? }`: `keys` are the top-level settings keys,
+MCP server names, subagent names or dotted config keys, and the two prompts have only `sha256`. An
+entry that sets none of them has no `redacted` member. Live calls, grant pins and step identity
+still use the raw values, so a changed value invalidates a pin or a completed step even though the
+manifest shows only a new digest. Reviewable controls stay plaintext: tools, permission mode,
+`agent`, plugins, `addDirs`, `extraArgs`, models, limits, isolation and sandbox. Never put secret
 values in `extraArgs`; use `env`. A registered harness lists its own sensitive option keys in the
 declaration's `sensitiveOptions`; an entry's values for them leave `harnesses.<name>` and
 `harnessCapabilities.<name>` and appear as `redacted.harnesses.<name>.<key>`, with `keys` only for
@@ -121,13 +119,13 @@ background if the operation ever returns.
 ## Idle deadline and tool-use diagnostics
 
 `idleTimeoutMs` ends an agent attempt whose CLI writes nothing to stdout or stderr for that many
-milliseconds. It is off by default. Set it like `timeoutMs`: in workflow `defaults`, on a roster entry,
-on a call, with `--profile name.idleTimeoutMs=N` (`RunOptions.profileOverrides`), or with an agent
-`--policy` rule (later sources win in the same order as `timeoutMs`; `kind: 'step'` and `'exec'`
-rules reject it). It is execution policy, never step identity, so a resume can raise it without a
-code change; child workflows inherit the parent's value as a ceiling. The attempt records the
-effective value and its source in `attemptHistory[].policy` and `sources`, and `inspect` shows it as
-`idle timeout`.
+milliseconds. It is off by default. Set it like `timeoutMs`: in workflow `defaults`, on a roster
+entry, on a call, with `--profile name.idleTimeoutMs=N` (`RunOptions.profileOverrides`), or with an
+agent `--policy` rule (later sources win in the same order as `timeoutMs`; `kind: 'step'` and
+`'exec'` rules reject it). It is execution policy, never step identity, so a resume can raise it
+without a code change; child workflows inherit the parent's value as a ceiling. The attempt records
+the effective value and its source in `attemptHistory[].policy` and `sources`, and `inspect` shows
+it as `idle timeout`.
 
 The process layer enforces it. The timer starts once the prompt has been fully flushed to the CLI's
 stdin, or stdin has closed (after durable process registration; a large prompt the CLI reads slowly

@@ -153,13 +153,13 @@ approval/stage gate exits 75: inspect `workflow pending`, answer its exact step 
 `workflow answer ... --by human:<name>`, then resume the **same run ID**. Bootstrap reuses the saved
 plan; SDLC passes a redo answer only to the requesting stage and its new round.
 
-Batch 01 preserves its optional `$claude` input (`model`, `tools`, `allowedTools`, `maxTurns`,
-`maxBudgetUsd`, `timeoutMs`) and `strictProfiles: false`. Tools are disabled by default; tools imply
-allowedTools unless narrowed, and under `--require-grants` elevated raw tools need write/exec/all
-launch grants. Its 68 original per-call effort choices are supported. Use named roles for new
-workflows. The local support files shown in the reader are batch helpers, not additions to the
-runtime API; Batch 02's `support.ts` re-exports `json`, `git` and `committedArtifact` from
-`quiet-choir/std`.
+Batch 01 makes raw calls: it preserves its optional `$claude` input (`model`, `tools`,
+`allowedTools`, `maxTurns`, `maxBudgetUsd`, `timeoutMs`) and sets `strictProfiles: false`. Tools are
+disabled by default; tools imply allowedTools unless narrowed, and under `--require-grants` elevated
+raw tools need write/exec/all launch grants. Its 68 original per-call effort choices are supported.
+Use a roster for new workflows, as Batch 02 does. The local support files shown in the reader are
+batch helpers, not additions to the runtime API; Batch 02's `support.ts` re-exports `json`, `git`
+and `committedArtifact` from `quiet-choir/std`.
 
 ## Add a batch
 

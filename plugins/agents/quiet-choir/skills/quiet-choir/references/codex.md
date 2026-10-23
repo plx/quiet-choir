@@ -5,37 +5,38 @@ adapter provides typed controls and a fingerprinted escape hatch. Any agent host
 workflow that invokes `ctx.codex`. This plugin does not install Codex; `CliHarness` runs the first
 `codex` on PATH unless an embedding caller overrides the binary.
 
-Read [agent calls](agent-calls.md) for result methods, shared options/defaults, profiles, grants,
-usage, retries, identity, and process recovery.
+Read [agent calls](agent-calls.md) for result methods, shared options/defaults, roster entries,
+grants, usage, retries, identity, and process recovery.
 
 ## Codex controls
 
 `effort` accepts none/minimal/low/medium/high/xhigh/max (Claude's `effort` has no none/minimal) and
 is sent as `model_reasoning_effort`. `sandbox` is read-only or workspace-write.
 `skipGitRepoCheck: true` permits calls outside Git. These are resolved through the shared
-profile/grant rules.
+roster/grant rules.
 
 | Additional option | Meaning                                                                                                                                                                               |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `networkAccess`   | Explicit boolean under workspace-write; requires that sandbox even when false                                                                                                         |
-| `harnessProfile`  | Native Codex profile (`--profile`); `profile` still selects a quiet-choir role; requires an inherited role, since restricted isolation skips the `config.toml` that defines profiles  |
+| `harnessProfile`  | Native Codex profile (`--profile`), unrelated to roster entries; requires an inherited role, since restricted isolation skips the `config.toml` that defines profiles                 |
 | `config`          | JSON values rendered as TOML per dotted key; rejects null and aliases of owned controls                                                                                               |
 | `images`          | Regular files resolved against effect cwd; contents fingerprinted, snapshotted before launch and re-hashed on resume (keep readable)                                                  |
 | `instructions`    | `'native'` (default) or `'none'`: a private `CODEX_HOME` with only `auth.json` plus `project_doc_max_bytes=0`, so no user or project `AGENTS.md`, skills or memories; restricted only |
 
 Effort omission uses native defaults under the selected configuration mode. Set it explicitly for
 repeatable cost expectations. Model-specific support remains native CLI behavior. Capability
-controls belong in profiles under `strictProfiles: true` (opt-in). Native profiles/config/escape/env
-and enabled network access are conservatively classified as exec access, and additional writable
-directories as write access; under `requireGrants` those classes need grants. Explicit config values
-enter identity; external native config files do not. `images` snapshots use 0600 files cleaned on
-every outcome; renaming unchanged bytes can replay, changing bytes cannot. Escape args fingerprint
-strings only, not files at paths embedded in them. Record model/effort selections under each
-attempt's `requested`, with `"inherited"` for omissions.
+controls belong on roster entries under `strictProfiles: true` (opt-in). Native
+profiles/config/escape/env and enabled network access are conservatively classified as exec access,
+and additional writable directories as write access; under `requireGrants` those classes need
+grants. Explicit config values enter identity; external native config files do not. `images`
+snapshots use 0600 files cleaned on every outcome; renaming unchanged bytes can replay, changing
+bytes cannot. Escape args fingerprint strings only, not files at paths embedded in them. Record
+model/effort selections under each attempt's `requested`, with `"inherited"` for omissions.
 
-Declare shared roles on `defineWorkflow`, for example `defaults: { codex: { effort: 'medium' } }`
-and `profiles: { skeptic: { extends: 'readonly', codex: { effort: 'high' } } }`. See
-[profiles](agent-calls.md#legacy-profiles) and [grants](agent-calls.md#requiregrants-launch-grants).
+Declare shared defaults on `defineWorkflow`, for example
+`defaults: { codex: { effort: 'medium' } }`, and a Codex entry in the roster, such as
+`Skeptic: { harness: 'codex', sandbox: 'read-only', effort: 'high' }`. See
+[roster](agent-calls.md#roster) and [grants](agent-calls.md#requiregrants-launch-grants).
 
 Inside a workflow whose input includes `topic`:
 
@@ -44,7 +45,6 @@ Inside a workflow whose input includes `topic`:
 ```ts
 const result = await ctx.codex.object('review', {
   prompt: `Assess the clarity of this topic: ${input.topic}. Do not use tools.`,
-  profile: 'readonly',
   effort: 'low',
   schema: z.object({ accepted: z.boolean(), reason: z.string() }),
 });
@@ -52,14 +52,14 @@ const result = await ctx.codex.object('review', {
 
 The adapter runs
 `codex exec --json --sandbox read-only --config approval_policy="never" --ephemeral --color never --ignore-user-config --ignore-rules -- -`
-by default. It does not expose interactive approvals or an unrestricted sandbox. Declare an
-`edit`-based role with `codex: { sandbox: 'workspace-write' }` for authorized editing tasks (under
-`requireGrants`, launch with `--grant role`). Add `worktree: true` for a fresh checkout on every
-attempt, or pass a `ctx.worktree` handle as `worktree` for serialized write/test/fix effects. Shard
-structurally disjoint files; isolate overlapping targets, concurrent runners, and retries unsafe on
-partial edits. See [worktrees](worktrees.md) for snapshots and explicit integration. Restricted mode
-skips `config.toml` and execpolicy rules, but Codex still loads the user's `CODEX_HOME/AGENTS.md`
-(or `AGENTS.override.md`), skill descriptions under `CODEX_HOME/skills` and `$HOME/.agents/skills`,
+by default. It does not expose interactive approvals or an unrestricted sandbox. Declare an editing
+entry with `sandbox: 'workspace-write'` for authorized editing tasks (under `requireGrants`, launch
+with `--grant Entry`). Add `worktree: true` for a fresh checkout on every attempt, or pass a
+`ctx.worktree` handle as `worktree` for serialized write/test/fix effects. Shard structurally
+disjoint files; isolate overlapping targets, concurrent runners, and retries unsafe on partial
+edits. See [worktrees](worktrees.md) for snapshots and explicit integration. Restricted mode skips
+`config.toml` and execpolicy rules, but Codex still loads the user's `CODEX_HOME/AGENTS.md` (or
+`AGENTS.override.md`), skill descriptions under `CODEX_HOME/skills` and `$HOME/.agents/skills`,
 project `AGENTS.md` or `AGENTS.override.md` and `.agents/skills` from the Git root down to `cwd`,
 and `<cwd>/.codex/skills`, plus managed layers. Memories load only with `features.memories`. The run
 records these files as paths and digests, warns about user-level ones, and `workflow doctor` names

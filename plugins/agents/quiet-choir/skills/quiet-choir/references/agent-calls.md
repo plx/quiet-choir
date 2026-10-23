@@ -10,7 +10,7 @@ checkpoint, and pre-launch configuration failures still reject. See
 
 ## Shared options and enforcement
 
-These are quiet-choir options. The core resolves roster-entry and profile defaults and validates
+These are quiet-choir options. The core resolves roster-entry and workflow defaults and validates
 requests; `CliHarness` translates them to native flags and enforces process limits. A custom harness
 must honor the resolved request itself. Native binaries/configuration still determine model support.
 
@@ -27,7 +27,7 @@ must honor the resolved request itself. Native binaries/configuration still dete
 | `maxBudgetUsd`           | Positive finite USD                      | Unsupported                      | Text $0.50                                   | Entry or baseline supplies; Claude enforces                    |
 | `tools` / `allowedTools` | Exposed / permitted tools                | Unsupported                      | Text empty; allowed copies tools             | Core grants; Claude enforces                                   |
 | `sandbox`                | Unsupported                              | read-only/workspace-write        | read-only                                    | Core grants; Codex enforces                                    |
-| `addDirs`                | Extra dirs; rooted at call site          | Extra writable directories       | None                                         | Core resolves/bounds/grants; native CLI enforces               |
+| `addDirs`                | Extra dirs                               | Extra writable directories       | None                                         | Core resolves/bounds/grants; native CLI enforces               |
 | `extraArgs`              | `--flag` or `--flag=value`               | Same                             | None                                         | Adapter rejects owned flags/aliases; core fingerprints strings |
 | `env`                    | Environment overlay                      | Same                             | Inherit parent environment                   | Adapter overlays; core fingerprints explicit values            |
 | `retry`                  | Safe-to-repeat calls only                | Same                             | One attempt; opted-in delay starts at 100 ms | Core owns retry, removes it from adapter request               |
@@ -95,8 +95,7 @@ export default defineWorkflow({
 - An attempt records the entry name as its role. `workflow validate --json` lists each entry under
   `workflow.capabilities.profiles` with its `harness`, model, tools or sandbox, limits and derived
   access (a tool-less Claude entry is `none`).
-- An entry runs only on its own harness: selecting it from the other one (an untyped
-  `ctx.codex.text(id, { prompt, profile: 'Reviewer' })`) fails with
+- An entry runs only on its own harness: an untyped call that selects it on the other one fails with
   `Roster entry Reviewer is pinned to harness claude; it cannot run on codex.`
 - Inside an inline child, `ctx.roster` is the child's own roster, so read it where you call it
   rather than carrying a parent's agent through shared state.
@@ -110,8 +109,8 @@ instead of a harness (checked when the workflow loads). `ctx.roster.Name` is the
 `onError`, `retry` and `timeoutMs`, and passing `provider` or `model` fails typecheck. The step's
 identity and fingerprint equal those of `ctx.decide(id, { provider, model, ... })`, and its
 `meta.roster` names the entry (a label, never identity). A decider takes no agent keys, is not a
-role (no grant, `--profile` override or capability profile) and cannot fill a team slot;
-`workflow validate --json` lists it under `workflow.deciders` with its provider and model.
+role (no grant or `--profile` override) and cannot fill a team slot; `workflow validate --json`
+lists it under `workflow.deciders` with its provider and model.
 
 <!-- skills-check: fragment; reason: A roster module and one call in a body; the workflow declares decisions: [jev] and has ctx, input and choice in scope. -->
 
@@ -169,7 +168,7 @@ export default defineWorkflow({
   default. When a registered harness's schema requires one of them, `bind` may leave it to each
   call; once bound to a value its type says is always set (not an optional property), calls and
   re-binds may omit it.
-- Identity is the raw call's: the merged options fingerprint, resolve profiles and policy, and
+- Identity is the raw call's: the merged options fingerprint, resolve the entry and policy, and
   record exactly as if spelled at the call site, so after moving a call to a bound agent,
   `--accept-code-change` still reuses its completed step.
 - Binding performs no effect. The step ID prefix comes from where the agent is called, so bind once
@@ -181,42 +180,23 @@ export default defineWorkflow({
   `NativeHarnessCapabilities`.
 - A bound agent binds again over `addDirs`, `timeoutMs` and `idleTimeoutMs` only; any other key
   fails typecheck and throws a `TypeError` at runtime, since the first bind fixed it.
-- `bind({ profile: 'scout' })` resolves like a raw `profile: 'scout'` call. Under
-  `strictProfiles: true`, `bind` rejects strict-owned keys such as `tools` just as a call does. A
-  strict agent bound to a profile without `claude.addDirRoots` takes no `addDirs`; a rooted one
-  does.
+- Under `strictProfiles: true`, `bind` takes the same keys as a raw call site, so strict-owned
+  controls such as `tools` belong on a roster entry (see [strict call sites](#strict-call-sites)).
 
 ## Raw-call defaults
 
-A raw `ctx.claude` or `ctx.codex` call that names no roster entry and no profile runs on the text
-baseline: tool-less for Claude and read-only for Codex (300s, 10 Claude turns, $0.50). Codex text
-still has read access; Claude turn and USD limits do not apply to Codex. A call that needs tools, a
-sandbox beyond read-only or other limits uses a roster entry or a bound agent, or spells them at the
-call site. Workflow `defaults` (per-harness model and effort, and limits) apply to every call;
-replacing Claude `tools` re-infers `allowedTools` unless supplied explicitly.
-`workflow validate FILE --json` lists the resolved `workflow.capabilities` without running the body,
-compactly (each fact once, harness option schemas omitted); `--harness-schemas` prints the complete
-document, and `requiredGrants` there is empty unless `requireGrants` is on. Unknown tools and native
-config controls are conservatively classified as exec access. Configuration loading defaults to
-restricted mode; [harness isolation](harness-isolation.md) explains inherited roles, environment
-edits and provider boundaries.
-
-### Legacy profiles
-
-Profiles, the call-site `profile` option, the presets (`text`, `readonly`, `edit`) and
-`strictProfiles` still work and are removed later; new code uses a roster. `readonly` exposes Claude
-Read/Grep/Glob and Codex read-only (900s, 25 turns, $2); `edit` adds Claude Edit/Write and Codex
-workspace-write (1800s, 40 turns, $5). A profile merges over the preset, workflow defaults and its
-`extends` chain, then call options. `strictProfiles` is opt-in (default `false`): under `true`, raw
-capability controls (tools, permissions, MCP, native config and agents, dirs, escape args,
-environment, and `isolation: 'inherit'`) are rejected at call sites by type and by
-`workflow validate`, and must be declared in a profile. One bounded exception: a profile declaring
-`claude: { addDirRoots: ['.state/runs'] }` accepts call-site `addDirs` inside those roots. A roster
-entry may not be a profile's `extends` parent, the default profile, or share a profile's name.
-Explicit `defineWorkflow` type arguments are all-or-nothing: with a shorter prefix such as
-`defineWorkflow<Input, Output>`, the rest take the permissive, childless defaults and leave
-`profiles`, `roster` and `defaults` uninferred; drop the type arguments (preferred) or spell all
-seven.
+A raw `ctx.claude` or `ctx.codex` call that names no roster entry runs on the text baseline:
+tool-less for Claude and read-only for Codex (300s, 10 Claude turns, $0.50). Codex text still has
+read access; Claude turn and USD limits do not apply to Codex. A call that needs tools, a sandbox
+beyond read-only or other limits uses a roster entry or a bound agent, or spells them at the call
+site. Workflow `defaults` (per-harness model and effort, and limits) apply to every call; replacing
+Claude `tools` re-infers `allowedTools` unless supplied explicitly. `workflow validate FILE --json`
+lists the resolved `workflow.capabilities` without running the body, compactly (each fact once,
+harness option schemas omitted); `--harness-schemas` prints the complete document, and
+`requiredGrants` there is empty unless `requireGrants` is on. Unknown tools and native config
+controls are conservatively classified as exec access. Configuration loading defaults to restricted
+mode; [harness isolation](harness-isolation.md) explains inherited roles, environment edits and
+provider boundaries.
 
 ### requireGrants: launch grants
 
@@ -230,17 +210,29 @@ needs a launch grant: `--grant Fixer` (the entry's name), `--grant write`, `--gr
 write), or `--grant all`. A write or exec entry is listed in `requiredGrants` and preflights before
 effects, even when no branch uses it; an entry's access is its pinned harness's alone. Grants
 persist on resume. Named grants pin the entry's capability declarations and its harness, and must be
-renewed if those change. Elevated raw call-site controls need class/all grants, and selecting the
-built-in `edit` profile directly needs a grant before that call. Without the layer, `--grant` is
-still validated and saved, so a later `--require-grants` resume honours it.
+renewed if those change. Elevated raw call-site controls need class/all grants. Without the layer,
+`--grant` is still validated and saved, so a later `--require-grants` resume honours it.
+
+### Strict call sites
+
+`strictProfiles` is opt-in (default `false`). Under `true`, raw capability controls (tools,
+permissions, MCP, native config and agents, dirs, escape args, environment, and
+`isolation: 'inherit'`) are rejected at raw call sites and in `bind`, by type and by
+`workflow validate`; declare them on a roster entry. Roster entries cannot declare `addDirRoots`, so
+call-site `addDirs` are refused on raw and roster calls alike (ADRs 0054 and 0062 record the
+historical rooted form). Explicit `defineWorkflow` type arguments are all-or-nothing: with a shorter
+prefix such as `defineWorkflow<Input, Output>`, the rest take the permissive, childless defaults and
+leave `roster` and `defaults` uninferred; drop the type arguments (preferred) or spell all seven.
+
+### Limit overrides and diagnostics
 
 Raise execution limits without source edits using
 `--resume --run-id ID --profile Reviewer.maxTurns=60` or `--profile '*.timeoutMs=1800000'`;
-`--profile` names a roster entry as well as a profile. Override fields are maxTurns, maxBudgetUsd,
-timeoutMs and idleTimeoutMs. Rules persist; `--policy-reset` clears profile and step rules. Matching
-step `--policy` rules win. Embedders use `profileOverrides` and `grants` in `RunOptions`. Permission
-denials are warnings unless `onPermissionDenied: 'fail'` makes them permission-kind failures while
-retaining usage.
+`--profile` names a roster entry or `*` (every role, raw calls included). Override fields are
+maxTurns, maxBudgetUsd, timeoutMs and idleTimeoutMs. Rules persist; `--policy-reset` clears override
+and step rules. Matching step `--policy` rules win. Embedders use `profileOverrides` and `grants` in
+`RunOptions`. Permission denials are warnings unless `onPermissionDenied: 'fail'` makes them
+permission-kind failures while retaining usage.
 
 `idleTimeoutMs` (off by default; set on `defaults`, a roster entry, a call, `--profile` or an agent
 `--policy` rule) ends an attempt whose CLI writes no stdout/stderr for that long, with kind
@@ -249,8 +241,8 @@ resume as the error suggests (`--profile Name.idleTimeoutMs=N`). Size it above t
 tool run or reasoning stretch: a too-small deadline fails the same way on every retry, including
 `'transient'` ones. Each attempt counts its tool calls in `diagnostics.toolUses` (Claude `tool_use`
 blocks without the `StructuredOutput` carrier, Codex command/file/MCP/web-search items). When the
-entry's or profile's `expectsToolUse` is true (default: any Claude tool or a Codex sandbox beyond
-read-only) and a completed attempt used none, the step gets a warning
+entry's `expectsToolUse` is true (default: any Claude tool or a Codex sandbox beyond read-only) and
+a completed attempt used none, the step gets a warning
 `no-tool-use: Profile <name> expects tool use, ...`, shown on `agent.finished` and in `inspect`; it
 never fails the call. Custom adapters opt in by passing `idleTimeoutMs` to `runProcess` and
 reporting `toolUses`.
@@ -258,12 +250,12 @@ reporting `toolUses`.
 ## Replay, retry, and usage
 
 Prompts, schemas, resolved models/effort, cwd, and capabilities must match completed effects. Entry
-and profile names, execution limits, retry policy, and run concurrency stay outside identity.
-`attemptHistory` records resolved limits, provenance, requested model/effort (or inherited), timing,
-and outcome. Model/effort policy replacements require `--allow-model-override` and affect unfinished
-attempts only. Source edits require [acceptance or a fork](durability.md#choose-a-recovery-path).
-Default retry is one attempt; an explicit `retry.on` filters error categories. Earlier attempts may
-already have mutated files. A saved `settled-failed` outcome replays without retrying.
+names, execution limits, retry policy, and run concurrency stay outside identity. `attemptHistory`
+records resolved limits, provenance, requested model/effort (or inherited), timing, and outcome.
+Model/effort policy replacements require `--allow-model-override` and affect unfinished attempts
+only. Source edits require [acceptance or a fork](durability.md#choose-a-recovery-path). Default
+retry is one attempt; an explicit `retry.on` filters error categories. Earlier attempts may already
+have mutated files. A saved `settled-failed` outcome replays without retrying.
 
 Each native effect creates a fresh session. Its `sessionId` is diagnostic, not a workflow resume
 token. Pass earlier answers explicitly in later prompts. `HarnessRequest.call` supplies `runId`,
@@ -307,8 +299,8 @@ per-call retries or settled error handling cannot bypass a latched run gate.
 A child has its own roster: nothing is compared to the parent's entries, and `ctx.workflow`'s
 `profiles` option is accepted and ignored; the parent's `--profile` limit rules still match by name.
 Parent-child ceilings apply only under `requireGrants`: inline child roles map to parent roles of
-the same name (or the `profiles` option maps them explicitly), and missing or insufficient grants
-fail before child effects. Child tool exposure cannot grow; mapped parent model and effort defaults
-and limit overrides pass down, and limits are bounded by the parent. A parent
+the same name (or the `ctx.workflow` `options.profiles` remap maps them explicitly), and missing or
+insufficient grants fail before child effects. Child tool exposure cannot grow; mapped parent model
+and effort defaults and limit overrides pass down, and limits are bounded by the parent. A parent
 `onPermissionDenied: 'fail'` passes down too; a child cannot weaken it to `warn`. Root concurrency
 and budgets span every frame. See [child workflows](child-workflows.md).

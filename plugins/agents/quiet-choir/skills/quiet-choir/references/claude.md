@@ -4,8 +4,8 @@ These are quiet-choir's `ClaudeOptions`, not the full Claude Code CLI surface or
 workflow API. Any agent host can use `ctx.claude`. This plugin does not install Claude Code;
 `CliHarness` runs the first `claude` on PATH unless an embedding caller overrides the binary.
 
-Read [agent calls](agent-calls.md) for result methods, shared options/defaults, profiles, grants,
-usage, retries, identity, and process recovery.
+Read [agent calls](agent-calls.md) for result methods, shared options/defaults, grants, usage,
+retries, identity, and process recovery.
 
 ## Claude controls
 
@@ -17,11 +17,11 @@ usage, retries, identity, and process recovery.
 | `agent`, `agents`                    | Native agent name and definitions with required description/prompt          |
 | `mcpServers`, `strictMcpConfig`      | Server-name mapping and exclusive explicit MCP configuration                |
 | `settings`                           | JSON native settings; typed model/agent/permission/MCP aliases are rejected |
-| `onPermissionDenied`                 | `warn` (default) or `fail`; per-call selection overrides the profile        |
+| `onPermissionDenied`                 | `warn` (default) or `fail`; per-call selection overrides the entry          |
 | `fallbackModel`                      | Model string or nonempty array, passed as a comma-separated chain           |
 
 Agents, MCP and settings also use 0600 temporary files, removed in finally. Capability controls
-belong in profiles under `strictProfiles: true` (opt-in); native
+belong on roster entries under `strictProfiles: true` (opt-in); native
 agent/config/MCP/settings/escape/env controls are conservatively classified as exec access, which
 needs a grant under `requireGrants`. Role prompts and effort may be supplied per call. Each attempt
 records requested model/effort or `"inherited"`. All these semantic values, including fallback
@@ -35,20 +35,19 @@ private attempt transcripts by default. The requested UUID is derived from the s
 ID and attempt; the observed ID is saved on first sight. Pass earlier output explicitly in later
 prompts. See [streaming and attempt evidence](agent-streaming.md).
 
-Declare roles on `defineWorkflow` and choose them per call:
+Declare roles as roster entries and call them by name:
 
-<!-- skills-check: fragment; reason: Definition fields and workflow body shown separately. -->
+<!-- skills-check: fragment; reason: Roster module and workflow body shown separately. -->
 
 ```ts
-// Definition fields, alongside name/version/input/output/run:
-profiles: {
-  scout: { extends: 'readonly', maxTurns: 30, description: 'Reads source' },
-  fixer: { extends: 'edit', onPermissionDenied: 'fail' },
-},
+// Roster module (defineRoster, std from 'quiet-choir/std'):
+const roster = defineRoster({
+  Scout: { ...std.claude.ReadOnly, maxTurns: 30, description: 'Reads source' },
+  Fixer: { ...std.claude.Edit, onPermissionDenied: 'fail' },
+});
 
-// Inside run:
-const result = await ctx.claude.object('review', {
-  profile: 'scout',
+// Inside run of a workflow that lists this roster:
+const result = await ctx.roster.Scout.object('review', {
   prompt: 'Read src/index.ts and summarize the public API.',
   schema: z.object({ summary: z.string() }),
 });

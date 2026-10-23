@@ -62,8 +62,8 @@ resume a failed or stale run, resume with `--kill-orphans` after `run.orphans`, 
 `--accept-code-change` or fork after `run.incompatible`, answer then resume a suspension. A failed
 run's entries follow its saved `recoveryCause`, as its `recoveryHint` does: a grant failure (only
 under `requireGrants`, which the run keeps, so the entry does not repeat `--require-grants`) gets
-`execute --resume --run-id ID --grant <profile>` (`workflow resume` takes no `--grant`; it is
-`--grant <access>` when call-site capability overrides make profile grants ineffective), a replay
+`execute --resume --run-id ID --grant <entry>` (`workflow resume` takes no `--grant`; it is
+`--grant <access>` when call-site capability overrides make entry grants ineffective), a replay
 divergence a fork, a settled map change a fork (after a `--accept-code-change` resume when only the
 mapper changed), and a run-budget stop `resume` with the cap's flag and `<LIMIT>`; a failed run that
 recorded no step or map gets no entry. Substitute `<ANSWER_JSON>`, `<NEW_RUN_ID>`, `<ENTRYPOINT>`,

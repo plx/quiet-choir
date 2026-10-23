@@ -11,8 +11,8 @@ Configuration mode and Git checkout selection are separate: `isolation` is only 
 mode (`'restricted' | 'inherit'`), and `worktree` is the only checkout selector. `worktree: true`
 requests a fresh checkout per attempt, `worktree: { base }` pins another ref or commit for it, and a
 shared `ctx.worktree` handle serializes the call on that checkout. Checkout selection keeps the
-configuration mode from the selected roster entry; for example, a trusted inherited role can also use
-`worktree: true`. See [worktree isolation](worktrees.md).
+configuration mode from the selected roster entry; for example, a trusted inherited role can also
+use `worktree: true`. See [worktree isolation](worktrees.md).
 
 ## Native boundary
 
@@ -36,13 +36,12 @@ worktree snapshotting runs outside the agent and does not require the agent to c
 
 `inherit` is an explicit trust decision. `cwd` selects project `.claude`/`.codex` inputs, and an
 inherit call also loads `.claude/skills` skills and `.claude/commands` commands from its `addDirs`
-directories; those are not
-detected in `projectInstructions`. Headless Claude skips the workspace trust dialog and can execute
-project hooks in never-trusted directories. Do not point inherited calls at untrusted checkouts.
-`tools: []` alone does not suppress inherited MCP or hooks. Custom providers normally stored in
-`config.toml` need explicit `config` or an inherited role. `harnessProfile` selects a native profile
-from the same skipped `config.toml`, so restricted mode rejects it; select `inherit` or configure
-the equivalent settings through `config`.
+directories; those are not detected in `projectInstructions`. Headless Claude skips the workspace
+trust dialog and can execute project hooks in never-trusted directories. Do not point inherited
+calls at untrusted checkouts. `tools: []` alone does not suppress inherited MCP or hooks. Custom
+providers normally stored in `config.toml` need explicit `config` or an inherited role.
+`harnessProfile` selects a native profile from the same skipped `config.toml`, so restricted mode
+rejects it; select `inherit` or configure the equivalent settings through `config`.
 
 Codex instruction boundary. Unlike restricted Claude, restricted Codex still loads instruction
 files. `--ignore-user-config` skips `config.toml` and `--ignore-rules` skips execpolicy rules, but
@@ -95,8 +94,8 @@ files (not `CLAUDE.local.md`, skills or commands). A host-exported value is remo
 `strictProfiles: true`, is classified as exec access (a grant under `requireGrants`) and enters the
 step fingerprint. Files loaded that way are not detected or recorded.
 
-Instruction-free Codex calls. Set `instructions: 'none'` on a Codex call, in a roster entry's `codex`
-options or in `defaults.codex` to run without these files. The adapter adds
+Instruction-free Codex calls. Set `instructions: 'none'` on a Codex call, in a roster entry's
+`codex` options or in `defaults.codex` to run without these files. The adapter adds
 `--config project_doc_max_bytes=0`, which stops project `AGENTS.md`/`AGENTS.override.md` loading,
 and runs the child against a private temporary `CODEX_HOME` (mode 0700) that holds only a 0600 copy
 of the real `auth.json`. Nothing else is copied: no `AGENTS.md`, skills, plugins, memories or

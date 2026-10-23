@@ -216,7 +216,7 @@ Use blocked for open questions/failures, concerns for non-blocking notes, pass w
 }
 
 export default defineWorkflow({
-  strictProfiles: false, // Historical explicit tool input; write/exec calls still need grants.
+  strictProfiles: false, // Raw calls on the historical $claude input; --require-grants needs class grants.
   name: meta.name,
   version: 'ultracode-durable-questions-01',
   input,
