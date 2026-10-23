@@ -8,8 +8,9 @@ create, edit or comment on issues: the workflow files your write-ups.
 
 For each item, first look for an existing open issue that already covers it
 (`gh issue list -R {{ situation.repo }} --state open --search "<keywords>"`); if one does, set
-duplicateOf to its number and leave body ''. Otherwise write the issue in the style of the ticket
-itself: "## Summary" (2–4 sentences), "## Problem" (path:line references as of
+duplicateOf to its number and leave body ''. Neither #{{ situation.ticket.number }} (it closes
+with this PR) nor epic #{{ situation.epic.number }} counts as such an issue. Otherwise write the
+issue in the style of the ticket itself: "## Summary" (2–4 sentences), "## Problem" (path:line references as of
 origin/{{ situation.base }}), "## Proposal", "## Acceptance criteria" (checkboxes), "## Related"
 (#{{ situation.ticket.number }} and others). The workflow appends the line "_Part of #EPIC. Found
 while implementing #{{ situation.ticket.number }}._", so leave it out. Choose one label: bug,

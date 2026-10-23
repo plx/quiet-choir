@@ -372,7 +372,9 @@ export type FoundIssue = z.output<typeof FoundIssue>;
  * earlier run's issue by title before filing, as the native helper did: first among `subIssues`
  * (the parent's open sub-issues, already read), then by a search read, then, since the search index
  * lags a just-filed issue, among the 100 newest open issues listed without a search. The quoted
- * phrase keeps words such as "fix:" from being read as search qualifiers.
+ * phrase keeps words such as "fix:" from being read as search qualifiers. An `exclude`d issue never
+ * matches: a slice or follow-up titled like the ticket it comes from is a new issue, not that
+ * ticket (#696 was once recorded as its own slice and then closed as split).
  */
 export async function findOpenIssueByTitle(
   ctx: WorkflowContext,
@@ -381,10 +383,12 @@ export async function findOpenIssueByTitle(
     readonly repo: string;
     readonly title: string;
     readonly subIssues?: readonly FoundIssue[];
+    readonly exclude?: readonly number[];
   },
 ): Promise<FoundIssue | null> {
+  const exclude = new Set(input.exclude ?? []);
   const exact = (issues: readonly FoundIssue[]) =>
-    issues.find((issue) => issue.title === input.title) ?? null;
+    issues.find((issue) => issue.title === input.title && !exclude.has(issue.number)) ?? null;
   const known = exact(input.subIssues ?? []);
   if (known !== null) return known;
   const list = (stepId: string, search: readonly string[]) =>

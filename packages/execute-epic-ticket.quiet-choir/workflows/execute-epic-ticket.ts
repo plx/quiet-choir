@@ -525,6 +525,7 @@ export default defineWorkflow({
             repo,
             title: w.title,
             subIssues,
+            exclude: [n, E],
           });
           if (found !== null) {
             // An earlier run's slice, perhaps filed before its parent link: only a sub-issue of
@@ -818,6 +819,15 @@ export default defineWorkflow({
             );
             continue;
           }
+          if (draft.duplicateOf === n || draft.duplicateOf === E) {
+            // The ticket closes with its PR and the epic is not a work item, so neither can hold it.
+            filed.push(
+              failed(
+                `claimed duplicate #${String(draft.duplicateOf)} is the ${draft.duplicateOf === n ? 'ticket itself' : 'epic'}`,
+              ),
+            );
+            continue;
+          }
           if (draft.duplicateOf > 0) {
             // The scribe's match is a claim: it settles the key only if that issue is open.
             const seen = await issueState(ctx, id('followups', key, 'duplicate'), {
@@ -842,6 +852,7 @@ export default defineWorkflow({
           const found = await findOpenIssueByTitle(ctx, id('followups', key, 'find'), {
             repo,
             title: draft.title,
+            exclude: [n, E],
             subIssues: await (subIssues ??= openSubIssues(ctx, id('followups', 'sub-issues'), {
               repo,
               parent,
