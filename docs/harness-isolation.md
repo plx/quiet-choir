@@ -94,22 +94,23 @@ files (not `CLAUDE.local.md`, skills or commands). A host-exported value is remo
 `strictProfiles: true`, is classified as exec access (a grant under `requireGrants`) and enters the
 step fingerprint. Files loaded that way are not detected or recorded.
 
-Instruction-free Codex calls. Set `instructions: 'none'` on a Codex call, in a roster entry's
-`codex` options or in `defaults.codex` to run without these files. The adapter adds
-`--config project_doc_max_bytes=0`, which stops project `AGENTS.md`/`AGENTS.override.md` loading,
-and runs the child against a private temporary `CODEX_HOME` (mode 0700) that holds only a 0600 copy
-of the real `auth.json`. Nothing else is copied: no `AGENTS.md`, skills, plugins, memories or
-`config.toml`. Skill roots outside `CODEX_HOME` are not affected: Codex 0.160.0 still loads the
-skills under `$HOME/.agents/skills`, the project's `.agents/skills` from the Git root to `cwd` and
-`<cwd>/.codex/skills` in a `'none'` call. The directory is removed after success, failure and
-cancellation. The real home is the one the child would otherwise use, so `env.set.CODEX_HOME` still
-selects where authentication comes from. When Codex refreshes its token during the call, the
-refreshed `auth.json` is written back to the real home atomically (temporary file in the same
-directory, fsync, rename, original mode) under a lock file in `os.tmpdir()`, and only while the real
-file still equals the copy. If another process changed it meanwhile, the file with the later
-`last_refresh` wins and the call records a warning that names the path, never the contents. A
-missing `auth.json` (API-key or `env_key` providers) gives an empty private home and nothing is
-written back; a torn copy left by a killed child is never written back.
+Instruction-free Codex calls. Set `instructions: 'none'` on a Codex call, on a Codex roster entry
+(`{ harness: 'codex', instructions: 'none', ... }`) or in `defaults.codex` to run without these
+files. The adapter adds `--config project_doc_max_bytes=0`, which stops project
+`AGENTS.md`/`AGENTS.override.md` loading, and runs the child against a private temporary
+`CODEX_HOME` (mode 0700) that holds only a 0600 copy of the real `auth.json`. Nothing else is
+copied: no `AGENTS.md`, skills, plugins, memories or `config.toml`. Skill roots outside `CODEX_HOME`
+are not affected: Codex 0.160.0 still loads the skills under `$HOME/.agents/skills`, the project's
+`.agents/skills` from the Git root to `cwd` and `<cwd>/.codex/skills` in a `'none'` call. The
+directory is removed after success, failure and cancellation. The real home is the one the child
+would otherwise use, so `env.set.CODEX_HOME` still selects where authentication comes from. When
+Codex refreshes its token during the call, the refreshed `auth.json` is written back to the real
+home atomically (temporary file in the same directory, fsync, rename, original mode) under a lock
+file in `os.tmpdir()`, and only while the real file still equals the copy. If another process
+changed it meanwhile, the file with the later `last_refresh` wins and the call records a warning
+that names the path, never the contents. A missing `auth.json` (API-key or `env_key` providers)
+gives an empty private home and nothing is written back; a torn copy left by a killed child is never
+written back.
 
 The trade-off: calls lose guidance users may expect from their own or the project's `AGENTS.md` and
 their `CODEX_HOME` skills, but `'none'` removes only the `AGENTS` files and `CODEX_HOME` skills. It

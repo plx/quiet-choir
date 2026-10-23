@@ -94,18 +94,19 @@ files (not `CLAUDE.local.md`, skills or commands). A host-exported value is remo
 `strictProfiles: true`, is classified as exec access (a grant under `requireGrants`) and enters the
 step fingerprint. Files loaded that way are not detected or recorded.
 
-Set Codex `instructions: 'none'` (on a call, a roster entry's `codex` options or `defaults.codex`)
-to run without these files. The adapter adds `--config project_doc_max_bytes=0`, which stops project
-`AGENTS.md` loading, and runs the child against a private temporary `CODEX_HOME` holding only a 0600
-copy of the real `auth.json`, removed after every outcome. A token refreshed during the call is
-written back to the real `auth.json` atomically under a lock, and only if the real file is
-unchanged; when another process changed it meanwhile, the later `last_refresh` wins and the call
-warns (paths, never contents). Skill roots outside `CODEX_HOME` are not affected: Codex 0.160.0
-still loads `$HOME/.agents/skills`, the project's `.agents/skills` and `<cwd>/.codex/skills`, so
-results can still depend on who runs the workflow. The trade-off: calls lose guidance users may
-expect from their own or the project's `AGENTS.md` and their `CODEX_HOME` skills. Supply
-instructions deliberately through the prompt or explicit `config` such as `developer_instructions`.
-`'none'` requires restricted isolation and is rejected with `inherit`, whose `config.toml` can carry
+Set Codex `instructions: 'none'` (on a Codex call, on a Codex roster entry
+`{ harness: 'codex', instructions: 'none', ... }` or in `defaults.codex`) to run without these
+files. The adapter adds `--config project_doc_max_bytes=0`, which stops project `AGENTS.md` loading,
+and runs the child against a private temporary `CODEX_HOME` holding only a 0600 copy of the real
+`auth.json`, removed after every outcome. A token refreshed during the call is written back to the
+real `auth.json` atomically under a lock, and only if the real file is unchanged; when another
+process changed it meanwhile, the later `last_refresh` wins and the call warns (paths, never
+contents). Skill roots outside `CODEX_HOME` are not affected: Codex 0.160.0 still loads
+`$HOME/.agents/skills`, the project's `.agents/skills` and `<cwd>/.codex/skills`, so results can
+still depend on who runs the workflow. The trade-off: calls lose guidance users may expect from
+their own or the project's `AGENTS.md` and their `CODEX_HOME` skills. Supply instructions
+deliberately through the prompt or explicit `config` such as `developer_instructions`. `'none'`
+requires restricted isolation and is rejected with `inherit`, whose `config.toml` can carry
 instructions of its own; it also owns the `project_doc_max_bytes` config key. Custom providers still
 need explicit `config`. It grants nothing, so call sites may set it under `strictProfiles`. `'none'`
 enters step identity; `'native'` (the default) and unset fingerprint identically. Steps record
