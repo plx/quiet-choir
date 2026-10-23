@@ -222,9 +222,10 @@ try {
     usageDocument.error.message,
   );
 
-  // Grants are opt-in (#577): without --require-grants the edit role needs no grant. Under it, a
-  // grant failure's next entry carries --grant and the recorded fixture selection (#284); run as
-  // emitted, it completes the run, reusing the recorded step, without repeating --require-grants.
+  // Grants are opt-in (#577): without --require-grants a call-site capability needs no grant. Under
+  // it, the call needs a grant of its access class, and the grant failure's next entry carries
+  // --grant write and the recorded fixture selection (#284); run as emitted, it completes the run,
+  // reusing the recorded step, without repeating --require-grants.
   const grantFixture = join(project, 'grant.fixture.json');
   writeFileSync(
     grantFixture,
@@ -235,9 +236,9 @@ try {
     grantFile,
     `import { defineWorkflow, z } from ${JSON.stringify(api)};
 import { appendFileSync } from 'node:fs';
-export default defineWorkflow({name:'grant',version:'1',input:z.object({}),output:z.string(),async run(ctx){
+export default defineWorkflow({name:'grant',version:'1',strictProfiles:false,input:z.object({}),output:z.string(),async run(ctx){
   await ctx.step('prepare',{input:null,schema:z.null(),run:()=>{appendFileSync(${JSON.stringify(join(root, 'prepared'))},'prepare\\n');return null;}});
-  return (await ctx.claude.text('edit',{prompt:'x',profile:'edit'})).output;
+  return (await ctx.claude.text('edit',{prompt:'x',tools:['Edit']})).output;
 }});`,
   );
   const open = documentOf(
@@ -290,7 +291,7 @@ export default defineWorkflow({name:'grant',version:'1',input:z.object({}),outpu
   assert.equal(documentOf(forkGrant('grant-fork'), 0).status, 'completed');
   assert.equal(recorded('grant-fork').requireGrants, undefined);
   const forkDenied = documentOf(forkGrant('grant-fork-strict', '--require-grants'), 1);
-  assert.match(forkDenied.error.message, /--grant edit/);
+  assert.match(forkDenied.error.message, /--grant write/);
   assert.equal(recorded('grant-fork-strict').requireGrants, true);
   const denied = documentOf(
     launch(project, [
@@ -318,7 +319,7 @@ export default defineWorkflow({name:'grant',version:'1',input:z.object({}),outpu
     '--state-dir',
     stateDir,
     '--grant',
-    'edit',
+    'write',
     '--harness',
     `fixture:${grantFixture}`,
   ]);
@@ -328,51 +329,6 @@ export default defineWorkflow({name:'grant',version:'1',input:z.object({}),outpu
   assert.equal(recorded('grant').requireGrants, true);
   // One prepare for grant-open and one for grant; the forks reused it and the resume replayed it.
   assert.equal(readFileSync(join(root, 'prepared'), 'utf8'), 'prepare\nprepare\n');
-
-  // Call-site capability overrides ignore profile grants, so that grant failure's entry names the
-  // access class instead of the profile, and it completes the run as emitted.
-  const rawFile = join(project, 'raw-grant.workflow.mts');
-  writeFileSync(
-    rawFile,
-    `import { defineWorkflow, z } from ${JSON.stringify(api)};
-export default defineWorkflow({name:'raw-grant',version:'1',strictProfiles:false,input:z.object({}),output:z.string(),async run(ctx){
-  await ctx.step('prepare',{input:null,schema:z.null(),run:()=>null});
-  return (await ctx.claude.text('edit',{prompt:'x',tools:['Edit']})).output;
-}});`,
-  );
-  const rawDenied = documentOf(
-    launch(project, [
-      'execute',
-      rawFile,
-      '--run-id',
-      'raw-grant',
-      '--state-dir',
-      stateDir,
-      '--harness',
-      `fixture:${grantFixture}`,
-      '--require-grants',
-      '--json',
-    ]),
-    1,
-  );
-  assert.equal(rawDenied.error.code, 'workflow.failed');
-  assert.equal(rawDenied.next.length, 1);
-  assert.deepEqual(rawDenied.next[0].argv.slice(2), [
-    'workflow',
-    'execute',
-    '--resume',
-    '--run-id',
-    'raw-grant',
-    '--state-dir',
-    stateDir,
-    '--grant',
-    'write',
-    '--harness',
-    `fixture:${grantFixture}`,
-  ]);
-  const rawGranted = documentOf(emitted([...rawDenied.next[0].argv, '--json']), 0);
-  assert.equal(rawGranted.status, 'completed');
-  assert.equal(rawGranted.output, 'edited');
 
   // A moved stored entrypoint is run.incompatible (exit 3), with a runnable fork entry.
   const moved = join(project, 'moved.workflow.mts');
