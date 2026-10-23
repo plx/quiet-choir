@@ -1,12 +1,13 @@
 // Rosters (ADR 0063 sections 3-4, #579): defineRoster entries compile to declared roles pinned to
 // one harness, and ctx.roster.Name is that harness's client bound to the entry through the internal
-// role channel, so its calls resolve, fingerprint and record as a `profile: 'Name'` call does.
+// role channel, so its calls resolve, fingerprint and record as a `profile: 'Name'` call did before
+// the public profile option was removed (#726).
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect } from 'vitest';
 import {
-  capabilityManifest,
+  ConfigurationError,
   defineHarness,
   defineRoster,
   defineWorkflow,
@@ -16,14 +17,17 @@ import {
   type AgentRequest,
   type HarnessAdapter,
   type StepRecord,
+  type WorkflowContext,
 } from '../src/index.js';
 import {
   capabilityManifestSchema,
   profileGrantDigest,
   requireGrant,
   resolveCapabilities,
+  capabilityManifest,
 } from '../src/workflow/runtime/profiles.js';
 import { bindRole } from '../src/workflow/runtime/bound-agent.js';
+import { describeWorkflow } from '../src/workflow/runtime/definition.js';
 import { compileRoster } from '../src/workflow/runtime/roster.js';
 import { it } from './setup/state-dir.js';
 
@@ -210,20 +214,21 @@ describe('definition errors', () => {
       ...extra,
     } as never);
 
-  it('rejects an entry named like a declared profile, at manifest and at run', async ({
+  it('refuses profiles and defaults.profile next to a roster, at manifest and at run (#726)', async ({
     stateDir,
     runs,
   }) => {
-    const definition = workflow({
-      roster,
-      profiles: { Reviewer: { extends: 'readonly' } },
-    });
-    expect(() => capabilityManifest(definition)).toThrow(
-      'Roster entry Reviewer has the same name as a declared profile.',
-    );
-    await expect(runs.run(definition, { stateDir, runId: 'collide', input: null })).rejects.toThrow(
-      'Roster entry Reviewer has the same name as a declared profile.',
-    );
+    for (const [extra, message] of [
+      [{ profiles: { Reviewer: { claude: { tools: ['Read'] } } } }, 'declares profiles'],
+      [{ defaults: { profile: 'Reviewer' } }, 'sets defaults.profile'],
+    ] as const) {
+      const definition = workflow({ roster, ...extra });
+      expect(() => capabilityManifest(definition)).toThrow(ConfigurationError);
+      expect(() => capabilityManifest(definition)).toThrow(`Workflow roster-errors ${message}`);
+      await expect(
+        runs.run(definition, { stateDir, runId: 'collide', input: null }),
+      ).rejects.toThrow(`Workflow roster-errors ${message}`);
+    }
   });
 
   it('rejects a preset or reserved name even without defineRoster', () => {
@@ -231,15 +236,6 @@ describe('definition errors', () => {
       expect(() =>
         capabilityManifest(workflow({ roster: { [name]: { harness: 'claude' } } })),
       ).toThrow(`Roster entry name ${name} is reserved`);
-  });
-
-  it('rejects defaults.profile naming an entry, and a profile extending one', () => {
-    expect(() =>
-      capabilityManifest(workflow({ roster, defaults: { profile: 'Reviewer' } })),
-    ).toThrow('defaults.profile cannot name roster entry Reviewer');
-    expect(() =>
-      capabilityManifest(workflow({ roster, profiles: { wider: { extends: 'Reviewer' } } })),
-    ).toThrow('Profile wider cannot extend roster entry Reviewer');
   });
 
   it('rejects a registered harness the workflow does not declare', () => {
@@ -903,7 +899,7 @@ describe('launch overrides and grants', () => {
         harness: fake.harness,
         grants: ['Mechanic'],
       }),
-    ).rejects.toThrow('Child profile wider-child.Mechanic exceeds parent profile Mechanic');
+    ).rejects.toThrow('Child role wider-child.Mechanic exceeds parent role Mechanic');
   });
 
   it('keeps defaults off unpinned blocks and holds a child to the parent entry pin', async ({
@@ -948,7 +944,7 @@ describe('launch overrides and grants', () => {
         grants: ['text'],
       }),
     ).rejects.toThrow(
-      'Child profile writer-child.Reviewer exceeds parent profile Reviewer: harness (codex; the parent role is pinned to claude)',
+      'Child role writer-child.Reviewer exceeds parent role Reviewer: harness (codex; the parent role is pinned to claude)',
     );
     expect(fake.requests).toEqual([]);
   });
@@ -976,7 +972,7 @@ describe('launch overrides and grants', () => {
     });
     await expect(
       runs.run(parent, { stateDir, runId: 'editor', input: null, harness: fake.harness }),
-    ).rejects.toThrow('Child profile editor-child.Reviewer exceeds parent profile Reviewer');
+    ).rejects.toThrow('Child role editor-child.Reviewer exceeds parent role Reviewer');
     // A Codex entry under an unpinned parent role need not repeat Claude-only restrictions.
     const restricted = { claude: { disallowedTools: ['Bash'], strictMcpConfig: true } } as const;
     const codexChild = defineWorkflow({
@@ -1003,5 +999,169 @@ describe('launch overrides and grants', () => {
       harness: fake.harness,
     });
     expect(result.output).toBe('ok');
+  });
+});
+
+/** The first ConfigurationError on an error's cause chain. */
+function configurationCause(error: unknown): unknown {
+  let cause = error;
+  while (cause instanceof Error && !(cause instanceof ConfigurationError)) cause = cause.cause;
+  return cause;
+}
+
+/** Assert that `error` carries a ConfigurationError naming `text` and pointing at rosters. */
+function expectRosterRefusal(error: unknown, text: string): void {
+  const cause = configurationCause(error);
+  expect(cause).toBeInstanceOf(ConfigurationError);
+  const message = (cause as Error).message;
+  expect(message).toContain(text);
+  expect(message).toContain('defineRoster');
+  expect(message).toContain('roster');
+}
+
+describe('removed profile surface (#726)', () => {
+  // The definitions are cast past the types, which no longer admit the removed spellings.
+  const removed = [
+    {
+      label: 'profiles',
+      extra: { profiles: { scout: { claude: { tools: ['Read'] } } } },
+      text: 'declares profiles, which were removed (#726)',
+    },
+    {
+      label: 'defaults.profile',
+      extra: { defaults: { profile: 'text' } },
+      text: 'sets defaults.profile, which was removed (#726)',
+    },
+  ] as const;
+
+  it.for(removed)(
+    'refuses $label before any harness call or record, in describe and as an inline child',
+    async ({ extra, text }, { stateDir, runs }) => {
+      const fake = capture();
+      const definition = defineWorkflow({
+        ...base,
+        name: 'removed',
+        run: (ctx: WorkflowContext) => ctx.claude.text('ask', { prompt }),
+        ...extra,
+      } as never);
+      const options = { stateDir, input: null, harness: fake.harness };
+      const error: unknown = await runs
+        .run(definition, { ...options, runId: 'root' })
+        .catch((cause: unknown) => cause);
+      expect(error).toBeInstanceOf(ConfigurationError);
+      expectRosterRefusal(error, `Workflow removed ${text}`);
+      await expect(readRun({ stateDir, runId: 'root' })).rejects.toThrow();
+      expect(() => describeWorkflow(definition)).toThrow(ConfigurationError);
+      expect(() => describeWorkflow(definition)).toThrow(`Workflow removed ${text}`);
+      // An undeclared inline child is refused when the parent dispatches it, before its body.
+      const parent = defineWorkflow({
+        ...base,
+        name: 'parent',
+        run: (ctx) => ctx.workflow('child', definition, null),
+      });
+      expectRosterRefusal(
+        await runs.run(parent, { ...options, runId: 'child' }).catch((cause: unknown) => cause),
+        `Workflow removed ${text}`,
+      );
+      // A declared child is refused as the parent's tree is validated.
+      expect(() => describeWorkflow({ ...parent, children: [definition] })).toThrow(
+        `Workflow removed ${text}`,
+      );
+      expect(fake.requests).toEqual([]);
+    },
+  );
+
+  it.for(['claude', 'codex', 'third'] as const)(
+    'refuses a raw profile call option on %s without invoking the adapter, also in a settled map',
+    async (harness, { stateDir, runs }) => {
+      const fake = capture();
+      const call = (ctx: {
+        readonly claude: { text: (id: string, options: never) => Promise<unknown> };
+        readonly codex: { text: (id: string, options: never) => Promise<unknown> };
+        agent: (name: 'third') => { text: (id: string, options: never) => Promise<unknown> };
+      }) => {
+        const client = harness === 'third' ? ctx.agent('third') : ctx[harness];
+        return client.text('raw', { prompt, profile: 'text' } as never);
+      };
+      const options = {
+        stateDir,
+        input: null,
+        harness: fake.harness,
+        adapters: { third: fake.adapter },
+      };
+      const raw = defineWorkflow({
+        ...base,
+        name: 'raw-profile',
+        harnesses: [third],
+        run: (ctx) => call(ctx as never),
+      });
+      expectRosterRefusal(
+        await runs.run(raw, { ...options, runId: 'raw' }).catch((cause: unknown) => cause),
+        'Step "raw": the profile call option was removed (#726)',
+      );
+      const saved = await readRun({ stateDir, runId: 'raw' });
+      expect(saved.status).toBe('failed');
+      expect(saved.steps['raw']).toBeUndefined();
+      // A settled map never journals the refusal as item data: the run still fails.
+      let settled = false;
+      const mapped = defineWorkflow({
+        ...base,
+        name: 'raw-profile-map',
+        harnesses: [third],
+        async run(ctx) {
+          await ctx.map('items', [1], { concurrency: 1, onError: 'return' }, () =>
+            call(ctx as never),
+          );
+          settled = true;
+          return null;
+        },
+      });
+      expectRosterRefusal(
+        await runs.run(mapped, { ...options, runId: 'map' }).catch((cause: unknown) => cause),
+        'the profile call option was removed (#726)',
+      );
+      expect(settled).toBe(false);
+      expect(fake.requests).toEqual([]);
+    },
+  );
+
+  it('refuses profile at bind time, before any call', async ({ stateDir, runs }) => {
+    const fake = capture();
+    let bound = false;
+    const definition = defineWorkflow({
+      ...base,
+      name: 'bind-profile',
+      run(ctx) {
+        ctx.claude.bind({ profile: 'text' } as never);
+        bound = true;
+        return Promise.resolve(null);
+      },
+    });
+    expectRosterRefusal(
+      await runs
+        .run(definition, { stateDir, runId: 'bind', input: null, harness: fake.harness })
+        .catch((cause: unknown) => cause),
+      'bind cannot set profile; it was removed (#726)',
+    );
+    expect(bound).toBe(false);
+    expect(fake.requests).toEqual([]);
+  });
+
+  it('still records a roster call under its entry through the internal role channel', async ({
+    stateDir,
+    runs,
+  }) => {
+    const fake = capture();
+    const definition = defineWorkflow({
+      ...base,
+      name: 'role-channel',
+      harnesses: [third],
+      roster,
+      run: async (ctx) => (await ctx.roster.Clerk.text('clerk', { prompt })).output,
+    });
+    await runs.run(definition, { stateDir, runId: 'channel', input: null, harness: fake.harness });
+    const saved = await readRun({ stateDir, runId: 'channel' });
+    expect(attempt(saved.steps['clerk'])).toMatchObject({ profile: 'Clerk' });
+    expect(fake.requests[0]?.options).not.toHaveProperty('profile');
   });
 });

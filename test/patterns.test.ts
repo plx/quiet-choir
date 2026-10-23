@@ -13,7 +13,6 @@ import {
   FixtureHarness,
   HarnessError,
   NodeProcessRunner,
-  capabilityManifest,
   defineWorkflow,
   parseHarnessFixtures,
   readRun,
@@ -36,6 +35,7 @@ import hunt from '../examples/patterns/loop-until-dry.workflow.js';
 import pipeline from '../examples/patterns/per-item-pipeline.workflow.js';
 import revise from '../examples/patterns/review-revise.workflow.js';
 import * as std from '../src/std/index.js';
+import { capabilityManifest } from '../src/workflow/runtime/profiles.js';
 import helper from '../examples/patterns/reusable-helper.workflow.js';
 import worktrees from '../examples/patterns/worktrees.workflow.js';
 import polling from '../examples/patterns/polling.workflow.js';

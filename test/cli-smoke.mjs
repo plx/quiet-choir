@@ -160,7 +160,8 @@ export default defineWorkflow({
   const goldenDocument = JSON.parse(golden.stdout);
   assert.equal(goldenDocument.workflow.capabilities.defaults, undefined);
   assert.equal(goldenDocument.workflow.entrypoint, undefined);
-  assert.deepEqual(goldenDocument.workflow.profiles, []);
+  // The removed workflow.profiles list (#726) is not printed.
+  assert.equal(goldenDocument.workflow.profiles, undefined);
   const withSchemas = cli('workflow', 'validate', workflow, '--json', '--harness-schemas');
   assert.equal(withSchemas.status, 0, withSchemas.stderr);
   const schemaHarnesses = JSON.parse(withSchemas.stdout).workflow.harnesses;

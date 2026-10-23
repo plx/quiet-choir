@@ -29,7 +29,6 @@ function description(name: string, children: WorkflowDescription[] = []): Workfl
     inputSchema: { type: 'object' },
     outputSchema: { type: 'string' },
     capabilities: {},
-    profiles: {},
     deciders: {},
     prompts: [],
     children,
@@ -86,7 +85,7 @@ const leaf = (name: string, extra: Record<string, unknown> = {}) =>
 
 /** Inverse of the compact view: restores every fact the full description states. */
 function expand(view: CompactWorkflowMetadataView, entrypoint: string | null): unknown {
-  const { capabilities, profiles, children, ...rest } = view;
+  const { capabilities, children, ...rest } = view;
   const { environment: shared, ...manifest } = capabilities;
   const full = Object.fromEntries(
     Object.entries(manifest.profiles).map(([name, profile]) => {
@@ -108,55 +107,55 @@ function expand(view: CompactWorkflowMetadataView, entrypoint: string | null): u
     ...rest,
     entrypoint: 'entrypoint' in view ? view.entrypoint : entrypoint,
     capabilities: restored,
-    profiles: Object.fromEntries(profiles.map((name) => [name, full[name]])),
     children: children.map((child) => expand(child, child.entrypoint ?? null)),
   };
 }
 
-it('drops defaults and per-profile environments for a default-only workflow', () => {
+it('drops defaults and per-role environments for a default-only workflow', () => {
   const full = describeWorkflow(leaf('plain'), '/work/plain.workflow.ts');
   const view = compactWorkflowMetadata(full, '/work/plain.workflow.ts');
   expect(view.capabilities).not.toHaveProperty('defaults');
   expect(view.capabilities.environment).toEqual(
     full.capabilities.profiles[full.capabilities.defaultProfile]?.environment,
   );
-  for (const profile of Object.values(view.capabilities.profiles))
-    expect(profile).not.toHaveProperty('environment');
-  expect(view.profiles).toEqual([]);
+  for (const role of Object.values(view.capabilities.profiles))
+    expect(role).not.toHaveProperty('environment');
+  // The removed workflow.profiles list (#726) is not printed.
+  expect(view).not.toHaveProperty('profiles');
   expect(view).not.toHaveProperty('entrypoint');
 });
 
-it('keeps a profile environment only for the harnesses that differ from the default', () => {
+it('keeps an entry environment only for the harnesses that differ from the default', () => {
   const full = describeWorkflow(
     leaf('envs', {
-      defaults: { profile: 'scout', claude: { env: { set: { SHARED: '1' } } } },
-      profiles: {
-        scout: { extends: 'readonly' },
-        vault: { extends: 'readonly', claude: { env: { set: { PRIVATE: 'x' } } } },
-      },
+      defaults: { claude: { env: { set: { SHARED: '1' } } } },
+      roster: defineRoster({
+        Scout: { harness: 'claude', tools: ['Read'] },
+        Vault: { harness: 'claude', tools: ['Read'], env: { set: { PRIVATE: 'x' } } },
+      }),
     }),
   );
   const view = compactCapabilityManifest(full.capabilities);
-  expect(view.defaultProfile).toBe('scout');
-  expect(view.environment).toEqual(full.capabilities.profiles['scout']?.environment);
-  expect(view.profiles['scout']).not.toHaveProperty('environment');
-  expect(view.profiles['vault']?.environment).toEqual({
-    claude: full.capabilities.profiles['vault']?.environment?.claude,
+  expect(view.defaultProfile).toBe('text');
+  expect(view.environment).toEqual(full.capabilities.profiles['text']?.environment);
+  expect(view.profiles['Scout']).not.toHaveProperty('environment');
+  expect(view.profiles['Vault']?.environment).toEqual({
+    claude: full.capabilities.profiles['Vault']?.environment?.claude,
   });
-  expect(view.profiles['vault']?.environment?.claude?.set).toEqual(['PRIVATE']);
+  expect(view.profiles['Vault']?.environment?.claude?.set).toEqual(['PRIVATE']);
   expect(Object.keys(view.profiles).sort()).toEqual(Object.keys(full.capabilities.profiles).sort());
 });
 
 it('round-trips to the full description at every child depth', () => {
   const grandchild = leaf('grandchild', {
-    profiles: { deep: { extends: 'readonly', codex: { env: { set: { D: '1' } } } } },
+    roster: defineRoster({ Deep: { harness: 'codex', env: { set: { D: '1' } } } }),
   });
   const child = leaf('child', {
     defaults: { claude: { env: { set: { C: '1' } } } },
     children: [grandchild],
   });
   const root = leaf('root', {
-    profiles: { vault: { extends: 'readonly', claude: { env: { set: { R: '1' } } } } },
+    roster: defineRoster({ Vault: { harness: 'claude', env: { set: { R: '1' } } } }),
     children: [child],
   });
   const full = describeWorkflow(root, '/work/root.workflow.ts');
@@ -164,7 +163,10 @@ it('round-trips to the full description at every child depth', () => {
   expect(expand(view, '/work/root.workflow.ts')).toEqual(withoutHarnessOptions(full));
   expect(view.children[0]?.capabilities).not.toHaveProperty('defaults');
   expect(view.children[0]?.children[0]?.capabilities).not.toHaveProperty('defaults');
-  expect(view.children[0]?.children[0]?.profiles).toEqual(['deep']);
+  expect(Object.keys(view.children[0]?.children[0]?.capabilities.profiles ?? {})).toEqual([
+    'text',
+    'Deep',
+  ]);
 });
 
 it('omits only the root entrypoint that equals the document copy', () => {
@@ -180,7 +182,7 @@ it('omits only the root entrypoint that equals the document copy', () => {
   expect(view.children[0]).toHaveProperty('entrypoint');
 });
 
-it('leaves a manifest without a matching default profile unchanged and never mutates input', () => {
+it('leaves a manifest without a matching default role unchanged and never mutates input', () => {
   const full = describeWorkflow(
     leaf('mut', { roster: defineRoster({ vault: { harness: 'claude' } }) }),
     '/work/mut.workflow.ts',

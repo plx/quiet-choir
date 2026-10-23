@@ -5,7 +5,6 @@ import { join, delimiter } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import {
   CliHarness,
-  capabilityManifest,
   defineRoster,
   defineWorkflow,
   readRun,
@@ -17,7 +16,7 @@ import {
 } from '../src/index.js';
 import { testInvocation } from './harness-invocation.js';
 import { childEnvironment } from '../src/harnesses/environment.js';
-import { publicCapabilityManifest } from '../src/workflow/runtime/profiles.js';
+import { capabilityManifest, publicCapabilityManifest } from '../src/workflow/runtime/profiles.js';
 import { validateAgentOptions } from '../src/workflow/runtime/options.js';
 import { legacyAgentIdentity } from '../src/workflow/runtime/legacy-agent.js';
 import type { BuiltinHarnessRequestInput } from '../src/workflow/runtime/model.js';

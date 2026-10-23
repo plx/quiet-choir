@@ -2,7 +2,7 @@ import { resolveStateDir } from '../src/index.js';
 import WorkflowList from '../src/commands/workflow/list.js';
 import { summarizeRun } from '../src/workflow/loader/inspection.js';
 import { workflowFailure } from '../src/workflow/loader/failure.js';
-import { capabilityManifest } from '../src/index.js';
+import { capabilityManifest } from '../src/workflow/runtime/profiles.js';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -223,7 +223,6 @@ describe('workflow lifecycle command adapters', () => {
         phases: [],
         inputSchema: {},
         outputSchema: {},
-        profiles: {},
         deciders: {},
         prompts: [],
         children: [],

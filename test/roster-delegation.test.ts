@@ -1,12 +1,11 @@
-// Child delegation ceilings on roster entries (ADR 0063 sections 4-5, #705/#709): the counterparts
-// of child-profiles.test.ts:23/68/91/151/218, children.test.ts:265/561/1815/1874 and the delegation
-// half of harness-registry.test.ts:232, with an entry name in place of the profile name. Rooted
-// call-site directories were removed in #707, so no addDirRoots case has a roster counterpart; the
-// literal addDirs subset tests below cover entries. defineRoster deep-freezes its entries, so a case
-// that changes a definition between runs builds it from a factory. A roster call takes only the
-// per-call and both-sides keys (ADR 0063 section 1), so the per-call maxTurns of children.test.ts:266
-// becomes a per-call timeoutMs, and the per-call denial override of :562 is refused before inference
-// as a key a call cannot set.
+// Child delegation ceilings on roster entries (ADR 0063 sections 4-5, #705/#709), which replaced
+// the profile cases removed with profiles (#726), plus the delegation half of
+// harness-registry.test.ts:232. Rooted call-site directories were removed in #707, so no
+// addDirRoots case has a roster counterpart; the literal addDirs subset tests below cover entries.
+// defineRoster deep-freezes its entries, so a case that changes a definition between runs builds it
+// from a factory. A roster call takes only the per-call and both-sides keys (ADR 0063 section 1), so
+// a child call's limit is a per-call timeoutMs, and a per-call denial override is refused before
+// inference as a key a call cannot set.
 import { describe, expect, vi } from 'vitest';
 import {
   defineHarness,
@@ -15,6 +14,7 @@ import {
   z,
   type Harness,
   type HarnessAdapter,
+  type ResolvedRole,
 } from '../src/index.js';
 import { describeWorkflow } from '../src/workflow/runtime/definition.js';
 import type { WorkflowDeclaration } from '../src/workflow/runtime/child-model.js';
@@ -43,7 +43,7 @@ function declaration(
 }
 
 describe('unit delegation ceilings', () => {
-  it('clamps a delegated entry to the root ceiling before a grandchild can inherit a laxer one (child-profiles.test.ts:26)', () => {
+  it('clamps a delegated entry to the root ceiling before a grandchild can inherit a laxer one', () => {
     // Root caps the shared Worker entry well below what an intermediate child declares.
     const root = resolveCapabilities({
       roster: defineRoster({
@@ -107,7 +107,7 @@ describe('unit delegation ceilings', () => {
     ).toEqual({ maxTurns: 3, maxBudgetUsd: 3, timeoutMs: 3_000 });
   });
 
-  it('clamps a delegated idle deadline to the parent ceiling (child-profiles.test.ts:71)', () => {
+  it('clamps a delegated idle deadline to the parent ceiling', () => {
     const root = resolveCapabilities({
       roster: defineRoster({
         Worker: { harness: 'claude', tools: ['Read', 'Grep', 'Glob'], idleTimeoutMs: 1_000 },
@@ -137,7 +137,7 @@ describe('unit delegation ceilings', () => {
     expect(child.limits('Worker', unset).idleTimeoutMs).toBe(1_000);
   });
 
-  it('keeps a failing parent denial policy for omitted child policies and refuses explicit warn (child-profiles.test.ts:94)', () => {
+  it('keeps a failing parent denial policy for omitted child policies and refuses explicit warn', () => {
     const root = resolveCapabilities({
       defaults: { claude: { onPermissionDenied: 'fail' } },
       roster: defineRoster({
@@ -170,7 +170,7 @@ describe('unit delegation ceilings', () => {
         prompt: 'x',
         onPermissionDenied: 'warn',
       } as ClaudeOptions);
-    }).toThrow('exceeds parent profile Scout: onPermissionDenied');
+    }).toThrow('exceeds parent role Scout: onPermissionDenied');
     expect(() => {
       inherited.check('Scout', 'claude', {
         prompt: 'x',
@@ -191,7 +191,7 @@ describe('unit delegation ceilings', () => {
         {},
         true,
       ),
-    ).toThrow('exceeds parent profile Scout: onPermissionDenied');
+    ).toThrow('exceeds parent role Scout: onPermissionDenied');
     expect(() =>
       delegateCapabilities(
         declaration('child', defineRoster({}), {
@@ -204,10 +204,10 @@ describe('unit delegation ceilings', () => {
         {},
         true,
       ),
-    ).toThrow('exceeds parent profile text: onPermissionDenied');
+    ).toThrow('exceeds parent role text: onPermissionDenied');
   });
 
-  it('lets a delegated child entry inherit the parent entry Codex effort unless it sets its own (child-profiles.test.ts:154)', () => {
+  it('lets a delegated child entry inherit the parent entry Codex effort unless it sets its own', () => {
     const root = resolveCapabilities({
       roster: defineRoster({ Careful: { harness: 'codex', effort: 'minimal' } }),
     });
@@ -230,7 +230,54 @@ describe('unit delegation ceilings', () => {
     expect(delegated.manifest.profiles['Tuned']?.codex).toMatchObject({ effort: 'high' });
   });
 
-  it('keeps a child its own entries without requireGrants and checks ceilings only with it (child-profiles.test.ts:428)', () => {
+  // Literal addDirs membership is transitive (#707): a grandchild is checked against its middle
+  // parent's delegated entries, which were checked against the root's, so no ancestor recheck is
+  // needed. toString checks that role lookups read own keys only.
+  it('bounds a grandchild Claude directory by its middle parent entry alone', () => {
+    const entry = (addDirs: string[]) => ({ harness: 'claude', tools: ['Read'], addDirs });
+    for (const name of ['Reader', 'toString']) {
+      const top = resolveCapabilities({ roster: { [name]: entry(['docs', 'notes']) } });
+      const topRole = Reflect.get(top.profiles, name) as ResolvedRole | undefined;
+      if (!topRole) throw new Error('top role missing');
+      const middle = delegateCapabilities(
+        declaration('middle', { [name]: entry(['docs']) }),
+        top,
+        [name],
+        { [name]: profileGrantDigest(topRole) },
+        [],
+        {},
+        true,
+      );
+      const delegateLeaf = (addDirs: string[], role = name) =>
+        delegateCapabilities(
+          declaration('leaf', { [role]: entry(addDirs) }),
+          middle.manifest,
+          middle.grants,
+          middle.pins,
+          middle.overrides,
+          role === name ? {} : { profiles: { [role]: name } },
+          true,
+        );
+      // notes is in the root entry but not the middle one, so the leaf cannot regain it, also
+      // through a mapped entry name.
+      expect(() => delegateLeaf(['notes'])).toThrow(
+        `Child role leaf.${name} exceeds parent role ${name}: claude.addDirs.`,
+      );
+      expect(() => delegateLeaf(['notes'], 'Scan')).toThrow(
+        `Child role leaf.Scan exceeds parent role ${name}: claude.addDirs.`,
+      );
+      const leaf = delegateLeaf(['docs']);
+      // A call's directories are checked the same way.
+      expect(() => {
+        leaf.check(name, 'claude', { prompt: 'x', addDirs: ['docs'] });
+      }).not.toThrow();
+      expect(() => {
+        leaf.check(name, 'claude', { prompt: 'x', addDirs: ['notes'] });
+      }).toThrow(`Child role leaf.${name} exceeds parent role ${name}: claude.addDirs.`);
+    }
+  });
+
+  it('keeps a child its own entries without requireGrants and checks ceilings only with it', () => {
     // A parent with a text-level Scout and an exec Runner that lacks Bash (toolAccess treats MCP
     // tools as exec), so a wider child entry exceeds it by tools.
     const root = resolveCapabilities({
@@ -280,23 +327,23 @@ describe('unit delegation ceilings', () => {
     // Under requireGrants, the same delegation is refused as before.
     expect(() =>
       delegateCapabilities(child, root, ['all'], {}, [], { profiles: { Builder: 'text' } }, true),
-    ).toThrow('Child profile child.Builder exceeds parent profile text: tools.');
+    ).toThrow('Child role child.Builder exceeds parent role text: tools.');
     expect(() =>
       delegateCapabilities(child, root, ['all'], {}, [], { profiles: { Builder: 'Runner' } }, true),
-    ).toThrow('Child profile child.Builder exceeds parent profile Runner: tools.');
+    ).toThrow('Child role child.Builder exceeds parent role Runner: tools.');
     // A parent roster entry is pinned, and the pin check runs before the subset check.
     expect(() =>
       delegateCapabilities(child, root, ['all'], {}, [], { profiles: { Builder: 'Scout' } }, true),
-    ).toThrow('Child profile child.Builder exceeds parent profile Scout: access.');
+    ).toThrow('Child role child.Builder exceeds parent role Scout: access.');
     expect(() =>
       delegateCapabilities(child, root, [], {}, [], { profiles: { missing: 'Scout' } }, true),
-    ).toThrow('Unknown child profile mapping: missing.');
+    ).toThrow('Unknown child role mapping: missing.');
     const orphan = declaration(
       'child',
       defineRoster({ Orphan: { harness: 'claude', tools: ['Read'] } }),
     );
     expect(() => delegateCapabilities(orphan, root, [], {}, [], {}, true)).toThrow(
-      'Child child profile Orphan has no parent grant Orphan',
+      'Child child role Orphan has no parent grant Orphan',
     );
     expect(() => delegateCapabilities(orphan, root, [], {}, [], {}, false)).not.toThrow();
   });
@@ -311,7 +358,7 @@ function fake(extra: { readonly permissionDenials?: number } = {}) {
 }
 
 describe('inline child delegation', () => {
-  it('maps a child entry to a differently named parent entry, caps its limits and refuses direct or nested escalation (children.test.ts:266)', async ({
+  it('maps a child entry to a differently named parent entry, caps its limits and refuses direct or nested escalation', async ({
     stateDir,
     runs,
   }) => {
@@ -377,7 +424,7 @@ describe('inline child delegation', () => {
   // A roster call cannot carry a denial policy (ADR 0063 section 1), so the original's weaker call
   // override is refused before inference as a key the call cannot set; the ceiling's call-time
   // refusal stays covered by the unit case above.
-  it('keeps a failing parent denial policy in children and refuses a weaker entry or call (children.test.ts:562)', async ({
+  it('keeps a failing parent denial policy in children and refuses a weaker entry or call', async ({
     stateDir,
     runs,
   }) => {
@@ -420,7 +467,7 @@ describe('inline child delegation', () => {
       roster: defineRoster({ Scout: { ...scout, onPermissionDenied: 'fail' } }),
       async run(ctx) {
         await expect(ctx.workflow('weakening', weakening, null)).rejects.toThrow(
-          'exceeds parent profile Scout: onPermissionDenied',
+          'exceeds parent role Scout: onPermissionDenied',
         );
         await expect(ctx.workflow('weakening-call', weakeningCall, null)).rejects.toThrow(
           'A bound agent call cannot set onPermissionDenied',
@@ -435,7 +482,7 @@ describe('inline child delegation', () => {
     expect(run.steps['weakening-call/look']).toBeUndefined();
   });
 
-  it('runs a child entry wider than its parent by default and refuses it under requireGrants (children.test.ts:1906)', async ({
+  it('runs a child entry wider than its parent by default and refuses it under requireGrants', async ({
     stateDir,
     runs,
   }) => {
@@ -473,7 +520,7 @@ describe('inline child delegation', () => {
     expect(tools).toEqual([['Read', 'Edit', 'Bash'], ['WebFetch']]);
     await expect(
       runs.run(parent(true), { stateDir, runId: 'opted', input: null, grants: ['all'], harness }),
-    ).rejects.toThrow('Unknown child profile mapping: missing.');
+    ).rejects.toThrow('Unknown child role mapping: missing.');
     const mapped = defineWorkflow({
       name: 'parent',
       ...base,
@@ -487,18 +534,18 @@ describe('inline child delegation', () => {
     // The unpinned text role carries the old edit preset's tools, so the tools-subset check refuses Bash.
     await expect(
       runs.run(mapped, { stateDir, runId: 'mapped', input: null, grants: ['all'], harness }),
-    ).rejects.toThrow('Child profile builder.Runner exceeds parent profile text: tools.');
+    ).rejects.toThrow('Child role builder.Runner exceeds parent role text: tools.');
     // The run-level flag turns the same layer on for a root that does not declare it.
     await expect(
       runs.run(
         { ...mapped, requireGrants: false },
         { stateDir, runId: 'flagged', input: null, grants: ['all'], requireGrants: true, harness },
       ),
-    ).rejects.toThrow('Child profile builder.Runner exceeds parent profile text: tools.');
+    ).rejects.toThrow('Child role builder.Runner exceeds parent role text: tools.');
     expect(tools).toHaveLength(2);
   });
 
-  it('ignores a child definition requireGrants: the root decides for every child (children.test.ts:1965)', async ({
+  it('ignores a child definition requireGrants: the root decides for every child', async ({
     stateDir,
     runs,
   }) => {

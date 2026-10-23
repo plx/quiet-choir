@@ -66,7 +66,6 @@ export const bound = defineWorkflow({
   ...base,
   name: 'bound-types',
   harnesses: [third, plain, strictDeadline, plainDeadline],
-  profiles: { scout: { claude: { tools: ['Read'] } } },
   async run(ctx) {
     const reviewer = ctx.claude.bind({ model: 'opus', effort: 'high', tools: ['Read', 'Grep'] });
     // For Claude the bound call options are exactly BoundCallOptions, in both directions.
@@ -99,7 +98,7 @@ export const bound = defineWorkflow({
     await reviewer.text('t', { prompt, tools: ['Bash'] });
     // @ts-expect-error -- effort is fixed by bind.
     await reviewer.text('t', { prompt, effort: 'low' });
-    // @ts-expect-error -- profile is fixed by bind.
+    // @ts-expect-error -- the profile option was removed (#726).
     await reviewer.text('t', { prompt, profile: 'scout' });
     // @ts-expect-error -- object needs a schema.
     await reviewer.object('o', { prompt });
@@ -116,9 +115,10 @@ export const bound = defineWorkflow({
     ctx.claude.bind({ retry: { maxAttempts: 2 } });
     // @ts-expect-error -- the schema is per call.
     ctx.claude.bind({ schema: Review });
-    // @ts-expect-error -- a profile must be a declared role or preset.
-    ctx.claude.bind({ profile: 'missing' });
+    // @ts-expect-error -- the profile option was removed (#726); bind cannot set it.
     ctx.claude.bind({ profile: 'scout' });
+    // @ts-expect-error -- nor on a registered harness.
+    ctx.agent('third').bind({ profile: 'scout' });
 
     // Codex: images are a per-call attachment.
     const mechanic = ctx.codex.bind({ model: 'gpt-5-codex', sandbox: 'workspace-write' });
@@ -217,7 +217,6 @@ export const bound = defineWorkflow({
     reviewer.bind({ model: 'haiku', timeoutMs: 1 });
     // A non-strict client is unchanged: one call shape, with addDirs.
     expectTypeOf(layered).toEqualTypeOf<typeof reviewer>();
-    expectTypeOf(ctx.claude.bind({ profile: 'scout' })).toEqualTypeOf<typeof reviewer>();
     return null;
   },
 });
@@ -226,33 +225,32 @@ export const strict = defineWorkflow({
   ...base,
   name: 'bound-strict',
   strictProfiles: true,
-  profiles: { scout: { claude: { tools: ['Read'] } } },
   async run(ctx) {
-    // @ts-expect-error -- strict: tools belong to a named profile, bound or raw.
+    // @ts-expect-error -- strict: tools belong to a roster entry, bound or raw.
     ctx.claude.bind({ tools: ['Read'] });
-    // @ts-expect-error -- strict: the Codex sandbox belongs to a named profile.
+    // @ts-expect-error -- strict: the Codex sandbox belongs to a roster entry.
     ctx.codex.bind({ sandbox: 'workspace-write' });
-    const scout = ctx.claude.bind({ profile: 'scout', model: 'opus' });
+    const scout = ctx.claude.bind({ model: 'opus' });
     await scout.text('t', { prompt });
     await scout.value('v', { prompt, schema: Review });
     await reviewWith(scout);
     // Strict Claude addDirs belong to a roster entry, bound or raw (#707).
     // @ts-expect-error -- strict: bind cannot set addDirs.
     ctx.claude.bind({ addDirs: ['runs/a'] });
-    // @ts-expect-error -- strict: nor can bind with a profile.
-    ctx.claude.bind({ profile: 'scout', addDirs: ['runs/a'] });
+    // @ts-expect-error -- strict: nor can bind with a model.
+    ctx.claude.bind({ model: 'opus', addDirs: ['runs/a'] });
     // @ts-expect-error -- strict: a bound agent's call cannot pass addDirs.
     await scout.text('t', { prompt, addDirs: ['runs/a'] });
     // @ts-expect-error -- strict: nor can a structured call.
     await scout.value('v', { prompt, schema: Review, addDirs: ['runs/a'] });
     await ctx
       .within('x')
-      .claude.bind({ profile: 'scout' })
+      .claude.bind({ model: 'opus' })
       // @ts-expect-error -- strict: the within scope keeps the refusal.
       .text('t', { prompt, addDirs: ['a'] });
     await ctx
       .agent('claude')
-      .bind({ profile: 'scout' })
+      .bind({ model: 'opus' })
       // @ts-expect-error -- strict: so does ctx.agent('claude').
       .text('t', { prompt, addDirs: ['a'] });
     expectTypeOf(scout.bind({ timeoutMs: 1 })).toEqualTypeOf<typeof scout>();

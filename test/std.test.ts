@@ -1,11 +1,10 @@
 // quiet-choir/std roster entries and tiers (#588). The preset entries are golden-tested against a
-// literal table of the text/readonly/edit preset values through the public capability manifest, so
+// literal table of the former text/readonly/edit preset values through the capability manifest, so
 // drift from those values fails here. The type assertions are checked by `npm run typecheck`, in the
 // style of test/roster-types.test.ts: a workflow body that never runs holds one `@ts-expect-error`
 // per rejected entry.
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
-  capabilityManifest,
   defineRoster,
   defineWorkflow,
   z,
@@ -13,6 +12,7 @@ import {
   type CapabilityManifest,
   type AnyRoster,
 } from '../src/index.js';
+import { capabilityManifest } from '../src/workflow/runtime/profiles.js';
 import * as std from '../src/std/index.js';
 
 const base = { version: '1', input: z.null(), output: z.null() } as const;
