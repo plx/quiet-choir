@@ -8,6 +8,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import {
   CliHarness,
   capabilityManifest,
+  defineRoster,
   defineWorkflow,
   readRun,
   runWorkflow,
@@ -209,7 +210,7 @@ it.each(codexEffortValues)('sends Codex effort %s as model_reasoning_effort', as
   expect(args.filter((arg) => arg.startsWith('model_reasoning_effort='))).toHaveLength(1);
 });
 
-it('rejects a renamed reasoningEffort on a Codex call, profile or defaults before invoking', async () => {
+it('rejects a renamed reasoningEffort on a Codex call, profile, roster entry or defaults before invoking', async () => {
   const renamed = 'reasoningEffort was renamed to effort';
   const legacy: object = { reasoningEffort: 'low' };
   await expect(
@@ -228,6 +229,10 @@ it('rejects a renamed reasoningEffort on a Codex call, profile or defaults befor
   await expect(runWorkflow(call, { ...setup(), harness: { invoke } })).rejects.toThrow(renamed);
   const declarations = [
     [{ profiles: { scout: { codex: legacy } } }, `Profile scout codex: ${renamed}`],
+    [
+      { roster: defineRoster({ scout: { harness: 'codex', ...legacy } } as never) },
+      `Roster entry scout: ${renamed}`,
+    ],
     [{ defaults: { codex: legacy } }, `defaults.codex: ${renamed}`],
   ] as const;
   for (const [index, [declaration, message]] of declarations.entries()) {
@@ -622,10 +627,10 @@ it('captures first-use versions, warns on resumed drift, and records inherited/r
     .mockResolvedValue(reply);
   const definition = defineWorkflow({
     ...base,
-    profiles: { careful: { extends: 'readonly', claude: { effort: 'low' } } },
+    roster: defineRoster({ careful: { harness: 'claude', effort: 'low' } }),
     async run(ctx) {
       await ctx.claude.text('one', { prompt: 'x', effort: 'high' });
-      await ctx.claude.text('three', { prompt: 'z', profile: 'careful' });
+      await ctx.roster.careful.text('three', { prompt: 'z' });
       return (await ctx.claude.text('two', { prompt: 'y' })).output;
     },
   });
@@ -731,7 +736,7 @@ it('lets a call-site Codex effort replace an inherited one and resolves inherite
   invoke.mockClear();
   const network = defineWorkflow({
     ...base,
-    defaults: { profile: 'edit' },
+    defaults: { codex: { sandbox: 'workspace-write' } },
     async run(ctx) {
       return (await ctx.codex.text('ask', { prompt: 'x', networkAccess: true })).output;
     },

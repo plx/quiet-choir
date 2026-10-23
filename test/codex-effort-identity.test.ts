@@ -6,7 +6,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { defineWorkflow, readRun, runWorkflow, z } from '../src/index.js';
+import { defineRoster, defineWorkflow, readRun, runWorkflow, z } from '../src/index.js';
 import { summarizeRun } from '../src/workflow/loader/inspection.js';
 import { parseJournalEntry, replayJournal } from '../src/workflow/runtime/journal.js';
 import { legacyAgentIdentity } from '../src/workflow/runtime/legacy-agent.js';
@@ -105,9 +105,9 @@ it('resumes a checkpoint recorded with Codex reasoningEffort after the source mo
     version: '1',
     input: z.null(),
     output: z.null(),
-    profiles: { scout: { extends: 'text', codex: { effort: 'low' } } },
+    roster: defineRoster({ scout: { harness: 'codex', effort: 'low' } }),
     async run(ctx) {
-      await ctx.codex.text('tuned', { prompt: 'a', profile: 'scout' });
+      await ctx.roster.scout.text('tuned', { prompt: 'a' });
       return null;
     },
   });

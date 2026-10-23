@@ -456,20 +456,17 @@ it('keeps object-level option refinements when adding runtime fields', async () 
       return response('ranged');
     },
   };
-  const call = (options: { min: number; max?: number; profile?: 'bounded' }) =>
+  const call = (options: { min: number; max?: number }) =>
     defineWorkflow({
       ...base,
       harnesses: [ranged],
-      profiles: { bounded: { harnesses: { ranged: { max: 2 } } } },
+      defaults: { harnesses: { ranged: { max: 2 } } },
       async run(ctx) {
         return ctx.agent('ranged').value('answer', { prompt: 'x', ...options });
       },
     });
-  // Directly supplied options, then a profile default that only conflicts once merged.
-  for (const options of [
-    { min: 3, max: 2 },
-    { min: 3, profile: 'bounded' as const },
-  ]) {
+  // Directly supplied options, then a default that only conflicts once merged.
+  for (const options of [{ min: 3, max: 2 }, { min: 3 }]) {
     const rejected = await setup();
     await expect(
       runWorkflow(call(options), { ...rejected, adapters: { ranged: adapter } }),
@@ -479,7 +476,7 @@ it('keeps object-level option refinements when adding runtime fields', async () 
   expect(calls).toBe(0);
   expect(
     (
-      await runWorkflow(call({ min: 1, profile: 'bounded' }), {
+      await runWorkflow(call({ min: 1 }), {
         ...(await setup()),
         adapters: { ranged: adapter },
       })

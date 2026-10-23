@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import {
   CliHarness,
   capabilityManifest,
+  defineRoster,
   defineWorkflow,
   readRun,
   runWorkflow,
@@ -167,23 +168,29 @@ it('keeps checkout placement out of profiles while accepting provider configurat
     { isolation: 'worktree' },
     { isolation: { kind: 'worktree', base: 'main' } },
   ]) {
-    expect(() => capabilityManifest({ profiles: { r: { claude: options } as never } })).toThrow();
-    expect(() => capabilityManifest({ profiles: { r: { codex: options } as never } })).toThrow();
+    expect(() =>
+      capabilityManifest({ roster: { r: { harness: 'claude', ...options } } }),
+    ).toThrow();
+    expect(() => capabilityManifest({ roster: { r: { harness: 'codex', ...options } } })).toThrow();
     expect(() => capabilityManifest({ defaults: { claude: options } as never })).toThrow();
   }
   expect(
-    capabilityManifest({ profiles: { r: { claude: { isolation: 'inherit' } } } }).profiles['r']
-      ?.claude.isolation,
+    capabilityManifest({ roster: defineRoster({ r: { harness: 'claude', isolation: 'inherit' } }) })
+      .profiles['r']?.claude.isolation,
   ).toBe('inherit');
 });
 
 it('rejects a Codex harnessProfile under restricted isolation but accepts it under inherit', () => {
-  expect(() => capabilityManifest({ profiles: { p: { codex: { harnessProfile: 'p' } } } })).toThrow(
-    'harnessProfile',
-  );
+  expect(() =>
+    capabilityManifest({
+      roster: defineRoster({ p: { harness: 'codex', harnessProfile: 'p' } }),
+    }),
+  ).toThrow('harnessProfile');
   expect(
     capabilityManifest({
-      profiles: { p: { codex: { isolation: 'inherit', harnessProfile: 'p' } } },
+      roster: defineRoster({
+        p: { harness: 'codex', isolation: 'inherit', harnessProfile: 'p' },
+      }),
     }).profiles['p']?.codex.harnessProfile,
   ).toBe('p');
 });
@@ -879,21 +886,25 @@ it('accepts Codex instructions only where they can mean none', () => {
     validateAgentOptions('claude', { prompt: '', instructions: 'none' });
   }).toThrow('Unrecognized key(s) "instructions"');
   expect(() =>
-    capabilityManifest({ profiles: { p: { claude: { instructions: 'none' } as never } } }),
+    capabilityManifest({
+      roster: defineRoster({ p: { harness: 'claude', instructions: 'none' } } as never),
+    }),
   ).toThrow('instructions');
   expect(
-    capabilityManifest({ profiles: { p: { codex: { instructions: 'none' } } } }).profiles['p']
-      ?.codex.instructions,
+    capabilityManifest({
+      roster: defineRoster({ p: { harness: 'codex', instructions: 'none' } }),
+    }).profiles['p']?.codex.instructions,
   ).toBe('none');
   expect(() =>
     capabilityManifest({
-      profiles: { p: { codex: { instructions: 'none', isolation: 'inherit' } } },
+      roster: defineRoster({ p: { harness: 'codex', instructions: 'none', isolation: 'inherit' } }),
     }),
   ).toThrow('requires restricted');
   // instructions removes context and grants nothing, so it stays a read-only control.
   expect(
-    capabilityManifest({ profiles: { p: { codex: { instructions: 'none' } } } }).profiles['p']
-      ?.codexAccess,
+    capabilityManifest({
+      roster: defineRoster({ p: { harness: 'codex', instructions: 'none' } }),
+    }).profiles['p']?.codexAccess,
   ).toBe('read');
 });
 
