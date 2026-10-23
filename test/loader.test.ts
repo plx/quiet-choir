@@ -384,7 +384,9 @@ export default defineWorkflow({
 // Decision fixtures through the executor (#652): --dry-run and --harness fixture answer ctx.decide
 // without building a provider transport, and `workflow fixtures` exports decision steps.
 // measured: like the loader suite above, dominated by the tsImport compile of each module.
-describe('decision fixtures through the executor', { timeout: 20_000 }, () => {
+// Node 24 coverage CI shards, six runs (Oct 2026, #715): 10.3-19.7 s for the --dry-run case,
+// which also timed out once at 20 s (PR #714).
+describe('decision fixtures through the executor', { timeout: 45_000 }, () => {
   const decisionImports = `${imports}
 import { choice, defineDecisionProvider, jevCompatible, noul } from ${JSON.stringify(join(projectRoot, 'src/integrations/decision.js'))};`;
   const guardedSource = `${decisionImports}

@@ -905,7 +905,8 @@ describe('pure mappers', () => {
 
 // One executor run type-checks and imports a workflow module. measured: 1.4 s alone, 4.3 s in the
 // full coverage run (dominated by the loader's type check and tsImport compile).
-describe('dry-run', { timeout: 30_000 }, () => {
+// Node 24 coverage CI shards, six runs (Oct 2026, #715): 16.9-25.7 s for the read listing.
+describe('dry-run', { timeout: 60_000 }, () => {
   it('lists every read in rehearsal commands with schema-valid synthesized values', async () => {
     await writeFile(join(cwd, 'package.json'), '{"type":"module"}');
     await symlink(join(repository, 'node_modules'), join(cwd, 'node_modules'));

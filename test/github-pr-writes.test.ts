@@ -1439,7 +1439,8 @@ const rehearsed = (commands: RehearsedCommands): string[] =>
 
 // Each executor run type-checks and imports a workflow module. measured: 1.4 s alone (dominated by
 // the loader's type check and tsImport compile), like the write dry-run in test/github-writes.test.ts.
-describe('dry-run', { timeout: 30_000 }, () => {
+// Node 24 coverage CI shards, six runs (Oct 2026, #715): 18.8-28.7 s for the op listing.
+describe('dry-run', { timeout: 60_000 }, () => {
   it('lists every op command under its step and spawns nothing', async () => {
     await project();
     const file = join(cwd(), 'pr-writes.workflow.ts');

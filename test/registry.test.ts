@@ -55,7 +55,8 @@ afterEach(async () => {
 // runs, and 8.0 s on the Node 22.13 and 12.7 s on the Node 24 CI legs; before the shared program cache
 // it took 10.1-13.1 s locally and up to 13.1 s on the Node 22.13 and 28.3 s on the Node 24 CI legs
 // (dominated by the suite's first full engine compile and tsImport).
-describe('trusted definition registry', { timeout: 30_000 }, () => {
+// Node 24 coverage CI shards, six runs (Oct 2026, #715): 9.6-19.4 s for the cache case.
+describe('trusted definition registry', { timeout: 40_000 }, () => {
   it('deduplicates overlapping directories and ignores generated trees and directory symlinks', async () => {
     const root = await project();
     await mkdir(join(root, 'nested'));
