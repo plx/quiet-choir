@@ -527,18 +527,18 @@ is refused for a missing grant before the body still saves it (and nothing else)
 `--accept-code-change` turns the layer off unless the run-level flag was given.
 
 ```sh
-quiet-choir workflow execute review.workflow.ts --run-id review-1 --require-grants --grant Fixer
+quiet-choir workflow execute review.workflow.ts --run-id review-1 --require-grants --grant Mechanic
 ```
 
 Under `requireGrants`, every roster entry with write/exec access requires authorization before the
 body starts, even if a branch never uses it. A write- or exec-capable entry, such as a
 `workspace-write` Codex mechanic, is listed in `requiredGrants` and needs `--grant Mechanic` (or a
-class grant), and its named grant pins its capabilities. `--grant Fixer` authorizes that entry;
-`--grant write` authorizes write roles; `--grant exec` authorizes both write and exec; `--grant all`
-authorizes every role. Multiple `--grant` flags accumulate. Elevated raw call-site controls need a
-class or `all` grant (see [raw call-site capabilities](#raw-call-site-capabilities)). Declaring an
-elevated entry makes this check happen before **any** workflow effects, and `--grant` hints and
-`next` commands name the missing grant.
+class grant), and its named grant pins its capabilities. `--grant write` authorizes write roles;
+`--grant exec` authorizes both write and exec; `--grant all` authorizes every role. Multiple
+`--grant` flags accumulate. Elevated raw call-site controls need a class or `all` grant (see
+[raw call-site capabilities](#raw-call-site-capabilities)). Declaring an elevated entry makes this
+check happen before **any** workflow effects, and `--grant` hints and `next` commands name the
+missing grant.
 
 Grants persist on resume. Named grants are pinned to exact tools, allowed rules, sandbox, the other
 declared capability controls and an entry's pinned harness; after those change (including repinning
