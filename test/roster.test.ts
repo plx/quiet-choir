@@ -1,6 +1,6 @@
 // Rosters (ADR 0063 sections 3-4, #579): defineRoster entries compile to declared roles pinned to
-// one harness, and ctx.roster.Name is that harness's client bound to the entry's profile, so its
-// calls resolve, fingerprint and record as a `profile: 'Name'` call does.
+// one harness, and ctx.roster.Name is that harness's client bound to the entry through the internal
+// role channel, so its calls resolve, fingerprint and record as a `profile: 'Name'` call does.
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -404,6 +404,103 @@ describe('ctx.roster calls', () => {
       'codex',
       'third',
     ]);
+  });
+
+  it('resolves, fingerprints and records a roster call as a raw profile call, also within a prefix and re-bound', async ({
+    runs,
+  }) => {
+    const sides = [];
+    for (const raw of [true, false]) {
+      const stateDir = await tempDir();
+      const fake = capture();
+      const definition = defineWorkflow({
+        ...base,
+        name: 'roster-profile-parity',
+        harnesses: [third],
+        roster,
+        async run(ctx) {
+          if (raw)
+            return [
+              await ctx.claude.value('review', {
+                prompt,
+                schema: Review,
+                profile: 'Reviewer',
+              } as never),
+              (await ctx.agent('third').text('scout', { prompt, profile: 'Scout' } as never))
+                .output,
+              (await ctx.within('p').claude.text('t', { prompt, profile: 'Reviewer' } as never))
+                .output,
+              (
+                await ctx.claude.text('dirs', {
+                  profile: 'Reviewer',
+                  addDirs: ['x', 'y'],
+                  prompt,
+                } as never)
+              ).output,
+            ];
+          return [
+            await ctx.roster.Reviewer.value('review', { prompt, schema: Review }),
+            (await ctx.roster.Scout.text('scout', { prompt })).output,
+            (await ctx.within('p').roster.Reviewer.text('t', { prompt })).output,
+            (
+              await ctx.roster.Reviewer.bind({ addDirs: ['x'] }).text('dirs', {
+                prompt,
+                addDirs: ['y'],
+              })
+            ).output,
+          ];
+        },
+      });
+      const result = await runs.run(definition, {
+        stateDir,
+        runId: 'profile-parity',
+        input: null,
+        harness: fake.harness,
+        adapters: { third: fake.adapter },
+      });
+      sides.push({ result, fake, record: await readRun({ stateDir, runId: 'profile-parity' }) });
+    }
+    const [left, right] = sides as [(typeof sides)[0], (typeof sides)[0]];
+    expect(right.fake.requests).toEqual(left.fake.requests);
+    expect(right.result.output).toEqual(left.result.output);
+    const ids = ['review', 'scout', 'p/t', 'dirs'];
+    expect(Object.keys(right.record.steps).sort()).toEqual([...ids].sort());
+    const identity = (step: StepRecord | undefined) => {
+      const last = attempt(step);
+      return {
+        fingerprint: step?.fingerprint,
+        attempt: last && {
+          fingerprint: last.fingerprint,
+          profile: last.profile,
+          policy: last.policy,
+          sources: last.sources,
+          request: last.request,
+          requested: last.requested,
+        },
+      };
+    };
+    for (const id of ids)
+      expect(identity(right.record.steps[id])).toEqual(identity(left.record.steps[id]));
+    expect(ids.map((id) => attempt(right.record.steps[id])?.profile)).toEqual([
+      'Reviewer',
+      'Scout',
+      'Reviewer',
+      'Reviewer',
+    ]);
+    // The entry's options reach each request, though the roster call names no profile.
+    const sent = Object.fromEntries(
+      right.fake.requests.map((request) => [request.stepId, request]),
+    );
+    for (const id of ['review', 'p/t', 'dirs'])
+      expect(sent[id]).toMatchObject({
+        harness: 'claude',
+        options: { model: 'opus', effort: 'high', tools: ['Read', 'Grep'], maxTurns: 40 },
+      });
+    expect(sent['scout']).toMatchObject({ harness: 'third', options: { thinking: 'deep' } });
+    expect(sent['dirs']?.options.addDirs).toEqual(['x', 'y']);
+    expect(attempt(right.record.steps['review'])?.sources).toMatchObject({
+      maxTurns: 'profile:Reviewer',
+    });
   });
 
   it('fills a required registered option from the entry', async ({ stateDir, runs }) => {

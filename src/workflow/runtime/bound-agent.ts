@@ -192,7 +192,19 @@ function merge(bound: Options, call: unknown): Options {
   return merged;
 }
 
-function layer(client: Methods, options: unknown, hooks: BindHooks, again: boolean): Methods {
+/**
+ * The roster entry each merged call options object of a role-bound agent names. A map entry, not a
+ * key, so the options stay what the public option types and the JSON boundary accept.
+ */
+const roles = new WeakMap<object, string>();
+
+function layer(
+  client: Methods,
+  options: unknown,
+  hooks: BindHooks,
+  again: boolean,
+  role?: string,
+): Methods {
   let bound: Options;
   try {
     bound = snapshot(options, again);
@@ -211,6 +223,7 @@ function layer(client: Methods, options: unknown, hooks: BindHooks, again: boole
         hooks.markFatal?.(failure);
         return hooks.reject ? hooks.reject(id, failure) : Promise.reject(failure);
       }
+      if (role !== undefined) roles.set(merged, role);
       return client[method](id, merged);
     };
   const agent: Methods & { readonly bind: (more: unknown) => Methods } = {
@@ -236,4 +249,23 @@ export function bindAgent<TOptions extends AgentOptions, const B extends BindOpt
   return layer(client as unknown as Methods, options, hooks, false) as unknown as AgentClient<
     BoundOptionsOf<SelectBranch<TOptions, B>, B>
   >;
+}
+
+/**
+ * Bind `client` to the roster entry `role` (ADR 0063 section 4) with no bound options. Each call
+ * passes its options to `client` as a fresh object that {@link roleOf} maps to `role`, so the
+ * runtime resolves the entry without a public `profile` key; a re-bind's calls reach this layer and
+ * are marked the same way. Calls and re-binds are checked as a `bindAgent(client, {})` agent's are.
+ * @internal
+ */
+export function bindRole(client: unknown, role: string, hooks: BindHooks = {}): unknown {
+  return layer(client as Methods, {}, hooks, false, role);
+}
+
+/**
+ * The roster entry a role-bound agent named for these call options, or `undefined` for options no
+ * {@link bindRole} agent passed. @internal
+ */
+export function roleOf(options: unknown): string | undefined {
+  return typeof options === 'object' && options !== null ? roles.get(options) : undefined;
 }

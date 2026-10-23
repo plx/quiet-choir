@@ -17,6 +17,7 @@ import {
   type WorkflowContext,
   type WorkflowHarnesses,
 } from '../src/index.js';
+import { bindAgent, bindRole, roleOf } from '../src/workflow/runtime/bound-agent.js';
 import { it } from './setup/state-dir.js';
 
 const prompt = 'review the diff';
@@ -635,6 +636,64 @@ it('reads top-level bind and call options by descriptor, never evaluating or dro
   expect(reads).toBe(0);
   expect(fake.requests).toEqual([]);
   expect(Object.keys((await readRun({ stateDir, runId: 'top-level' })).steps)).toEqual([]);
+});
+
+/** A client that records each call's method, step ID and options object. */
+function stubClient() {
+  const calls: { method: string; id: string; options: Record<string, unknown> }[] = [];
+  const record =
+    (method: string) =>
+    (id: string, options: Record<string, unknown>): Promise<null> => {
+      calls.push({ method, id, options });
+      return Promise.resolve(null);
+    };
+  return {
+    calls,
+    client: { value: record('value'), text: record('text'), object: record('object') },
+  };
+}
+
+type StubAgent = Record<
+  'value' | 'text' | 'object',
+  (id: string, options: unknown) => Promise<unknown>
+> & { readonly bind: (options: unknown) => StubAgent };
+
+it('names a role-bound call through the role channel, never a profile key', async () => {
+  const { calls, client } = stubClient();
+  const agent = bindRole(client, 'Reviewer') as StubAgent;
+  await agent.value('review', { prompt, schema: Review });
+  await agent.text('notes', { prompt, addDirs: ['a'] });
+  await agent.object('summary', { prompt });
+  // A re-bind's calls still reach the stub through the role layer, marked, with addDirs appended.
+  await agent.bind({ addDirs: ['b'] }).value('again', { prompt, addDirs: ['c'] });
+  expect(calls.map(({ method, id }) => [method, id])).toEqual([
+    ['value', 'review'],
+    ['text', 'notes'],
+    ['object', 'summary'],
+    ['value', 'again'],
+  ]);
+  for (const { options } of calls) {
+    expect(Object.hasOwn(options, 'profile')).toBe(false);
+    expect(roleOf(options)).toBe('Reviewer');
+  }
+  expect(calls[3]?.options).toEqual({ addDirs: ['b', 'c'], prompt });
+  // A plain bind leaves its calls unmarked; a profile key or a non-object names no role.
+  const plain = stubClient();
+  await (bindAgent(plain.client as never, {}) as unknown as StubAgent).value('plain', { prompt });
+  expect(roleOf(plain.calls[0]?.options)).toBeUndefined();
+  expect(roleOf({ profile: 'X' })).toBeUndefined();
+  expect(roleOf('x')).toBeUndefined();
+  expect(roleOf(null)).toBeUndefined();
+  // A role-bound call still cannot set profile, and a re-bind cannot bind it.
+  await expect(agent.value('profile', { prompt, profile: 'scout' })).rejects.toThrow(
+    new TypeError(
+      'A bound agent call cannot set profile; bind it instead, or call the harness client directly (ADR 0063).',
+    ),
+  );
+  expect(() => agent.bind({ profile: 'scout' })).toThrow(
+    new TypeError('A bound agent cannot bind profile again; the first bind fixed it (ADR 0063).'),
+  );
+  expect(calls).toHaveLength(4);
 });
 
 it('reuses a completed bound step on resume without invoking the adapter', async ({

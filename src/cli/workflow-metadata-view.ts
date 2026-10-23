@@ -1,6 +1,6 @@
 import type { WorkflowDescription } from '../workflow/runtime/child-model.js';
 import { digest } from '../workflow/runtime/json.js';
-import type { CapabilityManifest, ResolvedProfile } from '../workflow/runtime/profiles-model.js';
+import type { CapabilityManifest, ResolvedRole } from '../workflow/runtime/profiles-model.js';
 
 type HarnessMetadataView = Omit<WorkflowDescription['harnesses'][number], 'options'>;
 
@@ -30,10 +30,10 @@ export function withoutHarnessOptions<T extends WorkflowDescription>(
   };
 }
 
-type EnvironmentPair = NonNullable<ResolvedProfile['environment']>;
+type EnvironmentPair = NonNullable<ResolvedRole['environment']>;
 
 /** One profile in the compact capability view: only the environments that differ. @internal */
-export type CompactResolvedProfile = Omit<ResolvedProfile, 'environment'> & {
+export type CompactResolvedProfile = Omit<ResolvedRole, 'environment'> & {
   readonly environment?: Partial<EnvironmentPair>;
 };
 
@@ -43,7 +43,7 @@ export type CompactResolvedProfile = Omit<ResolvedProfile, 'environment'> & {
  * harnesses that differ (`profile.environment?.[h] ?? capabilities.environment[h]`). @internal
  */
 export type CompactCapabilityManifest = Omit<CapabilityManifest, 'defaults' | 'profiles'> & {
-  readonly defaults?: ResolvedProfile;
+  readonly defaults?: ResolvedRole;
   readonly environment?: EnvironmentPair;
   readonly profiles: Readonly<Record<string, CompactResolvedProfile>>;
 };

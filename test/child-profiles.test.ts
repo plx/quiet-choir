@@ -6,7 +6,7 @@ import { z } from '../src/index.js';
 import type { WorkflowDeclaration } from '../src/workflow/runtime/child-model.js';
 import { delegateCapabilities } from '../src/workflow/runtime/child-profiles.js';
 import { profileGrantDigest, resolveCapabilities } from '../src/workflow/runtime/profiles.js';
-import type { AgentProfile, ResolvedProfile } from '../src/workflow/runtime/profiles-model.js';
+import type { AgentProfile, ResolvedRole } from '../src/workflow/runtime/profiles-model.js';
 import type { ClaudeOptions, ExecutionPolicy } from '../src/workflow/runtime/model.js';
 
 function declaration(
@@ -373,7 +373,7 @@ it('reads only own keys when a role is named like an Object.prototype member (#3
     const top = resolveCapabilities({
       profiles: { toString: { extends: 'readonly', claude: { addDirRoots: [allowed] } } },
     });
-    const topRole = Reflect.get(top.profiles, 'toString') as ResolvedProfile | undefined;
+    const topRole = Reflect.get(top.profiles, 'toString') as ResolvedRole | undefined;
     if (!topRole) throw new Error('top role missing');
     // The same role name is delegated without a mapping and with no inherited ancestry.
     const middle = delegateCapabilities(

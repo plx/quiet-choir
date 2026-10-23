@@ -2,6 +2,14 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Roster agents name their entry through an internal role channel instead of binding the public
+  `profile` option (#706, ADR 0063 §4), so the public option can be removed later without touching
+  rosters. The runner still spells the entry as `profile`, so a `ctx.roster.Name` call keeps the
+  step identity, request and legacy fingerprints and attempt `profile` value of a `profile: 'Name'`
+  call, also under `ctx.within` and after a re-bind. The public `ResolvedProfile` type, still the
+  role type of `CapabilityManifest.defaults` and `.profiles`, is now `@deprecated`; the runtime's
+  internal name for it is `ResolvedRole`. `model.ts` and the Workflow Lab `apiSnapshot` are
+  unchanged.
 - Document rosters as the only agent inventory (#694, ADR 0063 §4). The "Appendix: requireGrants and
   legacy profiles" in `docs/roster.md` is gone: `requireGrants: launch grants and pins` is now its
   own section, with a short "Strict call sites" subsection for the opt-in `strictProfiles`. The
