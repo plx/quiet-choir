@@ -124,7 +124,13 @@ export interface RedactedControl {
   readonly keys?: readonly string[];
 }
 
-/** Fully resolved plain-data role, suitable for validation output. */
+/**
+ * Fully resolved plain-data role, suitable for validation output: the resolved role in public
+ * capability manifests.
+ *
+ * @deprecated Roster entries replace profiles (ADR 0063); this name goes with them (#696). The
+ * runtime calls it ResolvedRole.
+ */
 export interface ResolvedProfile extends Omit<
   AgentProfile,
   'extends' | 'access' | 'claude' | 'codex'
@@ -200,6 +206,12 @@ export interface ResolvedProfile extends Omit<
   };
 }
 
+/**
+ * A fully resolved role: a roster entry, built-in preset or declared profile (ADR 0063 section 4).
+ * @internal
+ */
+export type ResolvedRole = ResolvedProfile; // eslint-disable-line @typescript-eslint/no-deprecated -- the public manifest keeps the deprecated name until the removal slice (#696)
+
 /** Capability declaration without evaluating the workflow body. */
 export interface CapabilityManifest {
   /** Whether call-site capability controls are prohibited. */
@@ -207,9 +219,9 @@ export interface CapabilityManifest {
   /** Default profile name. */
   readonly defaultProfile: string;
   /** Resolved implicit call defaults. */
-  readonly defaults: ResolvedProfile;
+  readonly defaults: ResolvedProfile; // eslint-disable-line @typescript-eslint/no-deprecated -- the public manifest keeps the deprecated name until the removal slice (#696)
   /** All callable profiles, including built-ins. Under requireGrants, elevated ones need a grant. */
-  readonly profiles: Readonly<Record<string, ResolvedProfile>>;
+  readonly profiles: Readonly<Record<string, ResolvedProfile>>; // eslint-disable-line @typescript-eslint/no-deprecated -- the public manifest keeps the deprecated name until the removal slice (#696)
   /**
    * Declared/default elevated roles checked before the body starts under `requireGrants`; empty
    * when the run and its root definition do not opt in.

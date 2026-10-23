@@ -11,7 +11,7 @@ import type {
   CapabilityManifest,
   ProfileOverride,
   RedactedControl,
-  ResolvedProfile,
+  ResolvedRole,
 } from './profiles-model.js';
 import { digest, jsonValue } from './json.js';
 import { harnessIsolationSchema, isolationParts, resolveIsolation } from './agent-isolation.js';
@@ -287,9 +287,9 @@ export function resolveCapabilities(
     )
       throw new Error(`Reserved profile name: ${name}.`);
   }
-  const profiles: Record<string, ResolvedProfile> = Object.create(null) as Record<
+  const profiles: Record<string, ResolvedRole> = Object.create(null) as Record<
     string,
-    ResolvedProfile
+    ResolvedRole
   >;
   const chain = (
     name: string,
@@ -477,7 +477,7 @@ export function parseProfileOverride(value: string): ProfileOverride {
 }
 
 /** Pin named grants to exact capabilities across source acceptance/resume. @internal */
-export function profileGrantDigest(profile: ResolvedProfile): string {
+export function profileGrantDigest(profile: ResolvedRole): string {
   return digest({
     tools: profile.claude.tools,
     allowedTools: profile.claude.allowedTools,
@@ -497,7 +497,7 @@ export function profileGrantDigest(profile: ResolvedProfile): string {
  * an access-class grant can admit it, and the error says so. @internal
  */
 export function requireGrant(
-  profile: ResolvedProfile,
+  profile: ResolvedRole,
   grants: readonly string[],
   pins: Readonly<Record<string, string>>,
   access = profile.access,
@@ -532,7 +532,7 @@ export function resolveProfileCall(
   requireGrants: boolean,
   definition?: HarnessDeclaration,
   paths?: { readonly callCwd: string; readonly rootCwd: string },
-): { profile: ResolvedProfile; options: ClaudeOptions | CodexOptions } {
+): { profile: ResolvedRole; options: ClaudeOptions | CodexOptions } {
   const name = call.profile ?? manifest.defaultProfile;
   const profile = manifest.profiles[name];
   if (!Object.hasOwn(manifest.profiles, name) || !profile)

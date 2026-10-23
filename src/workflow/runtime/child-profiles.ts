@@ -6,7 +6,7 @@ import type {
   CapabilityManifest,
   ProfileLimits,
   ProfileOverride,
-  ResolvedProfile,
+  ResolvedRole,
 } from './profiles-model.js';
 import { digest } from './json.js';
 import { canonicalPath, canonicalRoots, insideRoots, within } from './add-dir-roots.js';
@@ -53,7 +53,7 @@ interface DirBlock {
   readonly addDirRoots?: readonly string[] | undefined;
 }
 
-function ceilingOf(profile: string, role: ResolvedProfile): DirCeiling {
+function ceilingOf(profile: string, role: ResolvedRole): DirCeiling {
   return {
     profile,
     addDirs: [...(role.claude.addDirs ?? [])],
@@ -80,7 +80,7 @@ function narrows(rule: string, parent: string): boolean {
 }
 
 /** The effective denial policy a provider call gets from a profile, before call options. */
-function denialPolicy(profile: ResolvedProfile, provider: 'claude' | 'codex'): 'warn' | 'fail' {
+function denialPolicy(profile: ResolvedRole, provider: 'claude' | 'codex'): 'warn' | 'fail' {
   return (
     (provider === 'claude' ? profile.claude.onPermissionDenied : undefined) ??
     profile.onPermissionDenied ??
@@ -137,12 +137,7 @@ function delegatedRoot(root: string, parent: DirBlock, rootCwd?: string): boolea
   }
 }
 
-function subset(
-  child: ResolvedProfile,
-  parent: ResolvedProfile,
-  label: string,
-  rootCwd?: string,
-): void {
+function subset(child: ResolvedRole, parent: ResolvedRole, label: string, rootCwd?: string): void {
   const reject = (field: string): never => {
     throw new Error(
       `Child profile ${label} exceeds parent profile ${parent.name}: ${field}. Delegate a sufficient parent role explicitly.`,
@@ -233,7 +228,7 @@ function subset(
  * Hold a child to a pinned ceiling's harness and access: a roster entry delegates authority on its
  * own harness only, so a child role on another harness, or above the entry's access, is refused.
  */
-function pinned(child: ResolvedProfile, parent: ResolvedProfile, label: string): void {
+function pinned(child: ResolvedRole, parent: ResolvedRole, label: string): void {
   if (parent.harness === undefined) return;
   const rank = { none: 0, read: 1, write: 2, exec: 3 };
   const reject = (field: string): never => {
@@ -254,7 +249,7 @@ function pinned(child: ResolvedProfile, parent: ResolvedProfile, label: string):
  * intermediate child narrowed to and later retargeted cannot carry a descendant outside an ancestor.
  */
 function withinAncestors(
-  child: ResolvedProfile,
+  child: ResolvedRole,
   ancestors: readonly DirCeiling[],
   label: string,
   rootCwd?: string,
@@ -309,7 +304,7 @@ export function delegateCapabilities(
   for (const name of Object.keys(mapping))
     if (!Object.hasOwn(manifest.profiles, name))
       throw new Error(`Unknown child profile mapping: ${name}.`);
-  const bounds = new Map<string, ResolvedProfile>();
+  const bounds = new Map<string, ResolvedRole>();
   // Own-key lookups only: roles named toString or valueOf must not read Object.prototype members.
   const parentNameOf = (name: string): string =>
     (Object.hasOwn(mapping, name) ? mapping[name] : name) ?? name;
@@ -318,7 +313,7 @@ export function delegateCapabilities(
   const grants: string[] = [];
   const pins: Record<string, string> = {};
   const overrides: ProfileOverride[] = [];
-  const bound = (name: string): ResolvedProfile => {
+  const bound = (name: string): ResolvedRole => {
     const cached = bounds.get(name);
     if (cached) return cached;
     const parentName = parentNameOf(name);
@@ -342,9 +337,9 @@ export function delegateCapabilities(
   // an explicit weaker policy is left in place so the subset check refuses it.
   const inheritDenials = (
     name: string,
-    role: ResolvedProfile,
-    ceiling: ResolvedProfile,
-  ): ResolvedProfile => {
+    role: ResolvedRole,
+    ceiling: ResolvedRole,
+  ): ResolvedRole => {
     if (declaredDenialPolicy(definition, name) !== undefined) return role;
     return {
       ...role,
@@ -355,7 +350,7 @@ export function delegateCapabilities(
         : {}),
     };
   };
-  const checkProfile = (name: string, role: ResolvedProfile): ResolvedProfile => {
+  const checkProfile = (name: string, role: ResolvedRole): ResolvedRole => {
     const ceiling = bound(name);
     const inherited = inheritDenials(name, role, ceiling);
     const label = `${definition.name}.${name}`;
@@ -369,14 +364,14 @@ export function delegateCapabilities(
     const role = manifest.profiles[name];
     if (role) checkProfile(name, role);
   }
-  const delegated: Record<string, ResolvedProfile> = {};
+  const delegated: Record<string, ResolvedRole> = {};
   const ancestry: Record<string, readonly DirCeiling[]> = Object.create(null) as Record<
     string,
     readonly DirCeiling[]
   >;
   for (const [name, declared] of Object.entries(manifest.profiles)) {
     // Remove unavailable optional built-ins as well: a grandchild must not inherit phantom authority.
-    let role: ResolvedProfile;
+    let role: ResolvedRole;
     try {
       role = checkProfile(name, declared);
     } catch {
@@ -386,7 +381,7 @@ export function delegateCapabilities(
     // Clamp to the effective ceiling here too: a grandchild otherwise treats the child's larger
     // declared limit as its own ceiling and can exceed the root's cap.
     const clamped = clampLimits(role, ceiling);
-    const inherited: ResolvedProfile = {
+    const inherited: ResolvedRole = {
       ...clamped,
       ...(clamped.harnesses === undefined
         ? {}

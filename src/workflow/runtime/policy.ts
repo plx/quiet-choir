@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { codexEffortValues } from './agent-controls.js';
-import type { ResolvedProfile, ProfileOverride } from './profiles-model.js';
+import type { ResolvedRole, ProfileOverride } from './profiles-model.js';
 import { retryOnSchema } from './step-error.js';
 
 import type {
@@ -169,7 +169,7 @@ export function resolvePolicy(
   defaults: ExecutionPolicy,
   overrides: readonly PolicyOverride[],
   matched: Set<number>,
-  profile?: ResolvedProfile,
+  profile?: ResolvedRole,
   profileOverrides: readonly ProfileOverride[] = [],
   limitKeys: readonly string[] = kind === 'codex' ? ['effort'] : claudeLimitKeys,
 ): AttemptPolicy {

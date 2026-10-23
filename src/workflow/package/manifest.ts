@@ -2,7 +2,7 @@ import type { PromptSetCheck } from '../prompts/check.js';
 import { promptSetDescriptor, type PromptSetDescriptor } from '../prompts/prompt.js';
 import type { WorkflowDeclaration, WorkflowDescription } from '../runtime/child-model.js';
 import type { JsonValue } from '../runtime/model.js';
-import type { AccessClass, ResolvedProfile } from '../runtime/profiles-model.js';
+import type { AccessClass, ResolvedRole } from '../runtime/profiles-model.js';
 import { packageFilesDigest, type HashedPackageFile } from './files.js';
 import type { WorkflowPackage } from './model.js';
 
@@ -104,7 +104,7 @@ export function packageListing(pkg: WorkflowPackage): PackageListing {
   };
 }
 
-function modelOf(profile: ResolvedProfile, harness: string): string | null {
+function modelOf(profile: ResolvedRole, harness: string): string | null {
   const options: unknown =
     harness === 'claude'
       ? profile.claude

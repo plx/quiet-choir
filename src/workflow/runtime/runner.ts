@@ -162,7 +162,7 @@ import {
   resolveProfileCall,
   validateProfileOverrides,
 } from './profiles.js';
-import type { ProfileOverride, ResolvedProfile } from './profiles-model.js';
+import type { ProfileOverride, ResolvedRole } from './profiles-model.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { resolve } from 'node:path';
 import {
@@ -2893,7 +2893,7 @@ export async function runWorkflow<
           let request: HarnessRequestInput<ClaudeOptions & CodexOptions>;
           let schema: z.ZodType<T>;
           let execution: AttemptPolicy;
-          let profile: ResolvedProfile;
+          let profile: ResolvedRole;
           let legacyRequest: JsonValue;
           const registration = registry.definitions(children.definition).get(harness);
           if (!registration)

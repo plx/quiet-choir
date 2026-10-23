@@ -216,6 +216,7 @@ export type {
   NoExtraKeys,
   ProfileReferenceOf,
   ProfileOverride,
+  // eslint-disable-next-line @typescript-eslint/no-deprecated -- the public manifest keeps the deprecated name until the removal slice (#696)
   ResolvedProfile,
   RedactedControl,
   CapabilityManifest,
