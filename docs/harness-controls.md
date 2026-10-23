@@ -2,10 +2,10 @@
 
 Both providers take one `effort` field. Claude accepts `'low' | 'medium' | 'high' | 'xhigh' | 'max'`
 and maps it to `--effort`; Codex also accepts `'none'` and `'minimal'` and sends it as
-`model_reasoning_effort`. A call-site `effort` replaces one inherited from profile defaults.
-Omission uses native defaults under the selected configuration mode. Accepted enum values do not
-guarantee support for every model. Each attempt records `requested.model` and `requested.effort`,
-using `"inherited"` for omissions.
+`model_reasoning_effort`. A raw call's `effort` replaces one inherited from `defaults`; a roster
+entry's `effort` is fixed, so a variant needs its own entry. Omission uses native defaults under the
+selected configuration mode. Accepted enum values do not guarantee support for every model. Each
+attempt records `requested.model` and `requested.effort`, using `"inherited"` for omissions.
 
 ## Typed controls
 
@@ -15,27 +15,21 @@ using `"inherited"` for omissions.
 | Claude   | `disallowedTools`, `permissionMode` (`dontAsk`, `acceptEdits`, `plan`), `systemPrompt`, `appendSystemPrompt`, `agent`, `agents`, `mcpServers`, `strictMcpConfig`, `settings`, `plugins`, `fallbackModel`, `onPermissionDenied` |
 | Codex    | `networkAccess`, `harnessProfile`, `config`, `images`, `instructions`                                                                                                                                                          |
 
-`profile` always selects a quiet-choir role. `harnessProfile` selects Codex's native configuration
-profile (`--profile`). Native profile names contain letters, numbers, underscores or hyphens and
-start with a letter or number. `networkAccess` requires `workspace-write`, even when false.
-`addDirs` resolves against the effect's cwd; Codex makes those directories **writable**. A Claude
-profile may declare `addDirRoots` (profile-only, not a call option) so that strict call sites can
-pass `addDirs` inside those roots; Codex cannot declare roots. Codex `instructions: 'none'` runs the
-child against a private temporary `CODEX_HOME` holding only a copy of `auth.json`, adds
-`--config project_doc_max_bytes=0`, and writes a refreshed `auth.json` back under a lock; it
-requires restricted isolation and owns the `project_doc_max_bytes` config key. It removes context
-and grants nothing, so it is not a capability control. See
-[harness isolation](harness-isolation.md).
+`harnessProfile` selects Codex's native configuration profile (`--profile`). Native profile names
+contain letters, numbers, underscores or hyphens and start with a letter or number. `networkAccess`
+requires `workspace-write`, even when false. `addDirs` resolves against the effect's cwd; Codex
+makes those directories **writable**. Codex `instructions: 'none'` runs the child against a private
+temporary `CODEX_HOME` holding only a copy of `auth.json`, adds `--config project_doc_max_bytes=0`,
+and writes a refreshed `auth.json` back under a lock; it requires restricted isolation and owns the
+`project_doc_max_bytes` config key. It removes context and grants nothing, so it is not a capability
+control. See [harness isolation](harness-isolation.md).
 
-Declare capability controls in [roster entries or profiles](roster.md), including tools,
-permissions, MCP/settings, native agents/profiles/config, additional directories, environment and
-escape args. `strictProfiles: true` (opt-in; the default is `false`) rejects those fields at call
-sites, with one bounded exception: a Claude call may pass `addDirs` when its profile declares
-`claude.addDirRoots` and every entry canonicalizes (no `..` segments, symlinks resolved) inside a
-root; accepted entries are appended to the profile's `addDirs` as canonical absolute paths. Under
-any other profile the call fails typecheck where `defineWorkflow` can see the profile's shape. See
-[bounded call-site directories](roster.md#bounded-call-site-directories). Role prompts, models,
-effort, fallbacks and image attachments can be supplied per call. Native
+Declare capability controls on [roster entries](roster.md), including tools, permissions,
+MCP/settings, native agents/profiles/config, additional directories, environment and escape args.
+`strictProfiles: true` (opt-in; the default is `false`) rejects those fields at raw call sites and
+in `bind`, so they belong on a roster entry; see [strict call sites](roster.md#strict-call-sites).
+Raw calls can supply role prompts, models, effort, fallbacks and image attachments per call; a
+roster call fixes all of them on its entry except Codex `images`. Native
 configuration/agent/escape/env controls and enabled network access are conservatively classified as
 **exec** access, and Codex additional writable directories as write access; Claude directories alone
 grant no tools. Under [`requireGrants`](roster.md#requiregrants-launch-grants-and-pins) those
@@ -43,19 +37,17 @@ classes need launch grants, and named grants pin these declared controls and req
 they change.
 
 ```ts
-// Fields on defineWorkflow:
-profiles: {
-  reviewer: {
-    extends: 'readonly',
-    claude: {
-      appendSystemPrompt: 'Review for correctness. Explain evidence.',
-      effort: 'high',
-      disallowedTools: ['Bash(git push:*)'],
-    },
+// In the roster module:
+const roster = defineRoster({
+  Reviewer: {
+    ...std.claude.ReadOnly,
+    appendSystemPrompt: 'Review for correctness. Explain evidence.',
+    effort: 'high',
+    disallowedTools: ['Bash(git push:*)'],
   },
-},
+});
 // Inside run:
-await ctx.claude.text('review', { profile: 'reviewer', prompt: 'Review src/index.ts.' });
+await ctx.roster.Reviewer.text('review', { prompt: 'Review src/index.ts.' });
 ```
 
 `agents` is a record of native Claude agent definitions, each with required `description` and
@@ -91,18 +83,18 @@ Public manifests (the checkpoint's `capabilities`, `workflow validate --json` an
 `check-resume` prints; checkpoints and `check-resume` keep the full shape, while `validate` and
 `list-defs` print the [compact view](cli-contract.md)) reduce every free-form native control to a
 digest. Claude `settings`, `mcpServers`, `agents` (descriptions and prompts), `systemPrompt`,
-`appendSystemPrompt` and Codex `config` are removed from the profile's `claude`/`codex` and listed
-under `redacted` as `{ sha256, keys? }`: `keys` are the top-level settings keys, MCP server names,
-subagent names or dotted config keys, and the two prompts have only `sha256`. A profile that sets
-none of them has no `redacted` member. Live calls, grant pins and step identity still use the raw
-values, so a changed value invalidates a pin or a completed step even though the manifest shows only
-a new digest. Reviewable controls stay plaintext: tools, permission mode, `agent`, plugins,
-`addDirs`, `addDirRoots`, `extraArgs`, models, limits, isolation and sandbox. Never put secret
+`appendSystemPrompt` and Codex `config` are removed from the entry's `claude`/`codex` in the
+manifest and listed under `redacted` as `{ sha256, keys? }`: `keys` are the top-level settings keys,
+MCP server names, subagent names or dotted config keys, and the two prompts have only `sha256`. An
+entry that sets none of them has no `redacted` member. Live calls, grant pins and step identity
+still use the raw values, so a changed value invalidates a pin or a completed step even though the
+manifest shows only a new digest. Reviewable controls stay plaintext: tools, permission mode,
+`agent`, plugins, `addDirs`, `extraArgs`, models, limits, isolation and sandbox. Never put secret
 values in `extraArgs`; use `env`. A registered harness lists its own sensitive option keys in the
-declaration's `sensitiveOptions`; a profile's values for them leave `harnesses.<name>` and
+declaration's `sensitiveOptions`; an entry's values for them leave `harnesses.<name>` and
 `harnessCapabilities.<name>` and appear as `redacted.harnesses.<name>.<key>`, with `keys` only for
 an object value. `defineHarness` rejects unknown and duplicate keys, and keys that never reach a
-manifest (`prompt`, `model`, `env` and the call options profiles cannot set). Other registered
+manifest (`prompt`, `model`, `env` and the call options entries cannot set). Other registered
 options stay plaintext. A digest of a short value can be confirmed by guessing. Checkpoints written
 before this change keep what they saved until the run next executes, which rewrites them. Prompts
 and previews in step records are plaintext state, outside the manifest. See
@@ -128,13 +120,13 @@ background if the operation ever returns.
 ## Idle deadline and tool-use diagnostics
 
 `idleTimeoutMs` ends an agent attempt whose CLI writes nothing to stdout or stderr for that many
-milliseconds. It is off by default. Set it like `timeoutMs`: in workflow `defaults`, on a profile,
-on a call, with `--profile name.idleTimeoutMs=N` (`RunOptions.profileOverrides`), or with an agent
-`--policy` rule (later sources win in the same order as `timeoutMs`; `kind: 'step'` and `'exec'`
-rules reject it). It is execution policy, never step identity, so a resume can raise it without a
-code change; child workflows inherit the parent's value as a ceiling. The attempt records the
-effective value and its source in `attemptHistory[].policy` and `sources`, and `inspect` shows it as
-`idle timeout`.
+milliseconds. It is off by default. Set it like `timeoutMs`: in workflow `defaults`, on a roster
+entry, on a call, with `--profile name.idleTimeoutMs=N` (`RunOptions.profileOverrides`), or with an
+agent `--policy` rule (later sources win in the same order as `timeoutMs`; `kind: 'step'` and
+`'exec'` rules reject it). It is execution policy, never step identity, so a resume can raise it
+without a code change; child workflows inherit the parent's value as a ceiling. The attempt records
+the effective value and its source in `attemptHistory[].policy` and `sources`, and `inspect` shows
+it as `idle timeout`.
 
 The process layer enforces it. The timer starts once the prompt has been fully flushed to the CLI's
 stdin, or stdin has closed (after durable process registration; a large prompt the CLI reads slowly
@@ -155,7 +147,7 @@ carries structured output, and distinct Codex `command_execution`, `file_change`
 and `web_search` items, counted from the header when the parser skips an oversized line. The
 `mcp_tool_call` and `web_search` item shapes are pinned by the captures in
 `test/fixtures/harness-tools/`. A skipped oversized Claude assistant line leaves a zero count
-unknown (`null`). When the profile's `expectsToolUse` is true and a completed attempt reports
+unknown (`null`). When the entry's `expectsToolUse` is true and a completed attempt reports
 `toolUses: 0`, the step records a `no-tool-use` warning, which the completed `agent.finished` event
 carries in `warnings` and the CLI logs at warn level ([roster](roster.md#recovery-and-diagnostics)).
 The warning never fails the attempt.

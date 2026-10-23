@@ -1,9 +1,9 @@
 # Restricted harness calls
 
 Agent calls default to `isolation: 'restricted'`. The runtime resolves this mode before computing
-the effect fingerprint. Set it on a call, a workflow's `defaults`, a named profile, or the
+the effect fingerprint. Set it on a call, a workflow's `defaults`, a roster entry, or the
 provider-specific `claude`/`codex` options. Explicit `inherit` loads native configuration and is
-classified as exec capability. Under `strictProfiles: true` declare it in a profile; under
+classified as exec capability. Under `strictProfiles: true` declare it on a roster entry; under
 `requireGrants` that role, or a raw `inherit` call, needs an exec grant. Narrowing a call to
 `restricted` is allowed.
 
@@ -11,7 +11,7 @@ Configuration mode and Git checkout selection are separate: `isolation` is only 
 mode (`'restricted' | 'inherit'`), and `worktree` is the only checkout selector. `worktree: true`
 requests a fresh checkout per attempt, `worktree: { base }` pins another ref or commit for it, and a
 shared `ctx.worktree` handle serializes the call on that checkout. Checkout selection keeps the
-configuration mode from the selected profile; for example, a trusted inherited role can also use
+configuration mode from the selected entry; for example, a trusted inherited role can also use
 `worktree: true`. See [worktree isolation](worktrees.md).
 
 ## Native boundary
@@ -36,13 +36,12 @@ worktree snapshotting runs outside the agent and does not require the agent to c
 
 `inherit` is an explicit trust decision. `cwd` selects project `.claude`/`.codex` inputs, and an
 inherit call also loads `.claude/skills` skills and `.claude/commands` commands from its `addDirs`
-directories, including bounded call-site directories of a profile with `addDirRoots`; those are not
-detected in `projectInstructions`. Headless Claude skips the workspace trust dialog and can execute
-project hooks in never-trusted directories. Do not point inherited calls at untrusted checkouts.
-`tools: []` alone does not suppress inherited MCP or hooks. Custom providers normally stored in
-`config.toml` need explicit `config` or an inherited role. `harnessProfile` selects a native profile
-from the same skipped `config.toml`, so restricted mode rejects it; select `inherit` or configure
-the equivalent settings through `config`.
+directories; those are not detected in `projectInstructions`. Headless Claude skips the workspace
+trust dialog and can execute project hooks in never-trusted directories. Do not point inherited
+calls at untrusted checkouts. `tools: []` alone does not suppress inherited MCP or hooks. Custom
+providers normally stored in `config.toml` need explicit `config` or an inherited role.
+`harnessProfile` selects a native profile from the same skipped `config.toml`, so restricted mode
+rejects it; select `inherit` or configure the equivalent settings through `config`.
 
 Codex instruction boundary. Unlike restricted Claude, restricted Codex still loads instruction
 files. `--ignore-user-config` skips `config.toml` and `--ignore-rules` skips execpolicy rules, but
@@ -85,28 +84,29 @@ Other inherit-mode inputs are not detected: project `CLAUDE.md` files (including
 Added directories. Restricted Claude 2.1.293 loads no `CLAUDE.md`, `.claude/CLAUDE.md`,
 `CLAUDE.local.md`, `.claude/rules/*.md`, `.claude/skills` skill or `.claude/commands` command from
 an `addDirs` directory: none reaches the request, and the skill and command are absent from the init
-listing. This holds for static `addDirs` and for bounded call-site directories alike, which are the
-same `--add-dir` argument. The directory only extends the file tools' reach. It is not a trust
-decision about its contents, so the run records nothing for it. Claude's native opt-in
+listing. This holds for static `addDirs` and call-site `addDirs` alike, which are the same
+`--add-dir` argument. The directory only extends the file tools' reach. It is not a trust decision
+about its contents, so the run records nothing for it. Claude's native opt-in
 `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1` is not blocked, only gated: with it, even
 restricted Claude loads the added directory's `CLAUDE.md`, `.claude/CLAUDE.md` and `.claude/rules`
 files (not `CLAUDE.local.md`, skills or commands). A host-exported value is removed by the
-`CLAUDE_CODE_*` scrub below, and restoring it takes `env.set`, which is a profile-only control under
+`CLAUDE_CODE_*` scrub below, and restoring it takes `env.set`, which belongs on a roster entry under
 `strictProfiles: true`, is classified as exec access (a grant under `requireGrants`) and enters the
 step fingerprint. Files loaded that way are not detected or recorded.
 
-Set Codex `instructions: 'none'` (on a call, a profile's `codex` options or `defaults.codex`) to run
-without these files. The adapter adds `--config project_doc_max_bytes=0`, which stops project
-`AGENTS.md` loading, and runs the child against a private temporary `CODEX_HOME` holding only a 0600
-copy of the real `auth.json`, removed after every outcome. A token refreshed during the call is
-written back to the real `auth.json` atomically under a lock, and only if the real file is
-unchanged; when another process changed it meanwhile, the later `last_refresh` wins and the call
-warns (paths, never contents). Skill roots outside `CODEX_HOME` are not affected: Codex 0.160.0
-still loads `$HOME/.agents/skills`, the project's `.agents/skills` and `<cwd>/.codex/skills`, so
-results can still depend on who runs the workflow. The trade-off: calls lose guidance users may
-expect from their own or the project's `AGENTS.md` and their `CODEX_HOME` skills. Supply
-instructions deliberately through the prompt or explicit `config` such as `developer_instructions`.
-`'none'` requires restricted isolation and is rejected with `inherit`, whose `config.toml` can carry
+Set Codex `instructions: 'none'` (on a Codex call, on a Codex roster entry
+`{ harness: 'codex', instructions: 'none', ... }` or in `defaults.codex`) to run without these
+files. The adapter adds `--config project_doc_max_bytes=0`, which stops project `AGENTS.md` loading,
+and runs the child against a private temporary `CODEX_HOME` holding only a 0600 copy of the real
+`auth.json`, removed after every outcome. A token refreshed during the call is written back to the
+real `auth.json` atomically under a lock, and only if the real file is unchanged; when another
+process changed it meanwhile, the later `last_refresh` wins and the call warns (paths, never
+contents). Skill roots outside `CODEX_HOME` are not affected: Codex 0.160.0 still loads
+`$HOME/.agents/skills`, the project's `.agents/skills` and `<cwd>/.codex/skills`, so results can
+still depend on who runs the workflow. The trade-off: calls lose guidance users may expect from
+their own or the project's `AGENTS.md` and their `CODEX_HOME` skills. Supply instructions
+deliberately through the prompt or explicit `config` such as `developer_instructions`. `'none'`
+requires restricted isolation and is rejected with `inherit`, whose `config.toml` can carry
 instructions of its own; it also owns the `project_doc_max_bytes` config key. Custom providers still
 need explicit `config`. It grants nothing, so call sites may set it under `strictProfiles`. `'none'`
 enters step identity; `'native'` (the default) and unset fingerprint identically. Steps record

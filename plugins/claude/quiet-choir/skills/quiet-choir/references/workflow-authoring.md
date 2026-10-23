@@ -75,9 +75,9 @@ version requires a new run ID (a fork can reuse compatible steps). See [durabili
 | `ctx.signal`                                                                                           | Current scope signal; inherits run and parent-map cancellation                                                        |
 
 Call-site task prompts and identity options are stored as component hashes. Resolved execution
-policy and requested model/effort are stored in plaintext per attempt. Profile declarations are
-saved in the capability manifest, with free-form controls reduced to names and digests: Claude
-settings, MCP servers, agents, system prompts, Codex config and a registered harness's declared
+policy and requested model/effort are stored in plaintext per attempt. Roster declarations are saved
+in the capability manifest, with free-form controls reduced to names and digests: Claude settings,
+MCP servers, agents, system prompts, Codex config and a registered harness's declared
 `sensitiveOptions` appear under `redacted` as `{ sha256, keys? }`, and environment values appear as
 names and a digest. Tools, permission mode, plugins, `extraArgs`, models and limits stay plaintext,
 so never put secret values in `extraArgs`. Checkpoints written before this change are scrubbed the

@@ -50,9 +50,9 @@ the workflow calls it.
 **Rule:** declare the agents a workflow calls once, in a data-only `roster.ts` module, and call them
 as `ctx.roster.Name`. An entry is one concrete configuration pinned to one harness
 (`harness: 'claude'` or `'codex'`), so a role that serves both harnesses becomes two entries, and a
-misspelled name fails typecheck. The recipes below import this module, which mirrors the old
-`readonly` and `edit` presets with explicit values, one small roster per recipe; copy it next to
-your workflow and change the values. Give each workflow only the entries it calls: under
+misspelled name fails typecheck. The recipes below import this module, which spells the read-only
+and edit configurations with explicit values, one small roster per recipe; copy it next to your
+workflow and change the values. Give each workflow only the entries it calls: under
 `--require-grants`, every write-capable entry in a workflow's roster needs a grant by its name
 (`--grant Editor`), used or not, and a child delegates only entries its parent also declares. When
 one call site needs a configuration no entry names, `ctx.claude.bind(options)` returns an `Agent`
@@ -157,8 +157,8 @@ export default defineWorkflow({
 });
 ```
 
-**Cost:** one call per repository. **Supersession:** an entry replaces a `profile: 'edit'` string
-and its `profiles` declaration; `bind` replaces repeating the same raw options at every call site.
+**Cost:** one call per repository. **Supersession:** an entry replaces repeating tools and limits at
+each call site; `bind` replaces repeating the same raw options at every call site.
 
 ## Cross-harness fan-out/fan-in
 

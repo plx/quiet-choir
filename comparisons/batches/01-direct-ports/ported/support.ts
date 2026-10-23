@@ -8,8 +8,8 @@ import {
 } from 'quiet-choir';
 
 // Explicit execution controls; source workflows inherited the interactive session.
-// Legacy strictProfiles:false ports expose $claude.tools; tools imply allowedTools unless narrowed.
-// Elevated raw tools still require write/exec/all grants at launch.
+// Batch 01 ports make raw calls over $claude (strictProfiles: false); tools imply allowedTools unless narrowed.
+// Under --require-grants, elevated raw tools need write/exec/all launch grants.
 export const executionInput = {
   $claude: z
     .object({

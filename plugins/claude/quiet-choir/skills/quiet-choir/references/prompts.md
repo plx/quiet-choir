@@ -61,8 +61,8 @@ description: Review a diff against the issue it claims to close.
   every agent call (raw, `ctx.agent(name)`, bound, roster) and Claude `systemPrompt` and
   `appendSystemPrompt` (calls, `bind`, roster entries) accept it. The runtime sends its text and
   fingerprints it exactly like the equal string, so switching a literal to a template that renders
-  the same text keeps completed steps reusable. Profiles, `defaults` and Codex options other than
-  `prompt` take strings; use `.text` there.
+  the same text keeps completed steps reusable. Roster entries, `defaults` and Codex options other
+  than `prompt` take strings; use `.text` there.
 - List every set in the workflow's `prompts`, and in each child that uses it, so the checks run.
 
 ## Template rules

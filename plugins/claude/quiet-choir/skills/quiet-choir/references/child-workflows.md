@@ -17,7 +17,7 @@ runtime. Explicit `defineWorkflow` type arguments are all-or-nothing: with a sho
 `strictProfiles: true` or a nonempty `children` list fails typecheck; drop the type arguments
 (preferred) or spell all seven. Direct definition calls preserve inferred output types. Name
 dispatch does not search the filesystem registry. Plain function helpers remain useful with
-`ctx.scope` or `ctx.within`; a typed workflow adds validated I/O, a recorded version, profile
+`ctx.scope` or `ctx.within`; a typed workflow adds validated I/O, a recorded version, requireGrants
 delegation and a visible frame. Do not wrap a child or a multi-effect helper in `ctx.step`.
 
 ## Identity and replay
@@ -83,28 +83,28 @@ resume sets the sticky guard; zero prohibits child entry. Recursion is allowed a
 guard. The refusal shows the workflow chain, and a raised cap resumes existing effects. It is
 policy, outside identity; `execute --policy-reset` restores the default before explicit overrides.
 
-## Profiles and observation
+## Rosters and observation
 
-By default a child's roles are its own: no role is compared to the parent's, `options.profiles` is
-accepted and ignored, and the parent's `--profile` limit rules still match by profile name. The
-child's own `strictProfiles` governs its call sites; a child definition's `requireGrants` is
-ignored, since only the root's (or the run's `--require-grants`) counts.
+By default a child's roster is its own: no role is compared to the parent's, `options.profiles` is
+accepted and ignored, and the parent's `--profile` limit rules still match by name. The child's own
+`strictProfiles` governs its call sites; a child definition's `requireGrants` is ignored, since only
+the root's (or the run's `--require-grants`) counts.
 
 ### requireGrants: delegation ceilings
 
 Under `requireGrants`, child roles map to parent roles of the same name by default, and
 `options.profiles` maps a child's role to a differently named parent role (an unknown child role in
-it is an error). Declared/default child requirements are checked before child effects. Tools,
-permissions, sandbox and native escape controls cannot exceed the delegated role; opaque controls
-require matching configuration. Missing or insufficient roles fail explicitly. Optional built-ins
-that the parent cannot delegate disappear from the child's available roles, so a grandchild cannot
-recover them. Raw call-site capabilities are checked too, even with `strictProfiles: false`.
+it is an error). Child roster entries are checked before child effects. Tools, permissions, sandbox
+and native escape controls cannot exceed the delegated role; opaque controls require matching
+configuration. A child call's directories must be listed by the parent role (directory membership is
+literal). Missing or insufficient roles fail explicitly. Raw call-site capabilities are checked too,
+even with `strictProfiles: false`.
 
 Under `requireGrants`, child models/effort inherit the mapped parent's values when omitted. Parent
-profile limit overrides pass through role mappings, and child call limits are bounded by the
-delegated parent limits. Child profile definitions remain the source of its requested tools; mapping
-never promotes it to additional parent tools. Workflow JavaScript remains trusted operator code, not
-a security sandbox.
+`--profile` limit overrides pass through role mappings, and child call limits are bounded by the
+delegated parent limits. The child's entries remain the source of its requested tools; mapping never
+promotes it to additional parent tools. Workflow JavaScript remains trusted operator code, not a
+security sandbox.
 
 ### Observation
 
@@ -129,13 +129,13 @@ notices edits. Use required Zod fields for required input, and `.describe()` for
 Missing required input fails before a new run record or agent call; returning `{error: ...}` is an
 ordinary successful output and should not replace input validation.
 
-`workflow validate FILE --json` includes input/output JSON Schemas, descriptions, phases, profiles,
+`workflow validate FILE --json` includes input/output JSON Schemas, descriptions, phases,
 capabilities and a declared child tree, in a compact form: no harness option JSON Schemas, no
 `capabilities.defaults` (use `profiles[defaultProfile]`), a shared `capabilities.environment` with
-per-profile differences only, `profiles` as declared names, and no root `entrypoint` (it equals the
-document's own). Pass `--harness-schemas` for the complete document; `list-defs --json` follows the
-same rules. Recursive declarations end in `recursive: true` reference nodes. Inline children have
-`entrypoint: null` when no source entrypoint is known.
+per-entry differences only, `workflow.profiles` as a field that does not list roster entries, and no
+root `entrypoint` (it equals the document's own). Pass `--harness-schemas` for the complete
+document; `list-defs --json` follows the same rules. Recursive declarations end in `recursive: true`
+reference nodes. Inline children have `entrypoint: null` when no source entrypoint is known.
 
 After saving the reusable review recipe in your trusted `workflows` directory:
 
