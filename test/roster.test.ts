@@ -154,6 +154,14 @@ describe('defineRoster', () => {
     );
   });
 
+  it('refuses addDirRoots as removed, pointing at addDirs on the entry', () => {
+    expect(() =>
+      defineRoster({ Entry: { harness: 'claude', addDirRoots: ['runs'] } } as never),
+    ).toThrow(
+      'Roster entry Entry cannot set addDirRoots: rooted call-site directories were removed; list addDirs on the entry',
+    );
+  });
+
   it('returns a deep-frozen copy', () => {
     const tools = ['Read'];
     const frozen = defineRoster({ Reader: { harness: 'claude', tools } });
@@ -651,6 +659,37 @@ describe('ctx.roster calls', () => {
       timeoutMs: 'profile:Reader',
     });
     expect(attempt(record.steps['outer/inner'])?.profile).toBe('Reader');
+  });
+
+  it('refuses call-site addDirs on a strict roster call; the entry keeps its own (#707)', async ({
+    stateDir,
+    runs,
+  }) => {
+    const fake = capture('ok');
+    const definition = (extra: boolean) =>
+      defineWorkflow({
+        ...base,
+        name: 'roster-strict-dirs',
+        strictProfiles: true,
+        roster: defineRoster({ Reader: { harness: 'claude', tools: ['Read'], addDirs: ['docs'] } }),
+        async run(ctx) {
+          await ctx.roster.Reader.text('plain', { prompt });
+          if (extra) await ctx.roster.Reader.text('extra', { prompt, addDirs: ['runs/a'] });
+          return null;
+        },
+      });
+    await expect(
+      runs.run(definition(true), { stateDir, runId: 'strict', input: null, harness: fake.harness }),
+    ).rejects.toThrow('strictProfiles forbids call-site addDirs');
+    expect(fake.requests.map((request) => request.stepId)).toEqual(['plain']);
+    expect(fake.requests[0]?.options).toMatchObject({ addDirs: ['docs'] });
+    await runs.run(definition(false), {
+      stateDir,
+      runId: 'plain',
+      input: null,
+      harness: fake.harness,
+    });
+    expect(fake.requests[1]?.options).toMatchObject({ addDirs: ['docs'] });
   });
 
   it('resolves an inline child against its own roster', async ({ stateDir, runs }) => {

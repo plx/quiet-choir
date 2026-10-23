@@ -1,8 +1,8 @@
 // Child delegation ceilings on roster entries (ADR 0063 sections 4-5, #705/#709): the counterparts
-// of child-profiles.test.ts:26/71/94/154/428, children.test.ts:266/562/1906/1965 and the delegation
-// half of harness-registry.test.ts:232, with an entry name in place of the profile name. The
-// addDirRoots cases (child-profiles.test.ts:174-426 and :501, children.test.ts:1762-1903) stay for
-// #707, because a roster entry rejects addDirRoots. defineRoster deep-freezes its entries, so a case
+// of child-profiles.test.ts:23/68/91/151/218, children.test.ts:265/561/1815/1874 and the delegation
+// half of harness-registry.test.ts:232, with an entry name in place of the profile name. Rooted
+// call-site directories were removed in #707, so no addDirRoots case has a roster counterpart; the
+// literal addDirs subset tests below cover entries. defineRoster deep-freezes its entries, so a case
 // that changes a definition between runs builds it from a factory. A roster call takes only the
 // per-call and both-sides keys (ADR 0063 section 1), so the per-call maxTurns of children.test.ts:266
 // becomes a per-call timeoutMs, and the per-call denial override of :562 is refused before inference
@@ -248,13 +248,12 @@ describe('unit delegation ceilings', () => {
     );
     const overrides = [{ profile: 'Scout', maxTurns: 2 }];
     const own = delegateCapabilities(child, root, [], {}, overrides, {}, false);
-    // The child's own resolved manifest, uncompared and unclamped, with no grants, pins or ancestry.
+    // The child's own resolved manifest, uncompared and unclamped, with no grants or pins.
     expect(own.manifest).toEqual(resolveCapabilities(child, { requireGrants: false }));
     expect(own.manifest.profiles['Builder']).toMatchObject({ access: 'exec', maxTurns: 99 });
     expect(own.manifest.requiredGrants).toEqual([]);
     expect(own.grants).toEqual([]);
     expect(own.pins).toEqual({});
-    expect(own.ancestry).toEqual({});
     // The parent's override rules pass through unchanged; operator limits still match by name.
     expect(own.overrides).toBe(overrides);
     expect(() => {
