@@ -218,11 +218,12 @@ renewed if those change. Elevated raw call-site controls need class/all grants. 
 `strictProfiles` is opt-in (default `false`). Under `true`, raw capability controls (tools,
 permissions, MCP, native config and agents, dirs, escape args, environment, and
 `isolation: 'inherit'`) are rejected at raw call sites and in `bind`, by type and by
-`workflow validate`; declare them on a roster entry. Roster entries cannot declare `addDirRoots`, so
-call-site `addDirs` are refused on raw and roster calls alike (ADRs 0054 and 0062 record the
-historical rooted form). Explicit `defineWorkflow` type arguments are all-or-nothing: with a shorter
-prefix such as `defineWorkflow<Input, Output>`, the rest take the permissive, childless defaults and
-leave `roster` and `defaults` uninferred; drop the type arguments (preferred) or spell all seven.
+`workflow validate`; declare them on a roster entry. Roster entries cannot declare `addDirRoots`;
+list directories in the entry's `addDirs` rather than passing them at the call site (ADRs 0054 and
+0062 record the historical rooted form). Explicit `defineWorkflow` type arguments are
+all-or-nothing: with a shorter prefix such as `defineWorkflow<Input, Output>`, the rest take the
+permissive, childless defaults and leave `roster` and `defaults` uninferred; drop the type arguments
+(preferred) or spell all seven.
 
 ### Limit overrides and diagnostics
 

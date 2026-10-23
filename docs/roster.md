@@ -568,8 +568,9 @@ only a fresh object literal. An omitted `strictProfiles` or a literal `false` ty
 non-literal `boolean` also stays permissive and leaves the decision to the runtime. A helper typed
 with a bare `WorkflowContext` stays permissive (the runtime check still applies).
 
-Roster entries cannot declare `addDirRoots`, so under `strictProfiles: true` call-site `addDirs` are
-refused on raw and roster calls alike (ADRs [0054](decisions/0054-bounded-call-site-adddirs.md) and
+Roster entries cannot declare `addDirRoots`; under `strictProfiles: true`, list directories in the
+entry's `addDirs` rather than passing them at the call site (ADRs
+[0054](decisions/0054-bounded-call-site-adddirs.md) and
 [0062](decisions/0062-type-call-site-adddirs-by-profile-roots.md) record the historical rooted
 form). Without strict call sites, a raw call's `addDirs` replace the defaults' list; a roster call's
 `addDirs` append to its entry's instead.
