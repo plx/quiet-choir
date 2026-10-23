@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { afterEach, expect } from 'vitest';
 import type { runWorkflow } from '../src/index.js';
 import {
+  ConfigurationError,
   defineHarness,
   defineWorkflow,
   readRun,
@@ -91,7 +92,7 @@ function view(step: StepRecord | undefined) {
 }
 
 const harnesses = [third, textOnly] as const;
-type Context = WorkflowContext<never, WorkflowHarnesses<typeof harnesses>, false>;
+type Context = WorkflowContext<WorkflowHarnesses<typeof harnesses>, false>;
 type Body = (ctx: Context) => Promise<unknown>;
 function workflow(name: string, run: Body) {
   return defineWorkflow({ ...base, name, harnesses, run });
@@ -676,14 +677,15 @@ it('names a role-bound call through the role channel, never a profile key', asyn
   expect(roleOf({ profile: 'X' })).toBeUndefined();
   expect(roleOf('x')).toBeUndefined();
   expect(roleOf(null)).toBeUndefined();
-  // A role-bound call still cannot set profile, and a re-bind cannot bind it.
+  // A role-bound call still cannot set profile, and a re-bind is refused as the removed option.
   await expect(agent.value('profile', { prompt, profile: 'scout' })).rejects.toThrow(
     new TypeError(
       'A bound agent call cannot set profile; bind it instead, or call the harness client directly (ADR 0063).',
     ),
   );
+  expect(() => agent.bind({ profile: 'scout' })).toThrow(ConfigurationError);
   expect(() => agent.bind({ profile: 'scout' })).toThrow(
-    new TypeError('A bound agent cannot bind profile again; the first bind fixed it (ADR 0063).'),
+    'bind cannot set profile; it was removed (#726): declare the agent with defineRoster and call ctx.roster.Name.',
   );
   expect(calls).toHaveLength(4);
 });

@@ -6,9 +6,10 @@ import type {
   BoundOptionsOf,
   SelectBranch,
 } from './model.js';
+import { removedProfileSurface } from './configuration-error.js';
 
 // ADR 0063 sections 1-2. A bound agent is partial application over the client it was bound from:
-// each call merges its options over the bound ones and calls that client, so naming, profiles,
+// each call merges its options over the bound ones and calls that client, so naming, roles,
 // policy, fingerprints and records see exactly the object a raw call would have spelled.
 
 /** Keys only a call may set; `bind` rejects them. */
@@ -145,14 +146,17 @@ function frozen(value: unknown, key: string, ancestors: readonly unknown[] = [])
 }
 
 /**
- * Deep-copy and freeze the defined bound options, rejecting per-call-only keys. A re-bind (`again`)
- * may set only the both-sides keys: the first bind fixed every other one.
+ * Deep-copy and freeze the defined bound options, rejecting per-call-only keys and the removed
+ * `profile` option. A re-bind (`again`) may set only the both-sides keys: the first bind fixed every
+ * other one.
  */
 function snapshot(bound: unknown, again: boolean): Options {
   if (!isOptions(bound)) throw new TypeError('bind options must be an object.');
   const copy: Record<string, unknown> = {};
   for (const [key, value] of entries(bound, 'bind')) {
     if (value === undefined) continue;
+    // The removed profile option (#726) is refused here, at the bind, not at the first call.
+    if (key === 'profile') throw removedProfileSurface('bind');
     if (perCallOnly.has(key))
       throw new TypeError(`bind cannot set ${key}; it is a per-call option (ADR 0063).`);
     if (again && !bothSides.has(key))

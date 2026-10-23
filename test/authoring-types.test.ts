@@ -1,6 +1,6 @@
-// Type-level contracts for call-site options, ctx.agent profiles and declared child dispatch. The
-// workflows are constructed but never run: typecheck (`npm run typecheck`) is the assertion, with
-// one `@ts-expect-error` per rejected call and `expectTypeOf` for inferred results.
+// Type-level contracts for call-site options, the removed profile surface (#726) and declared child
+// dispatch. The workflows are constructed but never run: typecheck (`npm run typecheck`) is the
+// assertion, with one `@ts-expect-error` per rejected call and `expectTypeOf` for inferred results.
 import { expect, expectTypeOf, it } from 'vitest';
 import type { claudeCapabilityKeys, codexCapabilityKeys } from '../src/index.js';
 import {
@@ -9,7 +9,6 @@ import {
   runWorkflow,
   z,
   type AgentDefaults,
-  type AgentProfile,
   type AgentResult,
   type BuiltInHarnesses,
   type CallOptions,
@@ -66,52 +65,51 @@ export const strict = defineWorkflow({
   ...base,
   name: 'strict',
   strictProfiles: true,
-  profiles: { scout: { claude: { tools: ['Read'] } } },
   harnesses: [tool, wide],
   async run(ctx) {
-    // @ts-expect-error -- strict: tools belongs to a named profile.
+    // @ts-expect-error -- strict: tools belongs to a roster entry.
     await ctx.claude.text('t', { prompt, tools: ['Read'] });
-    // @ts-expect-error -- strict: allowedTools belongs to a named profile.
+    // @ts-expect-error -- strict: allowedTools belongs to a roster entry.
     await ctx.claude.text('t', { prompt, allowedTools: ['Read'] });
-    // @ts-expect-error -- strict: disallowedTools belongs to a named profile.
+    // @ts-expect-error -- strict: disallowedTools belongs to a roster entry.
     await ctx.claude.text('t', { prompt, disallowedTools: ['Bash'] });
-    // @ts-expect-error -- strict: permissionMode belongs to a named profile.
+    // @ts-expect-error -- strict: permissionMode belongs to a roster entry.
     await ctx.claude.text('t', { prompt, permissionMode: 'plan' });
-    // @ts-expect-error -- strict: agent belongs to a named profile.
+    // @ts-expect-error -- strict: agent belongs to a roster entry.
     await ctx.claude.text('t', { prompt, agent: 'reviewer' });
-    // @ts-expect-error -- strict: agents belongs to a named profile.
+    // @ts-expect-error -- strict: agents belongs to a roster entry.
     await ctx.claude.text('t', { prompt, agents: {} });
-    // @ts-expect-error -- strict: plugins belongs to a named profile.
+    // @ts-expect-error -- strict: plugins belongs to a roster entry.
     await ctx.claude.text('t', { prompt, plugins: ['p'] });
-    // @ts-expect-error -- strict: mcpServers belongs to a named profile.
+    // @ts-expect-error -- strict: mcpServers belongs to a roster entry.
     await ctx.claude.text('t', { prompt, mcpServers: {} });
-    // @ts-expect-error -- strict: strictMcpConfig belongs to a named profile.
+    // @ts-expect-error -- strict: strictMcpConfig belongs to a roster entry.
     await ctx.claude.text('t', { prompt, strictMcpConfig: true });
-    // @ts-expect-error -- strict: settings belongs to a named profile.
+    // @ts-expect-error -- strict: settings belongs to a roster entry.
     await ctx.claude.text('t', { prompt, settings: {} });
     // @ts-expect-error -- strict: addDirs belongs to a roster entry.
     await ctx.claude.text('t', { prompt, addDirs: ['docs'] });
-    // @ts-expect-error -- strict: extraArgs belongs to a named profile.
+    // @ts-expect-error -- strict: extraArgs belongs to a roster entry.
     await ctx.claude.text('t', { prompt, extraArgs: ['--verbose'] });
-    // @ts-expect-error -- strict: env belongs to a named profile.
+    // @ts-expect-error -- strict: env belongs to a roster entry.
     await ctx.claude.text('t', { prompt, env: { A: 'b' } });
-    // @ts-expect-error -- strict: inherited configuration belongs to a named profile.
+    // @ts-expect-error -- strict: inherited configuration belongs to a roster entry.
     await ctx.claude.text('t', { prompt, isolation: 'inherit' });
-    // @ts-expect-error -- strict: sandbox belongs to a named profile.
+    // @ts-expect-error -- strict: sandbox belongs to a roster entry.
     await ctx.codex.text('t', { prompt, sandbox: 'workspace-write' });
-    // @ts-expect-error -- strict: networkAccess belongs to a named profile.
+    // @ts-expect-error -- strict: networkAccess belongs to a roster entry.
     await ctx.codex.text('t', { prompt, networkAccess: true });
-    // @ts-expect-error -- strict: config belongs to a named profile.
+    // @ts-expect-error -- strict: config belongs to a roster entry.
     await ctx.codex.text('t', { prompt, config: {} });
-    // @ts-expect-error -- strict: harnessProfile belongs to a named profile.
+    // @ts-expect-error -- strict: harnessProfile belongs to a roster entry.
     await ctx.codex.text('t', { prompt, harnessProfile: 'p' });
-    // @ts-expect-error -- strict: addDirs belongs to a named profile.
+    // @ts-expect-error -- strict: addDirs belongs to a roster entry.
     await ctx.codex.text('t', { prompt, addDirs: ['docs'] });
-    // @ts-expect-error -- strict: extraArgs belongs to a named profile.
+    // @ts-expect-error -- strict: extraArgs belongs to a roster entry.
     await ctx.codex.text('t', { prompt, extraArgs: ['--x'] });
-    // @ts-expect-error -- strict: env belongs to a named profile.
+    // @ts-expect-error -- strict: env belongs to a roster entry.
     await ctx.codex.text('t', { prompt, env: { A: 'b' } });
-    // @ts-expect-error -- strict: inherited configuration belongs to a named profile.
+    // @ts-expect-error -- strict: inherited configuration belongs to a roster entry.
     await ctx.codex.text('t', { prompt, isolation: 'inherit' });
     // ctx.agent('claude') and ctx.agent('codex') match ctx.claude and ctx.codex.
     // @ts-expect-error -- strict through ctx.agent too.
@@ -120,11 +118,9 @@ export const strict = defineWorkflow({
     await ctx.agent('codex').text('t', { prompt, sandbox: 'workspace-write' });
     // @ts-expect-error -- strict: addDirs belongs to a roster entry, through ctx.agent too.
     await ctx.agent('claude').text('t', { prompt, addDirs: ['runs/pr-1'] });
-    // @ts-expect-error -- strict: no profile admits call-site addDirs (#707).
-    await ctx.claude.text('t', { prompt, profile: 'scout', addDirs: ['runs/pr-1'] });
     // @ts-expect-error -- strict: addDirs belongs to a roster entry inside a bound scope too.
     await ctx.within('scope').claude.text('t', { prompt, addDirs: ['runs/pr-1'] });
-    // @ts-expect-error -- strict: Codex addDirs are writable roots and stay profile-owned.
+    // @ts-expect-error -- strict: Codex addDirs are writable roots and stay role-owned.
     await ctx.agent('codex').text('t', { prompt, addDirs: ['docs'] });
     // A registered harness's literal capabilityKeys are rejected; other options are not.
     // @ts-expect-error -- strict: tools is a declared capability key of the tool harness.
@@ -133,17 +129,17 @@ export const strict = defineWorkflow({
     // A widened capabilityKeys list stays permissive; the runtime check still applies.
     await ctx.agent('wide').text('t', { prompt, tools: ['shell'] });
     // Pre-built variables are rejected structurally, not only fresh literals.
-    // @ts-expect-error -- strict: a variable's tools belongs to a named profile.
+    // @ts-expect-error -- strict: a variable's tools belongs to a roster entry.
     await ctx.claude.text('t', claudeToolsOptions);
-    // @ts-expect-error -- strict: a variable's sandbox belongs to a named profile.
+    // @ts-expect-error -- strict: a variable's sandbox belongs to a roster entry.
     await ctx.codex.text('t', codexSandboxOptions);
-    // @ts-expect-error -- strict: a variable's tools belongs to a named profile.
+    // @ts-expect-error -- strict: a variable's tools belongs to a roster entry.
     await ctx.agent('claude').text('t', claudeToolsOptions);
     // @ts-expect-error -- strict: a variable's tools is a declared capability key of the tool harness.
     await ctx.agent('tool').text('t', registeredToolsOptions);
     // @ts-expect-error -- strict: an explicit undefined still sets the key (runtime Object.hasOwn).
     await ctx.claude.text('t', undefinedToolsOptions);
-    // @ts-expect-error -- strict: a variable's inherited configuration belongs to a named profile.
+    // @ts-expect-error -- strict: a variable's inherited configuration belongs to a roster entry.
     await ctx.claude.text('t', inheritOptions);
     // @ts-expect-error -- strict: a variable's addDirs belongs to a roster entry.
     await ctx.claude.text('t', addDirOptions);
@@ -187,7 +183,8 @@ export const strict = defineWorkflow({
     await ctx.claude.text('t', { prompt, worktree: { kind: 'worktree' } });
     // @ts-expect-error -- use worktree: { base }.
     await ctx.codex.text('t', { prompt, worktree: { kind: 'worktree', base: 'main' } });
-    await ctx.within('scope').claude.text('t', { prompt, profile: 'scout' });
+    // @ts-expect-error -- the profile call option was removed (#726), under strictProfiles too.
+    await ctx.within('scope').claude.text('t', { prompt, profile: 'text' });
     return null;
   },
 });
@@ -249,16 +246,15 @@ export const omittedStrict = defineWorkflow({
   ...base,
   name: 'omitted-strict',
   harnesses: [tool],
-  profiles: { plain: { extends: 'readonly' } },
   async run(ctx) {
     await ctx.claude.text('t', { prompt, tools: ['Read'] });
-    await ctx.claude.text('t', { prompt, profile: 'plain', addDirs: ['d'], env: { A: 'b' } });
+    await ctx.claude.text('t', { prompt, addDirs: ['d'], env: { A: 'b' } });
     await ctx.codex.text('t', { prompt, sandbox: 'workspace-write', networkAccess: true });
     await ctx.agent('tool').text('t', { prompt, tools: ['shell'] });
     await ctx.within('scope').claude.text('t', { prompt, isolation: 'inherit' });
     await ctx.claude.text('t', claudeToolsOptions);
-    // @ts-expect-error -- profile names stay checked without strict profiles.
-    await ctx.claude.text('t', { prompt, profile: 'typo' });
+    // @ts-expect-error -- the profile call option was removed (#726) without strict profiles too.
+    await ctx.claude.text('t', { prompt, profile: 'text' });
     return null;
   },
 });
@@ -278,105 +274,147 @@ export const dynamic = defineWorkflow({
 // A bare WorkflowContext helper stays permissive and accepts strict and typed-children contexts.
 async function permissiveHelper(ctx: WorkflowContext): Promise<JsonValue> {
   await ctx.claude.text('t', { prompt, tools: ['Read'] });
-  await ctx.claude.text('t', { prompt, profile: 'text', addDirs: ['runs/a'] });
+  await ctx.claude.text('t', { prompt, addDirs: ['runs/a'] });
+  // @ts-expect-error -- a bare context has no profile call option either (#726).
+  await ctx.claude.text('t', { prompt, profile: 'text' });
   return ctx.workflow('c', 'anything', { any: 'json' });
 }
-// A strict helper contract names its role, the built-in registry and true.
-async function strictHelper(ctx: WorkflowContext<'scout', BuiltInHarnesses, true>) {
+// A strict helper contract names the built-in registry and true.
+async function strictHelper(ctx: WorkflowContext<BuiltInHarnesses, true>) {
   // @ts-expect-error -- a strict helper rejects raw keys.
   await ctx.claude.text('t', { prompt, tools: ['Read'] });
-  return ctx.claude.text('t', { prompt, profile: 'scout' });
+  return ctx.claude.text('t', { prompt });
 }
 
-// ctx.agent profiles are typed like ctx.claude profiles.
-export const profiled = defineWorkflow({
+// The removed profile call option (#726) is an excess property on every client and on bind.
+export const removedProfileOption = defineWorkflow({
   ...base,
-  name: 'profiled',
-  profiles: { scout: { claude: { tools: ['Read'] } } },
+  name: 'removed-profile-option',
   harnesses: [tool],
   async run(ctx) {
-    // @ts-expect-error -- typo is neither a built-in preset nor a declared role.
-    await ctx.agent('claude').text('x', { prompt, profile: 'typo' });
-    // @ts-expect-error -- typo is neither a built-in preset nor a declared role.
-    await ctx.agent('codex').text('x', { prompt, profile: 'typo' });
-    // @ts-expect-error -- typo is neither a built-in preset nor a declared role.
-    await ctx.agent('tool').text('x', { prompt, profile: 'typo' });
-    await ctx.agent('claude').text('x', { prompt, profile: 'scout' });
-    await ctx.agent('codex').text('x', { prompt, profile: 'readonly' });
-    await ctx.agent('tool').text('x', { prompt, profile: 'scout' });
+    // @ts-expect-error -- the profile call option was removed (#726).
+    await ctx.claude.text('x', { prompt, profile: 'text' });
+    // @ts-expect-error -- on Codex too.
+    await ctx.codex.text('x', { prompt, profile: 'text' });
+    // @ts-expect-error -- through ctx.agent('claude').
+    await ctx.agent('claude').text('x', { prompt, profile: 'text' });
+    // @ts-expect-error -- through ctx.agent('codex').
+    await ctx.agent('codex').text('x', { prompt, profile: 'text' });
+    // @ts-expect-error -- on a registered harness.
+    await ctx.agent('tool').text('x', { prompt, profile: 'text' });
+    // @ts-expect-error -- inside within().
+    await ctx.within('scope').claude.text('x', { prompt, profile: 'text' });
+    // @ts-expect-error -- bind cannot set it either.
+    ctx.claude.bind({ profile: 'text' });
     await permissiveHelper(ctx);
     await strictHelper(ctx);
     return null;
   },
 });
 
-// Profiles and defaults take the same single Codex effort (#341).
-export const effortProfiles = defineWorkflow({
+// The removed `profiles` field and `defaults.profile` (#726) fail typecheck.
+export const removedProfiles = defineWorkflow({
   ...base,
-  name: 'effort-profiles',
-  defaults: { codex: { effort: 'minimal' } },
-  profiles: {
-    scout: { codex: { effort: 'none' } },
-    // @ts-expect-error -- reasoningEffort was renamed to effort.
-    legacy: { codex: { reasoningEffort: 'low' } },
-    // @ts-expect-error -- none is a Codex-only effort level.
-    claudeNone: { claude: { effort: 'none' } },
+  name: 'removed-profiles',
+  // @ts-expect-error -- profiles were removed (#726); declare agents with defineRoster.
+  profiles: { scout: { claude: { tools: ['Read'] } } },
+  run: () => Promise.resolve(null),
+});
+export const removedDefaultProfile = defineWorkflow({
+  ...base,
+  name: 'removed-default-profile',
+  defaults: {
+    maxTurns: 5,
+    // @ts-expect-error -- defaults.profile was removed (#726); the default role is always text.
+    profile: 'text',
   },
   run: () => Promise.resolve(null),
 });
 
-// Rooted call-site directories were removed (#707): no profile or defaults block declares roots,
-// and static addDirs stay.
-export const rootedProfiles = defineWorkflow({
+// Defaults take the single Codex effort (#341).
+export const effortDefaults = defineWorkflow({
   ...base,
-  name: 'rooted-profiles',
+  name: 'effort-defaults',
+  defaults: {
+    codex: {
+      effort: 'minimal',
+      // @ts-expect-error -- reasoningEffort was renamed to effort.
+      reasoningEffort: 'low',
+    },
+    claude: {
+      // @ts-expect-error -- none is a Codex-only effort level.
+      effort: 'none',
+    },
+  },
+  run: () => Promise.resolve(null),
+});
+
+// Rooted call-site directories were removed (#707): no defaults block declares roots, and static
+// addDirs stay.
+export const rootedDefaults = defineWorkflow({
+  ...base,
+  name: 'rooted-defaults',
   defaults: {
     claude: {
+      addDirs: ['docs'],
       // @ts-expect-error -- defaults.claude.addDirRoots was removed; list addDirs on a roster entry.
       addDirRoots: ['runs'],
     },
-  },
-  profiles: {
-    reader: {
-      extends: 'readonly',
-      claude: {
-        addDirs: ['docs'],
-        // @ts-expect-error -- claude.addDirRoots was removed; list addDirs on a roster entry.
-        addDirRoots: ['runs'],
-      },
+    codex: {
+      // @ts-expect-error -- codex.addDirRoots is rejected; list Codex directories in codex.addDirs.
+      addDirRoots: ['runs'],
     },
-    // @ts-expect-error -- codex.addDirRoots is rejected; list Codex directories in codex.addDirs.
-    writer: { codex: { addDirRoots: ['runs'] } },
   },
   run: () => Promise.resolve(null),
 });
 
-// Inline profiles and defaults literals keep their excess-property checks (#385).
-export const unknownProfileKeys = defineWorkflow({
+// An inline defaults literal keeps its excess-property checks (#385), and checkout placement is a
+// per-call decision: defaults isolation is only the configuration mode.
+export const unknownDefaultsKeys = defineWorkflow({
   ...base,
-  name: 'unknown-profile-keys',
+  name: 'unknown-defaults-keys',
   defaults: {
     codex: {
       model: 'gpt',
       // @ts-expect-error -- defaults.codex has no such key.
       sandboxMode: 'read-only',
     },
-  },
-  profiles: {
-    reader: {
-      extends: 'readonly',
-      // @ts-expect-error -- a profile has no such top-level key.
-      addDirRoots: ['runs'],
-    },
-    tooled: {
-      claude: {
-        tools: ['Read'],
-        // @ts-expect-error -- a profile's claude block has no such key.
-        allowTools: ['Read'],
-      },
+    claude: {
+      tools: ['Read'],
+      // @ts-expect-error -- defaults.claude has no such key.
+      allowTools: ['Read'],
     },
   },
   run: () => Promise.resolve(null),
+});
+const defaultsRun = () => Promise.resolve(null);
+defineWorkflow({
+  ...base,
+  name: 'top-level-defaults-key',
+  // @ts-expect-error -- defaults have no such top-level key.
+  defaults: { addDirRoots: ['runs'] },
+  run: defaultsRun,
+});
+defineWorkflow({
+  ...base,
+  name: 'defaults-isolation-worktree',
+  // @ts-expect-error -- defaults isolation is only the configuration mode.
+  defaults: { claude: { isolation: 'worktree' } },
+  run: defaultsRun,
+});
+defineWorkflow({
+  ...base,
+  name: 'defaults-worktree',
+  // @ts-expect-error -- defaults never select a checkout.
+  defaults: { claude: { worktree: true } },
+  run: defaultsRun,
+});
+defineWorkflow({
+  ...base,
+  name: 'defaults-worktree-base',
+  // @ts-expect-error -- defaults never select a checkout, with a base either.
+  defaults: { codex: { worktree: { base: 'main' } } },
+  run: defaultsRun,
 });
 
 // The checks recurse into structured values such as env edits; open records stay open. A mistyped
@@ -393,126 +431,100 @@ export const unknownEnvKeys = defineWorkflow({
         unest: ['BAZ'],
       },
     },
-  },
-  profiles: {
-    typo: {
-      claude: {
-        env: {
-          // @ts-expect-error -- the flat overlay takes only string values.
-          set: { FOO: 'bar' },
-          // @ts-expect-error -- a profile's claude.env edits have only set and unset.
-          unest: ['BAZ'],
-        },
-      },
-    },
-    codexTypo: {
-      codex: {
-        env: {
-          // @ts-expect-error -- the flat overlay takes only string values.
-          unset: ['BAZ'],
-          // @ts-expect-error -- a profile's codex.env edits have only set and unset.
-          sett: { FOO: 'bar' },
-        },
+    codex: {
+      env: {
+        // @ts-expect-error -- the flat overlay takes only string values.
+        unset: ['BAZ'],
+        // @ts-expect-error -- defaults.codex.env edits have only set and unset.
+        sett: { FOO: 'bar' },
       },
     },
   },
   run: () => Promise.resolve(null),
 });
-export const structuredProfileValues = defineWorkflow({
+export const structuredDefaultValues = defineWorkflow({
   ...base,
-  name: 'structured-profile-values',
-  defaults: { claude: { env: { set: { FOO: 'bar' }, unset: ['BAZ'] } } },
-  profiles: {
-    edits: {
-      claude: { env: { set: { FOO: 'bar' }, unset: ['BAZ'] } },
-      codex: { env: { unset: ['BAZ'] } },
+  name: 'structured-default-values',
+  defaults: {
+    claude: {
+      env: { set: { FOO: 'bar' }, unset: ['BAZ'] },
+      settings: { anyKey: { nested: true } },
+      mcpServers: { local: { command: 'server', args: ['--x'] } },
+      agents: { scout: { description: 'd', prompt: 'p', model: 'sonnet' } },
     },
-    flat: { claude: { env: { FOO: 'bar' } }, codex: { env: { FOO: 'bar', BAZ: 'qux' } } },
-    open: {
-      claude: {
-        settings: { anyKey: { nested: true } },
-        mcpServers: { local: { command: 'server', args: ['--x'] } },
-        agents: { scout: { description: 'd', prompt: 'p', model: 'sonnet' } },
-      },
-      codex: { config: { 'features.anything': true } },
-      harnesses: { tool: { tools: ['x'], extra: { nested: 1 } } },
-    },
+    codex: { env: { unset: ['BAZ'] }, config: { 'features.anything': true } },
+    harnesses: { tool: { tools: ['x'], extra: { nested: 1 } } },
   },
+  run: () => Promise.resolve(null),
+});
+export const flatDefaultValues = defineWorkflow({
+  ...base,
+  name: 'flat-default-values',
+  defaults: { claude: { env: { FOO: 'bar' } }, codex: { env: { FOO: 'bar', BAZ: 'qux' } } },
   run: () => Promise.resolve(null),
 });
 
-// strictProfiles: false keeps addDirs for every profile.
+// strictProfiles: false keeps call-site addDirs.
 export const permissiveAddDirs = defineWorkflow({
   ...base,
   name: 'permissive-add-dirs',
   strictProfiles: false,
-  profiles: { plain: { extends: 'readonly' } },
   async run(ctx) {
-    await ctx.claude.text('t', { prompt, profile: 'plain', addDirs });
+    await ctx.claude.text('t', { prompt, addDirs });
     await ctx.claude.text('t', addDirOptions);
-    await ctx.codex.text('t', { prompt, profile: 'plain', addDirs });
+    await ctx.codex.text('t', { prompt, addDirs });
     return null;
   },
 });
-// Array-valued controls in inline profiles stay assignable, and a strict structured call still
+// Array-valued controls in inline defaults stay assignable, and a strict structured call still
 // infers its schema type.
-export const constProfiles = defineWorkflow({
+export const constDefaults = defineWorkflow({
   ...base,
-  name: 'const-profiles',
+  name: 'const-defaults',
   strictProfiles: true,
-  profiles: {
-    tooled: { claude: { tools: ['Read'], settings: { list: [1] } } },
-    listed: { claude: { tools: ['Read'], settings: { list: [1, { a: [true] }] } } },
-  },
+  defaults: { claude: { tools: ['Read'], settings: { list: [1, { a: [true] }] } } },
   async run(ctx) {
-    await ctx.claude.text('t', { prompt, profile: 'tooled' });
+    await ctx.claude.text('t', { prompt });
     expectTypeOf(
-      await ctx.claude.value('v', { prompt, profile: 'listed', schema: z.number() }),
+      await ctx.claude.value('v', { prompt, schema: z.number() }),
     ).toEqualTypeOf<number>();
     expectTypeOf(
-      await ctx.claude.object('o', {
-        prompt,
-        profile: 'listed',
-        schema: z.string(),
-        onError: 'return',
-      }),
+      await ctx.claude.object('o', { prompt, schema: z.string(), onError: 'return' }),
     ).toEqualTypeOf<Settled<AgentResult<string>>>();
-    // @ts-expect-error -- strict: addDirs belongs to a roster entry under every profile.
-    await ctx.claude.text('t', { prompt, profile: 'tooled', addDirs });
+    // @ts-expect-error -- strict: addDirs belongs to a roster entry.
+    await ctx.claude.text('t', { prompt, addDirs });
     return null;
   },
 });
-const constDeclaration: WorkflowDeclaration = constProfiles;
+const constDeclaration: WorkflowDeclaration = constDefaults;
 export const constParent = defineWorkflow({
   ...base,
   name: 'const-parent',
-  children: [constProfiles],
+  children: [constDefaults],
   async run(ctx) {
-    expectTypeOf(await ctx.workflow('c', constProfiles, null)).toEqualTypeOf<null>();
-    expectTypeOf(await ctx.workflow('r', 'const-profiles', null)).toEqualTypeOf<null>();
+    expectTypeOf(await ctx.workflow('c', constDefaults, null)).toEqualTypeOf<null>();
+    expectTypeOf(await ctx.workflow('r', 'const-defaults', null)).toEqualTypeOf<null>();
     return null;
   },
 });
 const runConst = () =>
-  runWorkflow(constProfiles, { runId: 'unused', stateDir: 'unused', input: null });
-// Explicit type arguments type a strict workflow's declared roles too.
-export const explicitProfiles = defineWorkflow<
+  runWorkflow(constDefaults, { runId: 'unused', stateDir: 'unused', input: null });
+// Explicit type arguments type a strict workflow's call sites too.
+export const explicitStrict = defineWorkflow<
   null,
   null,
-  'plain',
   readonly [],
   true,
   readonly [],
-  'explicit-profiles'
+  'explicit-strict'
 >({
   ...base,
-  name: 'explicit-profiles',
+  name: 'explicit-strict',
   strictProfiles: true,
-  profiles: { plain: { extends: 'readonly' } },
   async run(ctx) {
-    await ctx.claude.text('t', { prompt, profile: 'plain' });
+    await ctx.claude.text('t', { prompt });
     // @ts-expect-error -- strict: addDirs belongs to a roster entry.
-    await ctx.claude.text('t', { prompt, profile: 'plain', addDirs });
+    await ctx.claude.text('t', { prompt, addDirs });
     return null;
   },
 });
@@ -612,11 +624,10 @@ export const prefixStrict = defineWorkflow<null, null>({
   name: 'prefix-strict',
   run: () => Promise.resolve(null),
 });
-// Spelling all seven type arguments types strictProfiles: false and declared children.
+// Spelling all six type arguments types strictProfiles: false and declared children.
 export const explicitAll = defineWorkflow<
   null,
   null,
-  never,
   readonly [],
   false,
   readonly [typeof child],
@@ -677,15 +688,15 @@ export const mapForms = defineWorkflow({
 });
 
 const run = () => runWorkflow(parent, { runId: 'unused', stateDir: 'unused', input: null });
-// The four-argument explicit runWorkflow form still compiles for a strict workflow with children.
+// The three-argument explicit runWorkflow form still compiles for a strict workflow with children.
 const runExplicit = () =>
-  runWorkflow<null, null, never, readonly []>(parent, {
+  runWorkflow<null, null, readonly []>(parent, {
     runId: 'unused',
     stateDir: 'unused',
     input: null,
   });
 
-it('carries strictness, profiles and declared children into authoring types', () => {
+it('carries strictness and declared children into authoring types', () => {
   // The literal name and strictness flow into the definition type.
   expectTypeOf(parent.name).toEqualTypeOf<'parent'>();
   expectTypeOf(strict.strictProfiles).toEqualTypeOf<true | undefined>();
@@ -693,8 +704,8 @@ it('carries strictness, profiles and declared children into authoring types', ()
   expectTypeOf(omittedStrict.strictProfiles).toEqualTypeOf<false | undefined>();
   // Strict built-in call options can set only a narrowed isolation of the shared key tuples; the
   // other capability keys, Claude's addDirs included (#707), remain as optional never properties.
-  type StrictClaude = CallOptions<'claude', BuiltInHarnesses['claude'], never, true>;
-  type StrictCodex = CallOptions<'codex', BuiltInHarnesses['codex'], never, true>;
+  type StrictClaude = CallOptions<'claude', BuiltInHarnesses['claude'], true>;
+  type StrictCodex = CallOptions<'codex', BuiltInHarnesses['codex'], true>;
   type Settable<T> = {
     [P in keyof T]-?: [Exclude<T[P], undefined>] extends [never] ? never : P;
   }[keyof T];
@@ -702,19 +713,22 @@ it('carries strictness, profiles and declared children into authoring types', ()
     Extract<Settable<StrictClaude>, (typeof claudeCapabilityKeys)[number]>
   >().toEqualTypeOf<'isolation'>();
   expectTypeOf<{ prompt: string; addDirs: string[] }>().not.toExtend<StrictClaude>();
-  expectTypeOf<{ prompt: string; profile: 'text'; addDirs: string[] }>().not.toExtend<
-    CallOptions<'claude', BuiltInHarnesses['claude'], 'reader', true>
-  >();
   expectTypeOf<{ prompt: string; addDirs: string[] }>().not.toExtend<StrictCodex>();
   expectTypeOf<
     Extract<Settable<StrictCodex>, (typeof codexCapabilityKeys)[number]>
   >().toEqualTypeOf<'isolation'>();
   expectTypeOf<Exclude<(typeof claudeCapabilityKeys)[number], keyof StrictClaude>>().toBeNever();
-  type StrictTool = CallOptions<'tool', typeof tool, never, true>;
+  // Call options have no profile key, strict or not (#726).
+  expectTypeOf<Extract<keyof StrictClaude, 'profile'>>().toBeNever();
+  expectTypeOf<
+    Extract<keyof CallOptions<'codex', BuiltInHarnesses['codex'], false>, 'profile'>
+  >().toBeNever();
+  type StrictTool = CallOptions<'tool', typeof tool, true>;
   expectTypeOf<Extract<Settable<StrictTool>, 'tools' | 'depth'>>().toEqualTypeOf<'depth'>();
   expectTypeOf<Extract<keyof StrictTool, 'tools'>>().toEqualTypeOf<'tools'>();
+  expectTypeOf<Extract<keyof StrictTool, 'profile'>>().toBeNever();
   // A widened capabilityKeys list adds no forbidden keys.
-  type StrictWide = CallOptions<'wide', typeof wide, never, true>;
+  type StrictWide = CallOptions<'wide', typeof wide, true>;
   expectTypeOf<Extract<Settable<StrictWide>, 'tools'>>().toEqualTypeOf<'tools'>();
   expectTypeOf<StrictClaude['isolation']>().toEqualTypeOf<
     Exclude<HarnessIsolation, 'inherit'> | undefined
@@ -726,7 +740,8 @@ it('carries strictness, profiles and declared children into authoring types', ()
   expectTypeOf<CapabilityKeysOf<typeof tool>>().toEqualTypeOf<'tools'>();
   expectTypeOf<CapabilityKeysOf<typeof wide>>().toBeNever();
   expect(
-    [strict, permissive, dynamic, profiled, parent, childless, erasedParent, mapForms].length,
+    [strict, permissive, dynamic, removedProfileOption, parent, childless, erasedParent, mapForms]
+      .length,
   ).toBe(8);
   expect([prefixPermissive, prefixParent, prefixStrict].map(({ name }) => name)).toEqual([
     'prefix-permissive',
@@ -739,68 +754,35 @@ it('carries strictness, profiles and declared children into authoring types', ()
   expect(typeof run).toBe('function');
   expectTypeOf(runExplicit).returns.toEqualTypeOf<Promise<WorkflowResult<null>>>();
   expect(grandparent.name).toBe('grandparent');
-  expect([permissiveAddDirs, rootedProfiles].length).toBe(2);
-  expect([constDeclaration.name, constParent.name, explicitProfiles.name]).toEqual([
-    'const-profiles',
+  expect([permissiveAddDirs, rootedDefaults, effortDefaults].length).toBe(3);
+  expect([constDeclaration.name, constParent.name, explicitStrict.name]).toEqual([
+    'const-defaults',
     'const-parent',
-    'explicit-profiles',
+    'explicit-strict',
   ]);
-  expect(unknownProfileKeys.name).toBe('unknown-profile-keys');
+  expect([removedProfiles.name, removedDefaultProfile.name]).toEqual([
+    'removed-profiles',
+    'removed-default-profile',
+  ]);
+  expect(unknownDefaultsKeys.name).toBe('unknown-defaults-keys');
+  expect([structuredDefaultValues.name, flatDefaultValues.name, unknownEnvKeys.name]).toHaveLength(
+    3,
+  );
   expect(typeof runConst).toBe('function');
 });
-// A profile map declared through an interface has no string index signature but is still a valid
-// finite profile map.
-interface InterfaceProfiles {
-  reader: { extends: 'readonly'; claude: { addDirs: readonly ['docs'] } };
-  plain: { extends: 'readonly' };
-}
-const interfaceProfiles: InterfaceProfiles = {
-  reader: { extends: 'readonly', claude: { addDirs: ['docs'] } },
-  plain: { extends: 'readonly' },
-};
-export const interfaceTypedProfiles = defineWorkflow({
-  ...base,
-  name: 'interface-typed-profiles',
-  strictProfiles: true,
-  profiles: interfaceProfiles,
-  async run(ctx) {
-    await ctx.claude.text('t', { prompt, profile: 'reader' });
-    // @ts-expect-error -- strict: addDirs belongs to a roster entry, even through an interface.
-    await ctx.claude.text('t', { prompt, profile: 'reader', addDirs });
-    return null;
-  },
-});
-// A generic factory that forwards a profile or defaults value compiles, and the strict checks
-// still apply.
+
+// A generic factory that forwards a defaults value compiles, and the strict checks still apply.
 // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- the generic is the case.
-function genericProfileFactory<P extends AgentProfile>(profile: P) {
-  return defineWorkflow({
-    ...base,
-    name: 'generic-profile',
-    strictProfiles: true,
-    profiles: { worker: profile, plain: { extends: 'readonly' } },
-    async run(ctx) {
-      await ctx.claude.text('t', { prompt, profile: 'worker' });
-      // @ts-expect-error -- typo is still neither a built-in preset nor a declared role.
-      await ctx.claude.text('t', { prompt, profile: 'typo' });
-      // @ts-expect-error -- tools stay profile-owned under strict profiles.
-      await ctx.claude.text('t', { prompt, tools: ['Read'] });
-      // @ts-expect-error -- strict: addDirs belongs to a roster entry.
-      await ctx.claude.text('t', { prompt, profile: 'worker', addDirs });
-      return null;
-    },
-  });
-}
-// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- the generic is the case.
-function genericDefaultsFactory<D extends AgentDefaults<never>>(defaults: D) {
+function genericDefaultsFactory<D extends AgentDefaults>(defaults: D) {
   return defineWorkflow({
     ...base,
     name: 'generic-defaults',
     strictProfiles: true,
     defaults,
-    profiles: { plain: { extends: 'readonly' } },
     async run(ctx) {
-      await ctx.claude.text('t', { prompt, profile: 'plain' });
+      await ctx.claude.text('t', { prompt });
+      // @ts-expect-error -- tools stay role-owned under strict profiles.
+      await ctx.claude.text('t', { prompt, tools: ['Read'] });
       // @ts-expect-error -- strict: addDirs belongs to a roster entry.
       await ctx.claude.text('t', { prompt, addDirs });
       return null;
@@ -808,91 +790,33 @@ function genericDefaultsFactory<D extends AgentDefaults<never>>(defaults: D) {
   });
 }
 // Excess-property checks still reject unknown keys in inline literals next to generic values.
-// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- the generics are the case.
-function genericFactoryTypos<P extends AgentProfile, D extends AgentDefaults<never>>(
-  profile: P,
-  defaults: D,
-) {
-  const profiles = defineWorkflow({
-    ...base,
-    name: 'generic-profile-typos',
-    profiles: {
-      worker: profile,
-      // @ts-expect-error -- a profile has no such top-level key.
-      plain: { extends: 'readonly', addDirRoots: ['runs'] },
-    },
-    run: () => Promise.resolve(null),
-  });
-  const env = defineWorkflow({
-    ...base,
-    name: 'generic-env-typos',
-    profiles: {
-      worker: profile,
-      // @ts-expect-error -- the edit object matches neither env shape.
-      edits: { claude: { env: { unest: ['BAZ'] } } },
-    },
-    run: () => Promise.resolve(null),
-  });
+
+function genericFactoryTypos<D extends AgentDefaults>(defaults: D) {
   const withDefaults = defineWorkflow({
     ...base,
     name: 'generic-defaults-typos',
     defaults,
-    // @ts-expect-error -- a profile has no such top-level key.
-    profiles: { plain: { extends: 'readonly', nope: true } },
+    // @ts-expect-error -- the removed profiles field (#726) is still an excess property here.
+    profiles: { plain: { claude: { tools: ['Read'] } } },
     run: () => Promise.resolve(null),
   });
-  return [profiles, env, withDefaults];
+  const inline = defineWorkflow({
+    ...base,
+    name: 'generic-inline-typos',
+    // @ts-expect-error -- the edit object matches neither env shape.
+    defaults: { claude: { env: { unest: ['BAZ'] } } },
+    run: () => Promise.resolve(null),
+  });
+  return [withDefaults, inline, defaults];
 }
 
-it('infers literal, interface-typed and generic profiles through one defineWorkflow signature', () => {
-  // TRoster is WorkflowDefinition's eighth parameter (#707).
-  expectTypeOf(constProfiles).toEqualTypeOf<
-    WorkflowDefinition<
-      null,
-      null,
-      'tooled' | 'listed',
-      readonly [],
-      true,
-      readonly [],
-      'const-profiles',
-      EmptyRoster
-    >
-  >();
-  expectTypeOf(interfaceTypedProfiles).toEqualTypeOf<
-    WorkflowDefinition<
-      null,
-      null,
-      'reader' | 'plain',
-      readonly [],
-      true,
-      readonly [],
-      'interface-typed-profiles',
-      EmptyRoster
-    >
-  >();
-  expectTypeOf(genericProfileFactory({ extends: 'readonly' })).toEqualTypeOf<
-    WorkflowDefinition<
-      null,
-      null,
-      'worker' | 'plain',
-      readonly [],
-      true,
-      readonly [],
-      'generic-profile',
-      EmptyRoster
-    >
+it('infers literal and generic defaults through one defineWorkflow signature', () => {
+  // TRoster is WorkflowDefinition's seventh parameter (#707, #726).
+  expectTypeOf(constDefaults).toEqualTypeOf<
+    WorkflowDefinition<null, null, readonly [], true, readonly [], 'const-defaults', EmptyRoster>
   >();
   expectTypeOf(genericDefaultsFactory({})).toEqualTypeOf<
-    WorkflowDefinition<
-      null,
-      null,
-      'plain',
-      readonly [],
-      true,
-      readonly [],
-      'generic-defaults',
-      EmptyRoster
-    >
+    WorkflowDefinition<null, null, readonly [], true, readonly [], 'generic-defaults', EmptyRoster>
   >();
-  expect(genericFactoryTypos({}, {})).toHaveLength(3);
+  expect(genericFactoryTypos({})).toHaveLength(3);
 });

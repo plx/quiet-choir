@@ -174,7 +174,6 @@ it('accepts sensitiveOptions, passes them through and rejects keys outside the o
         | 'env'
         | 'maxTurns'
         | 'maxBudgetUsd'
-        | 'profile'
         | 'cwd'
         | 'onError'
         | 'retry'

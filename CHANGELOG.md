@@ -2,6 +2,44 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Remove the public profile surface (#726, amending ADR 0010; ADR 0063 §4). Roster entries are the
+  only declared roles, and `text` is the implicit baseline and the default role. Removed: the
+  workflow `profiles` field and its `extends` chain, the `readonly` and `edit` presets,
+  `defaults.profile`, the call-site `profile` option and the `TProfile` generic. Each is a type
+  error now, and untyped code is refused with a `ConfigurationError` that names `defineRoster`,
+  before any effect or record:
+  `Workflow W declares profiles, which were removed (#726); declare agents with defineRoster, pass them as roster and call ctx.roster.Name.`,
+  `Workflow W sets defaults.profile, which was removed (#726); the default role is always text; …`
+  (both from definition loading, `describeWorkflow`, `validate` and inline children),
+  `Step "id": the profile call option was removed (#726); declare the agent with defineRoster and call ctx.roster.Name.`
+  for a raw `ctx.claude`, `ctx.codex` or `ctx.agent(name)` call (also inside a settled map, which
+  never journals it), and `bind cannot set profile; it was removed (#726): …` at `bind`. Removed
+  exports: `capabilityManifest`, `BuiltinProfile`, `AgentProfile` and the deprecated
+  `ResolvedProfile`; `ResolvedRole` is the new public name of the manifest role type, and
+  `AgentDefaults` is no longer generic. `ProfileLimits` and `ProfileOverride` stay, for
+  `profileOverrides` and `--profile`. New arities:
+  `WorkflowDefinition<TInput, TOutput, H, TStrict, TChildren, TName, TRoster>`,
+  `WorkflowContext<R, TStrict, TChildren, TRoster>`, `defineWorkflow` with six explicit type
+  arguments before `TRoster` ("spell all six"), `CallOptions<K, D, TStrict>`, and the explicit
+  `runWorkflow<Input, Output, Harnesses>` overload. Reworded messages:
+  `Role R requires A access. Retry with --grant R, --grant A, or --grant all.` (and the class-only
+  variant, `… which roster entry grants do not cover. …`),
+  `strictProfiles forbids call-site …; declare a roster entry.`,
+  `Child role C exceeds parent role P: F. Delegate a sufficient parent roster entry explicitly.`,
+  `Child W role C has no parent grant P; declare a parent roster entry or map it with options.profiles.`,
+  `Unknown child role mapping`, `Unknown role` and
+  `Role R cannot set harness H.field; use the entry's limits or call options.`; the recovery hints
+  read error fields, so they are unchanged. `validate --json` and `list-defs --json` no longer print
+  `workflow.profiles`, and `WorkflowDescription.profiles` is gone. New manifests list only `text`
+  and the roster entries; `text`, `readonly` and `edit` stay reserved entry names. Old records still
+  read, including manifests with preset rows and attempts and requests with a `profile` field, and
+  roster call identity is unchanged (the runtime still spells the entry as `profile` internally). A
+  resumed record whose saved `--profile` rules name a removed profile or preset is refused as
+  `Unknown override profile`; resume with `--policy-reset`. A named grant saved for a profile-era
+  role does not admit a roster entry of the same name, since an entry's grant digest includes its
+  harness: re-grant with `--grant Name` (#730). `test/profiles-cli-smoke.mjs` becomes the
+  roster-only `test/roster-cli-smoke.mjs`. The Workflow Lab `apiSnapshot.sha256` moves to the new
+  `model.ts` hash in both batches.
 - Retire rooted call-site directories (#707, amending ADRs 0054 and 0062). A `defaults.claude` or
   profile `claude` block that declares `addDirRoots` is refused when the definition loads, before
   the schema parse, with

@@ -76,7 +76,7 @@ export default defineWorkflow({name:'sdlc',version:'1',description:'Build from a
   const compactNodes = (value) => [value, ...value.children.flatMap(compactNodes)];
   for (const node of compactNodes(metadata)) {
     assert.equal(node.capabilities.defaults, undefined, `${node.name} omits defaults`);
-    assert.ok(Array.isArray(node.profiles), `${node.name} lists declared profile names`);
+    assert.equal(node.profiles, undefined, `${node.name} prints no removed profiles list`);
   }
   assert.equal(metadata.entrypoint, undefined, 'the root entrypoint is the definition entrypoint');
   assert.equal(typeof listing.definitions[0].entrypoint, 'string');

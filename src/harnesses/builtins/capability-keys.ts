@@ -6,8 +6,8 @@ import type { CodexOptions } from './codex-options.js';
 // isolatedDeclarations needs the explicit tuple types; `satisfies` checks each key exists.
 
 /**
- * Claude Code options that strict profiles own: under `strictProfiles` a call site may not set them
- * (for isolation only `'inherit'` is rejected), and named profiles declare them instead.
+ * Claude Code options that roles own: under `strictProfiles` a call site may not set them (for
+ * isolation only `'inherit'` is rejected), and roster entries declare them instead.
  */
 export const claudeCapabilityKeys: readonly [
   'tools',
@@ -42,8 +42,8 @@ export const claudeCapabilityKeys: readonly [
 ] as const satisfies readonly (keyof ClaudeOptions)[];
 
 /**
- * Codex options that strict profiles own: under `strictProfiles` a call site may not set them (for
- * isolation only `'inherit'` is rejected), and named profiles declare them instead.
+ * Codex options that roles own: under `strictProfiles` a call site may not set them (for
+ * isolation only `'inherit'` is rejected), and roster entries declare them instead.
  */
 export const codexCapabilityKeys: readonly [
   'sandbox',

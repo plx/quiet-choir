@@ -1,17 +1,18 @@
 import type { HarnessDeclaration } from './harness-model.js';
 import { commonControlFields, claudeControlFields, codexControlFields } from './agent-controls.js';
 import { validateAgentOptions } from './options.js';
-import { GrantRequiredError } from './configuration-error.js';
+import { GrantRequiredError, removedProfileSurface, setsOwnKey } from './configuration-error.js';
 import { z } from 'zod';
-import type { AgentOptions, ClaudeOptions, CodexOptions, JsonValue } from './model.js';
+import type { ClaudeOptions, CodexOptions, JsonValue } from './model.js';
 import type {
   AccessClass,
   AgentDefaults,
-  AgentProfile,
   CapabilityManifest,
   ProfileOverride,
   RedactedControl,
   ResolvedRole,
+  RoleLayer,
+  RoleRequest,
 } from './profiles-model.js';
 import { digest, jsonValue } from './json.js';
 import { harnessIsolationSchema, isolationParts, resolveIsolation } from './agent-isolation.js';
@@ -29,7 +30,7 @@ const limits = {
   maxBudgetUsd: z.number().positive().optional(),
 };
 const rosterLimitKeys = Object.keys(limits) as (keyof typeof limits)[];
-// Profiles select configuration mode only; checkout placement (worktree) is a per-call decision.
+// Roles select configuration mode only; checkout placement (worktree) is a per-call decision.
 const profileControlFields = {
   ...commonControlFields,
   isolation: harnessIsolationSchema.optional(),
@@ -66,7 +67,7 @@ const fields = {
     })
     .optional(),
 };
-const profileSchema = z.strictObject({ ...fields, extends: nameSchema.optional() });
+const layerSchema = z.strictObject(fields);
 /** Checkpoint/launch profile rule validator. @internal */
 export const profileOverrideSchema = z
   .strictObject({ profile: z.union([nameSchema, z.literal('*')]), ...limits })
@@ -81,29 +82,31 @@ export const profileOverrideSchema = z
 /** Checkpoint/launch grant validator. @internal */
 export const grantsSchema = z.array(nameSchema);
 
-const builtins: Record<string, AgentProfile> = {
-  text: {
-    maxTurns: 10,
-    maxBudgetUsd: 0.5,
-    timeoutMs: 300_000,
-    claude: { tools: [] },
-    codex: { sandbox: 'read-only' },
-  },
-  readonly: {
-    maxTurns: 25,
-    maxBudgetUsd: 2,
-    timeoutMs: 900_000,
-    claude: { tools: ['Read', 'Grep', 'Glob'] },
-    codex: { sandbox: 'read-only' },
-  },
-  edit: {
-    maxTurns: 40,
-    maxBudgetUsd: 5,
-    timeoutMs: 1_800_000,
-    claude: { tools: ['Read', 'Grep', 'Glob', 'Edit', 'Write'] },
-    codex: { sandbox: 'workspace-write' },
-  },
+/** The text baseline: the default role, and the layer every roster entry starts from. */
+const textBaseline: RoleLayer = {
+  maxTurns: 10,
+  maxBudgetUsd: 0.5,
+  timeoutMs: 300_000,
+  claude: { tools: [] },
+  codex: { sandbox: 'read-only' },
 };
+/**
+ * Names no role may take: `text`, the removed presets, which old records still name in manifests,
+ * grants and override rules (#726), and the words grants and the access lattice reserve.
+ */
+const reservedRoleNames: readonly string[] = [
+  'text',
+  'readonly',
+  'edit',
+  'all',
+  'none',
+  'read',
+  'write',
+  'exec',
+  'constructor',
+  'prototype',
+  '__proto__',
+];
 const rank: Record<AccessClass, number> = { none: 0, read: 1, write: 2, exec: 3 };
 
 /** Infer exposed tool access conservatively; unknown/MCP tools require exec. @internal */
@@ -138,7 +141,7 @@ export function checkAllowedTools(tools: readonly string[], allowed: readonly st
   }
 }
 
-function merge(base: AgentProfile, layer: AgentProfile): AgentProfile {
+function merge(base: RoleLayer, layer: RoleLayer): RoleLayer {
   const shared = layer.isolation === undefined ? {} : { isolation: layer.isolation };
   const claude = { ...base.claude, ...shared, ...isolationParts(layer.claude ?? {}) };
   // An explicit new exposure list invalidates inherited permissions; infer from the new list.
@@ -169,7 +172,6 @@ interface CapabilityDeclaration {
   /** Workflow name, for roster diagnostics. */
   readonly name?: string;
   readonly defaults?: AgentDefaults;
-  readonly profiles?: Readonly<Record<string, AgentProfile>>;
   /** Harness-pinned entries from `defineRoster`, compiled to declared roles (ADR 0063 §4). */
   readonly roster?: object;
   readonly strictProfiles?: boolean;
@@ -178,19 +180,13 @@ interface CapabilityDeclaration {
 }
 
 /**
- * The declared role names of a definition: its `profiles`, then its agent roster entries. Decider
- * entries (ADR 0066 section 2) are not roles. @internal
+ * The declared role names of a definition: its agent roster entries. Decider entries (ADR 0066
+ * section 2) are not roles. @internal
  */
-export function declaredRoleNames(definition: {
-  readonly profiles?: object;
-  readonly roster?: object;
-}): string[] {
-  return [
-    ...Object.keys(definition.profiles ?? {}),
-    ...Object.entries(definition.roster ?? {}).flatMap(([name, entry]: [string, unknown]) =>
-      typeof entry === 'object' && entry !== null && Object.hasOwn(entry, 'decider') ? [] : [name],
-    ),
-  ];
+export function declaredRoleNames(definition: { readonly roster?: object }): string[] {
+  return Object.entries(definition.roster ?? {}).flatMap(([name, entry]: [string, unknown]) =>
+    typeof entry === 'object' && entry !== null && Object.hasOwn(entry, 'decider') ? [] : [name],
+  );
 }
 
 /**
@@ -207,7 +203,7 @@ interface GrantLayer {
  */
 export function elevatedRoleNames(
   manifest: Pick<CapabilityManifest, 'defaultProfile' | 'profiles'>,
-  definition: Pick<CapabilityDeclaration, 'profiles' | 'roster'>,
+  definition: Pick<CapabilityDeclaration, 'roster'>,
 ): string[] {
   return [...new Set([manifest.defaultProfile, ...declaredRoleNames(definition)])].filter(
     (name) => {
@@ -226,29 +222,27 @@ export function resolveCapabilities(
   definition: CapabilityDeclaration,
   layer: GrantLayer = {},
 ): CapabilityManifest {
+  // checkedDefinition refuses these first; a direct caller gets the same refusal (#726).
+  if (setsOwnKey(definition, 'profiles'))
+    throw removedProfileSurface('profiles', definition.name ?? '<unnamed>');
+  if (setsOwnKey(definition.defaults, 'profile'))
+    throw removedProfileSurface('defaults.profile', definition.name ?? '<unnamed>');
   rejectRenamedEffort('defaults.codex', codexBlock(definition.defaults));
   rejectCodexRoots('defaults.codex', codexBlock(definition.defaults));
   rejectClaudeRoots('defaults.claude', claudeBlock(definition.defaults));
-  for (const [name, profile] of Object.entries(definition.profiles ?? {})) {
-    rejectRenamedEffort(`Profile ${name} codex`, codexBlock(profile));
-    rejectCodexRoots(`Profile ${name} codex`, codexBlock(profile));
-    rejectClaudeRoots(`Profile ${name} claude`, claudeBlock(profile));
-  }
-  // Roster entries become declared roles without extends, each pinned to one harness (#579).
+  // Roster entries are the declared roles, each pinned to one harness (#579, #726).
   const compiled = compileRoster(definition);
   for (const [name, profile] of Object.entries(compiled.profiles))
     rejectRenamedEffort(`Roster entry ${name}`, codexBlock(profile));
   const config = z
     .strictObject({
-      defaults: z.strictObject({ ...fields, profile: nameSchema.optional() }).optional(),
-      profiles: z.record(nameSchema, profileSchema).optional(),
-      roster: z.record(nameSchema, profileSchema).optional(),
+      defaults: layerSchema.optional(),
+      roster: z.record(nameSchema, layerSchema).optional(),
       strictProfiles: z.boolean().optional(),
     })
     .parse(
       jsonValue({
         ...(definition.defaults === undefined ? {} : { defaults: definition.defaults }),
-        ...(definition.profiles === undefined ? {} : { profiles: definition.profiles }),
         ...(definition.roster === undefined ? {} : { roster: compiled.profiles }),
         ...(definition.strictProfiles === undefined
           ? {}
@@ -256,60 +250,25 @@ export function resolveCapabilities(
       }),
     ) as {
     defaults?: AgentDefaults;
-    profiles?: Record<string, AgentProfile>;
-    roster?: Record<string, AgentProfile>;
+    roster?: Record<string, RoleLayer>;
     strictProfiles?: boolean;
   };
-  const rosterProfiles = config.roster ?? {};
-  for (const name of Object.keys(rosterProfiles))
-    if (Object.hasOwn(config.profiles ?? {}, name))
-      throw new Error(`Roster entry ${name} has the same name as a declared profile.`);
-  for (const [name, profile] of Object.entries(config.profiles ?? {}))
-    if (profile.extends !== undefined && Object.hasOwn(rosterProfiles, profile.extends))
-      throw new Error(
-        `Profile ${name} cannot extend roster entry ${profile.extends}; roster entries are pinned to one harness.`,
-      );
-  const defaultName = config.defaults?.profile;
-  if (defaultName !== undefined && Object.hasOwn(rosterProfiles, defaultName))
-    throw new Error(
-      `defaults.profile cannot name roster entry ${defaultName}; roster entries are pinned to one harness.`,
-    );
-  const declared: Record<string, AgentProfile> = { ...config.profiles, ...rosterProfiles };
+  const declared: Record<string, RoleLayer> = config.roster ?? {};
   const registrations = new Map((definition.harnesses ?? []).map((item) => [item.name, item]));
-  for (const name of Object.keys(declared)) {
-    if (
-      Object.hasOwn(builtins, name) ||
-      ['all', 'none', 'read', 'write', 'exec', 'constructor', 'prototype', '__proto__'].includes(
-        name,
-      )
-    )
-      throw new Error(`Reserved profile name: ${name}.`);
-  }
+  for (const name of Object.keys(declared))
+    if (reservedRoleNames.includes(name)) throw new Error(`Reserved role name: ${name}.`);
   const profiles: Record<string, ResolvedRole> = Object.create(null) as Record<
     string,
     ResolvedRole
   >;
-  const chain = (
-    name: string,
-    seen: string[] = [],
-  ): { preset: AgentProfile; layers: AgentProfile[] } => {
-    if (seen.includes(name))
-      throw new Error(`Profile inheritance cycle: ${[...seen, name].join(' -> ')}.`);
-    const builtin = builtins[name];
-    if (Object.hasOwn(builtins, name) && builtin) return { preset: builtin, layers: [] };
-    const layer = declared[name];
-    if (!Object.hasOwn(declared, name) || !layer) throw new Error(`Unknown profile: ${name}.`);
-    const parent = chain(layer.extends ?? 'text', [...seen, name]);
-    return { preset: parent.preset, layers: [...parent.layers, layer] };
-  };
-  for (const name of [...Object.keys(builtins), ...Object.keys(declared)]) {
-    const { preset, layers } = chain(name);
-    const defaults = { ...config.defaults };
-    delete defaults.profile;
-    const combined = layers.reduce(merge, merge(preset, defaults));
-    const assertion = combined.access;
+  // Each role is the text baseline, then the workflow defaults, then a roster entry's own layer.
+  const base = merge(textBaseline, { ...config.defaults });
+  for (const name of ['text', ...Object.keys(declared)]) {
+    const layer = name === 'text' ? undefined : declared[name];
+    const combined = layer === undefined ? base : merge(base, layer);
+    // `defaults.access` asserts the text role's access; roster entries cannot set `access`.
+    const assertion = layer === undefined ? combined.access : undefined;
     const data = { ...combined };
-    delete data.extends;
     delete data.access;
     const pin = Object.hasOwn(compiled.pins, name) ? compiled.pins[name] : undefined;
     // A roster entry runs only on its pinned harness, so its other blocks stay at the text
@@ -335,7 +294,7 @@ export function resolveCapabilities(
     let access = rank[claudeAccess] > rank[codexAccess] ? claudeAccess : codexAccess;
     for (const registered of Object.keys(data.harnesses ?? {}))
       if (!registrations.has(registered))
-        throw new Error(`Profile ${name} configures undeclared harness ${registered}.`);
+        throw new Error(`Role ${name} configures undeclared harness ${registered}.`);
     const harnesses: Record<string, Record<string, JsonValue>> = {};
     const harnessAccess: Record<string, AccessClass> = {};
     const harnessCapabilities: Record<string, Record<string, JsonValue>> = {};
@@ -344,7 +303,7 @@ export function resolveCapabilities(
       for (const field of profileForbiddenHarnessOptions)
         if (Object.hasOwn(supplied, field))
           throw new Error(
-            `Profile ${name} cannot set harness ${registered}.${field}; use profile limits or call options.`,
+            `Role ${name} cannot set harness ${registered}.${field}; use the entry's limits or call options.`,
           );
       if (!(declaration.options instanceof z.ZodObject))
         throw new Error(`Harness ${registered} options must be a Zod object schema.`);
@@ -368,11 +327,9 @@ export function resolveCapabilities(
           : pin === 'codex'
             ? codexAccess
             : (harnessAccess[pin] ?? 'exec');
-    // A parent's assertion describes the parent, not every descendant that replaces tools.
-    const ownAssertion = declared[name]?.access ?? (layers.length ? undefined : assertion);
-    if (ownAssertion !== undefined && ownAssertion !== access)
+    if (assertion !== undefined && assertion !== access)
       throw new Error(
-        `Profile ${name} declares access ${ownAssertion}, but its tools/sandbox infer ${access}.`,
+        `Role ${name} declares access ${assertion}, but its tools/sandbox infer ${access}.`,
       );
     profiles[name] = {
       ...data,
@@ -403,10 +360,10 @@ export function resolveCapabilities(
       codex: { ...data.codex, sandbox },
     };
   }
-  const defaultProfile = config.defaults?.profile ?? 'text';
+  // The default role is always the text baseline (#726).
+  const defaultProfile = 'text';
   const defaults = profiles[defaultProfile];
-  if (!Object.hasOwn(profiles, defaultProfile) || !defaults)
-    throw new Error(`Unknown default profile: ${defaultProfile}.`);
+  if (!defaults) throw new Error('Unreachable: the text role always resolves.');
   const requireGrants = layer.requireGrants ?? definition.requireGrants === true;
   return {
     strictProfiles: config.strictProfiles ?? false,
@@ -421,13 +378,12 @@ export function resolveCapabilities(
  * Validate capability declarations and expose the public manifest: environment, settings, MCP
  * servers, subagents, system prompts, Codex config and registered harness `sensitiveOptions` appear
  * as names and digests only. `requiredGrants` is empty unless the grant layer is on
- * (`layer.requireGrants`, defaulting to the definition's own `requireGrants`).
+ * (`layer.requireGrants`, defaulting to the definition's own `requireGrants`). @internal
  */
 export function capabilityManifest(
   definition: {
     readonly name?: string;
     readonly defaults?: AgentDefaults;
-    readonly profiles?: Readonly<Record<string, AgentProfile>>;
     readonly roster?: object;
     readonly strictProfiles?: boolean;
     readonly requireGrants?: boolean;
@@ -513,16 +469,17 @@ export function requireGrant(
 export function resolveProfileCall(
   manifest: CapabilityManifest,
   harness: string,
-  call: AgentOptions,
+  call: RoleRequest,
   grants: readonly string[],
   pins: Readonly<Record<string, string>>,
   requireGrants: boolean,
   definition?: HarnessDeclaration,
 ): { profile: ResolvedRole; options: ClaudeOptions | CodexOptions } {
+  // `profile` is the internal role channel's spelling of a roster entry (#726).
   const name = call.profile ?? manifest.defaultProfile;
   const profile = manifest.profiles[name];
   if (!Object.hasOwn(manifest.profiles, name) || !profile)
-    throw new Error(`Unknown profile: ${name}.`);
+    throw new Error(`Unknown role: ${name}.`);
   if (profile.harness !== undefined && profile.harness !== harness)
     throw new Error(
       `Roster entry ${name} is pinned to harness ${profile.harness}; it cannot run on ${harness}.`,
@@ -537,16 +494,16 @@ export function resolveProfileCall(
     const raw = (definition.capabilityKeys ?? []).filter((key) => Object.hasOwn(call, key));
     if (manifest.strictProfiles && raw.length)
       throw new Error(
-        `strictProfiles forbids call-site ${raw.join(', ')} for harness ${harness}; declare a named profile.`,
+        `strictProfiles forbids call-site ${raw.join(', ')} for harness ${harness}; declare a roster entry.`,
       );
     const merged = {
       ...profile.harnesses?.[harness],
       ...call,
       ...appended(profile.harnesses?.[harness]?.['addDirs']),
     };
-    // Profile selection is runtime-only unless the adapter schema explicitly accepts it.
+    // Role selection is runtime-only unless the adapter schema explicitly accepts it.
     Reflect.deleteProperty(merged, 'profile');
-    // A roster entry's limits are profile limits, not block options, so a schema that requires
+    // A roster entry's limits are role limits, not block options, so a schema that requires
     // one sees the entry's value here; policy supplies it to the request, and a filled key is
     // dropped after parsing so step identity is unchanged (ADR 0005).
     const shape =
@@ -582,7 +539,7 @@ export function resolveProfileCall(
     (key) => Object.hasOwn(call, key) && (key !== 'isolation' || call.isolation === 'inherit'),
   );
   if (manifest.strictProfiles && raw.length)
-    throw new Error(`strictProfiles forbids call-site ${raw.join(', ')}; declare a named profile.`);
+    throw new Error(`strictProfiles forbids call-site ${raw.join(', ')}; declare a roster entry.`);
   const overrides = isolationParts(call);
   Reflect.deleteProperty(overrides, 'profile');
   const resolved = { ...profile[harness], ...overrides, ...appended(profile[harness].addDirs) };
@@ -810,8 +767,8 @@ function claudeBlock(value: unknown): unknown {
 }
 
 function capabilityExtras(
-  claude: NonNullable<AgentProfile['claude']>,
-  codex: NonNullable<AgentProfile['codex']>,
+  claude: NonNullable<RoleLayer['claude']>,
+  codex: NonNullable<RoleLayer['codex']>,
 ): Record<string, unknown> {
   return Object.fromEntries(
     (

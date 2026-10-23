@@ -15,10 +15,10 @@ erased `WorkflowDeclaration`, falls back to any name with JSON input and output,
 runtime. Explicit `defineWorkflow` type arguments are all-or-nothing: with a shorter prefix such as
 `defineWorkflow<Input, Output>`, the rest take the permissive, childless defaults, so
 `strictProfiles: true` or a nonempty `children` list fails typecheck; drop the type arguments
-(preferred) or spell all seven. Direct definition calls preserve inferred output types. Name
-dispatch does not search the filesystem registry. Plain function helpers remain useful with
-`ctx.scope` or `ctx.within`; a typed workflow adds validated I/O, a recorded version, requireGrants
-delegation and a visible frame. Do not wrap a child or a multi-effect helper in `ctx.step`.
+(preferred) or spell all six. Direct definition calls preserve inferred output types. Name dispatch
+does not search the filesystem registry. Plain function helpers remain useful with `ctx.scope` or
+`ctx.within`; a typed workflow adds validated I/O, a recorded version, requireGrants delegation and
+a visible frame. Do not wrap a child or a multi-effect helper in `ctx.step`.
 
 ## Identity and replay
 
@@ -113,8 +113,8 @@ configuration. A child call's directories must be listed by the parent role (`cl
 Raw call-site capabilities are checked too, even with `strictProfiles: false`. A parent role that is
 elevated still needs the run's grant before the child uses it. A parent [roster entry](roster.md)
 delegates on its pinned harness only: the child role must be an entry pinned to the same harness at
-no higher access, or delegation fails with `Child profile … exceeds parent profile …: harness (…)`
-(or `: access`). Restrictions on a harness a child entry cannot run on, such as a parent's Claude
+no higher access, or delegation fails with `Child role … exceeds parent role …: harness (…)` (or
+`: access`). Restrictions on a harness a child entry cannot run on, such as a parent's Claude
 `disallowedTools` for a Codex entry, do not bind it.
 
 Under `requireGrants`, child models/effort inherit the mapped parent's values when omitted. Parent
@@ -151,10 +151,10 @@ ordinary successful output and should not replace input validation.
 `workflow validate FILE --json` includes input/output JSON Schemas, descriptions, phases,
 capabilities and a declared child tree, in a compact form: no harness option JSON Schemas, no
 `capabilities.defaults` (use `profiles[defaultProfile]`), a shared `capabilities.environment` with
-per-entry differences only, `workflow.profiles` as a field that does not list roster entries, and no
-root `entrypoint` (it equals the document's own). Pass `--harness-schemas` for the complete
-document; `list-defs --json` follows the same rules. Recursive declarations end in `recursive: true`
-reference nodes. Inline children have `entrypoint: null` when no source entrypoint is known.
+per-entry differences only, and no root `entrypoint` (it equals the document's own). Pass
+`--harness-schemas` for the complete document; `list-defs --json` follows the same rules. Recursive
+declarations end in `recursive: true` reference nodes. Inline children have `entrypoint: null` when
+no source entrypoint is known.
 
 ```sh
 quiet-choir workflow list-defs ./examples/patterns --json

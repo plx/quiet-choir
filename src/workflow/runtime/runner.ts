@@ -162,7 +162,7 @@ import {
   resolveProfileCall,
   validateProfileOverrides,
 } from './profiles.js';
-import type { ProfileOverride, ResolvedRole } from './profiles-model.js';
+import type { ProfileOverride, ResolvedRole, RoleRequest } from './profiles-model.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { resolve } from 'node:path';
 import {
@@ -210,7 +210,12 @@ import { bindAgent, bindRole, roleOf, type BindHooks } from './bound-agent.js';
 import { rosterReader } from './roster.js';
 import { execFailureFields, stepError, errorKind, rootCauseKind } from './step-error.js';
 import { stepEventError } from './step-event-error.js';
-import { ConfigurationError, GrantRequiredError } from './configuration-error.js';
+import {
+  ConfigurationError,
+  GrantRequiredError,
+  removedProfileSurface,
+  setsOwnKey,
+} from './configuration-error.js';
 import type { RecoveryCause } from './recovery-hint.js';
 import {
   cancelRecord,
@@ -837,39 +842,32 @@ function exposesTools(harness: string, options: { readonly tools?: unknown }): b
 export async function runWorkflow<
   TInput,
   TOutput,
-  TProfile extends string,
   H extends readonly HarnessDeclaration[],
   TStrict extends boolean,
   TChildren extends readonly WorkflowDeclaration[],
   TName extends string,
 >(
-  definition: WorkflowDefinition<TInput, TOutput, TProfile, H, TStrict, TChildren, TName>,
+  definition: WorkflowDefinition<TInput, TOutput, H, TStrict, TChildren, TName>,
   options: RunOptions,
 ): Promise<WorkflowResult<TOutput>>;
 /**
- * Run or resume a workflow with explicit `<Input, Output, Profile, Harnesses>` type arguments. The
+ * Run or resume a workflow with explicit `<Input, Output, Harnesses>` type arguments. The
  * definition's strictness, children and name widen to the {@link WorkflowDefinition} defaults; the
  * runtime still applies them.
  */
-export async function runWorkflow<
-  TInput,
-  TOutput,
-  TProfile extends string,
-  H extends readonly HarnessDeclaration[],
->(
-  definition: WorkflowDefinition<TInput, TOutput, TProfile, H>,
+export async function runWorkflow<TInput, TOutput, H extends readonly HarnessDeclaration[]>(
+  definition: WorkflowDefinition<TInput, TOutput, H>,
   options: RunOptions,
 ): Promise<WorkflowResult<TOutput>>;
 export async function runWorkflow<
   TInput,
   TOutput,
-  TProfile extends string,
   H extends readonly HarnessDeclaration[],
   TStrict extends boolean,
   TChildren extends readonly WorkflowDeclaration[],
   TName extends string,
 >(
-  definition: WorkflowDefinition<TInput, TOutput, TProfile, H, TStrict, TChildren, TName>,
+  definition: WorkflowDefinition<TInput, TOutput, H, TStrict, TChildren, TName>,
   options: RunOptions,
 ): Promise<WorkflowResult<TOutput>> {
   if (!isValidRunId(options.runId)) throw new Error(runIdMessage);
@@ -2910,11 +2908,15 @@ export async function runWorkflow<
           const saved = record.steps[id];
           const replayOnly = saved !== undefined && isTerminalStep(saved);
           let adapter: Harness | undefined;
+          // The removed `profile` call option (#726) is refused on the authored options, before
+          // the role channel adds its own `profile` below.
+          if (setsOwnKey(agentOptions, 'profile')) throw removedProfileSurface('call', id);
           // A roster call names its entry through the internal role channel, and the request
           // spells it as `profile`, so its identity, fingerprints and records are those of a
-          // `profile: 'Name'` call.
+          // `profile: 'Name'` call before #726.
           const role = roleOf(agentOptions);
-          const authored = role === undefined ? agentOptions : { profile: role, ...agentOptions };
+          const authored: RoleRequest<TOptions> =
+            role === undefined ? agentOptions : { profile: role, ...agentOptions };
           // The template name is observational (ADR 0064 section 5): it goes to the request
           // summary only, never into identity.
           const promptTemplate = promptTemplateOf(authored);
@@ -2925,11 +2927,11 @@ export async function runWorkflow<
               { options: optionData(promptOptionsAsText(authored), structured) },
               `Step "${id}" agent request`,
             ) as {
-              options: TOptions & JsonValue;
+              options: RoleRequest<TOptions> & JsonValue;
             };
             if (native) validateAgentOptions(harness, data.options, false);
-            // A call naming a profile is only part of the request: resolveProfileCall parses the
-            // profile's options merged with it, so here only the prompt is checked.
+            // A roster call is only part of the request: resolveProfileCall parses the entry's
+            // options merged with it, so here only the prompt is checked.
             if (data.options.profile === undefined) harnessOptions(registration, data.options);
             else if (typeof data.options.prompt !== 'string')
               throw new Error(`Harness ${harness} prompt must be a string.`);
@@ -4199,12 +4201,7 @@ export async function runWorkflow<
       const body = Promise.resolve().then(() =>
         observations.run(() =>
           definition.run(
-            context as unknown as WorkflowContext<
-              TProfile,
-              WorkflowHarnesses<H>,
-              TStrict,
-              TChildren
-            >,
+            context as unknown as WorkflowContext<WorkflowHarnesses<H>, TStrict, TChildren>,
             bodyInput,
           ),
         ),

@@ -24,6 +24,18 @@ pinned, and `requiredGrants` in the manifest is empty; access classes are still 
 `strictProfiles` now defaults to `false` at type level and at runtime, so strict call sites are
 opt-in; an explicit `true` keeps the checks above. The machinery itself is unchanged.
 
+Amended by #726 ([ADR 0063](0063-bound-agents-and-typed-rosters.md) §4): the declared-profile
+authoring surface is removed. Workflow `profiles` with `extends`, the `readonly` and `edit` presets,
+`defaults.profile` and the call-site `profile` option are gone from the types and refused at runtime
+with a `ConfigurationError` that names `defineRoster`. Roster entries are the only declared roles,
+and `text` is the implicit baseline and the default role; `defaults` still applies to every role.
+The names `text`, `readonly` and `edit` stay reserved. Grants and grant pins,
+`--profile Name.limit=` launch overrides, child delegation ceilings with the `options.profiles`
+remap, `strictProfiles` and the record and manifest field names (`capabilities.profiles`,
+`defaultProfile`, `profileOverrides`, `grantedProfiles`, the attempt `profile`) are unchanged, and
+the runtime still spells a roster call's entry as `profile` in its request, so roster call identity
+is unchanged. The Decision and Consequences below describe the original design.
+
 ## Context
 
 Shared per-call settings hide role capabilities and place operator controls in workflow input.

@@ -6,7 +6,7 @@ export interface CodexOptions extends AgentOptions {
   readonly effort?: 'none' | 'minimal' | Effort | undefined;
   /** Network access for workspace-write; requires that sandbox explicitly. */
   readonly networkAccess?: boolean;
-  /** Native Codex configuration profile; profile itself selects the quiet-choir role. */
+  /** Native Codex configuration profile (Codex `--profile`), unrelated to quiet-choir roles. */
   readonly harnessProfile?: string;
   /** Dotted native config keys with JSON-to-TOML values; owned settings and null are rejected. */
   readonly config?: Readonly<Record<string, JsonValue>>;
@@ -14,7 +14,7 @@ export interface CodexOptions extends AgentOptions {
   readonly images?: readonly string[];
   /** Structured-output encoding; compat translates common Zod shapes, strict requires a native Codex schema. CliHarness default: compat; the core supplies no default. */
   readonly structuredOutput?: 'strict' | 'compat';
-  /** Filesystem sandbox; declare it in a workflow profile under strictProfiles. Default: read-only. */
+  /** Filesystem sandbox; declare it on a roster entry under strictProfiles. Default: read-only. */
   readonly sandbox?: 'read-only' | 'workspace-write';
   /**
    * Native instruction loading. `'native'` (the default) lets Codex read the user's

@@ -1,12 +1,13 @@
 import type { HarnessDeclaration } from './harness-model.js';
 import type { ChildOptions, WorkflowDeclaration } from './child-model.js';
-import type { AgentOptions, ExecutionPolicy } from './model.js';
+import type { ExecutionPolicy } from './model.js';
 import type {
-  AgentProfile,
   CapabilityManifest,
   ProfileLimits,
   ProfileOverride,
   ResolvedRole,
+  RoleLayer,
+  RoleRequest,
 } from './profiles-model.js';
 import { digest } from './json.js';
 import { compileRoster } from './roster.js';
@@ -27,7 +28,7 @@ export interface ChildCapabilities {
   readonly check: (
     name: string,
     harness: string,
-    call: AgentOptions,
+    call: RoleRequest,
     definition?: HarnessDeclaration,
   ) => void;
   readonly limits: <T extends ExecutionPolicy>(name: string, policy: T) => T;
@@ -51,7 +52,7 @@ function narrows(rule: string, parent: string): boolean {
   );
 }
 
-/** The effective denial policy a provider call gets from a profile, before call options. */
+/** The effective denial policy a provider call gets from a role, before call options. */
 function denialPolicy(profile: ResolvedRole, provider: 'claude' | 'codex'): 'warn' | 'fail' {
   return (
     (provider === 'claude' ? profile.claude.onPermissionDenied : undefined) ??
@@ -65,25 +66,16 @@ function declaredDenialPolicy(
   definition: WorkflowDeclaration,
   name: string,
 ): 'warn' | 'fail' | undefined {
-  // Roster entries are declared roles too (#579); their own policy sits in the pinned block.
-  const profiles = { ...definition.profiles, ...compileRoster(definition).profiles };
-  const seen = new Set<string>();
-  for (let current: string | undefined = name; current !== undefined && !seen.has(current);) {
-    seen.add(current);
-    const layer: AgentProfile | undefined = Object.hasOwn(profiles, current)
-      ? profiles[current]
-      : undefined;
-    if (!layer) break;
-    if (layer.onPermissionDenied !== undefined) return layer.onPermissionDenied;
-    current = layer.extends;
-  }
-  return definition.defaults?.onPermissionDenied;
+  // Roster entries are the declared roles (#579, #726); their own policy sits in the pinned block.
+  const roles = compileRoster(definition).profiles;
+  const layer: RoleLayer | undefined = Object.hasOwn(roles, name) ? roles[name] : undefined;
+  return layer?.onPermissionDenied ?? definition.defaults?.onPermissionDenied;
 }
 
 function subset(child: ResolvedRole, parent: ResolvedRole, label: string): void {
   const reject = (field: string): never => {
     throw new Error(
-      `Child profile ${label} exceeds parent profile ${parent.name}: ${field}. Delegate a sufficient parent role explicitly.`,
+      `Child role ${label} exceeds parent role ${parent.name}: ${field}. Delegate a sufficient parent roster entry explicitly.`,
     );
   };
   const rank = { none: 0, read: 1, write: 2, exec: 3 };
@@ -167,7 +159,7 @@ function pinned(child: ResolvedRole, parent: ResolvedRole, label: string): void 
   const rank = { none: 0, read: 1, write: 2, exec: 3 };
   const reject = (field: string): never => {
     throw new Error(
-      `Child profile ${label} exceeds parent profile ${parent.name}: ${field}. Delegate a sufficient parent role explicitly.`,
+      `Child role ${label} exceeds parent role ${parent.name}: ${field}. Delegate a sufficient parent roster entry explicitly.`,
     );
   };
   if (child.harness !== parent.harness)
@@ -209,7 +201,7 @@ export function delegateCapabilities(
   const mapping = options.profiles ?? {};
   for (const name of Object.keys(mapping))
     if (!Object.hasOwn(manifest.profiles, name))
-      throw new Error(`Unknown child profile mapping: ${name}.`);
+      throw new Error(`Unknown child role mapping: ${name}.`);
   const bounds = new Map<string, ResolvedRole>();
   // Own-key lookups only: roles named toString or valueOf must not read Object.prototype members.
   const parentNameOf = (name: string): string =>
@@ -224,7 +216,7 @@ export function delegateCapabilities(
     const role = parent.profiles[parentName];
     if (!Object.hasOwn(parent.profiles, parentName) || !role)
       throw new Error(
-        `Child ${definition.name} profile ${name} has no parent grant ${parentName}; declare a parent role or map it with options.profiles.`,
+        `Child ${definition.name} role ${name} has no parent grant ${parentName}; declare a parent roster entry or map it with options.profiles.`,
       );
     const limits = { ...role };
     for (const rule of parentOverrides)
@@ -269,7 +261,7 @@ export function delegateCapabilities(
   }
   const delegated: Record<string, ResolvedRole> = {};
   for (const [name, declared] of Object.entries(manifest.profiles)) {
-    // Remove unavailable optional built-ins as well: a grandchild must not inherit phantom authority.
+    // Remove unavailable roles as well: a grandchild must not inherit phantom authority.
     let role: ResolvedRole;
     try {
       role = checkProfile(name, declared);
@@ -335,7 +327,7 @@ export function delegateCapabilities(
     overrides,
     check(name, harness, call, definition) {
       const role = manifest.profiles[name];
-      if (!role) throw new Error(`Unknown child profile ${name}.`);
+      if (!role) throw new Error(`Unknown child role ${name}.`);
       if (harness === 'claude' || harness === 'codex') {
         checkProfile(name, { ...role, [harness]: { ...role[harness], ...call } });
       } else {

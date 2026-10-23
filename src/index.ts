@@ -202,17 +202,13 @@ export type {
   PromptSet,
   PromptText,
 } from './workflow/runtime/model.js';
-export { capabilityManifest } from './workflow/runtime/profiles.js';
 export type {
-  BuiltinProfile,
   AccessClass,
   ProfileLimits,
-  AgentProfile,
   AgentDefaults,
   NoExtraKeys,
   ProfileOverride,
-  // eslint-disable-next-line @typescript-eslint/no-deprecated -- the public manifest keeps the deprecated name until the removal slice (#696)
-  ResolvedProfile,
+  ResolvedRole,
   RedactedControl,
   CapabilityManifest,
 } from './workflow/runtime/profiles-model.js';

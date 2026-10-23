@@ -1,6 +1,6 @@
-// Capability manifests without the profile surface (#724): the counterparts of the denial and limit
-// diagnostics, redaction, grant digest, rooted-directory and strict call-site cases that were in
-// profiles.test.ts, written on roster entries, `defaults` and the default role. An entry pins one
+// Capability manifests without the profile surface (#724, #726): the counterparts of the denial and
+// limit diagnostics, redaction, grant digest, rooted-directory and strict call-site cases of the
+// removed profile tests, written on roster entries, `defaults` and the default role. An entry pins one
 // harness and resets the other blocks to the text baseline, so the old cross-harness profile is a
 // Claude entry plus a Codex entry here. An entry's grant digest includes its harness pin, so it
 // cannot equal a profile-era value: the golden digests are computed through `defaults` on the
@@ -8,7 +8,6 @@
 // move. Cases that check a checkpointed pin compare it with the live entry digest instead.
 import { describe, expect, vi } from 'vitest';
 import {
-  capabilityManifest,
   claudeCapabilityKeys,
   codexCapabilityKeys,
   defineHarness,
@@ -33,6 +32,7 @@ import {
   publicCapabilityManifest,
   resolveCapabilities,
   resolveProfileCall,
+  capabilityManifest,
 } from '../src/workflow/runtime/profiles.js';
 import { it } from './setup/state-dir.js';
 
@@ -1017,7 +1017,7 @@ describe('rooted directories, strict call sites and digests', () => {
     // The same calls stay refused under an explicit strictProfiles: true.
     await expect(
       runs.run({ ...definition, strictProfiles: true }, { ...options, runId: 'strict' }),
-    ).rejects.toThrow('strictProfiles forbids call-site tools; declare a named profile.');
+    ).rejects.toThrow('strictProfiles forbids call-site tools; declare a roster entry.');
     expect(invoke).toHaveBeenCalledTimes(2);
   });
 });
@@ -1046,14 +1046,62 @@ describe('workflow-level settings without roles', () => {
     expect(run).not.toHaveBeenCalled();
   });
 
-  it.each([{ defaults: { idleTimeoutMs: 0 } }, { strictProfiles: 'true' }])(
-    'rejects invalid workflow settings before the body: %j',
-    (config) => {
-      expect(() =>
-        capabilityManifest(config as Parameters<typeof capabilityManifest>[0]),
-      ).toThrow();
-    },
-  );
+  it.each([
+    { defaults: { idleTimeoutMs: 0 } },
+    { strictProfiles: 'true' },
+    // defaults.access asserts the text role's inferred access.
+    { defaults: { access: 'read', claude: { tools: ['Edit'] } } },
+    { defaults: { access: 'none' } },
+    { roster: { Bad: { harness: 'claude', tools: ['Read'], allowedTools: ['Write'] } } },
+    { roster: { Bad: { harness: 'claude', tools: ['Bash(npm test:*)'] } } },
+    { roster: { Bad: { harness: 'claude', idleTimeoutMs: 2_147_483_648 } } },
+  ])('rejects invalid workflow settings before the body: %j', (config) => {
+    expect(() => capabilityManifest(config as Parameters<typeof capabilityManifest>[0])).toThrow();
+  });
+
+  it('lists only the text role and the roster entries, never the removed presets (#726)', () => {
+    const manifest = capabilityManifest(
+      defineWorkflow({
+        ...base,
+        roster: defineRoster({
+          Reader: { harness: 'claude', tools: ['Read'] },
+          Writer: { harness: 'codex', sandbox: 'workspace-write' },
+          // A decider entry is not a role.
+          Judge: { decider: 'jev' },
+        }),
+        run: () => Promise.resolve('ok'),
+      }),
+    );
+    expect(Object.keys(manifest.profiles)).toEqual(['text', 'Reader', 'Writer']);
+    expect(manifest.defaultProfile).toBe('text');
+    expect(manifest.defaults).toEqual(manifest.profiles['text']);
+    expect(capabilityManifest({}).profiles).not.toHaveProperty('readonly');
+    expect(Object.keys(capabilityManifest({}).profiles)).toEqual(['text']);
+  });
+
+  it('defaults expectsToolUse to roles that grant more than the text baseline', () => {
+    const manifest = capabilityManifest({
+      roster: {
+        Writer: { harness: 'codex', sandbox: 'workspace-write' },
+        Reader: { harness: 'codex', sandbox: 'read-only' },
+        Quiet: { harness: 'claude', tools: ['Read'], expectsToolUse: false },
+        Eager: { harness: 'claude', expectsToolUse: true },
+        Tooled: { harness: 'claude', tools: ['Read'] },
+      },
+    });
+    const expects = (name: string) => manifest.profiles[name]?.expectsToolUse;
+    expect(expects('text')).toBe(false);
+    expect(expects('Writer')).toBe(true);
+    expect(expects('Reader')).toBe(false);
+    expect(expects('Quiet')).toBe(false);
+    expect(expects('Eager')).toBe(true);
+    expect(expects('Tooled')).toBe(true);
+    // A defaults block that widens the text baseline makes the text role expect tools too.
+    expect(
+      capabilityManifest({ defaults: { claude: { tools: ['Read'] } } }).profiles['text']
+        ?.expectsToolUse,
+    ).toBe(true);
+  });
 
   it('applies a defaults idleTimeoutMs to the default role and entries', () => {
     const manifest = capabilityManifest({

@@ -688,7 +688,7 @@ process.exit(status ?? 1);
   assert.equal(granted.lines.at(-1).ok, true);
   const refused = shell(grantFence.replace(' --grant Fixer', ''), { cwd: target, env: roleEnv });
   assert.equal(refused.status, 2, refused.output);
-  assert.match(refused.lines.at(-1).error.message, /Profile Fixer requires exec access/u);
+  assert.match(refused.lines.at(-1).error.message, /Role Fixer requires exec access/u);
   const ungated = grantFence.replace(' --require-grants --grant Fixer', '');
   assert.notEqual(ungated, grantFence);
   const open = shell(ungated, { cwd: target, env: roleEnv });

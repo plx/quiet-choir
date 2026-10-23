@@ -40,7 +40,7 @@ import type {
 } from './wait-model.js';
 import type { PhaseOptions } from './observability-model.js';
 import type { z } from 'zod';
-import type { AgentDefaults, AgentProfile } from './profiles-model.js';
+import type { AgentDefaults } from './profiles-model.js';
 import type { MapStepError } from './fan-out.js';
 import type { ModelUsage, TokenCounts } from './usage-model.js';
 import type { ChildOptions, WorkflowDeclaration, WorkflowPhase } from './child-model.js';
@@ -275,8 +275,6 @@ export interface AgentOptions {
   readonly extraArgs?: readonly string[] | undefined;
   /** Fingerprinted set/unset edits after host scrubbing; flat set-only overlays remain supported. */
   readonly env?: AgentEnvironment | undefined;
-  /** Declared role or built-in preset; omission uses workflow defaults. */
-  readonly profile?: string | undefined;
   /** Persist a terminal outcome for branching; cancellation, configuration (e.g. missing harness), and checkpoint-write failures still reject. */
   readonly onError?: ErrorMode | undefined;
   /**
@@ -289,7 +287,7 @@ export interface AgentOptions {
   readonly model?: string | undefined;
   /** Working directory, relative to the workflow run's working directory. */
   readonly cwd?: string | undefined;
-  /** Wall-clock deadline in milliseconds; implicit text profile: 300,000. Custom harnesses must enforce it. */
+  /** Wall-clock deadline in milliseconds; implicit text role: 300,000. Custom harnesses must enforce it. */
   readonly timeoutMs?: number | undefined;
   /** Idle deadline: no stdout/stderr output for this long ends the attempt with kind idle-timeout. Off by default; custom harnesses must enforce it. */
   readonly idleTimeoutMs?: number | undefined;
@@ -612,12 +610,14 @@ export interface AgentClient<TOptions extends AgentOptions> {
    * that `addDirs` entries are appended to the bound list (never deduplicated), so a call cannot
    * drop a bound directory. A call's `timeoutMs` and `idleTimeoutMs` therefore win over bound
    * defaults, and a call value that is `undefined` counts as absent and keeps the default. The
-   * merged options fingerprint, resolve policy and profiles, and record exactly as if they had been
+   * merged options fingerprint, resolve policy and roles, and record exactly as if they had been
    * spelled at the call site. A bound agent binds again the same way over the both-sides keys only,
    * layering its defaults; the first bind fixed every other key.
    *
-   * `bind` throws a `TypeError` for a {@link PerCallOnlyKey}, and a bound call rejects before any
-   * step is claimed when it passes a key outside {@link BoundCallOptions} (and Codex `images`).
+   * `bind` throws a `TypeError` for a {@link PerCallOnlyKey}, and a `ConfigurationError` for the
+   * removed `profile` option (#726; declare a roster entry instead), and a bound call rejects
+   * before any step is claimed when it passes a key outside {@link BoundCallOptions} (and Codex
+   * `images`).
    */
   bind<const B extends BindOptions<TOptions>>(
     options: B & BindExcess<B, TOptions>,
@@ -769,7 +769,7 @@ export type ChildOutputOf<TChildren, N extends string> =
 
 /**
  * Durable operations available to ordinary TypeScript workflow code. `TStrict` is the workflow's
- * `strictProfiles` literal: exactly `true` omits profile-owned capability keys from call-site option
+ * `strictProfiles` literal: exactly `true` omits role-owned capability keys from call-site option
  * types, and the default `boolean` keeps them, so an unparameterized helper context stays permissive.
  * `TChildren` is the declared `children` tuple that types by-name child dispatch; the default `any`
  * keeps by-name dispatch on JSON values and lets typed contexts reach bare `WorkflowContext` helpers.
@@ -778,7 +778,6 @@ export type ChildOutputOf<TChildren, N extends string> =
  * bare `WorkflowContext` helpers.
  */
 export interface WorkflowContext<
-  TProfile extends string = string,
   R extends HarnessMap = BuiltInHarnesses,
   TStrict extends boolean = boolean,
   // `any`, not a concrete array: a concrete default makes typed contexts unassignable to helpers
@@ -791,12 +790,12 @@ export interface WorkflowContext<
 > {
   /**
    * Select one explicitly registered harness; capabilities determine structured-output availability.
-   * Options are typed like `ctx.claude`: `profile` must be a built-in or declared role, and a strict
-   * workflow omits the harness's literal `capabilityKeys` (see {@link CallOptions}).
+   * Options are typed like `ctx.claude`: a strict workflow omits the harness's literal
+   * `capabilityKeys` (see {@link CallOptions}).
    */
   agent<K extends keyof R & string>(
     name: K,
-  ): RegisteredAgentClient<CallOptions<K, R[K], TProfile, TStrict>, CapabilitiesOf<R[K]>>;
+  ): RegisteredAgentClient<CallOptions<K, R[K], TStrict>, CapabilitiesOf<R[K]>>;
   /**
    * Run a typed child inline with validated I/O, recorded identity, and a scoped effect namespace.
    * With `onError: 'return'`, the frame's outcome is saved and returned as
@@ -805,14 +804,13 @@ export interface WorkflowContext<
   workflow<
     I,
     O,
-    P extends string,
     H extends readonly HarnessDeclaration[],
     S extends boolean,
     C extends readonly WorkflowDeclaration[],
     M extends string,
   >(
     id: string,
-    child: WorkflowDefinition<I, O, P, H, S, C, M>,
+    child: WorkflowDefinition<I, O, H, S, C, M>,
     input: NoInfer<I>,
     options: ChildOptions & { readonly onError: 'return' },
   ): Promise<Settled<O, MapStepError>>;
@@ -820,7 +818,6 @@ export interface WorkflowContext<
   workflow<
     I,
     O,
-    P extends string,
     H extends readonly HarnessDeclaration[],
     S extends boolean,
     C extends readonly WorkflowDeclaration[],
@@ -828,7 +825,7 @@ export interface WorkflowContext<
     TMode extends ErrorMode = 'throw',
   >(
     id: string,
-    child: WorkflowDefinition<I, O, P, H, S, C, M>,
+    child: WorkflowDefinition<I, O, H, S, C, M>,
     input: NoInfer<I>,
     options?: ChildOptions & { readonly onError?: TMode | undefined },
   ): Promise<EffectResult<O, TMode, MapStepError>>;
@@ -1002,11 +999,11 @@ export interface WorkflowContext<
   /** Prefix every effect launched in the callback; nested scopes compose without counters. */
   scope<T>(prefix: string, run: () => Promise<T>): Promise<T>;
   /** Bind a lexical prefix to a reusable context; descendants retain their nested scope prefixes. */
-  within(prefix: string): WorkflowContext<TProfile, R, TStrict, TChildren, TRoster>;
+  within(prefix: string): WorkflowContext<R, TStrict, TChildren, TRoster>;
   /**
    * The workflow's roster agents by entry name (ADR 0063 section 3): `ctx.roster.Name` is the
    * entry's pinned harness client bound to the entry, so its calls take only the prompt, schema,
-   * placement and policy, and resolve, fingerprint and record as a `profile: 'Name'` call does.
+   * placement and policy, and resolve, fingerprint and record under the entry's role.
    * Each read gives agents bound over this context, so `ctx.within(p).roster.Name` keeps the
    * prefix. A decider entry (ADR 0066 section 2) gives `{ decide }` instead: `ctx.decide` with
    * the entry's provider and model fixed, recording the same identity plus a `meta.roster` label.
@@ -1014,12 +1011,10 @@ export interface WorkflowContext<
    * entries; an untyped misspelled name is `undefined`.
    */
   readonly roster: RosterAgents<TRoster>;
-  /** Claude-specific headless API; a strict workflow omits profile-owned keys (see {@link CallOptions}). */
-  readonly claude: AgentClient<
-    CallOptions<'claude', BuiltInHarnesses['claude'], TProfile, TStrict>
-  >;
-  /** Codex-specific headless API; a strict workflow omits profile-owned keys (see {@link CallOptions}). */
-  readonly codex: AgentClient<CallOptions<'codex', BuiltInHarnesses['codex'], TProfile, TStrict>>;
+  /** Claude-specific headless API; a strict workflow omits role-owned keys (see {@link CallOptions}). */
+  readonly claude: AgentClient<CallOptions<'claude', BuiltInHarnesses['claude'], TStrict>>;
+  /** Codex-specific headless API; a strict workflow omits role-owned keys (see {@link CallOptions}). */
+  readonly codex: AgentClient<CallOptions<'codex', BuiltInHarnesses['codex'], TStrict>>;
   /** Save a JSON result and reuse it on resume when its inputs match. */
   step<T>(
     id: string,
@@ -1065,7 +1060,6 @@ export interface WorkflowContext<
 export interface WorkflowDefinition<
   TInput,
   TOutput,
-  TProfile extends string = string,
   H extends readonly HarnessDeclaration[] = readonly HarnessDeclaration[],
   TStrict extends boolean = boolean,
   // `any`, not a concrete array: a concrete default makes typed definitions unassignable to
@@ -1097,17 +1091,18 @@ export interface WorkflowDefinition<
    * output; a workflow without children rejects by-name dispatch at type level.
    */
   readonly children?: TChildren;
-  /** Common defaults applied after the selected preset. */
-  readonly defaults?: AgentDefaults<NoInfer<TProfile>>;
-  /** Named capability roles, resolved before executing the workflow body. */
-  readonly profiles?: Readonly<Record<TProfile, AgentProfile>>;
   /**
-   * The workflow's inventory of harness-pinned agents, from `defineRoster` (ADR 0063 section 3).
+   * Common defaults applied to every role after the text baseline. Raw calls run in the `text`
+   * role, which these defaults shape; `defaults.profile` was removed (#726) and is refused.
+   */
+  readonly defaults?: AgentDefaults;
+  /**
+   * The workflow's inventory of harness-pinned agents, from `defineRoster` (ADR 0063 section 3),
+   * and its only declared roles; the `profiles` field was removed (#726) and is refused.
    * `defineWorkflow` infers its entry names, so `ctx.roster.Name` is typed and a misspelling fails
-   * typecheck. Each entry compiles to a declared role under its name: `--profile Name.maxTurns=60`,
-   * attempt records, grants under `requireGrants` and the capability manifest treat it like a
-   * profile. An entry name cannot equal a `profiles` name or a built-in preset, and
-   * `defaults.profile` cannot name an entry.
+   * typecheck. Each entry compiles to a role under its name: `--profile Name.maxTurns=60`, attempt
+   * records, grants under `requireGrants` and the capability manifest name it. An entry name
+   * cannot be `text`, `readonly`, `edit` or a reserved word.
    */
   readonly roster?: TRoster;
   /**
@@ -1155,7 +1150,6 @@ export interface WorkflowDefinition<
   readonly run: NoInfer<
     (
       context: WorkflowContext<
-        NoInfer<TProfile>,
         WorkflowHarnesses<NoInfer<H>>,
         NoInfer<TStrict>,
         NoInfer<TChildren>,
@@ -1169,23 +1163,23 @@ export interface WorkflowDefinition<
 /**
  * Define a workflow with input/output types inferred from its runtime schemas. The literal
  * `strictProfiles` (omitted means `false`), `children` tuple and `name` are inferred too, so strict
- * call sites (under an explicit `strictProfiles: true`), declared profiles and by-name child
- * dispatch are checked at type level. Inline `profiles` and `defaults` literals get TypeScript's
- * ordinary excess-property checks. The `roster` (`TRoster`) is inferred as the `defineRoster`
- * result's type, which types `ctx.roster`; without one the context has no roster entries.
+ * call sites (under an explicit `strictProfiles: true`) and by-name child dispatch are checked at
+ * type level. An inline `defaults` literal gets TypeScript's ordinary excess-property checks, so
+ * the removed `profiles` field and `defaults.profile` (#726) fail typecheck. The `roster`
+ * (`TRoster`) is inferred as the `defineRoster` result's type, which types `ctx.roster`; without
+ * one the context has no roster entries.
  */
 export function defineWorkflow<
   TInput,
   TOutput,
-  TProfile extends string = never,
   const H extends readonly HarnessDeclaration[] = readonly [],
   const TStrict extends boolean = false,
   const TChildren extends readonly WorkflowDeclaration[] = readonly [],
   const TName extends string = string,
   TRoster extends AnyRoster = EmptyRoster,
 >(
-  definition: WorkflowDefinition<TInput, TOutput, TProfile, H, TStrict, TChildren, TName, TRoster>,
-): WorkflowDefinition<TInput, TOutput, TProfile, H, TStrict, TChildren, TName, TRoster> {
+  definition: WorkflowDefinition<TInput, TOutput, H, TStrict, TChildren, TName, TRoster>,
+): WorkflowDefinition<TInput, TOutput, H, TStrict, TChildren, TName, TRoster> {
   if (!definition.name.trim() || !definition.version.trim()) {
     throw new Error('Workflow name and version must be nonempty.');
   }

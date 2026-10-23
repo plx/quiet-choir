@@ -1,6 +1,6 @@
-// Grants, grant pins and launch overrides on roster entries (ADR 0063 sections 4-5, #705/#708):
-// the counterparts of the profile cases in profiles.test.ts, harness-controls.test.ts:667 and
-// harness-registry.test.ts:232, with an entry name in place of the profile name. defineRoster
+// Grants, grant pins and launch overrides on roster entries (ADR 0063 sections 4-5, #705/#708),
+// which replaced the profile cases removed with profiles (#726), plus the counterparts of
+// harness-controls.test.ts:667 and harness-registry.test.ts:232. defineRoster
 // deep-freezes its entries, so a case that edits a role between runs builds a second definition
 // from a factory. Every agent entry is a declared role, so the launch preflight refuses an ungranted
 // elevated entry before the body runs and before any record exists; the call-time grant cause and
@@ -8,7 +8,6 @@
 import { join } from 'node:path';
 import { describe, expect, vi } from 'vitest';
 import {
-  capabilityManifest,
   ConfigurationError,
   defineHarness,
   defineRoster,
@@ -29,6 +28,7 @@ import {
   profileGrantDigest,
   resolveCapabilities,
   validateProfileOverrides,
+  capabilityManifest,
 } from '../src/workflow/runtime/profiles.js';
 import { runNextCommands } from '../src/workflow/loader/next-commands.js';
 import { it } from './setup/state-dir.js';
@@ -42,7 +42,7 @@ const reply = {
   usage: { inputTokens: 10, outputTokens: 2, costUsd: 0.31 },
 };
 const fixerMessage =
-  'Profile Fixer requires write access. Retry with --grant Fixer, --grant write, or --grant all.';
+  'Role Fixer requires write access. Retry with --grant Fixer, --grant write, or --grant all.';
 /** The write entry most cases grant: Claude with Read and Edit. */
 const fixer = { harness: 'claude', tools: ['Read', 'Edit'] } as const;
 
@@ -72,7 +72,7 @@ function grantCause(error: unknown): unknown {
 }
 
 describe('launch overrides and the manifest', () => {
-  it('merges the entry, defaults, named launch rules and step policy in order (profiles.test.ts:110)', async ({
+  it('merges the entry, defaults, named launch rules and step policy in order', async ({
     stateDir,
     runs,
   }) => {
@@ -124,7 +124,7 @@ describe('launch overrides and the manifest', () => {
     });
   });
 
-  it('infers entry access from tools and narrower rules, and lists required grants (profiles.test.ts:172)', () => {
+  it('infers entry access from tools and narrower rules, and lists required grants', () => {
     const manifest = capabilityManifest(
       defineWorkflow({
         ...base,
@@ -151,7 +151,7 @@ describe('launch overrides and the manifest', () => {
     expect(manifest.requiredGrants).toEqual(['Custom', 'Fixer', 'Writer']);
   });
 
-  it('parses entry override rules and validates entry names for overrides and grants (profiles.test.ts:666)', async ({
+  it('parses entry override rules and validates entry names for overrides and grants', async ({
     stateDir,
     runs,
   }) => {
@@ -176,6 +176,11 @@ describe('launch overrides and the manifest', () => {
     expect(() =>
       validateProfileOverrides([{ profile: 'Reviewr', maxTurns: 60 }], capabilities),
     ).toThrow('Unknown override profile');
+    // The removed presets (#726) are unknown roles, so a saved rule naming one is refused too.
+    for (const preset of ['readonly', 'edit'])
+      expect(() =>
+        validateProfileOverrides([{ profile: preset, maxTurns: 60 }], capabilities),
+      ).toThrow(`Unknown override profile: ${preset}.`);
     const options = { stateDir, runId, input: null };
     await expect(
       runs.run(definition, { ...options, profileOverrides: [{ profile: 'Reviewr', maxTurns: 2 }] }),
@@ -187,7 +192,7 @@ describe('launch overrides and the manifest', () => {
   });
 
   it.for(['turn-limit', 'budget-limit'] as const)(
-    'reports %s with the entry cap, reported turns/spend and a usable flag (profiles.test.ts:582)',
+    'reports %s with the entry cap, reported turns/spend and a usable flag',
     async (kind, { stateDir, runs }) => {
       const error = new HarnessError({
         harness: 'claude',
@@ -232,7 +237,7 @@ describe('launch overrides and the manifest', () => {
     },
   );
 
-  it('keeps entry names and limits outside identity, persists rules, and detects semantic changes (profiles.test.ts:499)', async ({
+  it('keeps entry names and limits outside identity, persists rules, and detects semantic changes', async ({
     stateDir,
     runs,
   }) => {
@@ -282,7 +287,7 @@ describe('launch grants on named entries', () => {
   // A named elevated entry is a declared role, so the launch preflight refuses it before the body
   // runs; the profile case's call-time refusal is not reachable through ctx.roster.
   it.for(['Fixer', 'write', 'exec', 'all'])(
-    'enforces launch grants and saves %s for resume (profiles.test.ts:261)',
+    'enforces launch grants and saves %s for resume',
     async (grant, { stateDir, runs }) => {
       let stop = true;
       const body = vi.fn();
@@ -312,13 +317,13 @@ describe('launch grants on named entries', () => {
     },
   );
 
-  // Refused at launch, not at the call (profiles.test.ts:293's call-time refusal is covered by the
-  // raw class-only call below): no record, no body effect, and the same launch with the grant runs.
+  // Refused at launch, not at the call (the call-time refusal is covered by the raw class-only call
+  // below): no record, no body effect, and the same launch with the grant runs.
   it.for([
     { label: 'the definition', flag: true, extra: {} },
     { label: 'RunOptions', flag: undefined, extra: { requireGrants: true } },
   ] as const)(
-    'refuses an ungranted entry before the body when $label opts in (profiles.test.ts:293/1664)',
+    'refuses an ungranted entry before the body when $label opts in',
     async ({ flag, extra }, { stateDir, runs }) => {
       const { invoke, harness } = fake();
       const options = { stateDir, runId, input: null, harness, ...extra };
@@ -353,15 +358,12 @@ describe('launch grants on named entries', () => {
       .catch((cause: unknown) => cause);
     expect(error).toBeInstanceOf(GrantRequiredError);
     expect((error as Error).message).toBe(
-      'Profile Runner requires exec access. Retry with --grant Runner, --grant exec, or --grant all.',
+      'Role Runner requires exec access. Retry with --grant Runner, --grant exec, or --grant all.',
     );
   });
 
   // Refused at launch: --grant write does not cover an exec entry.
-  it('does not treat write as exec permission for an entry (profiles.test.ts:413)', async ({
-    stateDir,
-    runs,
-  }) => {
+  it('does not treat write as exec permission for an entry', async ({ stateDir, runs }) => {
     const { invoke, harness } = fake();
     const definition = defineWorkflow({
       ...base,
@@ -466,10 +468,7 @@ describe('launch grants on named entries', () => {
   });
 
   // Refused at launch: a fork is a new run, so it holds no grant of its source.
-  it('does not pass an entry grant to a fork (profiles.test.ts:742)', async ({
-    stateDir,
-    runs,
-  }) => {
+  it('does not pass an entry grant to a fork', async ({ stateDir, runs }) => {
     const { invoke, harness } = fake();
     const definition = fixerWorkflow(true);
     const options = { stateDir, runId, input: null, harness };
@@ -502,7 +501,7 @@ describe('call-time grant cause through a raw class-only call', () => {
     { label: 'the definition', flag: true, extra: {} },
     { label: 'RunOptions', flag: undefined, extra: { requireGrants: true } },
   ] as const)(
-    'advises an access-class grant, not a code change, when $label opts in (profiles.test.ts:293/352/1694)',
+    'advises an access-class grant, not a code change, when $label opts in',
     async ({ flag, extra }, { stateDir, runs }) => {
       const { invoke, harness } = fake();
       const definition = rawEdit(flag);
@@ -548,7 +547,7 @@ describe('call-time grant cause through a raw class-only call', () => {
     },
   );
 
-  it('saves the cause but no recovery hint when the raw call is the first effect (profiles.test.ts:330)', async ({
+  it('saves the cause but no recovery hint when the raw call is the first effect', async ({
     stateDir,
     runs,
   }) => {
@@ -570,7 +569,7 @@ describe('call-time grant cause through a raw class-only call', () => {
 });
 
 describe('grant pins on entries', () => {
-  it('pins an entry grant to its capabilities across explicit source acceptance (profiles.test.ts:393)', async ({
+  it('pins an entry grant to its capabilities across explicit source acceptance', async ({
     stateDir,
     runs,
   }) => {
@@ -594,7 +593,7 @@ describe('grant pins on entries', () => {
     expect(body).toHaveBeenCalledTimes(3);
   });
 
-  it('refuses a saved entry grant for a pending step whose mcpServers token rotated (profiles.test.ts:993)', async ({
+  it('refuses a saved entry grant for a pending step whose mcpServers token rotated', async ({
     stateDir,
     runs,
   }) => {
@@ -635,7 +634,7 @@ describe('grant pins on entries', () => {
   });
 
   it.for(['P', 'all'])(
-    'refuses a saved entry grant whose sensitive registered option rotated, until --grant %s (profiles.test.ts:1300)',
+    'refuses a saved entry grant whose sensitive registered option rotated, until --grant %s',
     async (grant, { stateDir, runs }) => {
       const vault = defineHarness({
         name: 'vault',
@@ -686,10 +685,7 @@ describe('grant pins on entries', () => {
 // ADR 0063 §5 (#577) on entries: grants, pins and the run-level flag are opt-in. Every refusal here
 // is the launch preflight's: Fixer is a declared role, so it is refused before the body runs.
 describe('requireGrants opt-in on entries (#577)', () => {
-  it('runs a write entry without a grant by default (profiles.test.ts:1644)', async ({
-    stateDir,
-    runs,
-  }) => {
+  it('runs a write entry without a grant by default', async ({ stateDir, runs }) => {
     const { invoke, harness } = fake();
     const run = await runs.run(fixerWorkflow(), { stateDir, runId, input: null, harness });
     expect(run.status).toBe('completed');
@@ -702,7 +698,7 @@ describe('requireGrants opt-in on entries (#577)', () => {
     expect(saved.capabilities?.profiles['Fixer']?.access).toBe('write');
   });
 
-  it('records and pins entry grants with the layer off and still rejects unknown names (profiles.test.ts:1722)', async ({
+  it('records and pins entry grants with the layer off and still rejects unknown names', async ({
     stateDir,
     runs,
   }) => {
@@ -718,7 +714,7 @@ describe('requireGrants opt-in on entries (#577)', () => {
     ).rejects.toThrow('Unknown grant: Fixr.');
   });
 
-  it('keeps the run-level flag across resumes and does not pass it to a fork (profiles.test.ts:1735)', async ({
+  it('keeps the run-level flag across resumes and does not pass it to a fork', async ({
     stateDir,
     runs,
   }) => {
@@ -755,7 +751,7 @@ describe('requireGrants opt-in on entries (#577)', () => {
     expect((await readRun({ stateDir, runId })).requireGrants).toBe(true);
   });
 
-  it('refreshes the manifest when the flag is first given to a completed run (profiles.test.ts:1772)', async ({
+  it('refreshes the manifest when the flag is first given to a completed run', async ({
     stateDir,
     runs,
   }) => {
@@ -784,7 +780,7 @@ describe('requireGrants opt-in on entries (#577)', () => {
     expect(invoke).toHaveBeenCalledTimes(1);
   });
 
-  it('refreshes the manifest of a completed run after a grant refusal already saved the flag (profiles.test.ts:1798)', async ({
+  it('refreshes the manifest of a completed run after a grant refusal already saved the flag', async ({
     stateDir,
     runs,
   }) => {
@@ -813,7 +809,7 @@ describe('requireGrants opt-in on entries (#577)', () => {
     expect(invoke).toHaveBeenCalledTimes(1);
   });
 
-  it('saves the run-level flag when a resume that first gives it is refused before the body (profiles.test.ts:1824)', async ({
+  it('saves the run-level flag when a resume that first gives it is refused before the body', async ({
     stateDir,
     runs,
   }) => {
@@ -856,7 +852,7 @@ describe('requireGrants opt-in on entries (#577)', () => {
     expect(completed.capabilities?.requiredGrants).toEqual(['Fixer']);
   });
 
-  it('repeats --require-grants in the retry text when the refusal cannot save the flag (profiles.test.ts:1870)', async ({
+  it('repeats --require-grants in the retry text when the refusal cannot save the flag', async ({
     stateDir,
     runs,
   }) => {
@@ -898,7 +894,7 @@ describe('requireGrants opt-in on entries (#577)', () => {
     const grant = (refused as AggregateError).errors[0] as unknown;
     expect(grant).toBeInstanceOf(GrantRequiredError);
     expect((grant as Error).message).toBe(
-      'Profile Fixer requires write access. Retry with --require-grants and --grant Fixer, --grant write, or --grant all.',
+      'Role Fixer requires write access. Retry with --require-grants and --grant Fixer, --grant write, or --grant all.',
     );
     expect((refused as Error).message).toContain('disk full');
     expect(await readRun({ stateDir, runId })).not.toHaveProperty('requireGrants');

@@ -2,14 +2,15 @@ import type { WorkflowDecider } from './child-model.js';
 import type { DecisionBinding } from './decisions.js';
 import type { HarnessDeclaration } from './harness-model.js';
 import type { JsonValue } from './model.js';
-import type { AgentProfile } from './profiles-model.js';
+import type { RoleLayer } from './profiles-model.js';
 import type { CheckedRosterEntries, Roster, RosterEntries, RosterOptions } from './roster-model.js';
 import { jsonValue } from './json.js';
 import { promptOptionsAsText } from '../prompts/prompt.js';
 
-// ADR 0063 sections 3-4. A roster entry compiles to an ordinary declared profile under its own
-// name, pinned to one harness, so resolution, launch overrides, attempt records, grants and the
-// manifest reuse the profile code. `ctx.roster.Name` is the pinned harness client bound to that
+// ADR 0063 sections 3-4. A roster entry compiles to a role layer under its own name, pinned to one
+// harness; roster entries are the only declared roles (#726), and resolution, launch overrides,
+// attempt records, grants and the manifest treat each as a role. `ctx.roster.Name` is the pinned
+// harness client bound to that
 // entry through the internal role channel (`bindRole`), not a public option, and the runner
 // resolves its calls as the entry's. A decider entry (ADR 0066 section 2) is not a role: it
 // compiles to nothing, and `ctx.roster.Name` is `{ decide }` over `ctx.decide` with the entry's
@@ -17,7 +18,10 @@ import { promptOptionsAsText } from '../prompts/prompt.js';
 
 /** Entry keys: identifiers, so dot access always works, capped to the manifest's name length. */
 const keyPattern = /^[A-Za-z][A-Za-z0-9_]{0,63}$/u;
-/** Built-in preset names and the words grants and the access lattice reserve. */
+/**
+ * The text role, the removed presets (old records still name them, #726) and the words grants and
+ * the access lattice reserve.
+ */
 const reservedNames: ReadonlySet<string> = new Set([
   'text',
   'readonly',
@@ -32,8 +36,8 @@ const reservedNames: ReadonlySet<string> = new Set([
   '__proto__',
 ]);
 /**
- * Keys an entry cannot set: the per-call-only keys of ADR 0063 section 1, the profile machinery an
- * entry replaces (`profile`, `extends`, `access`) and the cross-harness blocks.
+ * Keys an entry cannot set: the per-call-only keys of ADR 0063 section 1, the removed profile
+ * machinery an entry replaces (`profile`, `extends`, `access`) and the cross-harness blocks.
  */
 const forbiddenKeys: Readonly<Record<string, string>> = {
   prompt: 'it is a per-call option',
@@ -51,7 +55,7 @@ const forbiddenKeys: Readonly<Record<string, string>> = {
   harnesses: 'entries have no cross-harness blocks; the harness field selects the options',
   addDirRoots: 'rooted call-site directories were removed; list addDirs on the entry',
 };
-/** Limits that compile to top-level profile limits, so `--profile Name.limit=` overrides them. */
+/** Limits that compile to top-level role limits, so `--profile Name.limit=` overrides them. */
 const limitKeys = ['timeoutMs', 'idleTimeoutMs', 'maxTurns', 'maxBudgetUsd'] as const;
 
 /** Decision provider names, as `defineDecisionProvider` requires them. */
@@ -131,7 +135,9 @@ function checkedEntries(
         `Roster entry name ${JSON.stringify(name)} must be an identifier matching /^[A-Za-z][A-Za-z0-9_]*$/ of at most 64 characters.`,
       );
     if (reservedNames.has(name))
-      throw new Error(`Roster entry name ${name} is reserved (a built-in preset or access word).`);
+      throw new Error(
+        `Roster entry name ${name} is reserved (the text role, a removed preset or an access word).`,
+      );
     const entry = value[name];
     if (!isRecord(entry)) throw new TypeError(`Roster entry ${name} must be an object.`);
     if (Object.hasOwn(entry, 'decider')) {
@@ -166,13 +172,13 @@ function checkedEntries(
  * minus the per-call-only keys (`prompt`, the schema, `cwd`, `worktree`, `onError`, `retry` and
  * Codex `images`) and `profile`. `options.harnesses` types entries for registered harnesses; the
  * workflow must still declare each one in its own `harnesses`. Keys are identifiers
- * (`/^[A-Za-z][A-Za-z0-9_]*$/`, at most 64 characters), PascalCase by convention, and cannot be a
- * built-in preset (`text`, `readonly`, `edit`) or reserved word.
+ * (`/^[A-Za-z][A-Za-z0-9_]*$/`, at most 64 characters), PascalCase by convention, and cannot be
+ * `text`, a removed preset (`readonly`, `edit`) or a reserved word.
  *
  * A decider entry is `{ decider, model?, description? }`: `decider` names one of the workflow's
  * `decisions` (checked when the workflow loads) and `model` is the requested model, both fixed for
  * every `ctx.roster.Name.decide` call. It takes no other key, and an entry cannot set both
- * `harness` and `decider`. A decider entry is not a role: it has no capability profile, grant or
+ * `harness` and `decider`. A decider entry is not a role: it has no capabilities, grant or
  * `--profile` override.
  *
  * It validates the names, harnesses and forbidden keys when the module loads and returns a
@@ -207,12 +213,12 @@ export function defineRoster<
 }
 
 /**
- * The roster profiles of a definition and the harness each one is pinned to, plus its decider
- * entries, which are not profiles. @internal
+ * The roster roles of a definition and the harness each one is pinned to, plus its decider
+ * entries, which are not roles. @internal
  */
 export interface CompiledRoster {
-  /** Each agent entry as a declared profile without `extends`, under the entry's name. */
-  readonly profiles: Readonly<Record<string, AgentProfile>>;
+  /** Each agent entry as a role layer, under the entry's name. */
+  readonly profiles: Readonly<Record<string, RoleLayer>>;
   /** Agent entry name to its pinned harness. */
   readonly pins: Readonly<Record<string, string>>;
   /** Decider entry name to its provider, model and description. */
@@ -220,9 +226,9 @@ export interface CompiledRoster {
 }
 
 /**
- * Compile a definition's roster to profiles (ADR 0063 section 4). Each entry becomes a profile with
- * no `extends`, so it layers on the text baseline and workflow `defaults`: `description` and
- * `expectsToolUse` stay top-level, the four limits become profile limits, and every other key goes
+ * Compile a definition's roster to role layers (ADR 0063 section 4). Each entry layers on the text
+ * baseline and workflow `defaults`: `description` and
+ * `expectsToolUse` stay top-level, the four limits become role limits, and every other key goes
  * into the pinned harness's block (`claude`, `codex` or `harnesses.<name>`). Decider entries are
  * skipped and listed in `deciders`. The roster is validated again, since a definition need not have
  * come from `defineRoster`. @internal
@@ -240,7 +246,7 @@ export function compileRoster(definition: {
     (name, harness) =>
       `Roster entry ${name} uses harness ${harness}, which workflow ${definition.name ?? '<unnamed>'} does not declare; add its definition to the workflow's harnesses.`,
   );
-  const profiles: Record<string, AgentProfile> = {};
+  const profiles: Record<string, RoleLayer> = {};
   const pins: Record<string, string> = {};
   const deciders: Record<string, WorkflowDecider> = {};
   for (const [name, entry] of Object.entries(entries)) {

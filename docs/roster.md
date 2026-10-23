@@ -70,14 +70,22 @@ An entry cannot set the per-call-only keys (`prompt`, `schema`, `cwd`, `worktree
 entry, as in `{ ...Reviewer, model: 'sonnet' }`. A standing prompt is a plain string on the entry.
 
 Names are identifiers (`/^[A-Za-z][A-Za-z0-9_]*$/`, at most 64 characters), PascalCase by
-convention, so `ctx.roster.Name` dot access always works. The reserved names `text`, `readonly` and
-`edit`, and the reserved words `all`, `none`, `read`, `write`, `exec`, `constructor` and `prototype`
-are refused. `defineRoster` checks the names, harnesses and forbidden keys when the module loads and
-returns a deep-frozen copy. The option values themselves are checked against the harness when a
-workflow that uses the roster is validated or run.
+convention, so `ctx.roster.Name` dot access always works. The reserved names `text` (the default
+role) and `readonly` and `edit` (removed presets that old records still name), and the reserved
+words `all`, `none`, `read`, `write`, `exec`, `constructor` and `prototype` are refused.
+`defineRoster` checks the names, harnesses and forbidden keys when the module loads and returns a
+deep-frozen copy. The option values themselves are checked against the harness when a workflow that
+uses the roster is validated or run.
 
 `defineWorkflow` accepts only a `defineRoster` result as `roster` (an inline object literal fails
 typecheck) and infers its entry names.
+
+Roster entries are the only declared roles (#726). The removed workflow `profiles` field (with its
+`extends` and the `readonly`/`edit` presets), `defaults.profile` and the `profile` call option fail
+typecheck, and untyped code is refused with a `ConfigurationError` that points at `defineRoster`:
+when the definition loads (`Workflow review declares profiles, which were removed (#726); …`), and
+before a raw call, a `ctx.agent(name)` call or a `bind` that passes `profile` runs anything. A raw
+call runs in the implicit `text` role, which `defaults` shapes.
 
 ### How an entry resolves
 
@@ -264,8 +272,8 @@ name, as a resolved role with its `harness`, model, tools or sandbox, limits, `d
 tool-less Claude entry is `none`, not `read`. The unused harness blocks stay at the text baseline
 whatever `defaults` sets, since grant pins and child delegation compare both. Free-form controls
 (settings, MCP servers, subagents, system prompts such as `appendSystemPrompt`, Codex config and a
-registered harness's `sensitiveOptions`) appear only as digests under `redacted`. The top-level
-`workflow.profiles` list does not name roster entries. A run record's `capabilities` holds the same
+registered harness's `sensitiveOptions`) appear only as digests under `redacted`. Besides the
+entries, the manifest lists only the `text` role. A run record's `capabilities` holds the same
 public manifest (record schema revision 19 added the `harness` field; see
 [storage](storage.md#record-schema-revision)).
 
@@ -570,8 +578,8 @@ with a bare `WorkflowContext` stays permissive (the runtime check still applies)
 
 Under `strictProfiles: true`, call-site `addDirs` are refused like the other capability keys, on raw
 calls, bound agents and roster calls alike; list the directories in the entry's `addDirs` instead.
-`addDirRoots` was removed in #707: a roster entry, a profile or `defaults.claude` that declares it
-is refused when the definition loads (ADRs [0054](decisions/0054-bounded-call-site-adddirs.md) and
+`addDirRoots` was removed in #707: a roster entry or `defaults.claude` that declares it is refused
+when the definition loads (ADRs [0054](decisions/0054-bounded-call-site-adddirs.md) and
 [0062](decisions/0062-type-call-site-adddirs-by-profile-roots.md) record the historical rooted
 form). Without strict call sites, a raw call's `addDirs` replace the defaults' list; a roster call's
 `addDirs` append to its entry's instead.
@@ -579,7 +587,7 @@ form). Without strict call sites, a raw call's `addDirs` replace the defaults' l
 Explicit `defineWorkflow` type arguments are all-or-nothing: with a shorter prefix such as
 `defineWorkflow<Input, Output>`, the rest take the permissive, childless defaults, so
 `strictProfiles: true` or a nonempty `children` list fails typecheck; drop the type arguments
-(preferred) or spell all seven.
+(preferred) or spell all six.
 
 ### Raw call-site capabilities
 
