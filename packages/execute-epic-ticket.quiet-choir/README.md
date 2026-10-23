@@ -268,10 +268,10 @@ Measured on this branch with the commands below, against the native originals.
 
 | Measure                                                  | Package                                                      | Native                                                                                       |
 | -------------------------------------------------------- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
-| Total lines (package without README; script plus helper) | 3,337 in 26 files                                            | 3,065 (execute-epic-ticket.js 1,371 + epic.mjs 1,694); rehearse.mjs adds 1,184               |
+| Total lines (package without README; script plus helper) | 3,604 in 26 files                                            | 3,065 (execute-epic-ticket.js 1,371 + epic.mjs 1,694); rehearse.mjs adds 1,184               |
 | Prompt prose                                             | 279 lines, 16.4 KB in prompts/\*\*/\*.md                     | 9 multi-line template literals, 92 lines, 11.5 KB in the script                              |
-| Control flow                                             | 944 lines in workflows/                                      | the whole 1,371-line script                                                                  |
-| Mechanics                                                | 1,497 lines in lib/ (531 of them pure policy)                | 1,694 lines in epic.mjs                                                                      |
+| Control flow                                             | 1,010 lines in workflows/                                    | the whole 1,371-line script                                                                  |
+| Mechanics                                                | 1,698 lines in lib/ (568 of them pure policy)                | 1,694 lines in epic.mjs                                                                      |
 | Agent call sites                                         | 6 roster or team-slot calls                                  | 6 judgment `agent(` calls + 22 clerk relay calls (one `agent(` site)                         |
 | Model calls per mechanical step                          | 0                                                            | 1 haiku clerk (a sonnet copyist for the survey and report), plus a re-read on a failed relay |
 | Rehearsal                                                | 8 cases in packages/rehearsals/ (JSON) and the shared script | rehearse.mjs, 1,184 lines                                                                    |
@@ -293,7 +293,7 @@ The prose figures count bytes in thousands. The script's template literals were 
 merge-down's were, with the TypeScript parser: every template literal whose source spans more than
 one line, with its substitutions.
 
-The package is about 9% longer than the native pair, and much of `lib/` is reused rather than
+The package is about 18% longer than the native pair, and much of `lib/` is reused rather than
 written: the command wrappers, dependency provisioning, the check-log helpers and the issue renderer
 come from the merge-down package. The relay protocol is gone; the port spells out what the native
 JavaScript left implicit: Zod contracts for every agent and step result and the record (358 lines in
