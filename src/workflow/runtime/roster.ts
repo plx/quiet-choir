@@ -49,7 +49,7 @@ const forbiddenKeys: Readonly<Record<string, string>> = {
   claude: 'entries have no cross-harness blocks; the harness field selects the options',
   codex: 'entries have no cross-harness blocks; the harness field selects the options',
   harnesses: 'entries have no cross-harness blocks; the harness field selects the options',
-  addDirRoots: 'bounded call-site directories belong to profiles; list addDirs on the entry',
+  addDirRoots: 'rooted call-site directories were removed; list addDirs on the entry',
 };
 /** Limits that compile to top-level profile limits, so `--profile Name.limit=` overrides them. */
 const limitKeys = ['timeoutMs', 'idleTimeoutMs', 'maxTurns', 'maxBudgetUsd'] as const;

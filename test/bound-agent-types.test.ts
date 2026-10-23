@@ -234,54 +234,30 @@ export const strict = defineWorkflow({
     ctx.codex.bind({ sandbox: 'workspace-write' });
     const scout = ctx.claude.bind({ profile: 'scout', model: 'opus' });
     await scout.text('t', { prompt });
-    return null;
-  },
-});
-
-// A strict bound agent keeps the profile and addDirs pairing of a raw call (#385, ADR 0062): only a
-// profile that declares claude.addDirRoots leaves addDirs open to its calls.
-export const strictRoots = defineWorkflow({
-  ...base,
-  name: 'bound-strict-roots',
-  strictProfiles: true,
-  profiles: {
-    reader: { extends: 'readonly', claude: { addDirRoots: ['runs'] } },
-    plain: { extends: 'readonly' },
-  },
-  async run(ctx) {
-    const reader = ctx.claude.bind({ profile: 'reader', model: 'opus' });
-    await reader.text('t', { prompt, addDirs: ['runs/a'] });
-    await reader.value('v', { prompt, schema: Review, addDirs: ['runs/a'] });
-    await reviewWith(reader);
-    const plainAgent = ctx.claude.bind({ profile: 'plain' });
-    await plainAgent.text('t', { prompt });
-    // @ts-expect-error -- plain declares no claude.addDirRoots, so its agent takes no addDirs.
-    await plainAgent.text('t', { prompt, addDirs: ['runs/a'] });
-    // @ts-expect-error -- neither does the unrooted implicit default.
-    await ctx.claude.bind({ model: 'opus' }).text('t', { prompt, addDirs: ['runs/a'] });
-    // @ts-expect-error -- bind itself pairs addDirs with a rooted profile, as a call does.
-    ctx.claude.bind({ profile: 'plain', addDirs: ['runs/a'] });
-    ctx.claude.bind({ profile: 'reader', addDirs: ['runs/a'] });
-    // A re-bind keeps the pairing. Binding addDirs keeps only the member that admits them, which
-    // accepts exactly the calls the rooted agent does.
-    const again = reader.bind({ addDirs: ['runs/b'], timeoutMs: 1 });
-    expectTypeOf(again).toExtend<typeof reader>();
-    expectTypeOf(reader).toExtend<typeof again>();
-    expectTypeOf(reader.bind({ timeoutMs: 1 })).toEqualTypeOf<typeof reader>();
-    await again.text('t', { prompt, addDirs: ['runs/c'] });
-    expectTypeOf(plainAgent.bind({ timeoutMs: 1 })).toEqualTypeOf<typeof plainAgent>();
-    // @ts-expect-error -- re-binding addDirs is closed when the first bind left it closed.
-    plainAgent.bind({ addDirs: ['runs/a'] });
-    // The same through ctx.agent('claude') and a ctx.within scope.
-    await ctx
-      .agent('claude')
-      .bind({ profile: 'reader' })
-      .text('t', { prompt, addDirs: ['a'] });
+    await scout.value('v', { prompt, schema: Review });
+    await reviewWith(scout);
+    // Strict Claude addDirs belong to a roster entry, bound or raw (#707).
+    // @ts-expect-error -- strict: bind cannot set addDirs.
+    ctx.claude.bind({ addDirs: ['runs/a'] });
+    // @ts-expect-error -- strict: nor can bind with a profile.
+    ctx.claude.bind({ profile: 'scout', addDirs: ['runs/a'] });
+    // @ts-expect-error -- strict: a bound agent's call cannot pass addDirs.
+    await scout.text('t', { prompt, addDirs: ['runs/a'] });
+    // @ts-expect-error -- strict: nor can a structured call.
+    await scout.value('v', { prompt, schema: Review, addDirs: ['runs/a'] });
     await ctx
       .within('x')
-      .claude.bind({ profile: 'plain' })
-      // @ts-expect-error -- the within scope keeps the pairing.
+      .claude.bind({ profile: 'scout' })
+      // @ts-expect-error -- strict: the within scope keeps the refusal.
       .text('t', { prompt, addDirs: ['a'] });
+    await ctx
+      .agent('claude')
+      .bind({ profile: 'scout' })
+      // @ts-expect-error -- strict: so does ctx.agent('claude').
+      .text('t', { prompt, addDirs: ['a'] });
+    expectTypeOf(scout.bind({ timeoutMs: 1 })).toEqualTypeOf<typeof scout>();
+    // @ts-expect-error -- strict: a re-bind cannot set addDirs either.
+    scout.bind({ addDirs: ['runs/a'] });
     return null;
   },
 });
@@ -303,5 +279,4 @@ it('derives the bind and bound option types from the client options', () => {
   expectTypeOf<BoundDefaultKey<unknown>>().toBeNever();
   expect(bound.name).toBe('bound-types');
   expect(strict.strictProfiles).toBe(true);
-  expect(strictRoots.strictProfiles).toBe(true);
 });

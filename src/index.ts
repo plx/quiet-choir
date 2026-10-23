@@ -20,7 +20,6 @@ export type {
   CapabilitiesOf,
   CapabilityKeysOf,
   CallOptions,
-  ClaudeAddDirSelection,
   RegisteredAgentClient,
 } from './workflow/runtime/harness-model.js';
 export { RunBudgetExceededError } from './workflow/runtime/run-budget.js';
@@ -210,11 +209,7 @@ export type {
   ProfileLimits,
   AgentProfile,
   AgentDefaults,
-  AddDirProfilesOf,
-  AddDirRootedName,
-  HasAddDirRoots,
   NoExtraKeys,
-  ProfileReferenceOf,
   ProfileOverride,
   // eslint-disable-next-line @typescript-eslint/no-deprecated -- the public manifest keeps the deprecated name until the removal slice (#696)
   ResolvedProfile,

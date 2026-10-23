@@ -1222,9 +1222,7 @@ describe('revision-three records (static addDirs before bounded call-site roots,
       version: '1',
       input: z.null(),
       output: z.null(),
-      profiles: {
-        reader: { extends: 'readonly', claude: { addDirs: ['docs'], addDirRoots: ['runs'] } },
-      },
+      profiles: { reader: { extends: 'readonly', claude: { addDirs: ['docs'] } } },
       async run(ctx) {
         await ctx.claude.text('read', { prompt: 'x', profile: 'reader' });
         return null;
@@ -1246,9 +1244,24 @@ describe('revision-three records (static addDirs before bounded call-site roots,
     const record = await readRun({ stateDir, runId: 'rooted' });
     expect(record.steps['read']?.request?.addDirs).toEqual(['docs']);
     expect(record.steps['read']?.attemptHistory?.[0]?.request?.addDirs).toEqual(['docs']);
-    expect(record.capabilities?.profiles['reader']?.claude.addDirRoots).toEqual(['runs']);
     expect(recordSchemaDrift(record)).toBeUndefined();
     expect((await rawSnapshot('rooted'))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
+    // Definitions can no longer declare roots (#707), but a record written before then, whose
+    // role carries claude.addDirRoots, still reads with no schema drift.
+    await editSnapshot('rooted', (raw) => {
+      const capabilities = raw['capabilities'] as {
+        profiles: Record<string, { claude: Record<string, unknown> }>;
+      };
+      const reader = capabilities.profiles['reader'];
+      if (!reader) throw new Error('missing reader role');
+      reader.claude['addDirRoots'] = ['runs'];
+    });
+    const stored = await readRun({ stateDir, runId: 'rooted' });
+    expect(stored.capabilities?.profiles['reader']?.claude).toMatchObject({
+      addDirs: ['docs'],
+      addDirRoots: ['runs'],
+    });
+    expect(recordSchemaDrift(stored)).toBeUndefined();
   });
 });
 

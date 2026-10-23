@@ -9,6 +9,16 @@
   `defineWorkflow` infers an omitted `strictProfiles` as `false`, so these types apply under an
   explicit `strictProfiles: true`, and an `<Input, Output>` prefix now defaults the rest to the
   permissive form.
+- Amended by #707: retired with [0054](0054-bounded-call-site-adddirs.md)'s roots. Profiles and
+  defaults can no longer declare `claude.addDirRoots`, so `AddDirProfilesOf` and its helpers
+  (`HasAddDirRoots`, `ProfileReferenceOf`, `AddDirRootedName`), `ClaudeAddDirSelection`, the
+  `TAddDirProfile` parameter of `CallOptions`, `WorkflowContext` and `WorkflowDefinition`, the
+  `TProfiles`/`TDefaults` inference of `defineWorkflow` and its fallback overload are removed. Under
+  `strictProfiles: true`, Claude `addDirs` is an optional `never` like every other capability key,
+  on calls and bound agents alike. `WorkflowContext`'s `TRoster` is now its fifth parameter and
+  `WorkflowDefinition`'s its eighth. With one `defineWorkflow` signature, a rejected definition
+  reports TS2322 again; inline `profiles` and `defaults` literals keep TypeScript's ordinary
+  excess-property checks. The sections below record the historical form.
 
 ## Context
 

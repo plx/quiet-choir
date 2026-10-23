@@ -9,8 +9,6 @@ import type {
   ResolvedRole,
 } from './profiles-model.js';
 import { digest } from './json.js';
-import { canonicalPath, canonicalRoots, insideRoots, within } from './add-dir-roots.js';
-import { isAbsolute, resolve } from 'node:path';
 import { compileRoster } from './roster.js';
 import {
   declaredRoleNames,
@@ -33,32 +31,6 @@ export interface ChildCapabilities {
     definition?: HarnessDeclaration,
   ) => void;
   readonly limits: <T extends ExecutionPolicy>(name: string, policy: T) => T;
-  /**
-   * For each delegated role, the Claude directory ceilings of every strict ancestor role it was
-   * checked against, outermost first. Live only: never recorded, pinned or part of identity.
-   */
-  readonly ancestry: Readonly<Record<string, readonly DirCeiling[]>>;
-}
-
-/** The Claude directories one ancestor role delegates, rechecked live for descendants. @internal */
-export interface DirCeiling {
-  readonly profile: string;
-  readonly addDirs: readonly string[];
-  readonly addDirRoots: readonly string[];
-}
-
-/** The Claude directory part of a profile that bounds a child's directories. */
-interface DirBlock {
-  readonly addDirs?: readonly string[] | undefined;
-  readonly addDirRoots?: readonly string[] | undefined;
-}
-
-function ceilingOf(profile: string, role: ResolvedRole): DirCeiling {
-  return {
-    profile,
-    addDirs: [...(role.claude.addDirs ?? [])],
-    addDirRoots: [...(role.claude.addDirRoots ?? [])],
-  };
 }
 
 /** Clamp resource limit fields to a ceiling, keeping an undefined ceiling field unconstrained. */
@@ -108,36 +80,7 @@ function declaredDenialPolicy(
   return definition.defaults?.onPermissionDenied;
 }
 
-/**
- * Whether a child's Claude directory is delegated: literally listed by the parent, or (with the run
- * cwd known) an absolute path whose canonical form lies inside one of the parent's roots. Relative
- * entries need literal membership, because they resolve against an effect cwd unknown here.
- */
-function delegatedDir(path: string, parent: DirBlock, rootCwd?: string): boolean {
-  if (parent.addDirs?.includes(path)) return true;
-  const roots = parent.addDirRoots ?? [];
-  if (rootCwd === undefined || !roots.length || !isAbsolute(path)) return false;
-  try {
-    return insideRoots(path, roots, rootCwd);
-  } catch {
-    return false;
-  }
-}
-
-/** Whether a child's root lies inside one of the parent's roots, both canonicalized against the run cwd. */
-function delegatedRoot(root: string, parent: DirBlock, rootCwd?: string): boolean {
-  const roots = parent.addDirRoots ?? [];
-  if (roots.includes(root)) return true;
-  if (rootCwd === undefined || !roots.length) return false;
-  try {
-    const target = canonicalPath(resolve(rootCwd, root));
-    return canonicalRoots(roots, rootCwd).some((allowed) => within(allowed, target));
-  } catch {
-    return false;
-  }
-}
-
-function subset(child: ResolvedRole, parent: ResolvedRole, label: string, rootCwd?: string): void {
+function subset(child: ResolvedRole, parent: ResolvedRole, label: string): void {
   const reject = (field: string): never => {
     throw new Error(
       `Child profile ${label} exceeds parent profile ${parent.name}: ${field}. Delegate a sufficient parent role explicitly.`,
@@ -169,13 +112,8 @@ function subset(child: ResolvedRole, parent: ResolvedRole, label: string, rootCw
     const allowed = parent[harness];
     if (wanted.isolation === 'inherit' && allowed.isolation !== 'inherit')
       reject(`${harness}.isolation`);
-    if (
-      !(wanted.addDirs ?? []).every((path) =>
-        harness === 'claude'
-          ? delegatedDir(path, parent.claude, rootCwd)
-          : allowed.addDirs?.includes(path),
-      )
-    )
+    // Literal membership is transitive: each level is checked against its parent's delegated roles.
+    if (!(wanted.addDirs ?? []).every((path) => allowed.addDirs?.includes(path)))
       reject(`${harness}.addDirs`);
     // Native configuration is opaque: only exactly delegated escape hatches can cross the boundary.
     for (const field of [
@@ -197,10 +135,6 @@ function subset(child: ResolvedRole, parent: ResolvedRole, label: string, rootCw
         reject(`${harness}.${field}`);
     }
   }
-  if (
-    !(child.claude.addDirRoots ?? []).every((root) => delegatedRoot(root, parent.claude, rootCwd))
-  )
-    reject('claude.addDirRoots');
   if (
     runs('claude') &&
     !(parent.claude.disallowedTools ?? []).every((rule) =>
@@ -244,37 +178,12 @@ function pinned(child: ResolvedRole, parent: ResolvedRole, label: string): void 
 }
 
 /**
- * Recheck a child's Claude directories against every ancestor above its immediate parent, outermost
- * first, with the same rules as the parent check. Roots are canonicalized now, so a symlink root an
- * intermediate child narrowed to and later retargeted cannot carry a descendant outside an ancestor.
- */
-function withinAncestors(
-  child: ResolvedRole,
-  ancestors: readonly DirCeiling[],
-  label: string,
-  rootCwd?: string,
-): void {
-  for (const ancestor of ancestors) {
-    const reject = (field: string): never => {
-      throw new Error(
-        `Child profile ${label} exceeds ancestor profile ${ancestor.profile}: ${field}. Delegate a sufficient parent role explicitly.`,
-      );
-    };
-    if (!(child.claude.addDirs ?? []).every((path) => delegatedDir(path, ancestor, rootCwd)))
-      reject('claude.addDirs');
-    if (!(child.claude.addDirRoots ?? []).every((root) => delegatedRoot(root, ancestor, rootCwd)))
-      reject('claude.addDirRoots');
-  }
-}
-
-/**
  * Resolve declared child needs and, under `requireGrants`, check them against concrete parent roles
- * before child effects. With the run's working directory, Claude directories and `addDirRoots` are
- * checked by canonical containment in the parent's roots and, through `parentAncestry` (the parent
- * authority's `ancestry`), in every ancestor role's roots, canonicalized at each check; without it,
- * only literal membership delegates. Without `requireGrants` (ADR 0063 §5) the child's roles are its
- * own: no parent role is looked up, compared, clamped or granted, `options.profiles` is ignored, and
- * the parent's override rules pass through unchanged. @internal
+ * before child effects. `addDirs` delegate by literal membership in the parent role's; the parent's
+ * roles were themselves checked against their parents', so this bounds every descendant. Without
+ * `requireGrants` (ADR 0063 §5) the child's roles are its own: no parent role is looked up,
+ * compared, clamped or granted, `options.profiles` is ignored, and the parent's override rules pass
+ * through unchanged. @internal
  */
 export function delegateCapabilities(
   definition: WorkflowDeclaration,
@@ -284,8 +193,6 @@ export function delegateCapabilities(
   parentOverrides: readonly ProfileOverride[],
   options: ChildOptions,
   requireGrants: boolean,
-  rootCwd?: string,
-  parentAncestry: Readonly<Record<string, readonly DirCeiling[]>> = {},
 ): ChildCapabilities {
   let manifest = resolveCapabilities(definition, { requireGrants });
   if (!requireGrants)
@@ -294,7 +201,6 @@ export function delegateCapabilities(
       grants: [],
       pins: {},
       overrides: parentOverrides,
-      ancestry: {},
       check() {
         // No ceiling to check against: the child's own strictProfiles still governs its calls.
       },
@@ -308,8 +214,6 @@ export function delegateCapabilities(
   // Own-key lookups only: roles named toString or valueOf must not read Object.prototype members.
   const parentNameOf = (name: string): string =>
     (Object.hasOwn(mapping, name) ? mapping[name] : name) ?? name;
-  const ancestorsOf = (parentName: string): readonly DirCeiling[] =>
-    Object.hasOwn(parentAncestry, parentName) ? (parentAncestry[parentName] ?? []) : [];
   const grants: string[] = [];
   const pins: Record<string, string> = {};
   const overrides: ProfileOverride[] = [];
@@ -355,8 +259,7 @@ export function delegateCapabilities(
     const inherited = inheritDenials(name, role, ceiling);
     const label = `${definition.name}.${name}`;
     pinned(inherited, ceiling, label);
-    subset(inherited, ceiling, label, rootCwd);
-    withinAncestors(inherited, ancestorsOf(parentNameOf(name)), label, rootCwd);
+    subset(inherited, ceiling, label);
     requireGrant(ceiling, parentGrants, parentPins);
     return inherited;
   };
@@ -365,10 +268,6 @@ export function delegateCapabilities(
     if (role) checkProfile(name, role);
   }
   const delegated: Record<string, ResolvedRole> = {};
-  const ancestry: Record<string, readonly DirCeiling[]> = Object.create(null) as Record<
-    string,
-    readonly DirCeiling[]
-  >;
   for (const [name, declared] of Object.entries(manifest.profiles)) {
     // Remove unavailable optional built-ins as well: a grandchild must not inherit phantom authority.
     let role: ResolvedRole;
@@ -421,8 +320,6 @@ export function delegateCapabilities(
       },
     };
     delegated[name] = inherited;
-    const parentName = parentNameOf(name);
-    ancestry[name] = [...ancestorsOf(parentName), ceilingOf(parentName, ceiling)];
     grants.push(name);
     pins[name] = profileGrantDigest(inherited);
   }
@@ -436,7 +333,6 @@ export function delegateCapabilities(
     grants,
     pins,
     overrides,
-    ancestry,
     check(name, harness, call, definition) {
       const role = manifest.profiles[name];
       if (!role) throw new Error(`Unknown child profile ${name}.`);
