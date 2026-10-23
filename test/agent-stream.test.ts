@@ -10,6 +10,7 @@ import {
   HarnessError,
   WorkflowRunError,
   FileRunStore,
+  defineRoster,
   defineWorkflow,
   deriveAgentSessionId,
   inspectRunOwnership,
@@ -1139,10 +1140,10 @@ process.stdin.on('end', () => {
 });`);
     const definition = defineWorkflow({
       ...base,
-      profiles: { scout: { idleTimeoutMs: 400 } },
+      roster: defineRoster({ scout: { harness: 'claude', idleTimeoutMs: 400 } }),
       async run(ctx) {
-        await ctx.claude.text('first', { prompt: 'fast', profile: 'scout' });
-        return (await ctx.claude.text('second', { prompt: 'slow', profile: 'scout' })).output;
+        await ctx.roster.scout.text('first', { prompt: 'fast' });
+        return (await ctx.roster.scout.text('second', { prompt: 'slow' })).output;
       },
     });
     const harness = new CliHarness({ claudeBinary: agent, killGraceMs: 20 });
