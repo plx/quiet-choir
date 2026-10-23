@@ -3,8 +3,10 @@
 // half of harness-registry.test.ts:232, with an entry name in place of the profile name. The
 // addDirRoots cases (child-profiles.test.ts:174-426 and :501, children.test.ts:1762-1903) stay for
 // #707, because a roster entry rejects addDirRoots. defineRoster deep-freezes its entries, so a case
-// that changes a definition between runs builds it from a factory. A roster call takes no per-call
-// limits or denial policy, so the per-call halves of children.test.ts:266 and :562 are not ported.
+// that changes a definition between runs builds it from a factory. A roster call takes only the
+// per-call and both-sides keys (ADR 0063 section 1), so the per-call maxTurns of children.test.ts:266
+// becomes a per-call timeoutMs, and the per-call denial override of :562 is refused before inference
+// as a key a call cannot set.
 import { describe, expect, vi } from 'vitest';
 import {
   defineHarness,
@@ -322,8 +324,9 @@ describe('inline child delegation', () => {
         Author: { harness: 'claude', tools: ['Read', 'Edit'], maxTurns: 99 },
       }),
       async run(ctx) {
-        // The roster call takes no per-call limits; the entry's own 99 is what the parent clamps.
-        await ctx.roster.Author.text('write', { prompt: 'x' });
+        // A roster call sets no maxTurns, so the entry's own 99 is what the parent clamps; its
+        // per-call deadline is the call-site limit the parent clamps too.
+        await ctx.roster.Author.text('write', { prompt: 'x', timeoutMs: 99_000 });
         return null;
       },
     });
@@ -345,6 +348,7 @@ describe('inline child delegation', () => {
           harness: 'claude',
           tools: ['Read', 'Grep', 'Glob', 'Edit', 'Write'],
           maxTurns: 3,
+          timeoutMs: 3_000,
           model: 'parent-model',
         },
       }),
@@ -368,12 +372,13 @@ describe('inline child delegation', () => {
     expect(request?.harness).toBe('claude');
     expect(request?.options).toMatchObject({ maxTurns: 3 });
     expect(request?.options.model).toBe('parent-model');
+    expect(invoke.mock.calls[0]?.[1].policy?.timeoutMs).toBe(3_000);
   });
 
-  // The call-override half of the original is unreachable: a roster call takes no per-call denial
-  // policy and ctx.claude accepts only built-in profile names in a workflow with a roster. The
-  // call-time refusal stays covered by the unit case above.
-  it('keeps a failing parent denial policy in children and refuses a weaker entry (children.test.ts:562)', async ({
+  // A roster call cannot carry a denial policy (ADR 0063 section 1), so the original's weaker call
+  // override is refused before inference as a key the call cannot set; the ceiling's call-time
+  // refusal stays covered by the unit case above.
+  it('keeps a failing parent denial policy in children and refuses a weaker entry or call (children.test.ts:562)', async ({
     stateDir,
     runs,
   }) => {
@@ -398,6 +403,16 @@ describe('inline child delegation', () => {
         return null;
       },
     });
+    const weakeningCall = defineWorkflow({
+      name: 'weakening-call',
+      ...base,
+      roster: defineRoster({ Scout: scout }),
+      async run(ctx) {
+        // @ts-expect-error -- the denial policy is bound, never set per call.
+        await ctx.roster.Scout.text('look', { prompt: 'x', onPermissionDenied: 'warn' });
+        return null;
+      },
+    });
     const root = defineWorkflow({
       name: 'parent',
       ...base,
@@ -408,6 +423,9 @@ describe('inline child delegation', () => {
         await expect(ctx.workflow('weakening', weakening, null)).rejects.toThrow(
           'exceeds parent profile Scout: onPermissionDenied',
         );
+        await expect(ctx.workflow('weakening-call', weakeningCall, null)).rejects.toThrow(
+          'A bound agent call cannot set onPermissionDenied',
+        );
         return ctx.workflow('inheriting', inheriting, null);
       },
     });
@@ -415,6 +433,7 @@ describe('inline child delegation', () => {
     expect(run.output).toBe('permission');
     expect(invoke).toHaveBeenCalledTimes(1);
     expect(run.steps['weakening/look']).toBeUndefined();
+    expect(run.steps['weakening-call/look']).toBeUndefined();
   });
 
   it('runs a child entry wider than its parent by default and refuses it under requireGrants (children.test.ts:1906)', async ({
