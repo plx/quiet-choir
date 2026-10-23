@@ -17,6 +17,7 @@ import {
   readRun,
   runWorkflow,
   z,
+  type Agent,
   type Harness,
   type WorkflowEvent,
   type PolicyOverride,
@@ -661,7 +662,7 @@ it('fails permission-denied calls with tool names and preserves their evidence',
   });
 });
 
-it('allows Claude-specific profile policy and an explicit per-call warning override', async () => {
+it('allows Claude-specific defaults policy and an explicit per-call warning override', async () => {
   const definition = defineWorkflow({
     ...base,
     defaults: { claude: { onPermissionDenied: 'fail' } },
@@ -797,28 +798,46 @@ async function protocolBinary(lines: readonly unknown[], after = ''): Promise<st
   return binary(`for (const line of ${JSON.stringify(text)}) console.log(line);\n${after}`);
 }
 
+/**
+ * Run one `task` call through `harness`: as the read-only `Reader` entry, or as a plain call on the
+ * unpinned text role. A structured call always runs on Claude.
+ */
 async function toolUseRun(
   harness: 'claude' | 'codex',
   lines: readonly unknown[],
-  profile: 'text' | 'readonly' = 'readonly',
+  role: 'text' | 'reader' = 'reader',
   structured = false,
   runId = 'stream',
   policy: PolicyOverride[] = [],
 ) {
   const agent = await protocolBinary(lines);
   const events: WorkflowEvent[] = [];
+  const pinned = structured ? 'claude' : harness;
+  // A pinned Codex read-only entry does not infer tool use from its sandbox, so it says so.
+  const roster = defineRoster({
+    Reader:
+      pinned === 'claude'
+        ? { harness: 'claude', expectsToolUse: true, tools: ['Read', 'Grep', 'Glob'] }
+        : { harness: 'codex', expectsToolUse: true },
+  });
   const definition = defineWorkflow({
     ...base,
+    roster,
     async run(ctx) {
-      if (structured)
+      const reader: Agent = ctx.roster.Reader;
+      if (structured) {
+        const options = { prompt: 'answer', schema: z.object({ answer: z.string() }) };
         return JSON.stringify(
-          await ctx.claude.value('task', {
-            prompt: 'answer',
-            profile,
-            schema: z.object({ answer: z.string() }),
-          }),
+          role === 'reader'
+            ? await reader.value('task', options)
+            : await ctx.claude.value('task', options),
         );
-      return (await ctx[harness].text('task', { prompt: 'answer', profile })).output;
+      }
+      const result =
+        role === 'reader'
+          ? await reader.text('task', { prompt: 'answer' })
+          : await ctx[harness].text('task', { prompt: 'answer' });
+      return result.output;
     },
   });
   const run = await runWorkflow(definition, {
@@ -853,7 +872,7 @@ function taskCompletedLines(result: Awaited<ReturnType<typeof toolUseRun>>) {
   return { live, recorded };
 }
 
-const noToolUse = (harness: string, profile = 'readonly') =>
+const noToolUse = (harness: string, profile = 'Reader') =>
   `no-tool-use: Profile ${profile} expects tool use, but the ${harness} attempt completed without a tool call.`;
 
 it('warns when a Claude attempt that expects tools completes without one', async () => {
@@ -875,7 +894,7 @@ it.each(['claude', 'codex'] as const)(
       harness === 'claude'
         ? [claudeInit, claudeText, ...fixtureStdout('claude-text-success')]
         : codexLines(),
-      'readonly',
+      'reader',
       false,
       `events-${harness}`,
     );
@@ -895,7 +914,7 @@ it('leaves toolUses on and warnings off the step.completed line of an attempt th
   const result = await toolUseRun(
     'claude',
     [claudeInit, claudeTool('toolu_1'), claudeText, ...fixtureStdout('claude-text-success')],
-    'readonly',
+    'reader',
     false,
     'events-tool',
   );
@@ -927,7 +946,7 @@ it('does not count the synthetic StructuredOutput tool of a structured Claude ca
       claudeTool('toolu_s', 'StructuredOutput'),
       ...fixtureStdout('claude-structured-success'),
     ],
-    'readonly',
+    'reader',
     true,
   );
   expect(toolUses).toBe(0);
@@ -944,7 +963,7 @@ it('warns for a Codex attempt with only a message, and counts a started+complete
       codexItem('item.started', 'item_1', 'command_execution'),
       codexItem('item.completed', 'item_1', 'command_execution'),
     ),
-    'readonly',
+    'reader',
     false,
     'stream-tool',
   );
@@ -964,7 +983,7 @@ describe('oversized skipped lines', () => {
     const run = await toolUseRun(
       'codex',
       codexLines(bigCodex('item.completed', 'command', 'command_execution')),
-      'readonly',
+      'reader',
       false,
       'stream-big',
       cap,
@@ -984,7 +1003,7 @@ describe('oversized skipped lines', () => {
         bigCodex('item.completed', 'item_2', 'file_change'),
         bigCodex('item.completed', undefined, 'mcp_tool_call'),
       ),
-      'readonly',
+      'reader',
       false,
       'stream-big-pair',
       cap,
@@ -997,7 +1016,7 @@ describe('oversized skipped lines', () => {
     const { step, toolUses } = await toolUseRun(
       'codex',
       codexLines(bigCodex('item.completed', 'think', 'reasoning')),
-      'readonly',
+      'reader',
       false,
       'stream-big-reasoning',
       cap,
@@ -1019,7 +1038,7 @@ describe('oversized skipped lines', () => {
     const { step, toolUses } = await toolUseRun(
       'claude',
       [claudeInit, oversized, claudeText, ...fixtureStdout('claude-text-success')],
-      'readonly',
+      'reader',
       false,
       'stream-big-claude',
       cap,
@@ -1038,7 +1057,7 @@ describe('oversized skipped lines', () => {
         { type: 'assistant', message: { content: [{ type: 'text', text: huge }] } },
         ...fixtureStdout('claude-text-success'),
       ],
-      'readonly',
+      'reader',
       false,
       'stream-big-claude-count',
       cap,
