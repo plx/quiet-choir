@@ -1,7 +1,8 @@
-// quiet-choir/std roster entries and tiers (#588). The preset entries are golden-tested against the
-// built-in preset table through the public capability manifest, so drift from that table fails here.
-// The type assertions are checked by `npm run typecheck`, in the style of test/roster-types.test.ts:
-// a workflow body that never runs holds one `@ts-expect-error` per rejected entry.
+// quiet-choir/std roster entries and tiers (#588). The preset entries are golden-tested against a
+// literal table of the text/readonly/edit preset values through the public capability manifest, so
+// drift from those values fails here. The type assertions are checked by `npm run typecheck`, in the
+// style of test/roster-types.test.ts: a workflow body that never runs holds one `@ts-expect-error`
+// per rejected entry.
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
   capabilityManifest,
@@ -16,23 +17,49 @@ import * as std from '../src/std/index.js';
 
 const base = { version: '1', input: z.null(), output: z.null() } as const;
 
-/** The resolved built-in `preset` and the resolved `Entry` of a workflow with `roster`. */
-function rows(
-  roster: AnyRoster,
-  preset: 'text' | 'readonly' | 'edit',
-): { builtin: CapabilityManifest['defaults']; entry: CapabilityManifest['defaults'] } {
+/** The resolved `Entry` of a workflow with `roster`. */
+function entryRow(roster: AnyRoster): CapabilityManifest['defaults'] {
   const workflow = defineWorkflow({
     ...base,
     name: 'std-golden',
     roster,
     run: () => Promise.resolve(null),
   });
-  const manifest = capabilityManifest(workflow);
-  const builtin = manifest.profiles[preset];
-  const resolved = manifest.profiles['Entry'];
-  if (builtin === undefined || resolved === undefined) throw new Error('missing manifest row');
-  return { builtin, entry: resolved };
+  const resolved = capabilityManifest(workflow).profiles['Entry'];
+  if (resolved === undefined) throw new Error('missing manifest row');
+  return resolved;
 }
+
+/** The text, readonly and edit preset values each std entry carries. */
+const presetValues = {
+  text: {
+    tools: [],
+    sandbox: 'read-only',
+    maxTurns: 10,
+    maxBudgetUsd: 0.5,
+    timeoutMs: 300_000,
+    claudeAccess: 'none',
+    codexAccess: 'read',
+  },
+  readonly: {
+    tools: ['Read', 'Grep', 'Glob'],
+    sandbox: 'read-only',
+    maxTurns: 25,
+    maxBudgetUsd: 2,
+    timeoutMs: 900_000,
+    claudeAccess: 'read',
+    codexAccess: 'read',
+  },
+  edit: {
+    tools: ['Read', 'Grep', 'Glob', 'Edit', 'Write'],
+    sandbox: 'workspace-write',
+    maxTurns: 40,
+    maxBudgetUsd: 5,
+    timeoutMs: 1_800_000,
+    claudeAccess: 'write',
+    codexAccess: 'write',
+  },
+} as const;
 
 const presets = [
   ['Text', 'text'],
@@ -42,23 +69,25 @@ const presets = [
 
 describe('std.claude', () => {
   it.each(presets)('%s carries the %s preset tools and limits', (name, preset) => {
-    const { builtin, entry } = rows(defineRoster({ Entry: { ...std.claude[name] } }), preset);
+    const expected = presetValues[preset];
+    const entry = entryRow(defineRoster({ Entry: { ...std.claude[name] } }));
     expect(entry.harness).toBe('claude');
-    expect(entry.claude.tools).toEqual(builtin.claude.tools);
-    expect(entry.maxTurns).toBe(builtin.maxTurns);
-    expect(entry.maxBudgetUsd).toBe(builtin.maxBudgetUsd);
-    expect(entry.timeoutMs).toBe(builtin.timeoutMs);
-    expect(entry.access).toBe(builtin.claudeAccess);
+    expect(entry.claude.tools).toEqual(expected.tools);
+    expect(entry.maxTurns).toBe(expected.maxTurns);
+    expect(entry.maxBudgetUsd).toBe(expected.maxBudgetUsd);
+    expect(entry.timeoutMs).toBe(expected.timeoutMs);
+    expect(entry.access).toBe(expected.claudeAccess);
   });
 });
 
 describe('std.codex', () => {
   it.each(presets)('%s carries the %s preset sandbox and time limit', (name, preset) => {
-    const { builtin, entry } = rows(defineRoster({ Entry: { ...std.codex[name] } }), preset);
+    const expected = presetValues[preset];
+    const entry = entryRow(defineRoster({ Entry: { ...std.codex[name] } }));
     expect(entry.harness).toBe('codex');
-    expect(entry.codex.sandbox).toBe(builtin.codex.sandbox);
-    expect(entry.timeoutMs).toBe(builtin.timeoutMs);
-    expect(entry.access).toBe(builtin.codexAccess);
+    expect(entry.codex.sandbox).toBe(expected.sandbox);
+    expect(entry.timeoutMs).toBe(expected.timeoutMs);
+    expect(entry.access).toBe(expected.codexAccess);
     expect(Object.keys(std.codex[name])).not.toContain('maxTurns');
     expect(Object.keys(std.codex[name])).not.toContain('maxBudgetUsd');
   });
@@ -100,10 +129,7 @@ describe('std.tiers', () => {
       maxTurns: 40,
       description: std.tiers.Mechanic.description,
     });
-    const { entry } = rows(
-      defineRoster({ Entry: { ...std.claude.Edit, ...std.tiers.Mechanic } }),
-      'edit',
-    );
+    const entry = entryRow(defineRoster({ Entry: { ...std.claude.Edit, ...std.tiers.Mechanic } }));
     expect(entry.claude.model).toBe('sonnet');
     expect(entry.claude.effort).toBe('high');
     expect(entry.access).toBe('write');
