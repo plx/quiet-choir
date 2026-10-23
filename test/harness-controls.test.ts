@@ -8,6 +8,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import {
   CliHarness,
   capabilityManifest,
+  defineRoster,
   defineWorkflow,
   readRun,
   runWorkflow,
@@ -622,10 +623,10 @@ it('captures first-use versions, warns on resumed drift, and records inherited/r
     .mockResolvedValue(reply);
   const definition = defineWorkflow({
     ...base,
-    profiles: { careful: { extends: 'readonly', claude: { effort: 'low' } } },
+    roster: defineRoster({ careful: { harness: 'claude', effort: 'low' } }),
     async run(ctx) {
       await ctx.claude.text('one', { prompt: 'x', effort: 'high' });
-      await ctx.claude.text('three', { prompt: 'z', profile: 'careful' });
+      await ctx.roster.careful.text('three', { prompt: 'z' });
       return (await ctx.claude.text('two', { prompt: 'y' })).output;
     },
   });
@@ -731,7 +732,7 @@ it('lets a call-site Codex effort replace an inherited one and resolves inherite
   invoke.mockClear();
   const network = defineWorkflow({
     ...base,
-    defaults: { profile: 'edit' },
+    defaults: { codex: { sandbox: 'workspace-write' } },
     async run(ctx) {
       return (await ctx.codex.text('ask', { prompt: 'x', networkAccess: true })).output;
     },
