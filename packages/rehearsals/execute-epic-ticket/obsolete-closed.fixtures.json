@@ -1,0 +1,387 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "step": "ticket/9/plan/first",
+      "output": {
+        "readiness": "obsolete",
+        "rationale": "src/widget.ts:40 already memoizes sizes since #8. test/widget.test.ts covers it.",
+        "issueComment": "Already done: #8 memoizes widget sizes (src/widget.ts:40), tested in test/widget.test.ts.",
+        "obsoleteKind": "already-done",
+        "decision": {
+          "question": "",
+          "options": [],
+          "recommendation": ""
+        },
+        "blockedBy": [],
+        "slices": [],
+        "plan": {
+          "title": "",
+          "approach": "",
+          "steps": [],
+          "acceptance": [],
+          "tests": [],
+          "docs": [],
+          "risks": [],
+          "outOfScope": [],
+          "complexity": "mechanical",
+          "size": "small"
+        }
+      }
+    },
+    {
+      "step": "ticket/9/skeptic",
+      "output": {
+        "agree": true,
+        "evidence": "src/widget.ts:40 memoizes; the test asserts one computation.",
+        "remaining": []
+      }
+    }
+  ],
+  "exec": [
+    {
+      "step": "repo-info",
+      "json": {
+        "data": {
+          "viewer": {
+            "login": "epic-bot"
+          },
+          "repository": {
+            "nameWithOwner": "acme/widgets",
+            "isPrivate": false,
+            "viewerPermission": "ADMIN",
+            "defaultBranchRef": {
+              "name": "main"
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "survey/epic/7",
+      "json": {
+        "data": {
+          "viewer": {
+            "login": "epic-bot"
+          },
+          "repository": {
+            "issue": {
+              "number": 7,
+              "title": "Epic: widgets",
+              "state": "OPEN",
+              "url": "https://github.com/acme/widgets/issues/7",
+              "body": "## Items\n\n- [x] #8 First widget\n- [ ] #9 Cache widget sizes\n",
+              "subIssuesSummary": {
+                "total": 2,
+                "completed": 1
+              },
+              "subIssues": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "number": 8,
+                    "title": "First widget",
+                    "state": "CLOSED",
+                    "stateReason": "COMPLETED",
+                    "url": "https://github.com/acme/widgets/issues/8",
+                    "body": "",
+                    "repository": {
+                      "nameWithOwner": "acme/widgets"
+                    },
+                    "labels": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "assignees": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "blockedBy": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "closedByPullRequestsReferences": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "comments": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    }
+                  },
+                  {
+                    "number": 9,
+                    "title": "Cache widget sizes",
+                    "state": "OPEN",
+                    "stateReason": null,
+                    "url": "https://github.com/acme/widgets/issues/9",
+                    "body": "",
+                    "repository": {
+                      "nameWithOwner": "acme/widgets"
+                    },
+                    "labels": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "assignees": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "blockedBy": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "closedByPullRequestsReferences": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "comments": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    }
+                  }
+                ]
+              }
+            },
+            "pullRequests": {
+              "pageInfo": {
+                "hasNextPage": false
+              },
+              "nodes": []
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "ticket/9/issue",
+      "json": [
+        {
+          "data": {
+            "repository": {
+              "issue": {
+                "number": 9,
+                "title": "Cache widget sizes",
+                "state": "OPEN",
+                "body": "Sizes are computed on every render.",
+                "url": "https://github.com/acme/widgets/issues/9",
+                "author": {
+                  "login": "octo-human",
+                  "__typename": "User"
+                },
+                "labels": {
+                  "pageInfo": {
+                    "hasNextPage": false
+                  },
+                  "nodes": []
+                },
+                "comments": {
+                  "pageInfo": {
+                    "hasNextPage": false,
+                    "endCursor": null
+                  },
+                  "nodes": []
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "survey/epic-body/7",
+      "json": {
+        "data": {
+          "repository": {
+            "issue": {
+              "number": 7,
+              "title": "Epic: widgets",
+              "state": "OPEN",
+              "body": "## Items\n\n- [x] #8 First widget\n- [ ] #9 Cache widget sizes\n",
+              "url": "https://github.com/acme/widgets/issues/7",
+              "author": {
+                "login": "octo-human",
+                "__typename": "User"
+              },
+              "labels": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": ["git", "fetch", "--quiet", "origin", "main"],
+      "stdout": ""
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": ["git", "worktree", "add", "--detach"],
+      "stdout": ""
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": [
+        "git",
+        "fetch",
+        "--quiet",
+        "--prune",
+        "origin",
+        "+refs/heads/epic-7/*:refs/remotes/origin/epic-7/*"
+      ],
+      "stdout": ""
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": ["git", "rev-parse", "--path-format=absolute", "--git-path"],
+      "stdout": "/nonexistent/git-state\n"
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": ["git", "for-each-ref", "--format=%(refname)", "refs/heads/epic-7/"],
+      "stdout": ""
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": ["git", "for-each-ref", "--format=%(refname)", "refs/remotes/origin/epic-7/"],
+      "stdout": ""
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": ["git", "symbolic-ref", "--quiet", "HEAD"],
+      "stdout": "",
+      "code": 1
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": ["git", "status", "--porcelain"],
+      "stdout": ""
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": ["git", "log", "--format=%h %s", "HEAD", "--not", "--branches", "--remotes"],
+      "stdout": ""
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": ["git", "worktree", "list", "--porcelain"],
+      "stdout": "worktree /src/widgets\nHEAD a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0\nbranch refs/heads/main\n"
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": [
+        "git",
+        "checkout",
+        "--quiet",
+        "--no-track",
+        "-B",
+        "epic-7/9-cache-widget-sizes",
+        "origin/main"
+      ],
+      "stdout": ""
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": [
+        "git",
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        "refs/remotes/origin/epic-7/9-cache-widget-sizes"
+      ],
+      "stdout": "",
+      "code": 1
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": ["git", "rev-list", "--count"],
+      "stdout": "0\n"
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": ["git", "rev-parse", "origin/main"],
+      "stdout": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0\n"
+    },
+    {
+      "step": "ticket/9/close",
+      "argvPrefix": ["gh", "api", "graphql"],
+      "json": {
+        "data": {
+          "repository": {
+            "issue": {
+              "number": 9,
+              "state": "OPEN",
+              "stateReason": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "ticket/9/close",
+      "argvPrefix": [
+        "gh",
+        "api",
+        "--paginate",
+        "repos/acme/widgets/issues/9/comments?per_page=100"
+      ],
+      "json": []
+    },
+    {
+      "step": "ticket/9/close",
+      "argvPrefix": ["gh", "api", "-X", "POST", "repos/acme/widgets/issues/9/comments"],
+      "json": {
+        "id": 902,
+        "html_url": "https://github.com/acme/widgets/issues/9#issuecomment-902"
+      }
+    },
+    {
+      "step": "ticket/9/close",
+      "argvPrefix": ["gh", "api", "-X", "PATCH", "repos/acme/widgets/issues/9"],
+      "json": {
+        "number": 9
+      }
+    },
+    {
+      "step": "ticket/9/tick",
+      "argvPrefix": ["gh", "api", "repos/acme/widgets/issues/7", "--jq"],
+      "json": {
+        "body": "## Items\n\n- [x] #8 First widget\n- [ ] #9 Cache widget sizes\n"
+      }
+    },
+    {
+      "step": "ticket/9/tick",
+      "argvPrefix": ["gh", "api", "-X", "PATCH", "repos/acme/widgets/issues/7"],
+      "stdout": ""
+    }
+  ],
+  "unmatched": "error",
+  "commands": "fixture"
+}

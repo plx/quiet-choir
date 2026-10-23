@@ -103,7 +103,7 @@
     "test:cli": "node --test test/cli-smoke-runner.test.mjs && node scripts/run-cli-smokes.mjs",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
-    "typecheck": "tsc --project tsconfig.json && tsc --project packages/merge-down.quiet-choir/tsconfig.json",
+    "typecheck": "tsc --project tsconfig.json && tsc --project packages/merge-down.quiet-choir/tsconfig.json && tsc --project packages/execute-epic-ticket.quiet-choir/tsconfig.json",
     "durability:check": "node --import tsx scripts/check-durability-lint.mjs",
     "packages:rehearse": "node scripts/rehearse-packages.mjs",
     "comparisons:check": "node comparisons/scripts/check-source-hashes.mjs && node comparisons/scripts/check-api-snapshot.mjs && node --test comparisons/scripts/api-snapshot.test.mjs comparisons/scripts/source-hashes.test.mjs && tsc -p comparisons/batches/01-direct-ports/tsconfig.json && tsc -p comparisons/batches/02-idiomatic-ports/tsconfig.json && node --import tsx comparisons/scripts/verify-ports.mjs --check && node --import tsx comparisons/scripts/verify-idiomatic-ports.mjs --check",

@@ -1,14 +1,16 @@
-// Rehearsal gate for the workflow packages under packages/ (#589). For merge-down.quiet-choir it
-// validates the package and checks the `package` section of `workflow validate --json`, checks
-// the authoring rules the port must keep (no raw harness calls in the package, no multi-line
-// literals in workflows/), and rehearses every case in packages/rehearsals/merge-down/ with
+// Rehearsal gate for the workflow packages under packages/ (#589, #590). For each package in
+// PACKAGES it validates the package and checks the `package` section of `workflow validate --json`,
+// checks the authoring rules the ports must keep (no raw harness calls in the package, no
+// multi-line literals in workflows/), and rehearses every case in its rehearsal directory with
 // `execute --dry-run --harness fixture:<case>.fixtures.json`: the run must complete with the
 // expected ledger subset, answer every agent call and command from the fixtures, leave no
 // fixture rule unused, fail no command except the `{ step, error }` simulations a case lists in
 // `failures` (each of which must happen), and start the steps a case lists in `order` in that
-// order (by their first command). Run after `npm run build`; the CLI runs from dist.
+// order (by their first command). A case with `child: { label, workflow }` must also end with that
+// inline child frame completed, and the run summary `workflow inspect` prints must show it. Run
+// after `npm run build`; the CLI runs from dist.
 //
-//   node scripts/rehearse-packages.mjs [case ...]
+//   node scripts/rehearse-packages.mjs [case | package/case ...]
 import { execFile } from 'node:child_process';
 import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -19,9 +21,71 @@ import ts from 'typescript';
 
 const run = promisify(execFile);
 const repository = join(dirname(fileURLToPath(import.meta.url)), '..');
-const pkg = join(repository, 'packages', 'merge-down.quiet-choir');
-const cases = join(repository, 'packages', 'rehearsals', 'merge-down');
 const cli = join(repository, 'bin', 'run.js');
+
+/**
+ * The packages and what their `package` section must say: name, entry, workflow names, roster
+ * entries (`Name:harness:model`, sorted) and the names in the package's own prompt set.
+ */
+const PACKAGES = [
+  {
+    dir: 'merge-down.quiet-choir',
+    cases: 'merge-down',
+    name: 'merge-down',
+    entry: 'merge-down-pr',
+    workflows: ['merge-down-pr'],
+    roster: [
+      'Judge:claude:opus',
+      'Mechanic:claude:sonnet',
+      'Reviewer:claude:opus',
+      'Scribe:claude:sonnet',
+      'Surgeon:claude:opus',
+    ],
+    prompts: [
+      'DraftFollowups',
+      'EscalatedReview',
+      'FollowupEpicBody',
+      'Implement',
+      'IssueSummary',
+      'ResolveConflicts',
+      'ReviewChange',
+      'ReviewDependency',
+      'TriageLocalReview',
+      'TriageThreads',
+    ],
+  },
+  {
+    dir: 'execute-epic-ticket.quiet-choir',
+    cases: 'execute-epic-ticket',
+    name: 'execute-epic-ticket',
+    entry: 'execute-epic-ticket',
+    workflows: ['execute-epic-ticket'],
+    roster: [
+      'Mechanic:claude:sonnet',
+      'Planner:claude:opus',
+      'Scribe:claude:sonnet',
+      'Skeptic:claude:opus',
+      'Surgeon:claude:opus',
+    ],
+    prompts: [
+      'CloseSplitComment',
+      'DecisionComment',
+      'FollowupEpicBody',
+      'FollowupsSection',
+      'Implement',
+      'Plan',
+      'Skeptic',
+      'SplitComment',
+      'WriteFollowups',
+      'WritePr',
+      'WriteSlices',
+    ],
+  },
+].map((p) => ({
+  ...p,
+  root: join(repository, 'packages', p.dir),
+  caseDir: join(repository, 'packages', 'rehearsals', p.cases),
+}));
 const problems = [];
 const fail = (message) => problems.push(message);
 
@@ -49,61 +113,46 @@ async function sources(directory) {
 }
 
 // ── The package section ──────────────────────────────────────────────────────────────────────
-async function checkValidate() {
-  const result = await quietChoir(['workflow', 'validate', pkg, '--json']);
+async function checkValidate(pkg) {
+  const result = await quietChoir(['workflow', 'validate', pkg.root, '--json']);
   if (result.ok !== true) {
-    fail(`validate failed: ${JSON.stringify(result.error ?? result).slice(0, 2000)}`);
+    fail(`${pkg.name}: validate failed: ${JSON.stringify(result.error ?? result).slice(0, 2000)}`);
     return;
   }
   const section = result.package;
   const expect = (label, actual, wanted) => {
     if (JSON.stringify(actual) !== JSON.stringify(wanted))
       fail(
-        `validate package.${label}: expected ${JSON.stringify(wanted)}, got ${JSON.stringify(actual)}`,
+        `${pkg.name}: validate package.${label}: expected ${JSON.stringify(wanted)}, got ${JSON.stringify(actual)}`,
       );
   };
-  expect('name', section?.name, 'merge-down');
-  expect('entry', section?.entry, 'merge-down-pr');
+  expect('name', section?.name, pkg.name);
+  expect('entry', section?.entry, pkg.entry);
   expect(
     'workflows',
     section?.workflows?.map((w) => w.name),
-    ['merge-down-pr'],
+    pkg.workflows,
   );
   expect(
     'workflows[0].roster',
     section?.workflows?.[0]?.roster?.map((r) => `${r.name}:${r.harness}:${String(r.model)}`),
-    [
-      'Judge:claude:opus',
-      'Mechanic:claude:sonnet',
-      'Reviewer:claude:opus',
-      'Scribe:claude:sonnet',
-      'Surgeon:claude:opus',
-    ],
+    pkg.roster,
   );
-  expect('prompts', section?.prompts?.flatMap((set) => set.entries.map((e) => e.name)).sort(), [
-    'DraftFollowups',
-    'EscalatedReview',
-    'FollowupEpicBody',
-    'Implement',
-    'IssueSummary',
-    'ResolveConflicts',
-    'ReviewChange',
-    'ReviewDependency',
-    'TriageLocalReview',
-    'TriageThreads',
-  ]);
+  // The package's own prompt set; a child's sets (merge-down's, for execute-epic-ticket) follow it.
+  const own = section?.prompts?.filter((set) => set.root === join(pkg.root, 'prompts'));
+  expect('prompts', own?.flatMap((set) => set.entries.map((e) => e.name)).sort(), pkg.prompts);
   const files = section?.files;
   if (!(files?.count > 0 && files?.bytes > 0 && /^[0-9a-f]{64}$/.test(files?.sha256 ?? '')))
     fail(
-      `validate package.files: expected a count, bytes and a SHA-256, got ${JSON.stringify(files)}`,
+      `${pkg.name}: validate package.files: expected a count, bytes and a SHA-256, got ${JSON.stringify(files)}`,
     );
 }
 
 // ── Authoring rules ──────────────────────────────────────────────────────────────────────────
-async function checkSources() {
+async function checkSources(pkg) {
   // Every agent call goes through ctx.roster (or a team slot filled from it) with a prompts.*
   // function; codex review is a command effect, not ctx.codex.
-  for (const file of await sources(pkg)) {
+  for (const file of await sources(pkg.root)) {
     const text = await readFile(file, 'utf8');
     for (const [index, line] of text.split('\n').entries())
       if (/\bctx\.(claude|codex)\b|\bctx\.agent\(/.test(line))
@@ -112,7 +161,7 @@ async function checkSources() {
         );
   }
   // Prose lives in prompts/*.md: no string or template literal in workflows/ carries a newline.
-  for (const file of await sources(join(pkg, 'workflows'))) {
+  for (const file of await sources(join(pkg.root, 'workflows'))) {
     const text = await readFile(file, 'utf8');
     const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
     const visit = (node) => {
@@ -159,29 +208,30 @@ function subset(actual, expected, path, mismatches) {
   }
 }
 
-async function rehearse(name) {
+async function rehearse(pkg, name) {
   const {
     input,
     expect,
     order = [],
     failures = [],
-  } = JSON.parse(await readFile(join(cases, `${name}.json`), 'utf8'));
-  const root = await mkdtemp(join(tmpdir(), `merge-down-${name}-`));
+    child,
+  } = JSON.parse(await readFile(join(pkg.caseDir, `${name}.json`), 'utf8'));
+  const root = await mkdtemp(join(tmpdir(), `${pkg.cases}-${name}-`));
   try {
     const inputFile = join(root, 'input.json');
     await writeFile(inputFile, JSON.stringify({ ...input, root }));
     const report = await quietChoir([
       'workflow',
       'execute',
-      pkg,
+      pkg.root,
       '--dry-run',
       '--harness',
-      `fixture:${join(cases, `${name}.fixtures.json`)}`,
+      `fixture:${join(pkg.caseDir, `${name}.fixtures.json`)}`,
       '--input',
       `@${inputFile}`,
       '--json',
     ]);
-    const where = `rehearsal ${name}`;
+    const where = `rehearsal ${pkg.cases}/${name}`;
     if (report.ok !== true || report.run?.status !== 'completed') {
       fail(
         `${where}: ${report.run?.status ?? 'failed'}: ${JSON.stringify(report.error ?? report.run?.error).slice(0, 2000)}`,
@@ -216,27 +266,65 @@ async function rehearse(name) {
       else if (index > 0 && first[index] < first[index - 1])
         fail(`${where}: step ${step} ran before ${order[index - 1]}`);
     });
+    if (child) await checkChild(where, report.run, child);
     console.log(
-      `Rehearsed ${name}: ${report.run.output.status}, ${String(report.calls?.length ?? 0)} agent call(s), ${String(report.commands?.length ?? 0)} command(s).`,
+      `Rehearsed ${pkg.cases}/${name}: ${report.run.output.status}, ${String(report.calls?.length ?? 0)} agent call(s), ${String(report.commands?.length ?? 0)} command(s).`,
     );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 }
 
+/**
+ * The inline child frame `child` names must have completed in the run record, and the run summary
+ * `workflow inspect` prints must show it in the workflow tree: the record goes through the CLI's
+ * own summarizeRun and formatRunSummary, with the ownership of a finished, unlocked run.
+ */
+async function checkChild(where, record, child) {
+  const frame = Object.values(record.children ?? {}).find((c) => c.label === child.label);
+  if (frame?.workflow?.name !== child.workflow || frame?.status !== 'completed') {
+    fail(
+      `${where}: expected a completed child frame ${child.label} of ${child.workflow}, got ${JSON.stringify(record.children ?? {})}`,
+    );
+    return;
+  }
+  const { summarizeRun } = await import(
+    join(repository, 'dist', 'workflow', 'loader', 'inspection.js')
+  );
+  const { formatRunSummary } = await import(join(repository, 'dist', 'cli', 'inspection-view.js'));
+  const ownership = { locked: false, owner: null, processes: [], locks: [] };
+  const line = `${child.label}: ${child.workflow}@${frame.workflow.version} completed`;
+  if (!formatRunSummary(summarizeRun(record, ownership)).includes(line))
+    fail(`${where}: the inspect summary does not show "${line}"`);
+}
+
 const wanted = process.argv.slice(2);
-const names = (await readdir(cases))
-  .filter((file) => file.endsWith('.json') && !file.endsWith('.fixtures.json'))
-  .map((file) => file.slice(0, -'.json'.length))
-  .filter((name) => wanted.length === 0 || wanted.includes(name))
-  .sort();
-if (names.length === 0) fail(`no rehearsal cases in ${relative(repository, cases)}`);
-await checkSources();
-await Promise.all([checkValidate(), ...names.map(rehearse)]);
+const selected = [];
+for (const pkg of PACKAGES) {
+  const names = (await readdir(pkg.caseDir))
+    .filter((file) => file.endsWith('.json') && !file.endsWith('.fixtures.json'))
+    .map((file) => file.slice(0, -'.json'.length))
+    .filter(
+      (name) =>
+        wanted.length === 0 || wanted.includes(name) || wanted.includes(`${pkg.cases}/${name}`),
+    )
+    .sort();
+  if (names.length === 0 && wanted.length === 0)
+    fail(`no rehearsal cases in ${relative(repository, pkg.caseDir)}`);
+  selected.push(...names.map((name) => ({ pkg, name })));
+}
+if (selected.length === 0) fail(`no rehearsal case matches ${wanted.join(', ')}`);
+for (const pkg of PACKAGES) await checkSources(pkg);
+await Promise.all([
+  ...PACKAGES.map(checkValidate),
+  ...selected.map(({ pkg, name }) => rehearse(pkg, name)),
+]);
 if (problems.length > 0) {
   for (const problem of problems) console.error(problem);
   console.error(`Package rehearsals failed: ${String(problems.length)} problem(s).`);
   process.exitCode = 1;
 } else {
-  console.log(`Package rehearsals passed: ${String(names.length)} case(s).`);
+  console.log(
+    `Package rehearsals passed: ${String(selected.length)} case(s) in ${String(PACKAGES.length)} package(s).`,
+  );
 }

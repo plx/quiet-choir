@@ -1,0 +1,64 @@
+{
+  "input": {
+    "epic": 7,
+    "repo": "acme/widgets",
+    "followupEpic": 50
+  },
+  "expect": {
+    "status": "landed",
+    "ticket": {
+      "number": 9,
+      "title": "Add a widget",
+      "status": "ready"
+    },
+    "pr": {
+      "number": 42,
+      "mergeCommit": "9e8d7c6b5a49382716051f2e3d4c5b6a79881726"
+    },
+    "plan": {
+      "readiness": "ready",
+      "title": "Add a widget",
+      "criteria": 2
+    },
+    "implementer": {
+      "tier": "mechanic",
+      "rounds": 1,
+      "head": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+      "commits": 2
+    },
+    "verifyOnPr": [
+      {
+        "id": "a2",
+        "check": "Check that the docs job renders docs/widget.md."
+      }
+    ],
+    "deviations": [],
+    "followups": [
+      {
+        "key": "f1",
+        "number": 51,
+        "action": "created"
+      }
+    ],
+    "followupEpic": 50,
+    "landing": {
+      "status": "merged",
+      "mergeCommit": "9e8d7c6b5a49382716051f2e3d4c5b6a79881726",
+      "blocked": null
+    },
+    "remaining": {
+      "open": 1,
+      "ready": 1
+    },
+    "next": {
+      "number": 10,
+      "status": "ready"
+    },
+    "blocked": null,
+    "headline": "#9 \"Add a widget\" landed as PR #42 (9e8d7c6). Merged #42, which adds the widget for #9."
+  },
+  "child": {
+    "label": "land",
+    "workflow": "merge-down-pr"
+  }
+}

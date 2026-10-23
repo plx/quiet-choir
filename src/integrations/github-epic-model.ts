@@ -698,6 +698,15 @@ function fenceMask(text: readonly string[]): boolean[] {
 }
 
 /**
+ * For each line of an epic body (split on line breaks), whether it belongs to fenced code, as the
+ * snapshot's checklist parser reads it: fences in block quotes and list items included. An edit of
+ * the checklist uses it so it skips exactly the lines {@link parseEpicChecklist} skips.
+ */
+export function epicFencedLines(lines: readonly string[]): boolean[] {
+  return fenceMask(lines);
+}
+
+/**
  * `text` without inline code spans, in linear time. As in CommonMark, a span opens at a backtick
  * run and closes at the next run of exactly the same length; a run with no such closer stays as
  * literal text, and scanning resumes after it. Backslash escapes are not interpreted.

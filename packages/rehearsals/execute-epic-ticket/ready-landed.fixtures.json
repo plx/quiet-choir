@@ -1,0 +1,1971 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "step": "ticket/9/plan/first",
+      "output": {
+        "readiness": "ready",
+        "rationale": "The widget does not exist yet.",
+        "issueComment": "",
+        "obsoleteKind": "n/a",
+        "decision": {
+          "question": "",
+          "options": [],
+          "recommendation": ""
+        },
+        "blockedBy": [],
+        "slices": [],
+        "plan": {
+          "title": "Add a widget",
+          "approach": "Add src/widget.ts and its test, then document it.",
+          "steps": [
+            {
+              "id": "s1",
+              "description": "Add the widget.",
+              "files": ["src/widget.ts"]
+            }
+          ],
+          "acceptance": [
+            {
+              "id": "a1",
+              "criterion": "A widget renders.",
+              "how": "test/widget.test.ts renders it."
+            },
+            {
+              "id": "a2",
+              "criterion": "The widget is documented.",
+              "how": "docs/widget.md."
+            }
+          ],
+          "tests": ["test/widget.test.ts"],
+          "docs": ["docs/widget.md"],
+          "risks": [],
+          "outOfScope": ["Widget themes (#10)."],
+          "complexity": "mechanical",
+          "size": "small"
+        }
+      }
+    },
+    {
+      "step": "ticket/9/impl/1",
+      "output": {
+        "criteria": [
+          {
+            "id": "a1",
+            "status": "done",
+            "commit": "abc0001",
+            "evidence": "test/widget.test.ts"
+          },
+          {
+            "id": "a2",
+            "status": "verify-on-pr",
+            "commit": "abc0002",
+            "evidence": "Check that the docs job renders docs/widget.md."
+          }
+        ],
+        "deviations": [],
+        "followups": [
+          {
+            "title": "Theme the widget",
+            "detail": "src/widget.ts:12 hard-codes the colours."
+          }
+        ],
+        "notes": ["Focused tests pass."]
+      }
+    },
+    {
+      "step": "ticket/9/followups/draft",
+      "output": {
+        "issues": [
+          {
+            "key": "f1",
+            "duplicateOf": 0,
+            "title": "Theme the widget",
+            "label": "enhancement",
+            "body": "## Summary\n\nThe widget hard-codes its colours (src/widget.ts:12)."
+          }
+        ]
+      }
+    },
+    {
+      "step": "ticket/9/pr-text",
+      "output": {
+        "title": "Add the widget",
+        "body": "Closes #9.\nPart of #7.\n\nAdds a widget.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+      }
+    },
+    {
+      "step": "land/review",
+      "output": {
+        "threads": [],
+        "findings": [],
+        "alignment": {
+          "verdict": "complete",
+          "notes": "Delivers the widget the issue asks for."
+        },
+        "issueDisposition": {
+          "action": "close",
+          "remaining": []
+        },
+        "escalate": false,
+        "escalateReason": "",
+        "summaryNotes": []
+      }
+    },
+    {
+      "step": "land/report",
+      "output": {
+        "post": false,
+        "body": "",
+        "headline": "Merged #42, which adds the widget for #9."
+      }
+    }
+  ],
+  "exec": [
+    {
+      "step": "repo-info",
+      "json": {
+        "data": {
+          "viewer": {
+            "login": "epic-bot"
+          },
+          "repository": {
+            "nameWithOwner": "acme/widgets",
+            "isPrivate": false,
+            "viewerPermission": "ADMIN",
+            "defaultBranchRef": {
+              "name": "main"
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "survey/epic/7",
+      "json": {
+        "data": {
+          "viewer": {
+            "login": "epic-bot"
+          },
+          "repository": {
+            "issue": {
+              "number": 7,
+              "title": "Epic: widgets",
+              "state": "OPEN",
+              "url": "https://github.com/acme/widgets/issues/7",
+              "body": "## Items\n\n- [x] #8 First widget\n- [ ] #9 Add a widget\n- [ ] #10 Widget docs\n",
+              "subIssuesSummary": {
+                "total": 3,
+                "completed": 1
+              },
+              "subIssues": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "number": 8,
+                    "title": "First widget",
+                    "state": "CLOSED",
+                    "stateReason": "COMPLETED",
+                    "url": "https://github.com/acme/widgets/issues/8",
+                    "body": "",
+                    "repository": {
+                      "nameWithOwner": "acme/widgets"
+                    },
+                    "labels": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "assignees": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "blockedBy": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "closedByPullRequestsReferences": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "comments": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    }
+                  },
+                  {
+                    "number": 9,
+                    "title": "Add a widget",
+                    "state": "OPEN",
+                    "stateReason": null,
+                    "url": "https://github.com/acme/widgets/issues/9",
+                    "body": "",
+                    "repository": {
+                      "nameWithOwner": "acme/widgets"
+                    },
+                    "labels": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "assignees": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "blockedBy": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "closedByPullRequestsReferences": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "comments": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    }
+                  },
+                  {
+                    "number": 10,
+                    "title": "Widget docs",
+                    "state": "OPEN",
+                    "stateReason": null,
+                    "url": "https://github.com/acme/widgets/issues/10",
+                    "body": "",
+                    "repository": {
+                      "nameWithOwner": "acme/widgets"
+                    },
+                    "labels": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "assignees": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "blockedBy": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "closedByPullRequestsReferences": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "comments": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    }
+                  }
+                ]
+              }
+            },
+            "pullRequests": {
+              "pageInfo": {
+                "hasNextPage": false
+              },
+              "nodes": []
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "ticket/9/issue",
+      "json": [
+        {
+          "data": {
+            "repository": {
+              "issue": {
+                "number": 9,
+                "title": "Add a widget",
+                "state": "OPEN",
+                "body": "We need a widget.",
+                "url": "https://github.com/acme/widgets/issues/9",
+                "author": {
+                  "login": "octo-human",
+                  "__typename": "User"
+                },
+                "labels": {
+                  "pageInfo": {
+                    "hasNextPage": false
+                  },
+                  "nodes": []
+                },
+                "comments": {
+                  "pageInfo": {
+                    "hasNextPage": false,
+                    "endCursor": null
+                  },
+                  "nodes": []
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "survey/epic-body/7",
+      "json": {
+        "data": {
+          "repository": {
+            "issue": {
+              "number": 7,
+              "title": "Epic: widgets",
+              "state": "OPEN",
+              "body": "## Items\n\n- [x] #8 First widget\n- [ ] #9 Add a widget\n- [ ] #10 Widget docs\n",
+              "url": "https://github.com/acme/widgets/issues/7",
+              "author": {
+                "login": "octo-human",
+                "__typename": "User"
+              },
+              "labels": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": ["git", "fetch", "--quiet", "origin", "main"],
+      "stdout": ""
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": ["git", "worktree", "add", "--detach"],
+      "stdout": ""
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": [
+        "git",
+        "fetch",
+        "--quiet",
+        "--prune",
+        "origin",
+        "+refs/heads/epic-7/*:refs/remotes/origin/epic-7/*"
+      ],
+      "stdout": ""
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": ["git", "rev-parse", "--path-format=absolute", "--git-path"],
+      "stdout": "/nonexistent/git-state\n"
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": ["git", "for-each-ref", "--format=%(refname)", "refs/heads/epic-7/"],
+      "stdout": ""
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": ["git", "for-each-ref", "--format=%(refname)", "refs/remotes/origin/epic-7/"],
+      "stdout": ""
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": ["git", "symbolic-ref", "--quiet", "HEAD"],
+      "stdout": "",
+      "code": 1
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": ["git", "status", "--porcelain"],
+      "stdout": ""
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": ["git", "log", "--format=%h %s", "HEAD", "--not", "--branches", "--remotes"],
+      "stdout": ""
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": ["git", "worktree", "list", "--porcelain"],
+      "stdout": "worktree /src/widgets\nHEAD a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0\nbranch refs/heads/main\n"
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": [
+        "git",
+        "checkout",
+        "--quiet",
+        "--no-track",
+        "-B",
+        "epic-7/9-add-a-widget",
+        "origin/main"
+      ],
+      "stdout": ""
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": [
+        "git",
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        "refs/remotes/origin/epic-7/9-add-a-widget"
+      ],
+      "stdout": "",
+      "code": 1
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": ["git", "rev-list", "--count"],
+      "stdout": "0\n"
+    },
+    {
+      "step": "ticket/9/start",
+      "argvPrefix": ["git", "rev-parse", "origin/main"],
+      "stdout": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0\n"
+    },
+    {
+      "step": "ticket/9/impl/1/verify",
+      "argvPrefix": ["git", "rev-parse", "HEAD"],
+      "stdout": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567\n"
+    },
+    {
+      "step": "ticket/9/impl/1/verify",
+      "argvPrefix": ["git", "symbolic-ref", "--quiet", "HEAD"],
+      "stdout": "refs/heads/epic-7/9-add-a-widget\n"
+    },
+    {
+      "step": "ticket/9/impl/1/verify",
+      "argvPrefix": ["git", "rev-parse", "--verify", "--quiet"],
+      "stdout": ""
+    },
+    {
+      "step": "ticket/9/impl/1/verify",
+      "argvPrefix": ["git", "merge-base", "--is-ancestor"],
+      "stdout": ""
+    },
+    {
+      "step": "ticket/9/impl/1/verify",
+      "argvPrefix": ["git", "rev-list", "--count", "origin/main..HEAD"],
+      "stdout": "2\n"
+    },
+    {
+      "step": "ticket/9/impl/1/verify",
+      "argvPrefix": ["git", "status", "--porcelain"],
+      "stdout": ""
+    },
+    {
+      "step": "ticket/9/impl/1/check",
+      "argvPrefix": ["git", "rev-parse", "HEAD"],
+      "stdout": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567\n"
+    },
+    {
+      "step": "ticket/9/impl/1/check",
+      "argvPrefix": ["git", "symbolic-ref", "--quiet", "HEAD"],
+      "stdout": "refs/heads/epic-7/9-add-a-widget\n"
+    },
+    {
+      "step": "ticket/9/impl/1/check",
+      "argvPrefix": ["git", "status", "--porcelain", "--untracked-files=normal"],
+      "stdout": ""
+    },
+    {
+      "step": "ticket/9/impl/1/check",
+      "argvPrefix": ["git", "hash-object", "package.json", "package-lock.json"],
+      "stdout": "5eedcafe\nf00dcafe\n"
+    },
+    {
+      "step": "ticket/9/impl/1/check",
+      "argvPrefix": ["npm", "ci"],
+      "stdout": "added 300 packages\n"
+    },
+    {
+      "step": "ticket/9/impl/1/check",
+      "argvPrefix": ["bash", "-c"],
+      "stdout": ""
+    },
+    {
+      "step": "ticket/9/snapshot",
+      "argvPrefix": ["git", "rev-parse", "HEAD"],
+      "stdout": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567\n"
+    },
+    {
+      "step": "ticket/9/snapshot",
+      "argvPrefix": ["git", "diff", "--stat=120"],
+      "stdout": " src/widget.ts | 12 ++++++++++++\n 1 file changed, 12 insertions(+)\n"
+    },
+    {
+      "step": "ticket/9/snapshot",
+      "argvPrefix": ["git", "diff"],
+      "stdout": ""
+    },
+    {
+      "step": "ticket/9/snapshot",
+      "argvPrefix": ["git", "log", "--reverse"],
+      "stdout": "abc0001 Add the widget\nabc0002 Document the widget\n"
+    },
+    {
+      "step": "ticket/9/followups/sub-issues",
+      "json": []
+    },
+    {
+      "step": "ticket/9/followups/f1/find",
+      "json": []
+    },
+    {
+      "step": "ticket/9/followups/f1/find/recent",
+      "json": []
+    },
+    {
+      "step": "ticket/9/followups/f1/file",
+      "argvPrefix": ["gh", "api", "graphql"],
+      "call": 1,
+      "json": {
+        "data": {
+          "repository": {
+            "wanted": {
+              "id": "I_50",
+              "number": 50
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "ticket/9/followups/f1/file",
+      "argvPrefix": ["gh", "api", "graphql"],
+      "call": 2,
+      "json": {
+        "data": {
+          "viewer": {
+            "login": "epic-bot"
+          },
+          "repository": {
+            "nameWithOwner": "acme/widgets",
+            "isPrivate": false,
+            "viewerPermission": "ADMIN",
+            "defaultBranchRef": {
+              "name": "main"
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "ticket/9/followups/f1/file",
+      "argvPrefix": ["gh", "api", "graphql"],
+      "call": 3,
+      "json": {
+        "data": {
+          "addSubIssue": {
+            "issue": {
+              "number": 50
+            },
+            "subIssue": {
+              "number": 51
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "ticket/9/followups/f1/file",
+      "argvPrefix": [
+        "gh",
+        "api",
+        "repos/acme/widgets/issues?creator=epic-bot&state=all&sort=created&direction=desc&per_page=100&page=1"
+      ],
+      "json": []
+    },
+    {
+      "step": "ticket/9/followups/f1/file",
+      "argvPrefix": ["gh", "api", "-X", "POST", "repos/acme/widgets/issues"],
+      "json": {
+        "number": 51,
+        "html_url": "https://github.com/acme/widgets/issues/51",
+        "node_id": "I_51"
+      }
+    },
+    {
+      "step": "ticket/9/push",
+      "argvPrefix": ["git", "symbolic-ref", "--quiet", "HEAD"],
+      "stdout": "refs/heads/epic-7/9-add-a-widget\n"
+    },
+    {
+      "step": "ticket/9/push",
+      "argvPrefix": ["git", "rev-parse", "HEAD"],
+      "stdout": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567\n"
+    },
+    {
+      "step": "ticket/9/push",
+      "argvPrefix": ["git", "status", "--porcelain"],
+      "stdout": ""
+    },
+    {
+      "step": "ticket/9/push",
+      "argvPrefix": ["git", "ls-remote", "origin", "refs/heads/epic-7/9-add-a-widget"],
+      "stdout": ""
+    },
+    {
+      "step": "ticket/9/push",
+      "argvPrefix": [
+        "git",
+        "push",
+        "--quiet",
+        "--force-with-lease=refs/heads/epic-7/9-add-a-widget:",
+        "origin",
+        "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567:refs/heads/epic-7/9-add-a-widget"
+      ],
+      "stdout": ""
+    },
+    {
+      "step": "ticket/9/pr",
+      "argvPrefix": [
+        "gh",
+        "api",
+        "--paginate",
+        "repos/acme/widgets/pulls?head=acme%3Aepic-7%2F9-add-a-widget&state=all&per_page=100"
+      ],
+      "json": []
+    },
+    {
+      "step": "ticket/9/pr",
+      "argvPrefix": ["gh", "api", "-X", "POST", "repos/acme/widgets/pulls"],
+      "json": {
+        "number": 42,
+        "html_url": "https://github.com/acme/widgets/pull/42",
+        "node_id": "PR_kwDOexample"
+      }
+    },
+    {
+      "step": "land/repo-info",
+      "json": {
+        "data": {
+          "viewer": {
+            "login": "epic-bot"
+          },
+          "repository": {
+            "nameWithOwner": "acme/widgets",
+            "isPrivate": false,
+            "viewerPermission": "ADMIN",
+            "defaultBranchRef": {
+              "name": "main"
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "land/pr/42",
+      "json": {
+        "data": {
+          "repository": {
+            "pullRequest": {
+              "number": 42,
+              "title": "Add the widget",
+              "url": "https://github.com/acme/widgets/pull/42",
+              "body": "Adds a widget.\n\nCloses #9.",
+              "state": "OPEN",
+              "isDraft": false,
+              "mergeable": "MERGEABLE",
+              "mergeStateStatus": "CLEAN",
+              "headRefOid": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+              "headRefName": "epic-7/9-add-a-widget",
+              "baseRefName": "main",
+              "closingIssuesReferences": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "number": 9,
+                    "repository": {
+                      "nameWithOwner": "acme/widgets"
+                    }
+                  }
+                ]
+              },
+              "commits": {
+                "nodes": [
+                  {
+                    "commit": {
+                      "oid": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+                      "statusCheckRollup": {
+                        "state": "SUCCESS",
+                        "contexts": {
+                          "pageInfo": {
+                            "hasNextPage": false
+                          },
+                          "nodes": [
+                            {
+                              "__typename": "CheckRun",
+                              "name": "Quality and package",
+                              "status": "COMPLETED",
+                              "conclusion": "SUCCESS",
+                              "detailsUrl": "https://github.com/acme/widgets/actions/runs/555",
+                              "checkSuite": {
+                                "workflowRun": {
+                                  "databaseId": 555
+                                }
+                              }
+                            },
+                            {
+                              "__typename": "CheckRun",
+                              "name": "test (22)",
+                              "status": "COMPLETED",
+                              "conclusion": "SUCCESS",
+                              "detailsUrl": "https://github.com/acme/widgets/actions/runs/555",
+                              "checkSuite": {
+                                "workflowRun": {
+                                  "databaseId": 555
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "land/issue-kind/9",
+      "json": {
+        "pullRequest": false
+      }
+    },
+    {
+      "step": "land/issue/9",
+      "json": [
+        {
+          "data": {
+            "repository": {
+              "issue": {
+                "number": 9,
+                "title": "Add a widget",
+                "state": "OPEN",
+                "body": "We need a widget.",
+                "url": "https://github.com/acme/widgets/issues/9",
+                "author": {
+                  "login": "octo-human",
+                  "__typename": "User"
+                },
+                "comments": {
+                  "pageInfo": {
+                    "hasNextPage": false,
+                    "endCursor": null
+                  },
+                  "nodes": []
+                },
+                "labels": {
+                  "pageInfo": {
+                    "hasNextPage": false
+                  },
+                  "nodes": []
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "land/children/42",
+      "json": [
+        {
+          "data": {
+            "repository": {
+              "pullRequests": {
+                "pageInfo": {
+                  "hasNextPage": false,
+                  "endCursor": null
+                },
+                "nodes": []
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "land/open/42",
+      "json": [
+        {
+          "data": {
+            "repository": {
+              "pullRequests": {
+                "pageInfo": {
+                  "hasNextPage": false,
+                  "endCursor": null
+                },
+                "nodes": [
+                  {
+                    "number": 42,
+                    "title": "Add the widget",
+                    "state": "OPEN",
+                    "isDraft": false,
+                    "headRefName": "epic-7/9-add-a-widget",
+                    "baseRefName": "main",
+                    "headRefOid": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+                    "url": "https://github.com/acme/widgets/pull/42",
+                    "body": "Closes #9."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "land/threads/42/0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+      "json": [
+        {
+          "data": {
+            "repository": {
+              "pullRequest": {
+                "reviewThreads": {
+                  "pageInfo": {
+                    "hasNextPage": false,
+                    "endCursor": null
+                  },
+                  "nodes": []
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "land/alerts/42/0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+      "code": 1,
+      "json": {
+        "message": "Code scanning is not enabled for this repository. Please enable code scanning in the repository settings.",
+        "documentation_url": "https://docs.github.com/rest/code-scanning/code-scanning#list-code-scanning-alerts-for-a-repository",
+        "status": "403"
+      }
+    },
+    {
+      "step": "land/head-repo/42",
+      "json": {
+        "repo": "acme/widgets"
+      }
+    },
+    {
+      "step": "land/**",
+      "argvPrefix": ["git", "symbolic-ref"],
+      "stdout": "refs/heads/merge-down/package/pr-42\n"
+    },
+    {
+      "step": "land/sync",
+      "argvPrefix": ["git", "fetch"],
+      "stdout": ""
+    },
+    {
+      "step": "land/sync",
+      "argvPrefix": ["git", "worktree", "add"],
+      "stdout": ""
+    },
+    {
+      "step": "land/sync",
+      "argvPrefix": ["git", "rebase", "--abort"],
+      "code": 128,
+      "stdout": "",
+      "stderr": "fatal: No rebase in progress?\n"
+    },
+    {
+      "step": "land/sync",
+      "argvPrefix": ["git", "merge", "--abort"],
+      "code": 128,
+      "stdout": "",
+      "stderr": "fatal: There is no merge to abort (MERGE_HEAD missing).\n"
+    },
+    {
+      "step": "land/sync",
+      "argvPrefix": ["git", "reset"],
+      "stdout": ""
+    },
+    {
+      "step": "land/sync",
+      "argvPrefix": ["git", "clean"],
+      "stdout": ""
+    },
+    {
+      "step": "land/sync",
+      "argvPrefix": ["git", "checkout"],
+      "stdout": ""
+    },
+    {
+      "step": "land/sync",
+      "argvPrefix": ["git", "rev-parse", "HEAD"],
+      "stdout": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567\n"
+    },
+    {
+      "step": "land/sync",
+      "argvPrefix": ["git", "rev-parse", "origin/main"],
+      "stdout": "c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00\n"
+    },
+    {
+      "step": "land/sync",
+      "argvPrefix": ["git", "merge-base", "--is-ancestor"],
+      "stdout": ""
+    },
+    {
+      "step": "land/sync",
+      "argvPrefix": ["git", "rev-parse", "--path-format=absolute"],
+      "stdout": "/nonexistent/rebase-state\n"
+    },
+    {
+      "step": "land/sync",
+      "argvPrefix": ["git", "diff", "--stat=120"],
+      "stdout": " src/widget.ts | 12 ++++++++++++\n 1 file changed, 12 insertions(+)\n"
+    },
+    {
+      "step": "land/sync",
+      "argvPrefix": ["git", "diff"],
+      "stdout": ""
+    },
+    {
+      "step": "land/sync",
+      "argvPrefix": ["git", "log"],
+      "stdout": "abc0001 Add the widget\n"
+    },
+    {
+      "step": "land/check/check-0",
+      "argvPrefix": ["git", "status", "--porcelain"],
+      "stdout": ""
+    },
+    {
+      "step": "land/check/check-0",
+      "argvPrefix": ["git", "rev-parse", "HEAD"],
+      "stdout": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567\n"
+    },
+    {
+      "step": "land/check/check-0",
+      "argvPrefix": ["git", "hash-object", "package.json", "package-lock.json"],
+      "stdout": "5eedcafe\nf00dcafe\n"
+    },
+    {
+      "step": "land/check/check-0",
+      "argvPrefix": ["npm", "ci"],
+      "stdout": "added 300 packages\n"
+    },
+    {
+      "step": "land/check/check-0",
+      "argvPrefix": ["bash", "-c"],
+      "stdout": ""
+    },
+    {
+      "step": "land/codex/r0/0a1b2c3d4e5f60718293a4b5c6d7e8f901234567/gpt-6-astra/default/setup",
+      "argvPrefix": ["git", "worktree", "remove"],
+      "code": 128,
+      "stdout": "",
+      "stderr": "fatal: not a working tree\n"
+    },
+    {
+      "step": "land/codex/r0/0a1b2c3d4e5f60718293a4b5c6d7e8f901234567/gpt-6-astra/default/setup",
+      "argvPrefix": ["git", "worktree", "prune"],
+      "stdout": ""
+    },
+    {
+      "step": "land/codex/r0/0a1b2c3d4e5f60718293a4b5c6d7e8f901234567/gpt-6-astra/default/setup",
+      "argvPrefix": ["git", "worktree", "add"],
+      "stdout": ""
+    },
+    {
+      "step": "land/codex/r0/0a1b2c3d4e5f60718293a4b5c6d7e8f901234567/gpt-6-astra/default/setup",
+      "argvPrefix": ["git", "hash-object", "package.json", "package-lock.json"],
+      "stdout": "5eedcafe\nb0bacafe\n"
+    },
+    {
+      "step": "land/codex/r0/0a1b2c3d4e5f60718293a4b5c6d7e8f901234567/gpt-6-astra/default/setup",
+      "argvPrefix": ["npm", "ci"],
+      "stdout": "added 300 packages\n"
+    },
+    {
+      "step": "land/codex/r0/0a1b2c3d4e5f60718293a4b5c6d7e8f901234567/gpt-6-astra/default/review",
+      "argvPrefix": ["sh", "-c"],
+      "stdout": "I reviewed the change and found no issues.\n"
+    },
+    {
+      "step": "land/codex/r0/0a1b2c3d4e5f60718293a4b5c6d7e8f901234567/gpt-6-astra/default/teardown",
+      "argvPrefix": ["git", "status"],
+      "stdout": ""
+    },
+    {
+      "step": "land/codex/r0/0a1b2c3d4e5f60718293a4b5c6d7e8f901234567/gpt-6-astra/default/teardown",
+      "argvPrefix": ["git", "rev-parse", "HEAD"],
+      "stdout": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567\n"
+    },
+    {
+      "step": "land/codex/r0/0a1b2c3d4e5f60718293a4b5c6d7e8f901234567/gpt-6-astra/default/teardown",
+      "argvPrefix": ["git", "worktree", "remove"],
+      "stdout": ""
+    },
+    {
+      "step": "land/codex/r0/0a1b2c3d4e5f60718293a4b5c6d7e8f901234567/gpt-6-astra/default/teardown",
+      "argvPrefix": ["git", "worktree", "prune"],
+      "stdout": ""
+    },
+    {
+      "step": "land/gate/1/push",
+      "argvPrefix": ["git", "rev-parse", "HEAD"],
+      "stdout": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567\n"
+    },
+    {
+      "step": "land/gate/1/push",
+      "argvPrefix": ["git", "ls-remote"],
+      "stdout": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567\trefs/heads/epic-7/9-add-a-widget\n"
+    },
+    {
+      "step": "land/gate/1/visible",
+      "json": {
+        "sha": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567"
+      }
+    },
+    {
+      "step": "land/gate/1/body",
+      "json": {
+        "data": {
+          "repository": {
+            "pullRequest": {
+              "number": 42,
+              "title": "Add the widget",
+              "url": "https://github.com/acme/widgets/pull/42",
+              "body": "Adds a widget.\n\nCloses #9.",
+              "state": "OPEN",
+              "isDraft": false,
+              "mergeable": "MERGEABLE",
+              "mergeStateStatus": "CLEAN",
+              "headRefOid": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+              "headRefName": "epic-7/9-add-a-widget",
+              "baseRefName": "main",
+              "closingIssuesReferences": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "number": 9,
+                    "repository": {
+                      "nameWithOwner": "acme/widgets"
+                    }
+                  }
+                ]
+              },
+              "commits": {
+                "nodes": [
+                  {
+                    "commit": {
+                      "oid": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+                      "statusCheckRollup": {
+                        "state": "SUCCESS",
+                        "contexts": {
+                          "pageInfo": {
+                            "hasNextPage": false
+                          },
+                          "nodes": [
+                            {
+                              "__typename": "CheckRun",
+                              "name": "Quality and package",
+                              "status": "COMPLETED",
+                              "conclusion": "SUCCESS",
+                              "detailsUrl": "https://github.com/acme/widgets/actions/runs/555",
+                              "checkSuite": {
+                                "workflowRun": {
+                                  "databaseId": 555
+                                }
+                              }
+                            },
+                            {
+                              "__typename": "CheckRun",
+                              "name": "test (22)",
+                              "status": "COMPLETED",
+                              "conclusion": "SUCCESS",
+                              "detailsUrl": "https://github.com/acme/widgets/actions/runs/555",
+                              "checkSuite": {
+                                "workflowRun": {
+                                  "databaseId": 555
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "land/gate/1/linked",
+      "json": {
+        "closingIssuesReferences": [
+          {
+            "number": 9
+          }
+        ]
+      }
+    },
+    {
+      "step": "land/gate/1/wait/ci",
+      "json": {
+        "data": {
+          "repository": {
+            "pullRequest": {
+              "number": 42,
+              "state": "OPEN",
+              "headRefOid": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+              "commits": {
+                "nodes": [
+                  {
+                    "commit": {
+                      "oid": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+                      "statusCheckRollup": {
+                        "state": "SUCCESS",
+                        "contexts": {
+                          "pageInfo": {
+                            "hasNextPage": false
+                          },
+                          "nodes": [
+                            {
+                              "__typename": "CheckRun",
+                              "name": "Quality and package",
+                              "status": "COMPLETED",
+                              "conclusion": "SUCCESS",
+                              "detailsUrl": "https://github.com/acme/widgets/actions/runs/555",
+                              "checkSuite": {
+                                "workflowRun": {
+                                  "databaseId": 555
+                                }
+                              }
+                            },
+                            {
+                              "__typename": "CheckRun",
+                              "name": "test (22)",
+                              "status": "COMPLETED",
+                              "conclusion": "SUCCESS",
+                              "detailsUrl": "https://github.com/acme/widgets/actions/runs/555",
+                              "checkSuite": {
+                                "workflowRun": {
+                                  "databaseId": 555
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "land/gate/1/wait/review",
+      "argvPrefix": [
+        "gh",
+        "api",
+        "graphql",
+        "-f",
+        "query=query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { number state headRefOid commits(last: 1) { nodes { commit { oid statusCheckRollup { state contexts(first: 100) { pageInfo { hasNextPage } nodes { __typename ... on CheckRun { name status conclusion detailsUrl checkSuite { workflowRun { databaseId } } } ... on StatusContext { context state targetUrl } } } } } } } } } }",
+        "-f",
+        "owner=acme",
+        "-f",
+        "name=widgets",
+        "-F",
+        "number=42"
+      ],
+      "json": {
+        "data": {
+          "repository": {
+            "pullRequest": {
+              "number": 42,
+              "state": "OPEN",
+              "headRefOid": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+              "commits": {
+                "nodes": [
+                  {
+                    "commit": {
+                      "oid": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+                      "statusCheckRollup": {
+                        "state": "SUCCESS",
+                        "contexts": {
+                          "pageInfo": {
+                            "hasNextPage": false
+                          },
+                          "nodes": [
+                            {
+                              "__typename": "CheckRun",
+                              "name": "Quality and package",
+                              "status": "COMPLETED",
+                              "conclusion": "SUCCESS",
+                              "detailsUrl": "https://github.com/acme/widgets/actions/runs/555",
+                              "checkSuite": {
+                                "workflowRun": {
+                                  "databaseId": 555
+                                }
+                              }
+                            },
+                            {
+                              "__typename": "CheckRun",
+                              "name": "test (22)",
+                              "status": "COMPLETED",
+                              "conclusion": "SUCCESS",
+                              "detailsUrl": "https://github.com/acme/widgets/actions/runs/555",
+                              "checkSuite": {
+                                "workflowRun": {
+                                  "databaseId": 555
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "land/gate/1/wait/review",
+      "argvPrefix": [
+        "gh",
+        "api",
+        "graphql",
+        "--paginate",
+        "--slurp",
+        "-f",
+        "query=query($owner: String!, $name: String!, $number: Int!, $endCursor: String) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewThreads(first: 100, after: $endCursor) { pageInfo { hasNextPage endCursor } nodes { id isResolved isOutdated path line originalLine comments(first: 100) { pageInfo { hasNextPage } nodes { databaseId author { login __typename } body url createdAt } } } } } } }",
+        "-f",
+        "owner=acme",
+        "-f",
+        "name=widgets",
+        "-F",
+        "number=42"
+      ],
+      "json": [
+        {
+          "data": {
+            "repository": {
+              "pullRequest": {
+                "reviewThreads": {
+                  "pageInfo": {
+                    "hasNextPage": false,
+                    "endCursor": null
+                  },
+                  "nodes": []
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "land/gate/1/wait/review",
+      "argvPrefix": [
+        "gh",
+        "api",
+        "graphql",
+        "-f",
+        "query=query($owner: String!, $name: String!) { viewer { login } repository(owner: $owner, name: $name) { nameWithOwner isPrivate viewerPermission defaultBranchRef { name } } }",
+        "-f",
+        "owner=acme",
+        "-f",
+        "name=widgets"
+      ],
+      "json": {
+        "data": {
+          "viewer": {
+            "login": "epic-bot"
+          },
+          "repository": {
+            "nameWithOwner": "acme/widgets",
+            "isPrivate": false,
+            "viewerPermission": "ADMIN",
+            "defaultBranchRef": {
+              "name": "main"
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "land/gate/1/wait/review",
+      "argvPrefix": [
+        "gh",
+        "api",
+        "--paginate",
+        "repos/acme/widgets/code-scanning/alerts?ref=refs%2Fpull%2F42%2Fmerge&state=open&per_page=100"
+      ],
+      "code": 1,
+      "json": {
+        "message": "Code scanning is not enabled for this repository. Please enable code scanning in the repository settings.",
+        "documentation_url": "https://docs.github.com/rest/code-scanning/code-scanning#list-code-scanning-alerts-for-a-repository",
+        "status": "403"
+      }
+    },
+    {
+      "step": "land/gate/1/refresh/ci",
+      "json": {
+        "data": {
+          "repository": {
+            "pullRequest": {
+              "number": 42,
+              "state": "OPEN",
+              "headRefOid": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+              "commits": {
+                "nodes": [
+                  {
+                    "commit": {
+                      "oid": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+                      "statusCheckRollup": {
+                        "state": "SUCCESS",
+                        "contexts": {
+                          "pageInfo": {
+                            "hasNextPage": false
+                          },
+                          "nodes": [
+                            {
+                              "__typename": "CheckRun",
+                              "name": "Quality and package",
+                              "status": "COMPLETED",
+                              "conclusion": "SUCCESS",
+                              "detailsUrl": "https://github.com/acme/widgets/actions/runs/555",
+                              "checkSuite": {
+                                "workflowRun": {
+                                  "databaseId": 555
+                                }
+                              }
+                            },
+                            {
+                              "__typename": "CheckRun",
+                              "name": "test (22)",
+                              "status": "COMPLETED",
+                              "conclusion": "SUCCESS",
+                              "detailsUrl": "https://github.com/acme/widgets/actions/runs/555",
+                              "checkSuite": {
+                                "workflowRun": {
+                                  "databaseId": 555
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "land/gate/1/refresh/review",
+      "argvPrefix": [
+        "gh",
+        "api",
+        "graphql",
+        "-f",
+        "query=query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { number state headRefOid commits(last: 1) { nodes { commit { oid statusCheckRollup { state contexts(first: 100) { pageInfo { hasNextPage } nodes { __typename ... on CheckRun { name status conclusion detailsUrl checkSuite { workflowRun { databaseId } } } ... on StatusContext { context state targetUrl } } } } } } } } } }",
+        "-f",
+        "owner=acme",
+        "-f",
+        "name=widgets",
+        "-F",
+        "number=42"
+      ],
+      "json": {
+        "data": {
+          "repository": {
+            "pullRequest": {
+              "number": 42,
+              "state": "OPEN",
+              "headRefOid": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+              "commits": {
+                "nodes": [
+                  {
+                    "commit": {
+                      "oid": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+                      "statusCheckRollup": {
+                        "state": "SUCCESS",
+                        "contexts": {
+                          "pageInfo": {
+                            "hasNextPage": false
+                          },
+                          "nodes": [
+                            {
+                              "__typename": "CheckRun",
+                              "name": "Quality and package",
+                              "status": "COMPLETED",
+                              "conclusion": "SUCCESS",
+                              "detailsUrl": "https://github.com/acme/widgets/actions/runs/555",
+                              "checkSuite": {
+                                "workflowRun": {
+                                  "databaseId": 555
+                                }
+                              }
+                            },
+                            {
+                              "__typename": "CheckRun",
+                              "name": "test (22)",
+                              "status": "COMPLETED",
+                              "conclusion": "SUCCESS",
+                              "detailsUrl": "https://github.com/acme/widgets/actions/runs/555",
+                              "checkSuite": {
+                                "workflowRun": {
+                                  "databaseId": 555
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "land/gate/1/refresh/review",
+      "argvPrefix": [
+        "gh",
+        "api",
+        "graphql",
+        "--paginate",
+        "--slurp",
+        "-f",
+        "query=query($owner: String!, $name: String!, $number: Int!, $endCursor: String) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewThreads(first: 100, after: $endCursor) { pageInfo { hasNextPage endCursor } nodes { id isResolved isOutdated path line originalLine comments(first: 100) { pageInfo { hasNextPage } nodes { databaseId author { login __typename } body url createdAt } } } } } } }",
+        "-f",
+        "owner=acme",
+        "-f",
+        "name=widgets",
+        "-F",
+        "number=42"
+      ],
+      "json": [
+        {
+          "data": {
+            "repository": {
+              "pullRequest": {
+                "reviewThreads": {
+                  "pageInfo": {
+                    "hasNextPage": false,
+                    "endCursor": null
+                  },
+                  "nodes": []
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "land/gate/1/refresh/review",
+      "argvPrefix": [
+        "gh",
+        "api",
+        "graphql",
+        "-f",
+        "query=query($owner: String!, $name: String!) { viewer { login } repository(owner: $owner, name: $name) { nameWithOwner isPrivate viewerPermission defaultBranchRef { name } } }",
+        "-f",
+        "owner=acme",
+        "-f",
+        "name=widgets"
+      ],
+      "json": {
+        "data": {
+          "viewer": {
+            "login": "epic-bot"
+          },
+          "repository": {
+            "nameWithOwner": "acme/widgets",
+            "isPrivate": false,
+            "viewerPermission": "ADMIN",
+            "defaultBranchRef": {
+              "name": "main"
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "land/gate/1/refresh/review",
+      "argvPrefix": [
+        "gh",
+        "api",
+        "--paginate",
+        "repos/acme/widgets/code-scanning/alerts?ref=refs%2Fpull%2F42%2Fmerge&state=open&per_page=100"
+      ],
+      "code": 1,
+      "json": {
+        "message": "Code scanning is not enabled for this repository. Please enable code scanning in the repository settings.",
+        "documentation_url": "https://docs.github.com/rest/code-scanning/code-scanning#list-code-scanning-alerts-for-a-repository",
+        "status": "403"
+      }
+    },
+    {
+      "step": "land/land/ci/0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+      "json": {
+        "data": {
+          "repository": {
+            "pullRequest": {
+              "number": 42,
+              "state": "OPEN",
+              "headRefOid": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+              "commits": {
+                "nodes": [
+                  {
+                    "commit": {
+                      "oid": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+                      "statusCheckRollup": {
+                        "state": "SUCCESS",
+                        "contexts": {
+                          "pageInfo": {
+                            "hasNextPage": false
+                          },
+                          "nodes": [
+                            {
+                              "__typename": "CheckRun",
+                              "name": "Quality and package",
+                              "status": "COMPLETED",
+                              "conclusion": "SUCCESS",
+                              "detailsUrl": "https://github.com/acme/widgets/actions/runs/555",
+                              "checkSuite": {
+                                "workflowRun": {
+                                  "databaseId": 555
+                                }
+                              }
+                            },
+                            {
+                              "__typename": "CheckRun",
+                              "name": "test (22)",
+                              "status": "COMPLETED",
+                              "conclusion": "SUCCESS",
+                              "detailsUrl": "https://github.com/acme/widgets/actions/runs/555",
+                              "checkSuite": {
+                                "workflowRun": {
+                                  "databaseId": 555
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "land/land/merge/0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+      "argvPrefix": ["gh", "api", "graphql", "-f"],
+      "json": {
+        "data": {
+          "repository": {
+            "pullRequest": {
+              "number": 42,
+              "title": "Add the widget",
+              "url": "https://github.com/acme/widgets/pull/42",
+              "body": "Adds a widget.\n\nCloses #9.",
+              "state": "OPEN",
+              "isDraft": false,
+              "mergeable": "MERGEABLE",
+              "mergeStateStatus": "CLEAN",
+              "headRefOid": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+              "headRefName": "epic-7/9-add-a-widget",
+              "baseRefName": "main",
+              "closingIssuesReferences": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "number": 9,
+                    "repository": {
+                      "nameWithOwner": "acme/widgets"
+                    }
+                  }
+                ]
+              },
+              "commits": {
+                "nodes": [
+                  {
+                    "commit": {
+                      "oid": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+                      "statusCheckRollup": {
+                        "state": "SUCCESS",
+                        "contexts": {
+                          "pageInfo": {
+                            "hasNextPage": false
+                          },
+                          "nodes": [
+                            {
+                              "__typename": "CheckRun",
+                              "name": "Quality and package",
+                              "status": "COMPLETED",
+                              "conclusion": "SUCCESS",
+                              "detailsUrl": "https://github.com/acme/widgets/actions/runs/555",
+                              "checkSuite": {
+                                "workflowRun": {
+                                  "databaseId": 555
+                                }
+                              }
+                            },
+                            {
+                              "__typename": "CheckRun",
+                              "name": "test (22)",
+                              "status": "COMPLETED",
+                              "conclusion": "SUCCESS",
+                              "detailsUrl": "https://github.com/acme/widgets/actions/runs/555",
+                              "checkSuite": {
+                                "workflowRun": {
+                                  "databaseId": 555
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "land/land/merge/0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+      "argvPrefix": ["gh", "api", "graphql", "--paginate"],
+      "json": [
+        {
+          "data": {
+            "repository": {
+              "pullRequest": {
+                "reviewThreads": {
+                  "pageInfo": {
+                    "hasNextPage": false,
+                    "endCursor": null
+                  },
+                  "nodes": []
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step": "land/land/merge/0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+      "argvPrefix": ["gh", "api", "--paginate"],
+      "code": 1,
+      "json": {
+        "message": "Code scanning is not enabled for this repository. Please enable code scanning in the repository settings.",
+        "documentation_url": "https://docs.github.com/rest/code-scanning/code-scanning#list-code-scanning-alerts-for-a-repository",
+        "status": "403"
+      }
+    },
+    {
+      "step": "land/land/merge/0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+      "argvPrefix": ["gh", "api", "repos/acme/widgets/pulls/42"],
+      "call": 1,
+      "json": {
+        "number": 42,
+        "html_url": "https://github.com/acme/widgets/pull/42",
+        "node_id": "PR_kwDOexample",
+        "state": "open",
+        "merged": false,
+        "merge_commit_sha": null,
+        "title": "Add the widget",
+        "body": "Adds a widget.\n\nCloses #9.",
+        "head": {
+          "ref": "epic-7/9-add-a-widget",
+          "sha": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567"
+        },
+        "base": {
+          "ref": "main"
+        }
+      }
+    },
+    {
+      "step": "land/land/merge/0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+      "argvPrefix": [
+        "gh",
+        "api",
+        "-X",
+        "PUT",
+        "repos/acme/widgets/pulls/42/merge",
+        "-f",
+        "merge_method=squash",
+        "-f",
+        "sha=0a1b2c3d4e5f60718293a4b5c6d7e8f901234567"
+      ],
+      "json": {
+        "sha": "9e8d7c6b5a49382716051f2e3d4c5b6a79881726",
+        "merged": true,
+        "message": "Pull Request successfully merged"
+      }
+    },
+    {
+      "step": "land/land/merge/0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+      "argvPrefix": ["gh", "api", "repos/acme/widgets/pulls/42"],
+      "call": 2,
+      "json": {
+        "number": 42,
+        "html_url": "https://github.com/acme/widgets/pull/42",
+        "node_id": "PR_kwDOexample",
+        "state": "closed",
+        "merged": true,
+        "merge_commit_sha": "9e8d7c6b5a49382716051f2e3d4c5b6a79881726",
+        "title": "Add the widget",
+        "body": "Adds a widget.\n\nCloses #9.",
+        "head": {
+          "ref": "epic-7/9-add-a-widget",
+          "sha": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567"
+        },
+        "base": {
+          "ref": "main"
+        }
+      }
+    },
+    {
+      "step": "land/land/issue-closed",
+      "json": {
+        "state": "closed"
+      }
+    },
+    {
+      "step": "report/tick",
+      "argvPrefix": ["gh", "api", "repos/acme/widgets/issues/7", "--jq"],
+      "json": {
+        "body": "## Items\n\n- [x] #8 First widget\n- [ ] #9 Add a widget\n- [ ] #10 Widget docs\n"
+      }
+    },
+    {
+      "step": "report/tick",
+      "argvPrefix": ["gh", "api", "-X", "PATCH", "repos/acme/widgets/issues/7"],
+      "stdout": ""
+    },
+    {
+      "step": "report/survey/epic/7",
+      "json": {
+        "data": {
+          "viewer": {
+            "login": "epic-bot"
+          },
+          "repository": {
+            "issue": {
+              "number": 7,
+              "title": "Epic: widgets",
+              "state": "OPEN",
+              "url": "https://github.com/acme/widgets/issues/7",
+              "body": "## Items\n\n- [x] #8 First widget\n- [x] #9 Add a widget\n- [ ] #10 Widget docs\n",
+              "subIssuesSummary": {
+                "total": 3,
+                "completed": 2
+              },
+              "subIssues": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "number": 8,
+                    "title": "First widget",
+                    "state": "CLOSED",
+                    "stateReason": "COMPLETED",
+                    "url": "https://github.com/acme/widgets/issues/8",
+                    "body": "",
+                    "repository": {
+                      "nameWithOwner": "acme/widgets"
+                    },
+                    "labels": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "assignees": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "blockedBy": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "closedByPullRequestsReferences": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "comments": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    }
+                  },
+                  {
+                    "number": 9,
+                    "title": "Add a widget",
+                    "state": "CLOSED",
+                    "stateReason": "COMPLETED",
+                    "url": "https://github.com/acme/widgets/issues/9",
+                    "body": "",
+                    "repository": {
+                      "nameWithOwner": "acme/widgets"
+                    },
+                    "labels": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "assignees": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "blockedBy": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "closedByPullRequestsReferences": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "comments": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    }
+                  },
+                  {
+                    "number": 10,
+                    "title": "Widget docs",
+                    "state": "OPEN",
+                    "stateReason": null,
+                    "url": "https://github.com/acme/widgets/issues/10",
+                    "body": "",
+                    "repository": {
+                      "nameWithOwner": "acme/widgets"
+                    },
+                    "labels": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "assignees": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "blockedBy": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "closedByPullRequestsReferences": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "comments": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    }
+                  }
+                ]
+              }
+            },
+            "pullRequests": {
+              "pageInfo": {
+                "hasNextPage": false
+              },
+              "nodes": []
+            }
+          }
+        }
+      }
+    }
+  ],
+  "unmatched": "error",
+  "commands": "fixture"
+}

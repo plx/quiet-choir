@@ -1,0 +1,15 @@
+{
+  "input": {
+    "epic": 7,
+    "repo": "acme/widgets"
+  },
+  "expect": {
+    "status": "blocked",
+    "epicTitle": "Epic: widgets",
+    "ticket": null,
+    "blocked": {
+      "stage": "survey",
+      "reason": "epic #7 has no sub-issues; execute-epic-ticket.quiet-choir surveys sub-issue epics only (attach the tickets as sub-issues, or use the native script)"
+    }
+  }
+}

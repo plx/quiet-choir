@@ -1,0 +1,23 @@
+{
+  "input": {
+    "epic": 7,
+    "repo": "acme/widgets",
+    "until": "survey"
+  },
+  "expect": {
+    "status": "stopped",
+    "ticket": {
+      "number": 10,
+      "title": "Widget theme",
+      "status": "ready"
+    },
+    "remaining": {
+      "total": 2,
+      "open": 2,
+      "ready": 1,
+      "waiting": 1
+    },
+    "notes": ["unreadable reference #42 counts as open"],
+    "headline": "Next in #7: #10 Widget theme (ready)."
+  }
+}

@@ -285,16 +285,24 @@ the same way after import. A refused package request also carries `requestedPack
 `entrypoint_missing` refusal, whose fork hint is `<PACKAGE_DIR> --workflow NAME` for you to fill in
 with the package's new directory.
 
-## A worked package
+## Worked packages
 
 [`packages/merge-down.quiet-choir`](../packages/merge-down.quiet-choir/README.md) ports the native
 `merge-down-pr` workflow script (#589): control flow in `workflows/`, prompts in `prompts/`, the
 tier map as a roster, teams for its swappable slots, and the git and check mechanics as versioned
-steps in `lib/`. `npm run packages:rehearse` (after `npm run build`) validates it and rehearses its
-cases in `packages/rehearsals/merge-down/`, kept outside the package root because every file under
-the root is fingerprinted. Its `tsconfig.json` maps `quiet-choir` and its subpaths to `src/`, and
-the repository's `.prettierignore` keeps formatters off `packages/*/prompts/`, whose rendered text
-is step identity.
+steps in `lib/`.
+[`packages/execute-epic-ticket.quiet-choir`](../packages/execute-epic-ticket.quiet-choir/README.md)
+ports the native `execute-epic-ticket` script (#590) the same way, and lands each ticket's pull
+request by running merge-down's workflow as a typed inline child (`ctx.workflow`, declared in
+`children`), which `workflow inspect` shows in its workflow tree. It imports merge-down's generic
+helpers rather than copying them; they are compiler dependencies, so they join its fingerprint.
+
+`npm run packages:rehearse` (after `npm run build`) validates every package in the table of
+`scripts/rehearse-packages.mjs` and rehearses each one's cases in `packages/rehearsals/<name>/`,
+kept outside the package roots because every file under a root is fingerprinted; a case can also
+require an inline child frame to complete and show in the inspect summary. Each package's
+`tsconfig.json` maps `quiet-choir` and its subpaths to `src/`, and the repository's
+`.prettierignore` keeps formatters off `packages/*/prompts/`, whose rendered text is step identity.
 
 ## For agents
 

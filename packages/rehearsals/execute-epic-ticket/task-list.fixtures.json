@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "calls": [],
+  "exec": [
+    {
+      "step": "repo-info",
+      "json": {
+        "data": {
+          "viewer": {
+            "login": "epic-bot"
+          },
+          "repository": {
+            "nameWithOwner": "acme/widgets",
+            "isPrivate": false,
+            "viewerPermission": "ADMIN",
+            "defaultBranchRef": {
+              "name": "main"
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "survey/epic/7",
+      "json": {
+        "data": {
+          "viewer": {
+            "login": "epic-bot"
+          },
+          "repository": {
+            "issue": {
+              "number": 7,
+              "title": "Epic: widgets",
+              "state": "OPEN",
+              "url": "https://github.com/acme/widgets/issues/7",
+              "body": "## Items\n\n- [ ] #8 First widget\n- [ ] #9 Second widget\n",
+              "subIssuesSummary": {
+                "total": 0,
+                "completed": 0
+              },
+              "subIssues": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": []
+              }
+            },
+            "pullRequests": {
+              "pageInfo": {
+                "hasNextPage": false
+              },
+              "nodes": []
+            }
+          }
+        }
+      }
+    }
+  ],
+  "unmatched": "error",
+  "commands": "fixture"
+}

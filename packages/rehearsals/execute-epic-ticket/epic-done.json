@@ -1,0 +1,18 @@
+{
+  "input": {
+    "epic": 7,
+    "repo": "acme/widgets"
+  },
+  "expect": {
+    "status": "epic-done",
+    "epicTitle": "Epic: widgets",
+    "ticket": null,
+    "remaining": {
+      "total": 2,
+      "open": 0,
+      "closed": 2,
+      "ready": 0
+    },
+    "headline": "Epic #7 has no open tickets left; close it when ready."
+  }
+}

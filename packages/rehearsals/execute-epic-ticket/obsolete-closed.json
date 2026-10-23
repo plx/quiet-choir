@@ -1,0 +1,19 @@
+{
+  "input": {
+    "epic": 7,
+    "repo": "acme/widgets"
+  },
+  "expect": {
+    "status": "closed-obsolete",
+    "ticket": {
+      "number": 9,
+      "title": "Cache widget sizes",
+      "status": "ready"
+    },
+    "plan": {
+      "readiness": "obsolete"
+    },
+    "blocked": null,
+    "headline": "Closed #9 \"Cache widget sizes\" as already-done: src/widget.ts:40 already memoizes sizes since #8."
+  }
+}

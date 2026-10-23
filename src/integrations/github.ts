@@ -144,6 +144,7 @@ export {
 } from './github-model.js';
 export { CODEQL_LOGIN, CODEX_LOGIN } from './github-wait-model.js';
 export {
+  epicFencedLines,
   epicSnapshotResponseSchema,
   nextTicket,
   outsideReferences,

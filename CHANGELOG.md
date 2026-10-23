@@ -2,6 +2,27 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Port `execute-epic-ticket` from a native Workflow script to the package
+  [`packages/execute-epic-ticket.quiet-choir`](packages/execute-epic-ticket.quiet-choir/README.md)
+  (#590, ADRs 0063-0065 and 0067). It surveys the epic with `gh.epic.snapshot` and `nextTicket`,
+  plans with a `Planner` (and a `Skeptic` before any obsolete ticket closes), implements through an
+  `ImplementTeam` of `Mechanic` and `Surgeon`, publishes the PR and its follow-ups with `Scribe`s,
+  and lands the PR by running the merge-down package's `merge-down-pr` as a typed inline child
+  (`ctx.workflow('land', …)`), whose frame `workflow inspect` shows. The native arguments (less
+  `tools`, `mergeDownTools` and `mergeDownScript`, plus `repo` and `checkCommand`), statuses and
+  result record are kept; bad arguments are the input schema's refusal. Every `epic.mjs` subcommand
+  is a durable effect: the ticket branch lives in a persistent worktree managed by versioned start,
+  verify and publish steps, the workflow runs the full check suite at the implementer's head and
+  pushes only that head, and the checklist tick and insert, label writes and exact-title lookups
+  before filing are check-then-act `gh api` steps; the tick and insert skip the lines the snapshot
+  reads as fenced code, through the new `quiet-choir/github` export `epicFencedLines`. Its own
+  default root (`<main checkout>-epic-burndown-package`) keeps the native script a safe fallback
+  until #592, and the shared `epic-E/N-slug` branches let either tool resume a ticket.
+  `npm run packages:rehearse` now validates and rehearses every package from one table: eight new
+  cases (ready ticket landed through the merge-down child, obsolete closed, needs-decision, split,
+  epic-done, stalled, a task-list epic blocked at survey, an unreadable dependency counted as open),
+  and a case can require an inline child frame to complete and show in the inspect summary.
+  `npm run typecheck` and `durability:check` cover the new package.
 - Teach agents to author and run packages (#591, ADR 0065 section 5). Both skill copies gain
   `references/packages.md`, a condensed authoring reference covering layout, `definePackage`, the
   shared roster, prompts, teams, `--workflow`, the `validate` package section, discovery,
