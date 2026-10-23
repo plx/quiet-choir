@@ -41,7 +41,10 @@ Declare roles as roster entries and call them by name:
 <!-- skills-check: fragment; reason: Roster module and workflow body shown separately. -->
 
 ```ts
-// Roster module (defineRoster, std from 'quiet-choir/std'):
+// Roster module:
+import { defineRoster } from 'quiet-choir';
+import * as std from 'quiet-choir/std';
+
 const roster = defineRoster({
   Scout: { ...std.claude.ReadOnly, maxTurns: 30, description: 'Reads source' },
   Fixer: { ...std.claude.Edit, onPermissionDenied: 'fail' },
