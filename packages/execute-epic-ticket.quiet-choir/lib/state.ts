@@ -2,7 +2,7 @@
 // renderer, the native layout) and epic.md, the epic body plus a table of every item with its
 // status. They are pure; the workflow writes their output with ctx.writeFile.
 import { renderIssue } from '../../merge-down.quiet-choir/lib/state.js';
-import type { EpicItem } from './policy.js';
+import { homeItems, type EpicItem } from './policy.js';
 
 export { renderIssue };
 
@@ -15,21 +15,30 @@ const cell = (text: string): string =>
 
 /**
  * The native item table: number, title, status, whether its checklist line is checked (`-` when
- * no line names it), its dependencies (open ones marked) and its open pull request.
+ * no line names it), its dependencies (open ones marked) and its open pull request. A dependency's
+ * state comes from the epic repository's own items (`repository`) and the `outside` states the
+ * survey read; another repository's item shares numbers with them, so it answers only through its
+ * own blockers.
  */
 export function renderItemsTable(
   items: readonly EpicItem[],
   statuses: ReadonlyMap<number, string>,
+  repository: string,
+  outside: readonly { readonly number: number; readonly state: string }[],
 ): string {
-  const known = new Map(items.map((x) => [x.number, x.state]));
+  const known = new Map([
+    ...outside.map((x): [number, string] => [x.number, x.state]),
+    ...homeItems(items, repository).map((x): [number, string] => [x.number, x.state]),
+  ]);
   const rows = items.map((i) => {
     const open = i.state === 'OPEN';
     const status = open ? (statuses.get(i.number) ?? 'open') : 'closed';
     const checked = i.checked === null ? '-' : i.checked ? 'x' : ' ';
     const deps = [...new Set([...i.dependsOn, ...i.blockedBy.map((b) => b.number)])];
-    // An item's state, else the blocker's, else unknown, which counts as open.
+    const home = i.repository.toLowerCase() === repository.toLowerCase();
+    // A known state, else the blocker's, else unknown, which counts as open.
     const stateOf = (d: number): string =>
-      known.get(d) ?? i.blockedBy.find((b) => b.number === d)?.state ?? 'OPEN';
+      (home ? known.get(d) : undefined) ?? i.blockedBy.find((b) => b.number === d)?.state ?? 'OPEN';
     const depText =
       deps.map((d) => `#${String(d)}${stateOf(d) === 'CLOSED' ? '' : ' (open)'}`).join(', ') || '-';
     const pr = i.pullRequests.find((p) => p.state === 'OPEN');
@@ -50,6 +59,8 @@ export function renderEpic(
   items: readonly EpicItem[],
   statuses: ReadonlyMap<number, string>,
   surveyedAt: string,
+  repository: string,
+  outside: readonly { readonly number: number; readonly state: string }[],
 ): string {
-  return `# #${String(epic.number)} ${epic.title}\n\nState: ${epic.state} · ${epic.url}\n\n${epic.body}\n\n## Items as of the last survey (${surveyedAt})\n\n${renderItemsTable(items, statuses)}`;
+  return `# #${String(epic.number)} ${epic.title}\n\nState: ${epic.state} · ${epic.url}\n\n${epic.body}\n\n## Items as of the last survey (${surveyedAt})\n\n${renderItemsTable(items, statuses, repository, outside)}`;
 }

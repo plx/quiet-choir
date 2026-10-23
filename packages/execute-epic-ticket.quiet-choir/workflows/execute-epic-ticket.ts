@@ -10,6 +10,7 @@ import {
   github,
   nextTicket,
   outsideReferences,
+  parseGithubRepo,
   type GithubIssue,
   type GithubIssueWithComments,
 } from 'quiet-choir/github';
@@ -61,6 +62,7 @@ import {
   itemStatuses,
   landingNotes,
   ledgerLine,
+  linkedPull,
   plain,
   prBody,
   shaCommits,
@@ -161,7 +163,7 @@ export default defineWorkflow({
       );
       // A task-list item carries only its checkbox: no labels, dependencies, split or real state,
       // so selecting from it would bypass every held, waiting and closed check.
-      if (snap.source === 'task-list') return { snap, selection: null };
+      if (snap.source === 'task-list') return { snap, selection: null, outside: [] };
       const outside: IssueState[] = [];
       for (const number of outsideReferences(snap)) {
         const seen = await issueState(ctx, ctx.id(...key, 'outside', number), { repo, number });
@@ -174,9 +176,13 @@ export default defineWorkflow({
           record.notes.push(note);
         }
       }
-      return { snap, selection: nextTicket(snap, { outside, holdLabels: [...HOLD_LABELS] }) };
+      return {
+        snap,
+        selection: nextTicket(snap, { outside, holdLabels: [...HOLD_LABELS] }),
+        outside,
+      };
     };
-    const { snap, selection } = await survey('survey');
+    const { snap, selection, outside } = await survey('survey');
     record.epicTitle = snap.epic.title;
     if (selection === null)
       return blocked(
@@ -306,7 +312,8 @@ export default defineWorkflow({
             headline: `#${String(n)} already has PR #${String(c.pr)}; would land it.`,
           });
         // The candidate keeps only the number; the linked PR's URL says which repository it is in.
-        const linked = own.find((i) => i.number === n)?.pullRequests.find((p) => p.number === c.pr);
+        const item = own.find((i) => i.number === n);
+        const linked = item === undefined ? undefined : linkedPull(item, c.pr, repo);
         const foreign = (url: string) =>
           blocked(
             'survey',
@@ -344,6 +351,8 @@ export default defineWorkflow({
           snap.items,
           itemStatuses(selection),
           epicNow.at,
+          snap.repository,
+          outside,
         ),
       );
       const started: Started = await start(ctx, id('start'), {
@@ -893,7 +902,11 @@ export default defineWorkflow({
             items: filed.map((f) => ({ number: f.number ?? 0, title: f.title })),
           }).text
         : '';
-      const body = withFollowups(prBody(prText.body, n, E, repo), section, A.prFooter);
+      const body = withFollowups(
+        prBody(prText.body, n, E, parseGithubRepo(repo).nameWithOwner),
+        section,
+        A.prFooter,
+      );
       const pushed = await publish(ctx, id('push'), {
         workdir: W,
         branch: started.branch,

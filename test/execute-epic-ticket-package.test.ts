@@ -15,6 +15,7 @@ import {
   itemStatuses,
   landingNotes,
   ledgerLine,
+  linkedPull,
   pickFor,
   prBody,
   SETTLED,
@@ -62,8 +63,15 @@ const { renderEpic, renderItemsTable } = await load<{
     items: readonly EpicItem[],
     statuses: ReadonlyMap<number, string>,
     at: string,
+    repository: string,
+    outside: readonly { number: number; state: string }[],
   ) => string;
-  renderItemsTable: (items: readonly EpicItem[], statuses: ReadonlyMap<number, string>) => string;
+  renderItemsTable: (
+    items: readonly EpicItem[],
+    statuses: ReadonlyMap<number, string>,
+    repository: string,
+    outside: readonly { number: number; state: string }[],
+  ) => string;
 }>('lib/state');
 const { parseSplit } = await import('../src/integrations/github.js');
 
@@ -184,6 +192,28 @@ describe('isRepoPull', () => {
     expect(isRepoPull('https://ghe.example/acme/widgets/pull/3', 'ghe.example/acme/widgets')).toBe(
       true,
     );
+  });
+});
+
+describe('linkedPull', () => {
+  const local = { number: 12, state: 'OPEN', url: 'https://github.com/acme/widgets/pull/12' };
+  const closedForeign = {
+    number: 12,
+    state: 'CLOSED',
+    url: 'https://github.com/other/gadgets/pull/12',
+  };
+  const openForeign = { ...closedForeign, state: 'OPEN' };
+
+  it('resolves to the open pull request of the repository, past a closed foreign one', () => {
+    const linked = item(3, { pullRequests: [closedForeign, openForeign, local] });
+    expect(linkedPull(linked, 12, repo)).toBe(local);
+    expect(linkedPull(item(3, { pullRequests: [closedForeign, local] }), 12, repo)).toBe(local);
+  });
+
+  it('keeps an open foreign pull request so its URL can be named, and finds none otherwise', () => {
+    expect(linkedPull(item(3, { pullRequests: [openForeign] }), 12, repo)).toBe(openForeign);
+    expect(linkedPull(item(3, { pullRequests: [closedForeign] }), 12, repo)).toBeUndefined();
+    expect(linkedPull(item(3, { pullRequests: [local] }), 13, repo)).toBeUndefined();
   });
 });
 
@@ -558,6 +588,8 @@ describe('epic.md', () => {
         item(2, { pullRequests: [{ number: 20, state: 'OPEN' }], checked: null }),
       ],
       statuses,
+      repo,
+      [],
     );
     expect(table.split('\n').slice(2, 5)).toEqual([
       '| #1 | Ticket 1 | closed | x | - | - |',
@@ -569,16 +601,49 @@ describe('epic.md', () => {
       [],
       statuses,
       '2026-10-22T00:00:00.000Z',
+      repo,
+      [],
     );
     expect(epic).toContain(
       '# #7 Epic\n\nState: OPEN · https://x/7\n\nBody.\n\n## Items as of the last survey (2026-10-22T00:00:00.000Z)',
     );
   });
 
+  it('marks a dependency open from the states the survey resolved, not from foreign items', () => {
+    const table = renderItemsTable(
+      [
+        item(4, { dependsOn: [30, 31, 5] }),
+        item(5),
+        // Another repository's closed item numbered like the local dependency #5.
+        item(5, { repository: 'other/gadgets', state: 'CLOSED' }),
+        // A foreign item answers only through its own blockers.
+        item(8, {
+          repository: 'other/gadgets',
+          dependsOn: [30, 5],
+          blockedBy: [{ number: 31, state: 'CLOSED' }],
+        }),
+      ],
+      new Map(),
+      repo,
+      [
+        { number: 30, state: 'CLOSED' },
+        { number: 31, state: 'OPEN' },
+      ],
+    );
+    expect(table.split('\n').slice(2, 6)).toEqual([
+      '| #4 | Ticket 4 | open |   | #30, #31 (open), #5 (open) | - |',
+      '| #5 | Ticket 5 | open |   | - | - |',
+      '| #5 | Ticket 5 | closed |   | - | - |',
+      '| #8 | Ticket 8 | open |   | #30 (open), #5 (open), #31 | - |',
+    ]);
+  });
+
   it('escapes backslashes so a title cannot break out of its cell', () => {
     const table = renderItemsTable(
       [item(5, { title: 'Back\\|slash' }), item(6, { title: 'Trailing\\' })],
       itemStatuses(selection),
+      repo,
+      [],
     );
     const rows = table.split('\n').slice(2, 4);
     expect(rows).toEqual([

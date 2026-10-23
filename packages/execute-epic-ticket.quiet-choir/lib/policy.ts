@@ -54,6 +54,20 @@ export function isRepoPull(url: string, repo: string): boolean {
   return url.toLowerCase().startsWith(prefix.toLowerCase());
 }
 
+/**
+ * The open pull request numbered `pr` that an item links: one of `repo` when there is one (a
+ * closed or foreign pull request of the same number can be listed first), else the first open one,
+ * so the caller can still name the other repository's URL.
+ */
+export function linkedPull<P extends EpicItem['pullRequests'][number]>(
+  item: { readonly pullRequests: readonly P[] },
+  pr: number,
+  repo: string,
+): P | undefined {
+  const open = item.pullRequests.filter((p) => p.number === pr && p.state === 'OPEN');
+  return open.find((p) => p.url !== undefined && isRepoPull(p.url, repo)) ?? open[0];
+}
+
 /** The pick of `nextTicket`. */
 export interface TicketPick {
   readonly number: number;
