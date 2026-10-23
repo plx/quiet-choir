@@ -135,8 +135,9 @@ response text (up to 256 KiB, with `responseTruncated`). Local Zod failures also
 these are not a billing ledger.
 
 Claude `onPermissionDenied: 'fail'` rejects a successful envelope that reports denied tools and
-lists their names. The default `warn` records them and prints a CLI warning. A per-call selection
-overrides the entry's policy and participates in semantic identity.
+lists their names. The default `warn` records them and prints a CLI warning. A raw call's selection
+overrides the `defaults` policy, a roster entry fixes its own, and the policy participates in
+semantic identity.
 
 Adding the diagnostics field changes agent result-schema fingerprints once. In-flight runs with
 pre-streaming completed agent calls cannot reuse those calls after upgrading merely by accepting

@@ -17,15 +17,16 @@ retries, identity, and process recovery.
 | `agent`, `agents`                    | Native agent name and definitions with required description/prompt          |
 | `mcpServers`, `strictMcpConfig`      | Server-name mapping and exclusive explicit MCP configuration                |
 | `settings`                           | JSON native settings; typed model/agent/permission/MCP aliases are rejected |
-| `onPermissionDenied`                 | `warn` (default) or `fail`; per-call selection overrides the entry          |
+| `onPermissionDenied`                 | `warn` (default) or `fail`; raw calls override `defaults`; entries fix it   |
 | `fallbackModel`                      | Model string or nonempty array, passed as a comma-separated chain           |
 
 Agents, MCP and settings also use 0600 temporary files, removed in finally. Capability controls
 belong on roster entries under `strictProfiles: true` (opt-in); native
 agent/config/MCP/settings/escape/env controls are conservatively classified as exec access, which
-needs a grant under `requireGrants`. Role prompts and effort may be supplied per call. Each attempt
-records requested model/effort or `"inherited"`. All these semantic values, including fallback
-models, must match for completed replay. Escape-arg paths fingerprint the path string only.
+needs a grant under `requireGrants`. Raw calls may supply role prompts and effort per call; a roster
+entry fixes them. Each attempt records requested model/effort or `"inherited"`. All these semantic
+values, including fallback models, must match for completed replay. Escape-arg paths fingerprint the
+path string only.
 
 The adapter defaults to
 `claude --print --output-format stream-json --verbose --permission-mode dontAsk` and

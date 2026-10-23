@@ -2,10 +2,10 @@
 
 Both providers take one `effort` field. Claude accepts `'low' | 'medium' | 'high' | 'xhigh' | 'max'`
 and maps it to `--effort`; Codex also accepts `'none'` and `'minimal'` and sends it as
-`model_reasoning_effort`. A call-site `effort` replaces one inherited from `defaults` or an entry.
-Omission uses native defaults under the selected configuration mode. Accepted enum values do not
-guarantee support for every model. Each attempt records `requested.model` and `requested.effort`,
-using `"inherited"` for omissions.
+`model_reasoning_effort`. A raw call's `effort` replaces one inherited from `defaults`; a roster
+entry's `effort` is fixed, so a variant needs its own entry. Omission uses native defaults under the
+selected configuration mode. Accepted enum values do not guarantee support for every model. Each
+attempt records `requested.model` and `requested.effort`, using `"inherited"` for omissions.
 
 ## Typed controls
 
@@ -28,7 +28,8 @@ Declare capability controls on [roster entries](roster.md), including tools, per
 MCP/settings, native agents/profiles/config, additional directories, environment and escape args.
 `strictProfiles: true` (opt-in; the default is `false`) rejects those fields at raw call sites and
 in `bind`, so they belong on a roster entry; see [strict call sites](roster.md#strict-call-sites).
-Role prompts, models, effort, fallbacks and image attachments can be supplied per call. Native
+Raw calls can supply role prompts, models, effort, fallbacks and image attachments per call; a
+roster call fixes all of them on its entry except Codex `images`. Native
 configuration/agent/escape/env controls and enabled network access are conservatively classified as
 **exec** access, and Codex additional writable directories as write access; Claude directories alone
 grant no tools. Under [`requireGrants`](roster.md#requiregrants-launch-grants-and-pins) those
