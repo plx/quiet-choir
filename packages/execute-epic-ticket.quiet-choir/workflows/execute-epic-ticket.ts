@@ -819,6 +819,15 @@ export default defineWorkflow({
             );
             continue;
           }
+          if (draft.duplicateOf === n || draft.duplicateOf === E) {
+            // The ticket closes with its PR and the epic is not a work item, so neither can hold it.
+            filed.push(
+              failed(
+                `claimed duplicate #${String(draft.duplicateOf)} is the ${draft.duplicateOf === n ? 'ticket itself' : 'epic'}`,
+              ),
+            );
+            continue;
+          }
           if (draft.duplicateOf > 0) {
             // The scribe's match is a claim: it settles the key only if that issue is open.
             const seen = await issueState(ctx, id('followups', key, 'duplicate'), {
