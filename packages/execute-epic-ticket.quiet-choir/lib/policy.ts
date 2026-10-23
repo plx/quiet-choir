@@ -15,6 +15,8 @@ export const DECISION_LABEL = 'needs-decision';
 /** An item of an epic snapshot, as these rules read it. */
 export interface EpicItem {
   readonly number: number;
+  /** The item's `OWNER/REPO`, which can differ from the epic's. */
+  readonly repository: string;
   readonly title: string;
   readonly state: string;
   readonly labels: readonly string[];
@@ -27,6 +29,18 @@ export interface EpicItem {
     readonly url?: string;
   }[];
   readonly split: readonly number[] | null;
+}
+
+/**
+ * The items that are issues of `repository` (the snapshot's `OWNER/REPO`, compared without case):
+ * a sub-issue of another repository can share a number with a ticket here, and `candidates`,
+ * `pickFor` and the linked-pull-request lookup find an item by number alone.
+ */
+export function homeItems<T extends Pick<EpicItem, 'repository'>>(
+  items: readonly T[],
+  repository: string,
+): T[] {
+  return items.filter((i) => i.repository.toLowerCase() === repository.toLowerCase());
 }
 
 /**

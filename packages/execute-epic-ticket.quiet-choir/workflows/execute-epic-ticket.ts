@@ -56,6 +56,7 @@ import {
   followupFooter,
   HOLD_LABELS,
   implementerSlot,
+  homeItems,
   isRepoPull,
   itemStatuses,
   landingNotes,
@@ -191,7 +192,9 @@ export default defineWorkflow({
       return finish('epic-done', {
         headline: `Epic #${String(E)} has no open tickets left; close it when ready.`,
       });
-    const list = candidates(selection, snap.items, A.ticket ?? null, A.maxCandidates);
+    // Tickets are found by number, so only the epic repository's own items may answer for one.
+    const own = homeItems(snap.items, snap.repository);
+    const list = candidates(selection, own, A.ticket ?? null, A.maxCandidates);
     const first = list[0];
     if (first === undefined && A.ticket !== undefined)
       return blocked('survey', `#${String(A.ticket)} is not an open ticket of epic #${String(E)}`);
@@ -303,9 +306,7 @@ export default defineWorkflow({
             headline: `#${String(n)} already has PR #${String(c.pr)}; would land it.`,
           });
         // The candidate keeps only the number; the linked PR's URL says which repository it is in.
-        const linked = snap.items
-          .find((i) => i.number === n)
-          ?.pullRequests.find((p) => p.number === c.pr);
+        const linked = own.find((i) => i.number === n)?.pullRequests.find((p) => p.number === c.pr);
         const foreign = (url: string) =>
           blocked(
             'survey',
@@ -502,8 +503,8 @@ export default defineWorkflow({
         const filed: { number: number; title: string }[] = [];
         // The epic's open sub-issues from the survey: an earlier run's linked slice is among them
         // even while the search index lags.
-        const subIssues = snap.items
-          .filter((s) => s.state === 'OPEN' && s.repository.toLowerCase() === repo.toLowerCase())
+        const subIssues = own
+          .filter((s) => s.state === 'OPEN')
           .map((s) => ({ number: s.number, title: s.title, url: s.url ?? '' }));
         for (const [i, w] of writeups.entries()) {
           if (w === undefined) continue;

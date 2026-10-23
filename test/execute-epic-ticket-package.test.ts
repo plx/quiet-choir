@@ -8,6 +8,7 @@ import {
   counts,
   fenceMask,
   firstSentence,
+  homeItems,
   implementerSlot,
   insertAfter,
   isRepoPull,
@@ -69,6 +70,7 @@ const { parseSplit } = await import('../src/integrations/github.js');
 const repo = 'acme/widgets';
 const item = (number: number, fields: Partial<EpicItem> = {}): EpicItem => ({
   number,
+  repository: repo,
   title: `Ticket ${String(number)}`,
   state: 'OPEN',
   labels: [],
@@ -137,6 +139,38 @@ describe('pickFor', () => {
     expect(pickFor(selection, items, 1)).toMatchObject({ number: 1, status: 'closed' });
     expect(pickFor(selection, items, 99)).toBeNull();
     expect(pickFor(selection, items, 8)).toBeNull();
+  });
+});
+
+describe('homeItems', () => {
+  it("keeps the epic repository's items, so a foreign sub-issue's number answers for nothing", () => {
+    const foreign = item(9, {
+      repository: 'other/repo',
+      state: 'CLOSED',
+      labels: ['blocked'],
+      split: [90],
+    });
+    const local = item(9, { repository: 'Acme/Widgets', labels: ['needs-decision'], split: [91] });
+    const mixed = [foreign, local];
+    const sel: Selection = {
+      pick: null,
+      skipped: [{ number: 9, title: 'Ticket 9', reason: 'held' }],
+      done: false,
+    };
+    expect(homeItems(mixed, repo)).toEqual([local]);
+    expect(candidates(sel, homeItems(mixed, repo), null, 3)).toEqual([]);
+    expect(pickFor(sel, homeItems(mixed, repo), 9)).toMatchObject({
+      number: 9,
+      status: 'held',
+      labels: ['needs-decision'],
+      split: [91],
+    });
+    // Unfiltered, the foreign item answers first, which is the defect this guards against.
+    expect(pickFor(sel, mixed, 9)).toMatchObject({ labels: ['blocked'], split: [90] });
+    // With only the foreign item left, a named ticket 9 is not an item of the epic.
+    expect(pickFor({ pick: null, skipped: [], done: false }, homeItems([foreign], repo), 9)).toBe(
+      null,
+    );
   });
 });
 
