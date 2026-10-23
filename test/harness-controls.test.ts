@@ -210,7 +210,7 @@ it.each(codexEffortValues)('sends Codex effort %s as model_reasoning_effort', as
   expect(args.filter((arg) => arg.startsWith('model_reasoning_effort='))).toHaveLength(1);
 });
 
-it('rejects a renamed reasoningEffort on a Codex call, profile or defaults before invoking', async () => {
+it('rejects a renamed reasoningEffort on a Codex call, profile, roster entry or defaults before invoking', async () => {
   const renamed = 'reasoningEffort was renamed to effort';
   const legacy: object = { reasoningEffort: 'low' };
   await expect(
@@ -229,6 +229,10 @@ it('rejects a renamed reasoningEffort on a Codex call, profile or defaults befor
   await expect(runWorkflow(call, { ...setup(), harness: { invoke } })).rejects.toThrow(renamed);
   const declarations = [
     [{ profiles: { scout: { codex: legacy } } }, `Profile scout codex: ${renamed}`],
+    [
+      { roster: defineRoster({ scout: { harness: 'codex', ...legacy } } as never) },
+      `Roster entry scout: ${renamed}`,
+    ],
     [{ defaults: { codex: legacy } }, `defaults.codex: ${renamed}`],
   ] as const;
   for (const [index, [declaration, message]] of declarations.entries()) {
