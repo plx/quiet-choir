@@ -59,7 +59,8 @@ function execute(
 }
 
 // measured: 1.4 s alone for the first compile, 4.8 s in the full coverage run (typecheck compile)
-describe('the decide-then-act recipe', { timeout: 30_000 }, () => {
+// Node 24 coverage CI shards, six runs (Oct 2026, #715): 13.6-22.1 s for the fixture rehearsal.
+describe('the decide-then-act recipe', { timeout: 45_000 }, () => {
   beforeEach(() => {
     // No credentials: a decision that reached the provider would fail its configuration.
     vi.stubEnv('TYPESAFE_API_KEY', undefined);

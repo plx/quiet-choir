@@ -669,8 +669,9 @@ export default defineWorkflow({
 
 // measured: 15.5 s alone for the slowest CLI case, which runs seven commands that each compile the
 // engine from scratch (the CLI passes no program cache), 2.2-13.4 s for the others; about 2.5x that
-// under coverage, hence the 120 s budget.
-describe('packages through the CLI', { timeout: 120_000 }, () => {
+// under coverage. On the Node 24 coverage CI shards, six runs (Oct 2026, #715), the slowest case
+// took 72.9-101.2 s, so the budget is twice that.
+describe('packages through the CLI', { timeout: 210_000 }, () => {
   it('executes the entry and --workflow other, then inspects and lists them', async ({
     cli,
     stateDir,

@@ -1908,7 +1908,8 @@ describe('examples/patterns/next-ticket.workflow.ts', () => {
 // One executor run type-checks and imports a workflow module. measured: 1.5 s alone; the same
 // executor run as test/github.test.ts's dry run, measured there at 4.3 s in the full coverage run
 // (dominated by the loader's type check and tsImport compile).
-describe('dry-run', { timeout: 30_000 }, () => {
+// Node 24 coverage CI shards, six runs (Oct 2026, #715): 14.5-25.9 s for the snapshot case.
+describe('dry-run', { timeout: 60_000 }, () => {
   it('lists the snapshot as exactly one synthesized command and spawns nothing', async () => {
     await project();
     const file = join(cwd(), 'epic.workflow.ts');

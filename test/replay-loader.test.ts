@@ -102,7 +102,8 @@ afterEach(async () => {
 // 7.5-8.8 s in local full coverage runs (28.2-34.0 s for the slowest case before the cache), and
 // 15.0 s on the Node 22.13 and 24.4 s on the Node 24 CI legs; before the cache it took 30.0 s on Node
 // 22.13 and 60.6 s on Node 24. This is a correctness suite, not a benchmark.
-describe('source-aware loader recovery', { timeout: 50_000 }, () => {
+// Node 24 coverage CI shards, six runs (Oct 2026, #715): 14.4-27.9 s for the symlink case.
+describe('source-aware loader recovery', { timeout: 60_000 }, () => {
   it('normalizes symlink spellings, excludes engine sources, and validates the exact stored fingerprint', async () => {
     const alias = join(root, 'alias');
     await symlink(root, alias);

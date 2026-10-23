@@ -89,8 +89,9 @@ const warning =
 // measured: 1.4 s for the first case alone (its full engine compile), 0.2-0.6 s for later ones,
 // 4.9 s worst case in the full coverage run (dominated by the first tsImport compile). The validate
 // command case builds two projects and took 14.4 s on CI's Node 22.13 leg and over 30 s on a loaded
-// Node 24 coverage shard, hence the 60 s budget.
-describe('prompt checks in the CLI loader', { timeout: 60_000 }, () => {
+// Node 24 coverage shard; on those shards, six runs (Oct 2026, #715), it took 27.2-42.9 s, so the
+// budget is twice that.
+describe('prompt checks in the CLI loader', { timeout: 90_000 }, () => {
   it('validates, publishes prompts with warnings and logs each warning', async () => {
     const { typecheck } = await project();
     const lines: string[] = [];

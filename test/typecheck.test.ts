@@ -189,8 +189,9 @@ describe('TypeScriptExecutor', { timeout: 20_000 }, () => {
     expect(result.ok).toBe(true);
     // measured: 1.8 s alone and 5.2-6.5 s in local full coverage runs, both unchanged by the cache,
     // and 8.6 s on the Node 22.13 and 16.6 s on the Node 24 CI legs with it (8.1-9.6 s and
-    // 12.2-15.8 s before it; one whole engine compile under the repository tsconfig)
-  }, 35_000);
+    // 12.2-15.8 s before it; one whole engine compile under the repository tsconfig); 13.4-25.9 s
+    // on the Node 24 coverage CI shards in six runs (Oct 2026, #715)
+  }, 60_000);
 
   it('targets the minimum supported Node declarations in the default profile', async () => {
     const root = await createFixture({
@@ -393,7 +394,8 @@ function checkedProgram(
 // measured: the parity case, the only one importing the engine, takes 2.4 s alone and 6.8-7.6 s in
 // local full coverage runs (one full engine compile, then cached checks); the others stay under 0.6 s
 // alone and 2 s in full runs.
-describe('TypecheckProgramCache', { timeout: 40_000 }, () => {
+// Node 24 coverage CI shards, six runs (Oct 2026, #715): 14.9-27.1 s for the parity case.
+describe('TypecheckProgramCache', { timeout: 60_000 }, () => {
   it('returns the same results as an uncached check, also when reused', async () => {
     const root = await createFixture({
       'package.json': '{"type":"module"}',
