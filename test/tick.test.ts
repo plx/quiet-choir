@@ -1659,8 +1659,8 @@ const unreadDeadline = "Tick's timeout passed before this run was read; a later 
 
 // Issue #199: tick's deadline interrupts into a resumable suspension, and a margin stops claims.
 // measured: 6.7 s alone for the timeout case (a fixed 6 s tick timeout, sized for a slow import on
-// a loaded CI leg, plus tsImport compiles) and 2.3 s for the margin case; the loader suite's 40 s
-// raise covers the compile-heavy tail. Issue #205's many-run cases measured 4.6 s and 3.6 s alone
+// a loaded CI leg, plus tsImport compiles) and 2.3 s for the margin case; the compile-heavy tail
+// sets the budget (below). Issue #205's many-run cases measured 4.6 s and 3.6 s alone
 // (twelve run starts with a shared program cache dominate), and the watch case 1.9 s.
 // Node 24 coverage CI shards, six runs (Oct 2026, #715): 13.0-24.3 s for the margin case.
 describe('tick deadline interruption and claim margin', { timeout: 50_000 }, () => {

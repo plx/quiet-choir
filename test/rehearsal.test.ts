@@ -1499,7 +1499,7 @@ it('selects a shipped fake CLI envelope by prompt pattern and logs its original 
 });
 
 // One case type-checks a workflow module that imports the engine source. measured: 1.4 s alone; the
-// sibling exec-fixtures executor suite budgets the same loader compile on CI's slowest leg.
+// sibling exec-fixtures executor suite budgets 50 s for the same loader compile on CI's slowest leg.
 // Node 24 coverage CI shards, six runs (Oct 2026, #715): 16.8-24.8 s for the slowest case.
 describe('dry-run worktree synthesis through the executor', { timeout: 50_000 }, () => {
   /**
