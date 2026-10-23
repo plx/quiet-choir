@@ -479,24 +479,22 @@ describe('inline child delegation', () => {
       ...base,
       requireGrants: true,
       children: [builder],
-      roster: defineRoster({
-        Editor: { harness: 'claude', tools: ['Read', 'Grep', 'Glob', 'Edit', 'Write'] },
-      }),
+      defaults: { claude: { tools: ['Read', 'Grep', 'Glob', 'Edit', 'Write'] } },
       async run(ctx) {
-        return ctx.workflow('builder', builder, null, { profiles: { Runner: 'Editor' } });
+        return ctx.workflow('builder', builder, null, { profiles: { Runner: 'text' } });
       },
     });
-    // Editor is pinned, so its pin check (Bash needs exec) refuses before the tools subset check.
+    // The unpinned text role carries the old edit preset's tools, so the tools-subset check refuses Bash.
     await expect(
       runs.run(mapped, { stateDir, runId: 'mapped', input: null, grants: ['all'], harness }),
-    ).rejects.toThrow('Child profile builder.Runner exceeds parent profile Editor: access.');
+    ).rejects.toThrow('Child profile builder.Runner exceeds parent profile text: tools.');
     // The run-level flag turns the same layer on for a root that does not declare it.
     await expect(
       runs.run(
         { ...mapped, requireGrants: false },
         { stateDir, runId: 'flagged', input: null, grants: ['all'], requireGrants: true, harness },
       ),
-    ).rejects.toThrow('Child profile builder.Runner exceeds parent profile Editor: access.');
+    ).rejects.toThrow('Child profile builder.Runner exceeds parent profile text: tools.');
     expect(tools).toHaveLength(2);
   });
 
