@@ -31,39 +31,39 @@ states each capability fact once, at every depth of `children`: no `harnesses[].
 Schema; no `capabilities.defaults` (read `capabilities.profiles[defaultProfile]`); the default
 entry's environment summaries once as `capabilities.environment`, with an entry's own `environment`
 listing only the harnesses (`claude`, `codex`) that differ from it (read
-`entry.environment?.[h] ?? capabilities.environment[h]`); `workflow.profiles`, a manifest field that
-does not list roster entries, because `capabilities.profiles` holds each roster entry under its name
-with the `harness` it is pinned to ([roster](roster.md#manifest-and-validate-output)); and no root
-`workflow.entrypoint`, which equals the top-level `entrypoint` (children keep theirs).
-`--harness-schemas` prints the complete document instead: option schemas, `defaults`, every entry's
-environment, the `workflow.profiles` map and both entrypoint copies. The golden-path
-`validate --json` is about 2.7 KB. Run records and checkpoints keep the full manifest. `list-defs`
-discovers `*.workflow.ts`, `*.workflow.mts` and `*.workflow.cts` files (not `.d.ts` or `.tsx`). The
-`configuration` topic has one command, `configuration doctor`. `list --all` discovers registered XDG
-projects without imports; rows include `cwd` and `stateDir`. `execute --resume --run-id ID` may omit
-FILE and use stored launch paths, as does `resume ID`. A supplied different FILE is refused before
-import. See [storage](storage.md). `inspect --watch --json` emits JSONL per checkpoint/ownership
-change, ending with a snapshot and exit 0/1/75/130/3 for completed/failed/suspended/cancelled/stale
-(an interrupted run ends as suspended). It does not add an error document for an observed failure.
-An interrupted watcher emits an error document and leaves the observed run untouched. Three opt-in
-flags bound the watch for hosts with time limits. `--timeout DURATION` is measured from the first
-successful read: a run still running then ends the watch with `watch.timeout` (exit 79), whose error
-document carries the last observed `status` (`running`) and `details.timeoutMs`; the run keeps
-running. `--wait-created DURATION` is measured from the start of the watch: until the first
-successful read, a missing record is retried at the interval instead of failing with `run.not_found`
-(exit 3), and when the bound expires the watch fails with `watch.record_not_created` (exit 66),
-`status: null` and `details.waitCreatedMs`. A record that disappears after it was read stays
-`run.not_found`. Both take `ms`, `s`, `m` or `h` durations up to 2147483647 ms and sleep at most
-until their deadline, then read once more, so a run that finishes at the deadline is reported as
-finished and the watch ends within one read after it. `--final` prints only the final snapshot, or
-only the error document on a bound, an interrupt or a missing record. With `--summary`, inspect
-error documents carry the compact `summary` instead of the whole `run`. 79 is the first exit after
-the sysexits block and has no meaning in sh, Node, `timeout(1)` or xargs; 124 stays `start.timeout`,
-so a host can tell "runner stopped without a record" from "run still running". See
-[run observability](observability.md) for polling, stale detection, and partial usage. Non-watching
-inspect exits 0 for any readable checkpoint status, including `failed`, `cancelled`, and `running`.
-Plain `inspect ID --json` (not `--summary` or `--watch`) of a run with a worktree ledger also
-carries `worktreeAdminLock` while the repository's worktree administration lock is held:
+`entry.environment?.[h] ?? capabilities.environment[h]`), where `capabilities.profiles` holds the
+`text` role and each roster entry under its name with the `harness` it is pinned to
+([roster](roster.md#manifest-and-validate-output)); and no root `workflow.entrypoint`, which equals
+the top-level `entrypoint` (children keep theirs). `--harness-schemas` prints the complete document
+instead: option schemas, `defaults`, every entry's environment and both entrypoint copies. The
+golden-path `validate --json` is about 2.7 KB. Run records and checkpoints keep the full manifest.
+`list-defs` discovers `*.workflow.ts`, `*.workflow.mts` and `*.workflow.cts` files (not `.d.ts` or
+`.tsx`). The `configuration` topic has one command, `configuration doctor`. `list --all` discovers
+registered XDG projects without imports; rows include `cwd` and `stateDir`.
+`execute --resume --run-id ID` may omit FILE and use stored launch paths, as does `resume ID`. A
+supplied different FILE is refused before import. See [storage](storage.md).
+`inspect --watch --json` emits JSONL per checkpoint/ownership change, ending with a snapshot and
+exit 0/1/75/130/3 for completed/failed/suspended/cancelled/stale (an interrupted run ends as
+suspended). It does not add an error document for an observed failure. An interrupted watcher emits
+an error document and leaves the observed run untouched. Three opt-in flags bound the watch for
+hosts with time limits. `--timeout DURATION` is measured from the first successful read: a run still
+running then ends the watch with `watch.timeout` (exit 79), whose error document carries the last
+observed `status` (`running`) and `details.timeoutMs`; the run keeps running.
+`--wait-created DURATION` is measured from the start of the watch: until the first successful read,
+a missing record is retried at the interval instead of failing with `run.not_found` (exit 3), and
+when the bound expires the watch fails with `watch.record_not_created` (exit 66), `status: null` and
+`details.waitCreatedMs`. A record that disappears after it was read stays `run.not_found`. Both take
+`ms`, `s`, `m` or `h` durations up to 2147483647 ms and sleep at most until their deadline, then
+read once more, so a run that finishes at the deadline is reported as finished and the watch ends
+within one read after it. `--final` prints only the final snapshot, or only the error document on a
+bound, an interrupt or a missing record. With `--summary`, inspect error documents carry the compact
+`summary` instead of the whole `run`. 79 is the first exit after the sysexits block and has no
+meaning in sh, Node, `timeout(1)` or xargs; 124 stays `start.timeout`, so a host can tell "runner
+stopped without a record" from "run still running". See [run observability](observability.md) for
+polling, stale detection, and partial usage. Non-watching inspect exits 0 for any readable
+checkpoint status, including `failed`, `cancelled`, and `running`. Plain `inspect ID --json` (not
+`--summary` or `--watch`) of a run with a worktree ledger also carries `worktreeAdminLock` while the
+repository's worktree administration lock is held:
 `{commonGitDir, path, owner, recovery, warning?}`, where `owner` is
 `{pid, host, token, state, osStartTime, acquiredAt}` or null when `owner.json` is missing or
 unreadable, `state` is `alive`, `dead`, `unknown`, `remote` or `released`, `acquiredAt` is the

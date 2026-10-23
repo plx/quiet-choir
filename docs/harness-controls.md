@@ -25,16 +25,16 @@ and writes a refreshed `auth.json` back under a lock; it requires restricted iso
 control. See [harness isolation](harness-isolation.md).
 
 Declare capability controls on [roster entries](roster.md), including tools, permissions,
-MCP/settings, native agents/profiles/config, additional directories, environment and escape args.
-`strictProfiles: true` (opt-in; the default is `false`) rejects those fields at raw call sites and
-in `bind`, so they belong on a roster entry; see [strict call sites](roster.md#strict-call-sites).
-Raw calls can supply role prompts, models, effort, fallbacks and image attachments per call; a
-roster call fixes all of them on its entry except Codex `images`. Native
-configuration/agent/escape/env controls and enabled network access are conservatively classified as
-**exec** access, and Codex additional writable directories as write access; Claude directories alone
-grant no tools. Under [`requireGrants`](roster.md#requiregrants-launch-grants-and-pins) those
-classes need launch grants, and named grants pin these declared controls and require renewal when
-they change.
+MCP/settings, native agents, Codex `harnessProfile` and config, additional directories, environment
+and escape args. `strictProfiles: true` (opt-in; the default is `false`) rejects those fields at raw
+call sites and in `bind`, so they belong on a roster entry; see
+[strict call sites](roster.md#strict-call-sites). Raw calls can supply role prompts, models, effort,
+fallbacks and image attachments per call; a roster call fixes all of them on its entry except Codex
+`images`. Native configuration/agent/escape/env controls and enabled network access are
+conservatively classified as **exec** access, and Codex additional writable directories as write
+access; Claude directories alone grant no tools. Under
+[`requireGrants`](roster.md#requiregrants-launch-grants-and-pins) those classes need launch grants,
+and named grants pin these declared controls and require renewal when they change.
 
 ```ts
 // In the roster module:

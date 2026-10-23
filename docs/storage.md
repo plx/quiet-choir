@@ -507,22 +507,24 @@ inherit it, and the root definition's own `requireGrants` is source, not saved
 unchanged and resume with the layer off unless the definition opts in; their saved `grants` and
 `grantedProfiles` are kept, so a later `--require-grants` resume honours them. A revision-17 build
 reads a revision-18 record without the field, reports it hidden, and refuses to rewrite it, so it
-can never drop the flag. Revision 19 (#579) is nested-only: a resolved profile in `capabilities`
-gains the optional `harness`, the one harness a roster entry is pinned to
-([roster](roster.md#manifest-and-validate-output)). Revision-18 records read and resume unchanged,
-since profiles and built-ins carry no pin. A revision-18 build cannot read a record whose manifest
-lists a roster entry (its strict manifest parse rejects the field), and refuses to rewrite any other
-revision-19 record. Revision 20 (#582) is nested-only: a request summary in `steps` (the step's and
-each attempt's `request`) gains the optional `promptTemplate`, the prompt name of a call whose
-`prompt` was a rendered `Prompt` ([prompt records](prompts.md#records)). Revision-19 records read,
-inspect and resume unchanged without it. A revision-19 build reads a revision-20 record and drops
-the field from its view (its request summary parse strips unknown keys), and refuses to rewrite it.
-Revision 21 (#584) is nested-only: `launch` gains the optional `package`, `{root, name, version}`
-with the real path of the `*.quiet-choir` directory a run was launched from
-([packages](packages.md#records-and-resume)); `launch.entrypoint` stays the selected workflow's
-module. Revision-20 records read and resume unchanged without it. A revision-20 build reads a
-revision-21 record and drops `package` from its view (its launch parse strips unknown keys), and
-refuses to rewrite it.
+can never drop the flag. A named grant saved for a role declared before profiles were removed (#726)
+does not admit a roster entry of the same name, because an entry's grant digest includes its pinned
+harness: resume with `--grant Name` again to pin the entry (#730). Revision 19 (#579) is
+nested-only: a resolved profile in `capabilities` gains the optional `harness`, the one harness a
+roster entry is pinned to ([roster](roster.md#manifest-and-validate-output)). Revision-18 records
+read and resume unchanged, since profiles and built-ins carry no pin. A revision-18 build cannot
+read a record whose manifest lists a roster entry (its strict manifest parse rejects the field), and
+refuses to rewrite any other revision-19 record. Revision 20 (#582) is nested-only: a request
+summary in `steps` (the step's and each attempt's `request`) gains the optional `promptTemplate`,
+the prompt name of a call whose `prompt` was a rendered `Prompt`
+([prompt records](prompts.md#records)). Revision-19 records read, inspect and resume unchanged
+without it. A revision-19 build reads a revision-20 record and drops the field from its view (its
+request summary parse strips unknown keys), and refuses to rewrite it. Revision 21 (#584) is
+nested-only: `launch` gains the optional `package`, `{root, name, version}` with the real path of
+the `*.quiet-choir` directory a run was launched from ([packages](packages.md#records-and-resume));
+`launch.entrypoint` stays the selected workflow's module. Revision-20 records read and resume
+unchanged without it. A revision-20 build reads a revision-21 record and drops `package` from its
+view (its launch parse strips unknown keys), and refuses to rewrite it.
 
 **Refusals.** A build must not rewrite a record it cannot fully read: its parse strips unknown
 top-level fields, and the next compaction would write the record back without them. When a record
