@@ -229,7 +229,9 @@ it('keeps declared policy changes out of replay identity while semantic options 
   ).rejects.toThrow(/changed/u);
 });
 
-it('uses package capabilities for grants, strict profiles and bounded child delegation', async () => {
+// The grant and child-delegation halves of this case moved onto roster entries in
+// roster-grants.test.ts and roster-delegation.test.ts.
+it('refuses a raw registered capability key under strictProfiles', async () => {
   const tool = defineHarness({
     ...third,
     name: 'tool',
@@ -240,52 +242,6 @@ it('uses package capabilities for grants, strict profiles and bounded child dele
     access: (options) => (options.tools?.length ? 'exec' : 'none'),
   });
   const adapter = { invoke: async () => response('done') };
-  const child = defineWorkflow({
-    ...base,
-    name: 'child',
-    requireGrants: true,
-    harnesses: [tool],
-    profiles: { worker: { harnesses: { tool: { tools: ['shell'] } } } },
-    defaults: { profile: 'worker' },
-    async run(ctx) {
-      return ctx.agent('tool').value('work', { prompt: 'x' });
-    },
-  });
-  await expect(
-    runWorkflow(child, { ...(await setup()), adapters: { tool: adapter } }),
-  ).rejects.toThrow('requires exec access');
-  expect(
-    (
-      await runWorkflow(child, {
-        ...(await setup()),
-        adapters: { tool: adapter },
-        grants: ['worker'],
-      })
-    ).output,
-  ).toBe('done');
-  const parent = defineWorkflow({
-    ...base,
-    requireGrants: true,
-    harnesses: [tool],
-    children: [child],
-    async run(ctx) {
-      return ctx.workflow('child', child, null);
-    },
-  });
-  await expect(
-    runWorkflow(parent, { ...(await setup()), adapters: { tool: adapter }, grants: ['exec'] }),
-  ).rejects.toThrow('no parent grant worker');
-  const grantedParent = {
-    ...parent,
-    profiles: { worker: { harnesses: { tool: { tools: ['shell'], model: 'parent-model' } } } },
-  };
-  const delegated = await runWorkflow(grantedParent, {
-    ...(await setup()),
-    adapters: { tool: adapter },
-    grants: ['worker'],
-  });
-  expect(delegated.output).toBe('done');
-  expect(delegated.steps['child/work']?.request?.model).toBe('parent-model');
   const raw = defineWorkflow({
     ...base,
     strictProfiles: true,

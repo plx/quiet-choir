@@ -144,13 +144,18 @@ it('resolves shared and provider-specific mode defaults and hides environment va
   const manifest = capabilityManifest({
     defaults: {
       isolation: 'inherit',
+      codex: { isolation: 'restricted' },
       claude: { env: { set: { PRIVATE: 'secret-marker' }, unset: ['REMOVE'] } },
     },
-    profiles: { reader: { isolation: 'restricted', codex: { isolation: 'inherit' } } },
+    roster: defineRoster({
+      reader: { harness: 'claude', isolation: 'restricted' },
+      coder: { harness: 'codex', isolation: 'inherit' },
+    }),
   });
   expect(manifest.defaults.claude.isolation).toBe('inherit');
+  expect(manifest.defaults.codex.isolation).toBe('restricted');
   expect(manifest.profiles['reader']?.claude.isolation).toBe('restricted');
-  expect(manifest.profiles['reader']?.codex.isolation).toBe('inherit');
+  expect(manifest.profiles['coder']?.codex.isolation).toBe('inherit');
   const visible = publicCapabilityManifest(manifest, undefined);
   expect(JSON.stringify(visible)).not.toContain('secret-marker');
   expect(visible.defaults.environment?.claude).toMatchObject({

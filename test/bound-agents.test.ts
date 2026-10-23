@@ -91,11 +91,10 @@ function view(step: StepRecord | undefined) {
 }
 
 const harnesses = [third, textOnly] as const;
-const profiles = { scout: { claude: { model: 'haiku', tools: ['Read'] } } };
-type Context = WorkflowContext<'scout', WorkflowHarnesses<typeof harnesses>, false>;
+type Context = WorkflowContext<never, WorkflowHarnesses<typeof harnesses>, false>;
 type Body = (ctx: Context) => Promise<unknown>;
 function workflow(name: string, run: Body) {
-  return defineWorkflow({ ...base, name, harnesses, profiles, run });
+  return defineWorkflow({ ...base, name, harnesses, run });
 }
 
 /** Run a raw and a bound body in separate state directories with one run ID; return both sides. */
@@ -246,15 +245,8 @@ it('binds a registered harness, and a text-only one to a text agent', async ({ r
   );
 });
 
-it('lifts a profile into a bound agent with the raw call resolution', async ({ runs }) => {
-  const { left } = await compare(
-    runs,
-    async (ctx) => ctx.claude.value('scan', { prompt, profile: 'scout' }),
-    async (ctx) => ctx.claude.bind({ profile: 'scout' }).value('scan', { prompt }),
-  );
-  expect(view(left.record.steps['scan']).attempts?.[0]?.profile).toBe('scout');
-  expect(left.requests[0]?.options).toMatchObject({ model: 'haiku', tools: ['Read'] });
-});
+// A role-bound call's raw call resolution is covered on roster entries by roster.test.ts 'sends the
+// request and fingerprint of a raw call that spells the entry' and the role-channel case below.
 
 it('layers a second bind over the first', async ({ runs }) => {
   const { left } = await compare(

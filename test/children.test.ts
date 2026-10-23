@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import {
+  defineRoster,
   defineWorkflow,
   readRun,
   runWorkflow,
@@ -1763,20 +1764,22 @@ it('refuses at construction to redefine a failed declared child that a committed
 it('refuses a grandchild Claude directory that its middle parent role lacks, under requireGrants', async () => {
   const stateDir = await directory();
   const requests: (readonly string[] | undefined)[] = [];
+  const reader = (addDirs: string[]) =>
+    defineRoster({ reader: { harness: 'claude', tools: ['Read', 'Grep', 'Glob'], addDirs } });
   const leaf = (addDirs: string[]) =>
     defineWorkflow({
       name: 'leaf',
       ...base,
-      profiles: { reader: { extends: 'readonly', claude: { addDirs } } },
+      roster: reader(addDirs),
       async run(ctx) {
-        await ctx.claude.text('read', { profile: 'reader', prompt: 'x' });
+        await ctx.roster.reader.text('read', { prompt: 'x' });
         return null;
       },
     });
   const middle = defineWorkflow({
     name: 'middle',
     ...base,
-    profiles: { reader: { extends: 'readonly', claude: { addDirs: ['docs'] } } },
+    roster: reader(['docs']),
     async run(ctx) {
       // notes is in the root's role but not in this one, so the leaf cannot list it.
       await expect(ctx.workflow('wide', leaf(['docs', 'notes']), null)).rejects.toThrow(
@@ -1790,7 +1793,7 @@ it('refuses a grandchild Claude directory that its middle parent role lacks, und
     name: 'parent',
     ...base,
     requireGrants: true,
-    profiles: { reader: { extends: 'readonly', claude: { addDirs: ['docs', 'notes'] } } },
+    roster: reader(['docs', 'notes']),
     async run(ctx) {
       await ctx.workflow('middle', middle, null);
       return null;
