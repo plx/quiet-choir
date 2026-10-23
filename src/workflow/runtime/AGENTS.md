@@ -171,9 +171,9 @@ the accepted-replay probe synthesizes every worktree effect, with no process run
 
 Resolve restricted/inherit mode before agent identity and preserve it through checkout preparation.
 Host environment values never enter semantic identity; explicit edits do. Persist only environment
-names/digests in request diagnostics and capability manifests, keeping the private resolved profile
-for live execution. Original format-one migration must not invent a completed agent’s isolation
-mode. See [ADR 0023](../../../docs/decisions/0023-restricted-harness-configuration.md).
+names/digests in request diagnostics and capability manifests, keeping the private resolved role for
+live execution. Original format-one migration must not invent a completed agent’s isolation mode.
+See [ADR 0023](../../../docs/decisions/0023-restricted-harness-configuration.md).
 
 Persist predicted Claude UUIDs and first observed native IDs per attempt. Own private transcripts
 and retain raw response/validation evidence before local validation. Transcript/session write errors
@@ -207,7 +207,7 @@ Registered harnesses share the existing effect path; never introduce untracked c
 Preflight names/revisions before effects, including declared children hidden by settled-map replay
 and declared children that a resumed or forked source never recorded at that declaration path. Keep
 adapter factories lazy on replay, named overrides ahead of the legacy catch-all, and explicit
-adapter-mode changes guarded. Strict package profiles own declared capability keys; child delegation
-cannot enlarge opaque controls. Preserve frozen built-in revision-one hashes and normalize legacy
-names only in read views. Helper metadata is observational; local usage is separate from agent
-attempt counts, and reports must stop when the callback returns. See ADR 0027.
+adapter-mode changes guarded. Under strictProfiles, roles own declared capability keys; child
+delegation cannot enlarge opaque controls. Preserve frozen built-in revision-one hashes and
+normalize legacy names only in read views. Helper metadata is observational; local usage is separate
+from agent attempt counts, and reports must stop when the callback returns. See ADR 0027.

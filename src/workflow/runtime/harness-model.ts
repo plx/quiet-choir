@@ -22,7 +22,7 @@ import type {
   Prompt,
   PromptText,
 } from './model.js';
-import type { AccessClass, BuiltinProfile } from './profiles-model.js';
+import type { AccessClass } from './profiles-model.js';
 import type { HarnessIsolation } from './agent-isolation.js';
 import type {
   claudeCapabilityKeys,
@@ -135,22 +135,23 @@ export interface HarnessDefinition<
   /** Option keys treated as execution policy rather than replay identity. */
   readonly policy?: readonly (keyof O & string)[];
   /**
-   * Capability controls that strict profiles own; adapters remain responsible for enforcing them.
+   * Capability controls that roles own under `strictProfiles`; adapters remain responsible for
+   * enforcing them.
    * Under `strictProfiles` the workflow's `ctx.agent(name)` option type omits a literal list's keys.
    */
   readonly capabilityKeys?: K;
   /**
    * Option keys whose values public capability manifests (checkpoints, `workflow validate --json`
-   * and `workflow check-resume --json`) must not print. A profile's value for a listed key moves
+   * and `workflow check-resume --json`) must not print. A role's value for a listed key moves
    * out of `harnesses.<name>` and `harnessCapabilities.<name>` into
    * `redacted.harnesses.<name>.<key>` as a SHA-256 digest, plus sorted top-level key names for an
    * object. Live calls, grant pins and step identity keep the raw values, so rotating one still
    * changes them. Step records and prompts are outside its scope. `defineHarness` rejects unknown
    * keys, duplicates, and keys that never reach a manifest: `prompt`, `model`, `env` and the
-   * runtime call options profiles cannot set.
+   * runtime call options roles cannot set.
    */
   readonly sensitiveOptions?: readonly (keyof O & string)[];
-  /** Pure access classification of partial profile or resolved call options; omission conservatively requires exec access. */
+  /** Pure access classification of partial role or resolved call options; omission conservatively requires exec access. */
   readonly access?: (options: Partial<O>) => AccessClass;
   /** Construct an adapter from operator configuration, outside effect identity. */
   readonly createAdapter?: (config: JsonValue) => HarnessAdapter<O>;
@@ -170,11 +171,11 @@ export interface HarnessDeclaration {
   readonly capabilities: HarnessCapabilities;
   /** Non-semantic option keys. */
   readonly policy?: readonly string[];
-  /** Profile-owned capability option keys. */
+  /** Role-owned capability option keys. */
   readonly capabilityKeys?: readonly string[];
   /** Option keys that public capability manifests show only as digests and key names. */
   readonly sensitiveOptions?: readonly string[];
-  /** Pure access classifier; receives validated partial profile or concrete call options. */
+  /** Pure access classifier; receives validated partial role or concrete call options. */
   readonly access?: (options: never) => AccessClass;
   /** Type-erased factory; callers recover its options from the registration schema. */
   readonly createAdapter?: (config: JsonValue) => HarnessAdapter<never>;
@@ -237,7 +238,7 @@ export type CapabilitiesOf<D> = D extends {
  * its call sites stay permissive at type level and the runtime strict check remains the backstop.
  */
 export type CapabilityKeysOf<D> = D extends {
-  /** Profile-owned capability option keys. */
+  /** Role-owned capability option keys. */
   readonly capabilityKeys?: infer K;
 }
   ? Exclude<K, undefined> extends infer T extends readonly string[]
@@ -248,8 +249,9 @@ export type CapabilityKeysOf<D> = D extends {
   : never;
 
 /**
- * Call-site options of harness `K` with registration `D` in a workflow with declared roles `TProfile`.
- * `profile` accepts a built-in preset or a declared role. When `TStrict` is exactly `true` (a
+ * Call-site options of harness `K` with registration `D`. They have no `profile` key: the removed
+ * call option (#726) fails typecheck, and a roster entry is called as `ctx.roster.Name` instead.
+ * When `TStrict` is exactly `true` (a
  * workflow that sets `strictProfiles` to a literal `true`; omitted infers `false`), the harness's
  * capability keys are forbidden as optional `never` properties, mirroring the runtime check: for
  * Claude and Codex every key except `isolation`, which is narrowed to exclude `'inherit'`; for a
@@ -259,24 +261,17 @@ export type CapabilityKeysOf<D> = D extends {
  * `boolean`, keeps every option. Claude's `addDirs` is forbidden like every other key: strict
  * directories belong on a roster entry, and rooted call-site directories were removed (#707).
  */
-export type CallOptions<
-  K extends string,
-  D,
-  TProfile extends string,
-  TStrict extends boolean,
-> = Extract<
+export type CallOptions<K extends string, D, TStrict extends boolean> = Extract<
   ([TStrict] extends [true]
     ? K extends 'claude' | 'codex'
       ? Omit<OptionsOf<D>, 'profile' | 'prompt' | 'isolation' | CapabilityKeysOf<D>> &
           Readonly<Partial<Record<Exclude<CapabilityKeysOf<D>, 'isolation'>, never>>> & {
-            /** Native configuration mode; strict profiles own `'inherit'`. */
+            /** Native configuration mode; under strictProfiles roster entries own `'inherit'`. */
             readonly isolation?: Exclude<HarnessIsolation, 'inherit'> | undefined;
           }
       : Omit<OptionsOf<D>, 'profile' | 'prompt' | CapabilityKeysOf<D>> &
           Readonly<Partial<Record<CapabilityKeysOf<D>, never>>>
     : Omit<OptionsOf<D>, 'profile' | 'prompt'>) & {
-    /** Built-in preset or one of this workflow's declared role names. */
-    readonly profile?: BuiltinProfile | TProfile | undefined;
     /** The task; a `Prompt` is replaced by its text before identity, so the adapter receives a string. */
     readonly prompt: string | Prompt;
   },

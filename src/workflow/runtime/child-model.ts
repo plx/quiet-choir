@@ -4,7 +4,7 @@ import type { DecisionProviderDeclaration } from './decision-model.js';
 import type { z } from 'zod';
 import type { AnyPromptSet, ErrorMode, JsonValue, Settled } from './model.js';
 import type { MapStepError } from './fan-out.js';
-import type { AgentDefaults, AgentProfile, CapabilityManifest } from './profiles-model.js';
+import type { AgentDefaults, CapabilityManifest } from './profiles-model.js';
 
 /** A child declaration with erased input/output types; typed calls use WorkflowDefinition directly. */
 export interface WorkflowDeclaration {
@@ -30,8 +30,6 @@ export interface WorkflowDeclaration {
   readonly phases?: readonly WorkflowPhase[];
   /** Children available to name-based inline dispatch. */
   readonly children?: readonly WorkflowDeclaration[];
-  /** Named capability requirements. */
-  readonly profiles?: Readonly<Record<string, AgentProfile>>;
   /**
    * Roster entries by name, from `defineRoster`: harness-pinned agents and decider entries, erased
    * to their harness or decision provider.
@@ -49,7 +47,7 @@ export interface WorkflowDeclaration {
         }
     >
   >;
-  /** Implicit role and common agent settings. */
+  /** Common agent settings, applied to every role after the text baseline. */
   readonly defaults?: AgentDefaults;
   /** Prompt sets checked before any effect (ADR 0064 section 3). */
   readonly prompts?: readonly AnyPromptSet[];
@@ -202,8 +200,6 @@ export interface WorkflowDescription {
   readonly outputSchema: JsonValue;
   /** Resolved roles with private environment values removed. */
   readonly capabilities: CapabilityManifest;
-  /** Declared profile names, separate from implicit built-ins. */
-  readonly profiles: Readonly<Record<string, CapabilityManifest['defaults']>>;
   /**
    * The roster's decider entries by name (ADR 0066 section 2), with the provider and model each one
    * fixes; empty when there are none. They are not roles, so `capabilities` does not list them.

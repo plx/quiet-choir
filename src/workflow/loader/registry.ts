@@ -43,7 +43,6 @@ const metadata: z.ZodType<WorkflowDescription> = z.lazy(() =>
     inputSchema: z.json(),
     outputSchema: z.json(),
     capabilities: capabilityManifestSchema,
-    profiles: z.record(z.string(), capabilityManifestSchema.shape.defaults),
     deciders: z.record(
       z.string(),
       z.object({

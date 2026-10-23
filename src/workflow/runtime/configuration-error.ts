@@ -26,11 +26,51 @@ export class ConfigurationError extends Error {
   }
 }
 
+/** A spelling of the profile authoring surface that #726 removed. @internal */
+export type RemovedProfileSurface = 'profiles' | 'defaults.profile' | 'call' | 'bind';
+
 /**
- * A profile call needs an access grant this run does not hold; raised only under `requireGrants`
+ * The refusal of a removed profile spelling (#726, ADR 0063 section 4), naming `defineRoster` and
+ * the roster that replace it. `subject` is the workflow name, or the step ID of a call. @internal
+ */
+export function removedProfileSurface(
+  spelling: RemovedProfileSurface,
+  subject = '',
+): ConfigurationError {
+  const tail = 'declare the agent with defineRoster and call ctx.roster.Name.';
+  switch (spelling) {
+    case 'profiles':
+      return new ConfigurationError(
+        `Workflow ${subject} declares profiles, which were removed (#726); declare agents with defineRoster, pass them as roster and call ctx.roster.Name.`,
+      );
+    case 'defaults.profile':
+      return new ConfigurationError(
+        `Workflow ${subject} sets defaults.profile, which was removed (#726); the default role is always text; declare agents with defineRoster and call ctx.roster.Name.`,
+      );
+    case 'call':
+      return new ConfigurationError(
+        `Step "${subject}": the profile call option was removed (#726); ${tail}`,
+      );
+    case 'bind':
+      return new ConfigurationError(`bind cannot set profile; it was removed (#726): ${tail}`);
+  }
+}
+
+/**
+ * Whether `value` is an object with an own `key` that is not `undefined`, read through its
+ * descriptor so no getter runs; a getter counts as set. @internal
+ */
+export function setsOwnKey(value: unknown, key: string): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  return descriptor !== undefined && (!('value' in descriptor) || descriptor.value !== undefined);
+}
+
+/**
+ * A call's role needs an access grant this run does not hold; raised only under `requireGrants`
  * (ADR 0063 §5). It is operator configuration, so it keeps {@link ConfigurationError}'s
- * never-settled, never-retried semantics; the runner reads its profile and access to choose a
- * `--grant` recovery hint instead of parsing the message.
+ * never-settled, never-retried semantics; the runner reads its role (the `profile` field) and
+ * access to choose a `--grant` recovery hint instead of parsing the message.
  * @internal
  */
 export class GrantRequiredError extends ConfigurationError {
@@ -43,14 +83,14 @@ export class GrantRequiredError extends ConfigurationError {
     return isBranded(this, value);
   }
 
-  /** Name the profile and the access it requires. */
+  /** Name the role and the access it requires. */
   public constructor(
-    /** Profile whose access is not granted. */
+    /** Role (`text` or a roster entry) whose access is not granted. */
     public readonly profile: string,
     /** Access level the call requires, such as `write` or `exec`. */
     public readonly access: string,
     /**
-     * Whether the call has call-site capability overrides, so a grant of its profile does not
+     * Whether the call has call-site capability overrides, so a grant of its roster entry does not
      * admit it and only an access-class grant (`access` or `all`) does.
      */
     public readonly classOnly = false,
@@ -63,8 +103,8 @@ export class GrantRequiredError extends ConfigurationError {
     const retry = repeatRequireGrants ? 'Retry with --require-grants and' : 'Retry with';
     super(
       classOnly
-        ? `Profile ${profile} requires ${access} access for call-site capability overrides, which profile grants do not cover. ${retry} --grant ${access} or --grant all.`
-        : `Profile ${profile} requires ${access} access. ${retry} --grant ${profile}, --grant ${access}, or --grant all.`,
+        ? `Role ${profile} requires ${access} access for call-site capability overrides, which roster entry grants do not cover. ${retry} --grant ${access} or --grant all.`
+        : `Role ${profile} requires ${access} access. ${retry} --grant ${profile}, --grant ${access}, or --grant all.`,
     );
     this.name = 'GrantRequiredError';
   }

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { WorkflowDeclaration, WorkflowDescription } from './child-model.js';
 import { jsonValue } from './json.js';
 import { capabilityManifest } from './profiles.js';
+import { removedProfileSurface, setsOwnKey } from './configuration-error.js';
 import { schemaJson } from './schema.js';
 import { checkWorktreePolicy } from './worktree-policy.js';
 import { checkDecisionProviders } from './decision-protocol.js';
@@ -34,6 +35,11 @@ export function checkedDefinition(value: unknown): WorkflowDeclaration {
         `Workflow "${field}" is not a zod 4 schema (zod/v3 and zod/mini are unsupported; import { z } from 'quiet-choir').`,
       );
   metadataSchema.parse(definition);
+  // Roster entries are the only declared roles (#726, ADR 0063 section 4).
+  if (setsOwnKey(definition, 'profiles'))
+    throw removedProfileSurface('profiles', String(definition['name']));
+  if (setsOwnKey(definition['defaults'], 'profile'))
+    throw removedProfileSurface('defaults.profile', String(definition['name']));
   if (definition['children'] !== undefined && !Array.isArray(definition['children']))
     throw new Error(
       `Workflow ${String(definition['name'])} children must be an array of definitions.`,
@@ -133,12 +139,6 @@ export function describeWorkflow(
         inputSchema: jsonValue(schemaJson(definition.input)),
         outputSchema: jsonValue(schemaJson(definition.output)),
         capabilities,
-        profiles: Object.fromEntries(
-          Object.keys(definition.profiles ?? {}).flatMap((name) => {
-            const profile = capabilities.profiles[name];
-            return profile ? [[name, profile]] : [];
-          }),
-        ),
         deciders: compileRoster(definition).deciders,
         prompts: promptSets(definition),
         children: [],

@@ -32,30 +32,28 @@ export function withoutHarnessOptions<T extends WorkflowDescription>(
 
 type EnvironmentPair = NonNullable<ResolvedRole['environment']>;
 
-/** One profile in the compact capability view: only the environments that differ. @internal */
-export type CompactResolvedProfile = Omit<ResolvedRole, 'environment'> & {
+/** One role in the compact capability view: only the environments that differ. @internal */
+export type CompactResolvedRole = Omit<ResolvedRole, 'environment'> & {
   readonly environment?: Partial<EnvironmentPair>;
 };
 
 /**
  * Capability manifest with each fact stated once: no `defaults` (read
- * `profiles[defaultProfile]`), and a shared `environment` that each profile overrides only for the
- * harnesses that differ (`profile.environment?.[h] ?? capabilities.environment[h]`). @internal
+ * `profiles[defaultProfile]`), and a shared `environment` that each role overrides only for the
+ * harnesses that differ (`role.environment?.[h] ?? capabilities.environment[h]`). @internal
  */
 export type CompactCapabilityManifest = Omit<CapabilityManifest, 'defaults' | 'profiles'> & {
   readonly defaults?: ResolvedRole;
   readonly environment?: EnvironmentPair;
-  readonly profiles: Readonly<Record<string, CompactResolvedProfile>>;
+  readonly profiles: Readonly<Record<string, CompactResolvedRole>>;
 };
 
 /** Workflow metadata as printed by `validate --json` and `list-defs --json`. @internal */
 export type CompactWorkflowMetadataView = Omit<
   WorkflowMetadataView<WorkflowDescription>,
-  'capabilities' | 'profiles' | 'children' | 'entrypoint'
+  'capabilities' | 'children' | 'entrypoint'
 > & {
   readonly capabilities: CompactCapabilityManifest;
-  /** Declared profile names in declaration order; each profile's facts live in `capabilities`. */
-  readonly profiles: readonly string[];
   readonly children: readonly CompactWorkflowMetadataView[];
   /** Absent on the root when it equals the document's own entrypoint. */
   readonly entrypoint?: string | null;
@@ -65,9 +63,9 @@ const ENVIRONMENT_HARNESSES = ['claude', 'codex'] as const;
 
 /**
  * Print-time view of a capability manifest that states each fact once. Removes `defaults` (the
- * default profile is named by `defaultProfile`), hoists the default profile's environment into
- * `environment`, and keeps a profile's `environment` only for harnesses whose summary differs.
- * The input is not modified; a manifest without a matching default profile or environment is
+ * default role is named by `defaultProfile`), hoists the default role's environment into
+ * `environment`, and keeps a role's `environment` only for harnesses whose summary differs.
+ * The input is not modified; a manifest without a matching default role or environment is
  * returned structurally unchanged. @internal
  */
 export function compactCapabilityManifest(manifest: CapabilityManifest): CompactCapabilityManifest {
@@ -89,14 +87,13 @@ export function compactCapabilityManifest(manifest: CapabilityManifest): Compact
         Object.keys(differing).length === 0 ? others : { ...others, environment: differing },
       ];
     }),
-  ) as Record<string, CompactResolvedProfile>;
+  ) as Record<string, CompactResolvedRole>;
   return { ...rest, environment: baseline, profiles: compacted };
 }
 
 /**
  * Print-time view for `validate --json` and `list-defs --json`: {@link withoutHarnessOptions}
- * plus {@link compactCapabilityManifest} at every depth, `profiles` reduced to the declared names,
- * and the root `entrypoint` omitted when it equals `entrypoint`, the document's own copy. Child
+ * plus {@link compactCapabilityManifest} at every depth, and the root `entrypoint` omitted when it equals `entrypoint`, the document's own copy. Child
  * nodes keep theirs. Nothing is modified in place. @internal
  */
 export function compactWorkflowMetadata(
@@ -115,7 +112,6 @@ function compactNode(value: WorkflowDescription): CompactWorkflowMetadataView {
   return {
     ...base,
     capabilities: compactCapabilityManifest(value.capabilities),
-    profiles: Object.keys(value.profiles),
     children: value.children.map((child) => compactNode(child)),
   };
 }

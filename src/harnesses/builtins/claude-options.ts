@@ -4,7 +4,7 @@ import type { AgentOptions, Effort, JsonValue, Prompt } from '../../workflow/run
 export interface ClaudeOptions extends AgentOptions {
   /** Native effort level, mapped to --effort. */
   readonly effort?: Effort | undefined;
-  /** Warn about denied tools, or fail the call; overrides the selected profile policy. */
+  /** Warn about denied tools, or fail the call; overrides the selected role's policy. */
   readonly onPermissionDenied?: 'warn' | 'fail';
   /** Explicit plugin directories; native code is trusted and paths enter semantic identity. */
   readonly plugins?: readonly string[];
@@ -46,12 +46,12 @@ export interface ClaudeOptions extends AgentOptions {
   readonly settings?: Readonly<Record<string, JsonValue>>;
   /** Fallback model or ordered models; semantic identity, not a policy override. */
   readonly fallbackModel?: string | readonly string[];
-  /** Built-in tools to expose; declare it in a workflow profile under strictProfiles. Default: none. */
+  /** Built-in tools to expose; declare it on a roster entry under strictProfiles. Default: none. */
   readonly tools?: readonly string[];
   /** Narrower tool permissions; omission pre-approves the exposed tools. */
   readonly allowedTools?: readonly string[];
-  /** Maximum agent turns; implicit text profile: 10. */
+  /** Maximum agent turns; implicit text role: 10. */
   readonly maxTurns?: number;
-  /** Per-call USD limit enforced by Claude; implicit text profile: 0.50. */
+  /** Per-call USD limit enforced by Claude; implicit text role: 0.50. */
   readonly maxBudgetUsd?: number;
 }

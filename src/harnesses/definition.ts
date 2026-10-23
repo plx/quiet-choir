@@ -26,7 +26,7 @@ export function defineHarness<
   O &
     Pick<
       AgentOptions,
-      'profile' | 'cwd' | 'onError' | 'retry' | 'timeoutMs' | 'idleTimeoutMs' | 'worktree' | 'model'
+      'cwd' | 'onError' | 'retry' | 'timeoutMs' | 'idleTimeoutMs' | 'worktree' | 'model'
     >,
   C,
   K
@@ -65,6 +65,7 @@ export function defineHarness<
     throw new Error(`Reserved harness name: ${definition.name}.`);
   const runtimeOptions = {
     model: z.string().optional(),
+    // The internal role channel's spelling of a roster entry; the public option types omit it.
     profile: z.string().min(1).optional(),
     cwd: z.string().optional(),
     onError: z.enum(['throw', 'return']).optional(),
@@ -113,9 +114,9 @@ export function defineHarness<
   ])
     if (!Object.hasOwn(shape, key))
       throw new Error(`Harness ${definition.name} refers to unknown option ${key}.`);
-  if (definition.capabilityKeys?.includes('profile'))
+  if ((definition.capabilityKeys as readonly string[] | undefined)?.includes('profile'))
     throw new Error(
-      `Harness ${definition.name} capabilityKeys cannot include profile; profile selects a named profile.`,
+      `Harness ${definition.name} capabilityKeys cannot include profile; profile names the call's role.`,
     );
   for (const key of definition.policy ?? [])
     if (
@@ -132,14 +133,7 @@ export function defineHarness<
       O &
         Pick<
           AgentOptions,
-          | 'profile'
-          | 'cwd'
-          | 'onError'
-          | 'retry'
-          | 'timeoutMs'
-          | 'idleTimeoutMs'
-          | 'worktree'
-          | 'model'
+          'cwd' | 'onError' | 'retry' | 'timeoutMs' | 'idleTimeoutMs' | 'worktree' | 'model'
         >
     >,
   };

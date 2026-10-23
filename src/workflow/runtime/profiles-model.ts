@@ -1,13 +1,14 @@
-import type { ClaudeOptions, CodexOptions, JsonValue } from './model.js';
+import type { AgentOptions, ClaudeOptions, CodexOptions, JsonValue } from './model.js';
 import type { HarnessIsolation } from './agent-isolation.js';
 import type { EnvironmentSummary } from './agent-environment-model.js';
-/** Named presets supplied by the runtime. */
-export type BuiltinProfile = 'text' | 'readonly' | 'edit';
 
 /** Capability classification; exec includes arbitrary command or unknown tool execution. */
 export type AccessClass = 'none' | 'read' | 'write' | 'exec';
 
-/** Resource limits available to profile launch overrides. Codex uses only the two deadlines. */
+/**
+ * Resource limits of a role, which `--profile Name.limit=` launch overrides can change. Codex uses
+ * only the two deadlines.
+ */
 export interface ProfileLimits {
   /** Wall-clock deadline, enforced by the harness. */
   readonly timeoutMs?: number;
@@ -19,14 +20,15 @@ export interface ProfileLimits {
   readonly maxBudgetUsd?: number;
 }
 
-/** A shared role with harness-specific semantics and common resource limits. */
-export interface AgentProfile extends ProfileLimits {
+/**
+ * Workflow-wide defaults: harness-specific semantics and common resource limits applied to every
+ * role after the text baseline, and before a roster entry's own options.
+ */
+export interface AgentDefaults extends ProfileLimits {
   /** Options for explicitly registered harnesses; prompt and per-call control fields stay at the call site. */
   readonly harnesses?: Readonly<Record<string, Readonly<Record<string, JsonValue>>>>;
   /** Configuration policy for both providers; harness-specific settings can override it. */
   readonly isolation?: HarnessIsolation;
-  /** Built-in or declared parent; inheritance cycles are definition errors. */
-  readonly extends?: string;
   /** Human-readable purpose, included in validate's manifest. */
   readonly description?: string;
   /** Optional assertion of the inferred maximum access across both providers. */
@@ -42,7 +44,6 @@ export interface AgentProfile extends ProfileLimits {
   /** Claude model, tool gates, role prompts, configuration mode and native controls. */
   readonly claude?: Omit<
     ClaudeOptions,
-    | 'profile'
     | 'prompt'
     | 'cwd'
     | 'onError'
@@ -53,17 +54,16 @@ export interface AgentProfile extends ProfileLimits {
     | 'appendSystemPrompt'
     | keyof ProfileLimits
   > & {
-    /** Replace the system prompt via a private temporary file. Profiles take a string. */
+    /** Replace the system prompt via a private temporary file. Defaults take a string. */
     readonly systemPrompt?: string;
-    /** Append stable role instructions via a private temporary file. Profiles take a string. */
+    /** Append stable role instructions via a private temporary file. Defaults take a string. */
     readonly appendSystemPrompt?: string;
-    /** Overrides the profile-wide configuration mode; checkout placement stays per call. */
+    /** Overrides the workflow-wide configuration mode; checkout placement stays per call. */
     readonly isolation?: HarnessIsolation;
   };
   /** Codex model, sandbox, effort and native controls. */
   readonly codex?: Omit<
     CodexOptions,
-    | 'profile'
     | 'prompt'
     | 'cwd'
     | 'onError'
@@ -73,29 +73,34 @@ export interface AgentProfile extends ProfileLimits {
     | 'worktree'
     | keyof ProfileLimits
   > & {
-    /** Overrides the profile-wide configuration mode; checkout placement stays per call. */
+    /** Overrides the workflow-wide configuration mode; checkout placement stays per call. */
     readonly isolation?: HarnessIsolation;
   };
 }
 
-/** Workflow-wide defaults applied after the selected built-in preset. */
-export interface AgentDefaults<TName extends string = string> extends Omit<
-  AgentProfile,
-  'extends'
-> {
-  /** Implicit profile for calls that omit profile. Defaults to text. */
-  readonly profile?: BuiltinProfile | TName;
-}
+/**
+ * One layer of a role as the resolver merges it: the workflow defaults or a compiled roster entry,
+ * over the text baseline. @internal
+ */
+export type RoleLayer = AgentDefaults;
 
-/** One ordered launch-time limit override; '*' selects every profile. */
+/**
+ * Agent call options as the runtime reads them: the internal role channel spells a roster call's
+ * entry as `profile`, which the public option types no longer have (#726). @internal
+ */
+export type RoleRequest<T extends AgentOptions = AgentOptions> = T & {
+  readonly profile?: string | undefined;
+};
+
+/** One ordered launch-time limit override; '*' selects every role. */
 export interface ProfileOverride extends ProfileLimits {
-  /** Built-in/declared name or '*'; semantic fields cannot be overridden here. */
+  /** A roster entry name, `text` or '*'; semantic fields cannot be overridden here. */
   readonly profile: string;
 }
 
 /**
  * Public stand-in for one free-form native control that manifests do not print. The raw value stays
- * in the live profile for execution and grant pins; a digest of a short or guessable value can be
+ * in the live role for execution and grant pins; a digest of a short or guessable value can be
  * guessed, which is the same trade-off as an environment digest.
  */
 export interface RedactedControl {
@@ -110,19 +115,13 @@ export interface RedactedControl {
 }
 
 /**
- * Fully resolved plain-data role, suitable for validation output: the resolved role in public
- * capability manifests.
- *
- * @deprecated Roster entries replace profiles (ADR 0063); this name goes with them (#696). The
- * runtime calls it ResolvedRole.
+ * A fully resolved plain-data role, suitable for validation output: the text baseline or a roster
+ * entry (ADR 0063 section 4), as public capability manifests list it.
  */
-export interface ResolvedProfile extends Omit<
-  AgentProfile,
-  'extends' | 'access' | 'claude' | 'codex'
-> {
+export interface ResolvedRole extends Omit<AgentDefaults, 'access' | 'claude' | 'codex'> {
   /** Inferred access for each declared additional harness. */
   readonly harnessAccess?: Readonly<Record<string, AccessClass>>;
-  /** Profile-owned generic capability controls, used for grant pinning and child delegation. */
+  /** Role-owned generic capability controls, used for grant pinning and child delegation. */
   readonly harnessCapabilities?: Readonly<Record<string, Readonly<Record<string, JsonValue>>>>;
   /** Safe environment diagnostics retained when serializable manifests omit explicit values. */
   readonly environment?: {
@@ -134,7 +133,7 @@ export interface ResolvedProfile extends Omit<
   /**
    * Names and digests of free-form controls that public manifests (checkpoints, validate and
    * check-resume output) omit from `claude` and `codex`, and of registered harness options a
-   * declaration lists in `sensitiveOptions`. Absent when the profile sets none of them.
+   * declaration lists in `sensitiveOptions`. Absent when the role sets none of them.
    */
   readonly redacted?: {
     /** Claude controls omitted from `claude`. */
@@ -164,7 +163,7 @@ export interface ResolvedProfile extends Omit<
   /** Name used for selection and diagnostics, outside step identity. */
   readonly name: string;
   /**
-   * The one harness a roster entry is pinned to (ADR 0063 §4); absent for profiles and built-ins.
+   * The one harness a roster entry is pinned to (ADR 0063 §4); absent for the text role.
    * A call that selects this role on another harness is refused, and `access` is this harness's.
    */
   readonly harness?: string;
@@ -178,35 +177,32 @@ export interface ResolvedProfile extends Omit<
   /** Codex sandbox classification; at least read, even for text. */
   readonly codexAccess: AccessClass;
   /** Resolved Claude semantics, including both tool gates. */
-  readonly claude: NonNullable<AgentProfile['claude']> & {
+  readonly claude: NonNullable<AgentDefaults['claude']> & {
     /** Exact exposed tools. */
     readonly tools: readonly string[];
     /** Exact pre-approved tools or narrower rules. */
     readonly allowedTools: readonly string[];
   };
   /** Resolved Codex semantics, including its sandbox. */
-  readonly codex: NonNullable<AgentProfile['codex']> & {
+  readonly codex: NonNullable<AgentDefaults['codex']> & {
     /** Effective filesystem sandbox. */
     readonly sandbox: 'read-only' | 'workspace-write';
   };
 }
 
-/**
- * A fully resolved role: a roster entry, built-in preset or declared profile (ADR 0063 section 4).
- * @internal
- */
-export type ResolvedRole = ResolvedProfile; // eslint-disable-line @typescript-eslint/no-deprecated -- the public manifest keeps the deprecated name until the removal slice (#696)
-
 /** Capability declaration without evaluating the workflow body. */
 export interface CapabilityManifest {
   /** Whether call-site capability controls are prohibited. */
   readonly strictProfiles: boolean;
-  /** Default profile name. */
+  /** Default role name: always `text` for new manifests. */
   readonly defaultProfile: string;
   /** Resolved implicit call defaults. */
-  readonly defaults: ResolvedProfile; // eslint-disable-line @typescript-eslint/no-deprecated -- the public manifest keeps the deprecated name until the removal slice (#696)
-  /** All callable profiles, including built-ins. Under requireGrants, elevated ones need a grant. */
-  readonly profiles: Readonly<Record<string, ResolvedProfile>>; // eslint-disable-line @typescript-eslint/no-deprecated -- the public manifest keeps the deprecated name until the removal slice (#696)
+  readonly defaults: ResolvedRole;
+  /**
+   * Every callable role by name: `text` and the roster entries. Under requireGrants, elevated ones
+   * need a grant.
+   */
+  readonly profiles: Readonly<Record<string, ResolvedRole>>;
   /**
    * Declared/default elevated roles checked before the body starts under `requireGrants`; empty
    * when the run and its root definition do not opt in.
