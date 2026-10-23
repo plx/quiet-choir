@@ -84,9 +84,9 @@ Other inherit-mode inputs are not detected: project `CLAUDE.md` files (including
 Added directories. Restricted Claude 2.1.293 loads no `CLAUDE.md`, `.claude/CLAUDE.md`,
 `CLAUDE.local.md`, `.claude/rules/*.md`, `.claude/skills` skill or `.claude/commands` command from
 an `addDirs` directory: none reaches the request, and the skill and command are absent from the init
-listing. This holds for static `addDirs` and for bounded call-site directories alike, which are the
-same `--add-dir` argument. The directory only extends the file tools' reach. It is not a trust
-decision about its contents, so the run records nothing for it. Claude's native opt-in
+listing. This holds for static `addDirs` and call-site `addDirs` alike, which are the same
+`--add-dir` argument. The directory only extends the file tools' reach. It is not a trust decision
+about its contents, so the run records nothing for it. Claude's native opt-in
 `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1` is not blocked, only gated: with it, even
 restricted Claude loads the added directory's `CLAUDE.md`, `.claude/CLAUDE.md` and `.claude/rules`
 files (not `CLAUDE.local.md`, skills or commands). A host-exported value is removed by the
