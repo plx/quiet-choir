@@ -23,6 +23,7 @@ import {
   requireGrant,
   resolveCapabilities,
 } from '../src/workflow/runtime/profiles.js';
+import { bindRole } from '../src/workflow/runtime/bound-agent.js';
 import { compileRoster } from '../src/workflow/runtime/roster.js';
 import { it } from './setup/state-dir.js';
 
@@ -414,91 +415,49 @@ describe('ctx.roster calls', () => {
     ]);
   });
 
-  it('resolves, fingerprints and records a roster call as a raw profile call, also within a prefix and re-bound', async ({
+  // Request and fingerprint parity with a raw call is the case above.
+  it('records a roster call as its entry, also within a prefix and re-bound', async ({
+    stateDir,
     runs,
   }) => {
-    const sides = [];
-    for (const raw of [true, false]) {
-      const stateDir = await tempDir();
-      const fake = capture();
-      const definition = defineWorkflow({
-        ...base,
-        name: 'roster-profile-parity',
-        harnesses: [third],
-        roster,
-        async run(ctx) {
-          if (raw)
-            return [
-              await ctx.claude.value('review', {
-                prompt,
-                schema: Review,
-                profile: 'Reviewer',
-              } as never),
-              (await ctx.agent('third').text('scout', { prompt, profile: 'Scout' } as never))
-                .output,
-              (await ctx.within('p').claude.text('t', { prompt, profile: 'Reviewer' } as never))
-                .output,
-              (
-                await ctx.claude.text('dirs', {
-                  profile: 'Reviewer',
-                  addDirs: ['x', 'y'],
-                  prompt,
-                } as never)
-              ).output,
-            ];
-          return [
-            await ctx.roster.Reviewer.value('review', { prompt, schema: Review }),
-            (await ctx.roster.Scout.text('scout', { prompt })).output,
-            (await ctx.within('p').roster.Reviewer.text('t', { prompt })).output,
-            (
-              await ctx.roster.Reviewer.bind({ addDirs: ['x'] }).text('dirs', {
-                prompt,
-                addDirs: ['y'],
-              })
-            ).output,
-          ];
-        },
-      });
-      const result = await runs.run(definition, {
-        stateDir,
-        runId: 'profile-parity',
-        input: null,
-        harness: fake.harness,
-        adapters: { third: fake.adapter },
-      });
-      sides.push({ result, fake, record: await readRun({ stateDir, runId: 'profile-parity' }) });
-    }
-    const [left, right] = sides as [(typeof sides)[0], (typeof sides)[0]];
-    expect(right.fake.requests).toEqual(left.fake.requests);
-    expect(right.result.output).toEqual(left.result.output);
+    const fake = capture();
+    const definition = defineWorkflow({
+      ...base,
+      name: 'roster-entry-record',
+      harnesses: [third],
+      roster,
+      async run(ctx) {
+        return [
+          await ctx.roster.Reviewer.value('review', { prompt, schema: Review }),
+          (await ctx.roster.Scout.text('scout', { prompt })).output,
+          (await ctx.within('p').roster.Reviewer.text('t', { prompt })).output,
+          (
+            await ctx.roster.Reviewer.bind({ addDirs: ['x'] }).text('dirs', {
+              prompt,
+              addDirs: ['y'],
+            })
+          ).output,
+        ];
+      },
+    });
+    await runs.run(definition, {
+      stateDir,
+      runId: 'entry-record',
+      input: null,
+      harness: fake.harness,
+      adapters: { third: fake.adapter },
+    });
+    const record = await readRun({ stateDir, runId: 'entry-record' });
     const ids = ['review', 'scout', 'p/t', 'dirs'];
-    expect(Object.keys(right.record.steps).sort()).toEqual([...ids].sort());
-    const identity = (step: StepRecord | undefined) => {
-      const last = attempt(step);
-      return {
-        fingerprint: step?.fingerprint,
-        attempt: last && {
-          fingerprint: last.fingerprint,
-          profile: last.profile,
-          policy: last.policy,
-          sources: last.sources,
-          request: last.request,
-          requested: last.requested,
-        },
-      };
-    };
-    for (const id of ids)
-      expect(identity(right.record.steps[id])).toEqual(identity(left.record.steps[id]));
-    expect(ids.map((id) => attempt(right.record.steps[id])?.profile)).toEqual([
+    expect(Object.keys(record.steps).sort()).toEqual([...ids].sort());
+    expect(ids.map((id) => attempt(record.steps[id])?.profile)).toEqual([
       'Reviewer',
       'Scout',
       'Reviewer',
       'Reviewer',
     ]);
     // The entry's options reach each request, though the roster call names no profile.
-    const sent = Object.fromEntries(
-      right.fake.requests.map((request) => [request.stepId, request]),
-    );
+    const sent = Object.fromEntries(fake.requests.map((request) => [request.stepId, request]));
     for (const id of ['review', 'p/t', 'dirs'])
       expect(sent[id]).toMatchObject({
         harness: 'claude',
@@ -506,7 +465,7 @@ describe('ctx.roster calls', () => {
       });
     expect(sent['scout']).toMatchObject({ harness: 'third', options: { thinking: 'deep' } });
     expect(sent['dirs']?.options.addDirs).toEqual(['x', 'y']);
-    expect(attempt(right.record.steps['review'])?.sources).toMatchObject({
+    expect(attempt(record.steps['review'])?.sources).toMatchObject({
       maxTurns: 'profile:Reviewer',
     });
   });
@@ -606,7 +565,9 @@ describe('ctx.roster calls', () => {
       name: 'roster-pin',
       roster: defineRoster({ Reviewer: { harness: 'claude', tools: ['Read'] } }),
       async run(ctx) {
-        return (await ctx.codex.text('wrong', { prompt, profile: 'Reviewer' } as never)).output;
+        // The role channel reaches the pin guard as ctx.roster would, but through the codex client.
+        const wrong = bindRole(ctx.codex, 'Reviewer') as typeof ctx.codex;
+        return (await wrong.text('wrong', { prompt })).output;
       },
     });
     await expect(
@@ -880,10 +841,16 @@ describe('launch overrides and grants', () => {
     expect(() => {
       requireGrant(repinned, ['Worker'], pins);
     }).toThrow('--grant Worker');
-    // A role without a pin keeps the digest it had before rosters, so saved grant pins hold.
-    const edit = resolveCapabilities({}).profiles['edit'];
-    if (!edit) throw new Error('edit did not resolve.');
-    expect(profileGrantDigest(edit)).toBe(
+    // An unpinned role keeps the digest it had before rosters, so saved grant pins hold: the
+    // unpinned text role with the edit preset's tools and sandbox digests as that preset did.
+    const unpinned = resolveCapabilities({
+      defaults: {
+        claude: { tools: ['Read', 'Grep', 'Glob', 'Edit', 'Write'] },
+        codex: { sandbox: 'workspace-write' },
+      },
+    }).profiles['text'];
+    if (!unpinned) throw new Error('text did not resolve.');
+    expect(profileGrantDigest(unpinned)).toBe(
       '4a87c86d2adce1b7712d584da2a0cf6a16c3daf76fc049310af0af38ef53f5f9',
     );
   });
@@ -1026,8 +993,8 @@ describe('launch overrides and grants', () => {
       name: 'profile-parent',
       requireGrants: true,
       defaults: restricted,
-      profiles: { Fixer: {} },
-      run: (ctx) => ctx.workflow('child', codexChild, null),
+      // Fixer maps onto the parent's unpinned text role.
+      run: (ctx) => ctx.workflow('child', codexChild, null, { profiles: { Fixer: 'text' } }),
     });
     const result = await runs.run(unpinned, {
       stateDir,
