@@ -135,10 +135,10 @@
     "@oclif/core": "4.13.3",
     "@types/node": "22.13.17",
     "minijinja-js": "3.0.1",
-    "smol-toml": "1.9.0",
-    "tsx": "4.23.11",
+    "smol-toml": "1.9.1",
+    "tsx": "4.23.15",
     "typescript": "npm:@typescript/typescript6@6.0.2",
-    "zod": "4.5.4"
+    "zod": "4.6.7"
   },
   "oclif": {
     "bin": "quiet-choir",
