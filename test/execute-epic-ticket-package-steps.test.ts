@@ -575,6 +575,22 @@ describe('epic body and label mechanics', () => {
       'api -X DELETE repos/acme/widgets/issues/9/labels/needs-decision --silent',
     ]);
   });
+
+  it('reaches a host-qualified repository by --hostname and an owner/name path', async () => {
+    await fakeGh('## Items\n\n- [ ] #9 Add a widget\n', ['needs-decision']);
+    const hosted = 'ghe.example/acme/widgets';
+    await inWorkflow(real, (ctx) => tick(ctx, 'tick', { repo: hosted, epic: 7, ticket: 9 }));
+    await inWorkflow(real, (ctx) =>
+      removeLabel(ctx, 'unlabel', { repo: hosted, number: 9, label: 'needs-decision' }),
+    );
+    const log = await readFile(join(real, 'gh.log'), 'utf8');
+    expect(log.split('\n').filter(Boolean)).toEqual([
+      'api --hostname ghe.example repos/acme/widgets/issues/7 --jq {body: .body}',
+      'api --hostname ghe.example -X PATCH repos/acme/widgets/issues/7 --input - --silent',
+      'api --hostname ghe.example repos/acme/widgets/issues/9 --jq {labels: [.labels[].name]}',
+      'api --hostname ghe.example -X DELETE repos/acme/widgets/issues/9/labels/needs-decision --silent',
+    ]);
+  });
 });
 
 describe('sub-issue links and issue reads', () => {
@@ -605,9 +621,9 @@ describe('sub-issue links and issue reads', () => {
       "  process.stdout.write('{}');",
       "} else if (query.startsWith('query=query')) {",
       "  process.stdout.write(JSON.stringify({ data: { repository: { child, wanted: { id: 'I_7' } } } }));",
-      "} else if (args[1] === 'repos/acme/widgets/issues/21') {",
+      "} else if (args.includes('repos/acme/widgets/issues/21')) {",
       "  process.stdout.write(JSON.stringify({ number: 21, title: 'Registry', state: 'open', pull_request: null }));",
-      "} else if (args[1] === 'repos/acme/widgets/issues/30') {",
+      "} else if (args.includes('repos/acme/widgets/issues/30')) {",
       "  process.stdout.write(JSON.stringify({ number: 30, title: 'A PR', state: 'open', pull_request: { url: 'x' } }));",
       '} else {',
       "  process.stderr.write('gh: Not Found (HTTP 404)\\n');",
@@ -655,6 +671,18 @@ describe('sub-issue links and issue reads', () => {
     expect(await state(21)).toEqual({ number: 21, title: 'Registry', state: 'OPEN' });
     expect(await state(99)).toBeNull();
     expect(await state(30)).toBeNull();
+  });
+
+  it('issueState reads a host-qualified repository through --hostname', async () => {
+    await fakeGh(null);
+    expect(
+      await inWorkflow(real, (ctx) =>
+        issueState(ctx, 'state', { repo: 'ghe.example/acme/widgets', number: 21 }),
+      ),
+    ).toEqual({ number: 21, title: 'Registry', state: 'OPEN' });
+    expect((await readFile(join(real, 'gh.log'), 'utf8')).trim()).toBe(
+      'api --hostname ghe.example repos/acme/widgets/issues/21 --jq {number,title,state,pull_request}',
+    );
   });
 });
 
@@ -724,5 +752,24 @@ describe('title lookup before filing', () => {
     expect(
       await inWorkflow(real, (ctx) => openSubIssues(ctx, 'subs', { repo, parent: 50 })),
     ).toEqual([{ number: 21, title: 'Item 21', url: 'https://github.com/acme/widgets/issues/21' }]);
+  });
+
+  it('openSubIssues lists a host-qualified repository through --hostname', async () => {
+    const hosted = {
+      number: 21,
+      title: 'Item 21',
+      url: 'https://ghe.example/acme/widgets/issues/21',
+      state: 'open',
+      repository_url: 'https://ghe.example/api/v3/repos/acme/widgets',
+    };
+    const gh = await fakeGh([], [hosted, { ...hosted, number: 23, repository_url: 'x/repos/o/w' }]);
+    expect(
+      await inWorkflow(real, (ctx) =>
+        openSubIssues(ctx, 'subs', { repo: 'ghe.example/acme/widgets', parent: 50 }),
+      ),
+    ).toEqual([{ number: 21, title: 'Item 21', url: hosted.url }]);
+    expect((await gh.calls()).map((call) => call.split(' --jq ')[0])).toEqual([
+      'api --hostname ghe.example repos/acme/widgets/issues/50/sub_issues?per_page=100',
+    ]);
   });
 });

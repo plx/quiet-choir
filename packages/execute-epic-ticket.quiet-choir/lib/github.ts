@@ -19,10 +19,32 @@ const write = { retry: { maxAttempts: 3, on: ['process', 'timeout'] as const } }
 const LABEL_COLOR = 'BFD4F2';
 const LABEL_DESCRIPTION = 'Set by the execute-epic-ticket workflow';
 
+/**
+ * `gh api` argv builder for `repo` (`OWNER/REPO` or `HOST/OWNER/REPO`): `slug` is the REST path
+ * `repos/OWNER/REPO` without the host, and `api` puts `--hostname HOST` after `api` for a
+ * host-qualified repository, as merge-down's land step does.
+ */
+function repoApi(repo: string): {
+  slug: string;
+  api: (...rest: string[]) => [string, ...string[]];
+} {
+  const parsed = parseGithubRepo(repo);
+  return {
+    slug: `repos/${parsed.nameWithOwner}`,
+    api: (...rest) => [
+      'gh',
+      'api',
+      ...(parsed.host === null ? [] : ['--hostname', parsed.host]),
+      ...rest,
+    ],
+  };
+}
+
 /** Read an issue's body. */
 async function readBody(context: StepContext, repo: string, number: number): Promise<string> {
+  const { slug, api } = repoApi(repo);
   const issue = await context.exec.json(
-    ['gh', 'api', `repos/${repo}/issues/${String(number)}`, '--jq', '{body: .body}'],
+    api(`${slug}/issues/${String(number)}`, '--jq', '{body: .body}'),
     { schema: z.object({ body: z.string().nullable() }) },
   );
   return issue.body ?? '';
@@ -35,17 +57,9 @@ async function patchBody(
   number: number,
   body: string,
 ): Promise<void> {
+  const { slug, api } = repoApi(repo);
   await context.exec(
-    [
-      'gh',
-      'api',
-      '-X',
-      'PATCH',
-      `repos/${repo}/issues/${String(number)}`,
-      '--input',
-      '-',
-      '--silent',
-    ],
+    api('-X', 'PATCH', `${slug}/issues/${String(number)}`, '--input', '-', '--silent'),
     { input: JSON.stringify({ body }) },
   );
 }
@@ -123,24 +137,25 @@ export function ensureLabel(
     schema: z.object({ created: z.boolean() }),
     ...write,
     async run(context) {
-      const path = `repos/${input.repo}/labels/${encodeURIComponent(input.label)}`;
-      const found = await run(context, ['gh', 'api', path, '--silent']);
+      const { slug, api } = repoApi(input.repo);
+      const path = `${slug}/labels/${encodeURIComponent(input.label)}`;
+      const found = await run(context, api(path, '--silent'));
       if (found.code === 0) return { created: false };
       if (!notFound(found)) throw new Error(`gh api ${path}: ${found.stderr.trim()}`);
-      await context.exec([
-        'gh',
-        'api',
-        '-X',
-        'POST',
-        `repos/${input.repo}/labels`,
-        '-f',
-        `name=${input.label}`,
-        '-f',
-        `color=${LABEL_COLOR}`,
-        '-f',
-        `description=${LABEL_DESCRIPTION}`,
-        '--silent',
-      ]);
+      await context.exec(
+        api(
+          '-X',
+          'POST',
+          `${slug}/labels`,
+          '-f',
+          `name=${input.label}`,
+          '-f',
+          `color=${LABEL_COLOR}`,
+          '-f',
+          `description=${LABEL_DESCRIPTION}`,
+          '--silent',
+        ),
+      );
       return { created: true };
     },
   });
@@ -148,8 +163,9 @@ export function ensureLabel(
 
 /** An issue's label names. */
 async function labelsOf(context: StepContext, repo: string, number: number): Promise<string[]> {
+  const { slug, api } = repoApi(repo);
   const issue = await context.exec.json(
-    ['gh', 'api', `repos/${repo}/issues/${String(number)}`, '--jq', '{labels: [.labels[].name]}'],
+    api(`${slug}/issues/${String(number)}`, '--jq', '{labels: [.labels[].name]}'),
     { schema: z.object({ labels: z.array(z.string()) }) },
   );
   return issue.labels;
@@ -170,16 +186,17 @@ export function addLabel(
     async run(context) {
       if ((await labelsOf(context, input.repo, input.number)).includes(input.label))
         return { changed: false };
-      await context.exec([
-        'gh',
-        'api',
-        '-X',
-        'POST',
-        `repos/${input.repo}/issues/${String(input.number)}/labels`,
-        '-f',
-        `labels[]=${input.label}`,
-        '--silent',
-      ]);
+      const { slug, api } = repoApi(input.repo);
+      await context.exec(
+        api(
+          '-X',
+          'POST',
+          `${slug}/issues/${String(input.number)}/labels`,
+          '-f',
+          `labels[]=${input.label}`,
+          '--silent',
+        ),
+      );
       return { changed: true };
     },
   });
@@ -200,8 +217,9 @@ export function removeLabel(
     async run(context) {
       if (!(await labelsOf(context, input.repo, input.number)).includes(input.label))
         return { changed: false };
-      const path = `repos/${input.repo}/issues/${String(input.number)}/labels/${encodeURIComponent(input.label)}`;
-      const removed = await run(context, ['gh', 'api', '-X', 'DELETE', path, '--silent']);
+      const { slug, api } = repoApi(input.repo);
+      const path = `${slug}/issues/${String(input.number)}/labels/${encodeURIComponent(input.label)}`;
+      const removed = await run(context, api('-X', 'DELETE', path, '--silent'));
       if (removed.code === 0) return { changed: true };
       if (notFound(removed)) return { changed: false };
       throw new Error(`gh api -X DELETE ${path}: ${removed.stderr.trim()}`);
@@ -230,14 +248,9 @@ export function issueState(
     schema: IssueState.nullable(),
     ...write,
     async run(context) {
-      const path = `repos/${input.repo}/issues/${String(input.number)}`;
-      const read = await run(context, [
-        'gh',
-        'api',
-        path,
-        '--jq',
-        '{number,title,state,pull_request}',
-      ]);
+      const { slug, api } = repoApi(input.repo);
+      const path = `${slug}/issues/${String(input.number)}`;
+      const read = await run(context, api(path, '--jq', '{number,title,state,pull_request}'));
       if (read.code !== 0) {
         if (notFound(read)) return null;
         throw new Error(`gh api ${path}: ${read.stderr.trim()}`);
@@ -399,21 +412,20 @@ export async function openSubIssues(
   id: string,
   input: { readonly repo: string; readonly parent: number },
 ): Promise<FoundIssue[]> {
+  const { slug, api } = repoApi(input.repo);
   const listed = await ctx.exec.json(
     id,
-    [
-      'gh',
-      'api',
-      `repos/${input.repo}/issues/${String(input.parent)}/sub_issues?per_page=100`,
+    api(
+      `${slug}/issues/${String(input.parent)}/sub_issues?per_page=100`,
       '--jq',
       '[.[] | {number, title, url: .html_url, state, repository_url}]',
-    ],
+    ),
     {
       schema: z.array(FoundIssue.extend({ state: z.string(), repository_url: z.string() })),
       ...write,
     },
   );
-  const home = `/repos/${input.repo}`.toLowerCase();
+  const home = `/${slug}`.toLowerCase();
   return listed
     .filter((i) => i.state === 'open' && i.repository_url.toLowerCase().endsWith(home))
     .map(({ number, title, url }) => ({ number, title, url }));
