@@ -38,11 +38,11 @@ try {
     assert.equal(failure.code, 'load.typecheck');
     assert.equal(failure.details.compilerOptions.noUncheckedIndexedAccess, true);
     assert.equal(failure.details.compilerOptions.exactOptionalPropertyTypes, undefined);
-    // A mismatch in an overloaded call (ctx.step, and defineWorkflow with its generic-profile
-    // fallback) reports TS2769 with each overload's TS2322 chain.
+    // A mismatch in the overloaded ctx.step reports TS2769 with each overload's TS2322 chain;
+    // defineWorkflow has one signature since #707, so a definition error reports TS2322.
     assert.ok(
       JSON.parse(checked.stdout).diagnostics.some(
-        (item) => item.code === (name === 'unchecked' ? 2532 : 2769),
+        (item) => item.code === (name === 'step' ? 2769 : name === 'unchecked' ? 2532 : 2322),
       ),
       checked.stdout,
     );
