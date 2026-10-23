@@ -7,7 +7,6 @@ import { join, basename, delimiter } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import {
   CliHarness,
-  capabilityManifest,
   defineRoster,
   defineWorkflow,
   readRun,
@@ -664,39 +663,9 @@ it('captures first-use versions, warns on resumed drift, and records inherited/r
   expect(metadata).toHaveBeenCalledTimes(2);
 });
 
-it('includes native controls in profile manifests, grants, and strict call-site checks', async () => {
-  const manifest = capabilityManifest({
-    profiles: {
-      builder: {
-        extends: 'edit',
-        codex: { isolation: 'inherit', harnessProfile: 'native', effort: 'max' },
-      },
-      reader: { extends: 'readonly', claude: { appendSystemPrompt: 'role', effort: 'low' } },
-    },
-  });
-  expect(manifest.profiles['builder']?.access).toBe('exec');
-  expect(manifest.profiles['reader']?.access).toBe('read');
+// The manifest and grant half of this case moved onto roster entries in roster-grants.test.ts.
+it('refuses a call-site env under strictProfiles', async () => {
   const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
-  const definition = defineWorkflow({
-    ...base,
-    strictProfiles: true,
-    requireGrants: true,
-    profiles: {
-      builder: { extends: 'edit', codex: { isolation: 'inherit', harnessProfile: 'native' } },
-    },
-    async run(ctx) {
-      return (await ctx.codex.text('ask', { prompt: 'x', profile: 'builder' })).output;
-    },
-  });
-  await expect(
-    runWorkflow(definition, { ...setup(), grants: ['write'], harness: { invoke } }),
-  ).rejects.toThrow('requires exec');
-  const result = await runWorkflow(definition, {
-    ...setup(),
-    grants: ['builder'],
-    harness: { invoke },
-  });
-  expect(result.output).toBe('ok');
   const raw = defineWorkflow({
     ...base,
     strictProfiles: true,
