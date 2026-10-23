@@ -748,6 +748,54 @@ return (await ctx.claude.text('edit', { prompt: 'x', profile: 'edit' })).output;
     ).resolves.toMatchObject({ ok: true });
   });
 
+  it('advises --grant for a roster workflow: a class grant for a raw call, a launch refusal for an entry', async () => {
+    const rosterSource = (body: string) =>
+      `import { defineRoster, defineWorkflow, z } from ${JSON.stringify(join(repository, 'src/index.js'))};
+const roster = defineRoster({ Fixer: { harness: 'claude', tools: ['Read', 'Edit'] } });
+export default defineWorkflow({ name: 'loader-roster-grant', version: '1', input: z.null(), output: z.string(), roster, async run(ctx) {
+${body}
+}});`;
+    // A named entry is refused at launch, so the call-time path runs a raw class-only call after a
+    // step; the Fixer grant passes the launch preflight and does not admit the raw call.
+    await writeFile(
+      file,
+      rosterSource(`await ctx.step('prepare', { input: null, schema: z.string(), run: () => 'ready' });
+return (await ctx.claude.text('edit', { prompt: 'x', tools: ['Edit'] })).output;`),
+    );
+    const fixtures = { version: 1 as const, calls: [], unmatched: 'synthesize' as const };
+    const harness = { kind: 'fixture' as const, config: {}, fixtures };
+    await expect(execute('open', { harness })).resolves.toMatchObject({ ok: true });
+    // The plan's requireGrants reaches the run, which keeps it for the grant resume.
+    const failed = await execute('grant', { harness, requireGrants: true, grants: ['Fixer'] });
+    if (failed.ok) throw new Error(JSON.stringify(failed));
+    expect(failed.code).toBe('workflow.failed');
+    expect(failed.message).toMatch(/^Step edit \(claude\) failed:/u);
+    expect(failed.message).toContain('--resume --grant write');
+    expect(failed.message).not.toContain('accept-code-change');
+    expect((await readRun({ stateDir, runId: 'grant' })).requireGrants).toBe(true);
+    await expect(execute('grant', { harness, resume: true })).resolves.toMatchObject({
+      ok: false,
+      code: 'workflow.failed',
+    });
+    await expect(
+      execute('grant', { harness, resume: true, grants: ['write'] }),
+    ).resolves.toMatchObject({ ok: true });
+
+    // A named entry is a declared role: the launch preflight refuses it before the body runs and
+    // before any record exists.
+    await writeFile(
+      file,
+      rosterSource(`return (await ctx.roster.Fixer.text('fix', { prompt: 'x' })).output;`),
+    );
+    const refused = await execute('entry', { harness, requireGrants: true });
+    if (refused.ok) throw new Error(JSON.stringify(refused));
+    // A launch refusal is a usage error (exit 2), not a failed run.
+    expect(refused.code).toBe('usage.flag');
+    expect(workflowExitCodes[refused.code]).toBe(2);
+    expect(refused.message).toContain('--grant Fixer, --grant write, or --grant all');
+    await expect(readRun({ stateDir, runId: 'entry' })).rejects.toThrow();
+  });
+
   it('reports source changes on a completed run instead of silently returning stale final output', async () => {
     const prefix = "import { appendFileSync } from 'node:fs';\n";
     const callback = `() => { appendFileSync(new URL('./effects', import.meta.url), 'effect\\n'); return 'one'; }`;

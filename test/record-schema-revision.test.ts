@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   checkResume,
   defineHarness,
+  defineRoster,
   defineWorkflow,
   FileRunStore,
   FixtureHarness,
@@ -25,7 +26,9 @@ import {
   type RunStore,
   type WorkflowClock,
 } from '../src/index.js';
+import { formatRunSummary } from '../src/cli/inspection-view.js';
 import { rootCauseErrorKind } from '../src/workflow/loader/failure-kind.js';
+import { inspectRun } from '../src/workflow/loader/inspection.js';
 import { runNextCommands } from '../src/workflow/loader/next-commands.js';
 import { rehearsalState } from '../src/workflow/loader/rehearsal.js';
 import { JournalWriter } from '../src/workflow/runtime/journal.js';
@@ -2606,6 +2609,47 @@ describe('revision-nineteen records (an agent request summary before promptTempl
     expect(saved.steps['review']).toEqual(original.steps['review']);
     expect(recordSchemaDrift(saved)).toBeUndefined();
     expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
+  });
+
+  // ADR 0063 section 4 (#708): a format-7 record names the call's role in `profile`, which inspect
+  // groups and prints; a roster call records its entry name in the same field.
+  it('read profile on the attempts and the step request, and show it in inspect', async () => {
+    await install();
+    const record = await readRun({ stateDir, runId });
+    expect(record.formatVersion).toBe(7);
+    const step = record.steps['review'];
+    expect(step?.attemptHistory?.[0]?.profile).toBe('text');
+    expect(step?.attemptHistory?.[0]?.request?.profile).toBe('text');
+    expect(step?.request?.profile).toBe('text');
+    const { summary } = await inspectRun({ stateDir, runId });
+    expect(summary.agents.byRequest).toEqual([expect.objectContaining({ profile: 'text' })]);
+    expect(summary.agents.recent).toEqual([
+      expect.objectContaining({ id: 'review', profile: 'text' }),
+    ]);
+    expect(formatRunSummary(summary)).toContain('profile text');
+  });
+
+  it('record a roster entry as the profile of a new attempt and step request', async () => {
+    const entry = 'roster-profile';
+    const definition = defineWorkflow({
+      name: 'schema-revision',
+      version: '1',
+      input: z.null(),
+      output: z.string(),
+      roster: defineRoster({ Reviewer: { harness: 'claude', tools: ['Read'] } }),
+      async run(ctx) {
+        return (await ctx.roster.Reviewer.text('review', { prompt: 'Review the change.' })).output;
+      },
+    });
+    const harness: Harness = { invoke: () => Promise.resolve({ text: 'ok', sessionId: null }) };
+    await runWorkflow(definition, { ...options, stateDir, runId: entry, input: null, harness });
+    const record = await readRun({ stateDir, runId: entry });
+    const step = record.steps['review'];
+    expect(step?.attemptHistory?.[0]?.profile).toBe('Reviewer');
+    expect(step?.request?.profile).toBe('Reviewer');
+    const { summary } = await inspectRun({ stateDir, runId: entry });
+    expect(summary.agents.byRequest).toEqual([expect.objectContaining({ profile: 'Reviewer' })]);
+    expect(formatRunSummary(summary)).toContain('profile Reviewer');
   });
 
   it('refuse a promptTemplate that is not a prompt name', async () => {

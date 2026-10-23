@@ -229,10 +229,13 @@ async run(ctx){return (await ctx.agent('keeper').text('only',{prompt:'secret',pr
   // harness and access, and `--profile Name.limit=` recovers a roster call as it does a profile's.
   const rosterFile = join(fixture, 'roster.ts');
   const rosterSource = (profiles) => `import {defineRoster,defineWorkflow,z} from 'quiet-choir';
+import {writeFileSync} from 'node:fs';
 const roster=defineRoster({Reviewer:{harness:'claude',model:'opus',tools:['Read','Grep'],maxTurns:40,appendSystemPrompt:'marker-roster-prompt',description:'Reviews'},
 Mechanic:{harness:'codex',sandbox:'workspace-write'},Clerk:{harness:'claude'}});
 export default defineWorkflow({name:'roster-cli',version:'1',input:z.object({}),output:z.string(),roster,profiles:${profiles},
-async run(ctx){return (await ctx.roster.Reviewer.text('pending',{prompt:'pending'})).output;}});`;
+async run(ctx){
+// quiet-choir-ignore QC002 marker file proving whether the body ran
+writeFileSync('roster-body-started','yes');return (await ctx.roster.Reviewer.text('pending',{prompt:'pending'})).output;}});`;
   writeFileSync(rosterFile, rosterSource("{scout:{extends:'readonly'}}"));
   const rosterValidation = cli('validate', rosterFile, '--json');
   assert.equal(rosterValidation.status, 0, rosterValidation.stderr);
@@ -256,18 +259,48 @@ async run(ctx){return (await ctx.roster.Reviewer.text('pending',{prompt:'pending
   // The top-level profiles list stays limited to declared profiles.
   assert.deepEqual(rosterWorkflow.profiles, ['scout']);
   const rosterArgs = ['execute', rosterFile, '--run-id', 'roster', '--state-dir', state];
-  const rosterFirst = cli(...rosterArgs);
+  // The codex workspace-write entry Mechanic is a declared write role, so --require-grants refuses
+  // the launch before the body runs and before any record exists.
+  const rosterDenied = cli(...rosterArgs, '--require-grants');
+  assert.equal(rosterDenied.status, 2, rosterDenied.stderr);
+  assert.match(rosterDenied.stderr, /--grant[\s›]*Mechanic,/);
+  assert.equal(existsSync(join(fixture, 'roster-body-started')), false);
+  assert.equal(existsSync(join(state, 'roster', 'run.json')), false);
+  const rosterFirst = cli(...rosterArgs, '--require-grants', '--grant', 'Mechanic');
   assert.equal(rosterFirst.status, 1, rosterFirst.stderr);
   assert.match(rosterFirst.stderr, /--resume[\s›]*--profile Reviewer.maxTurns=80/);
-  const rosterResumed = cli(...rosterArgs, '--resume', '--profile', 'Reviewer.maxTurns=60');
+  assert.equal(existsSync(join(fixture, 'roster-body-started')), true);
+  const rosterResumed = cli(
+    ...rosterArgs,
+    '--resume',
+    '--profile',
+    'Reviewer.maxTurns=60',
+    '--profile',
+    '*.timeoutMs=1800000',
+  );
   assert.equal(rosterResumed.status, 0, rosterResumed.stderr);
   const rosterRecord = JSON.parse(readFileSync(join(state, 'roster', 'run.json'), 'utf8'));
   assert.equal(rosterRecord.status, 'completed');
+  assert.deepEqual(rosterRecord.grants, ['Mechanic']);
+  assert.equal(rosterRecord.requireGrants, true);
   const rosterAttempt = rosterRecord.steps.pending.attemptHistory[1];
   assert.equal(rosterAttempt.profile, 'Reviewer');
   assert.equal(rosterAttempt.policy.maxTurns, 60);
   assert.equal(rosterAttempt.sources.maxTurns, 'profile-override:0');
+  assert.equal(rosterAttempt.policy.timeoutMs, 1_800_000);
+  assert.equal(rosterAttempt.sources.timeoutMs, 'profile-override:1');
   assert.ok(!readFileSync(join(state, 'roster', 'run.json'), 'utf8').includes('marker-roster'));
+  // The saved rules are sticky: a bare resume of the completed run makes no new call.
+  const rosterCalls = readFileSync(join(fixture, 'calls.jsonl'), 'utf8');
+  const rosterBare = cli(...rosterArgs, '--resume');
+  assert.equal(rosterBare.status, 0, rosterBare.stderr);
+  assert.equal(readFileSync(join(fixture, 'calls.jsonl'), 'utf8'), rosterCalls);
+  const rosterInspected = cli('inspect', 'roster', '--state-dir', state, '--json');
+  assert.equal(rosterInspected.status, 0, rosterInspected.stderr);
+  assert.equal(JSON.parse(rosterInspected.stdout).profileOverrides.length, 2);
+  const rosterInvalid = cli(...rosterArgs, '--resume', '--profile', 'Reviewer.model=other');
+  assert.equal(rosterInvalid.status, 2, rosterInvalid.stderr);
+  assert.match(rosterInvalid.stderr, /Invalid --profile/);
   writeFileSync(rosterFile, rosterSource("{Reviewer:{extends:'readonly'}}"));
   const collision = cli('validate', rosterFile, '--json');
   assert.notEqual(collision.status, 0, collision.stdout);
@@ -276,7 +309,7 @@ async run(ctx){return (await ctx.roster.Reviewer.text('pending',{prompt:'pending
     /Roster entry Reviewer has the same name as a declared profile/,
   );
   console.log(
-    'PASS CLI capability manifest, grant preflight, limit diagnostics, sticky profile recovery, typed names, redacted free-form controls, redacted registered harness options and roster entries',
+    'PASS CLI capability manifest, grant preflight, limit diagnostics, sticky profile recovery, typed names, redacted free-form controls, redacted registered harness options and roster entries (grant preflight, launch overrides, sticky rules)',
   );
 } finally {
   rmSync(fixture, { recursive: true, force: true });
