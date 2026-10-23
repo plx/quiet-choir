@@ -719,36 +719,7 @@ ${tail}
     expect(refused.message).not.toContain(plain);
   });
 
-  it('advises --grant, not --accept-code-change, for a grant failure', async () => {
-    await writeFile(
-      file,
-      `import { defineWorkflow, z } from ${JSON.stringify(join(repository, 'src/index.js'))};
-export default defineWorkflow({ name: 'loader-grant', version: '1', input: z.null(), output: z.string(), async run(ctx) {
-await ctx.step('prepare', { input: null, schema: z.string(), run: () => 'ready' });
-return (await ctx.claude.text('edit', { prompt: 'x', profile: 'edit' })).output;
-}});`,
-    );
-    const fixtures = { version: 1 as const, calls: [], unmatched: 'synthesize' as const };
-    const harness = { kind: 'fixture' as const, config: {}, fixtures };
-    // Without requireGrants the edit role needs no grant (#577).
-    await expect(execute('open', { harness })).resolves.toMatchObject({ ok: true });
-    // The plan's requireGrants reaches the run, which keeps it for the grant resume.
-    const failed = await execute('grant', { harness, requireGrants: true });
-    if (failed.ok) throw new Error(JSON.stringify(failed));
-    expect(failed.code).toBe('workflow.failed');
-    expect(failed.message).toMatch(/^Step edit \(claude\) failed:/u);
-    expect(failed.message).toContain('--resume --grant edit');
-    expect(failed.message).not.toContain('accept-code-change');
-    expect((await readRun({ stateDir, runId: 'grant' })).requireGrants).toBe(true);
-    await expect(execute('grant', { harness, resume: true })).resolves.toMatchObject({
-      ok: false,
-      code: 'workflow.failed',
-    });
-    await expect(
-      execute('grant', { harness, resume: true, grants: ['edit'] }),
-    ).resolves.toMatchObject({ ok: true });
-  });
-
+  // This also covers the former named-role grant failure, whose call-time path is the raw call here.
   it('advises --grant for a roster workflow: a class grant for a raw call, a launch refusal for an entry', async () => {
     const rosterSource = (body: string) =>
       `import { defineRoster, defineWorkflow, z } from ${JSON.stringify(join(repository, 'src/index.js'))};
