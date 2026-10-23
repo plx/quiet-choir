@@ -113,7 +113,8 @@ defineWorkflow({
 The journal was empty, so only `run.json` is checked in. Stack paths are scrubbed to `/fixture/...`
 and the file was formatted with Prettier; its read-view digest in
 `test/record-schema-revision.test.ts` was computed on the same unmodified main from this file. The
-same main also produced the golden `profileGrantDigest` values pinned in `test/profiles.test.ts`.
+same main also produced the golden `profileGrantDigest` values pinned in
+`test/capability-manifest.test.ts`, which computes them through `defaults` on the text role.
 
 `revision-four-checkpoint.json` was generated the same way at origin/main `7fa2348`, before
 tolerated poll errors (#223) added the event type `wait.tolerated` to the nested `events` shape in

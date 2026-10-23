@@ -6,8 +6,6 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   capabilityManifest,
-  claudeCapabilityKeys,
-  codexCapabilityKeys,
   defineHarness,
   defineWorkflow,
   FileRunStore,
@@ -23,16 +21,10 @@ import {
   type RunStore,
 } from '../src/index.js';
 import {
-  capabilityManifestSchema,
   parseProfileOverride,
   profileGrantDigest,
-  publicCapabilityManifest,
   resolveCapabilities,
-  resolveProfileCall,
 } from '../src/workflow/runtime/profiles.js';
-import { claudeDefinition, codexDefinition } from '../src/harnesses/builtins/definitions.js';
-import { digest } from '../src/workflow/runtime/json.js';
-import { parseClaude } from '../src/harnesses/protocol.js';
 import { runNextCommands } from '../src/workflow/loader/next-commands.js';
 
 let stateDir: string;
@@ -50,26 +42,12 @@ afterEach(async () => {
   await rm(stateDir, { recursive: true, force: true });
 });
 
-it('publishes presets and default access without evaluating the body', () => {
+// The default role's manifest rows are in capability-manifest.test.ts.
+it('publishes presets without evaluating the body', () => {
   const run = vi.fn(() => Promise.resolve('done'));
   const definition = defineWorkflow({ ...base, run });
   const manifest = capabilityManifest(definition);
   expect(run).not.toHaveBeenCalled();
-  expect(manifest).toMatchObject({
-    strictProfiles: false,
-    defaultProfile: 'text',
-    requiredGrants: [],
-  });
-  expect(manifest.defaults).toMatchObject({
-    maxTurns: 10,
-    maxBudgetUsd: 0.5,
-    timeoutMs: 300_000,
-    access: 'read',
-    claudeAccess: 'none',
-    codexAccess: 'read',
-    claude: { tools: [], allowedTools: [] },
-    codex: { sandbox: 'read-only' },
-  });
   expect(manifest.profiles['readonly']).toMatchObject({
     maxTurns: 25,
     maxBudgetUsd: 2,
@@ -101,7 +79,6 @@ it('publishes presets and default access without evaluating the body', () => {
   expect(
     capabilityManifest(defineWorkflow(declared), { requireGrants: true }).requiredGrants,
   ).toEqual(['fixer']);
-  expect(capabilityManifest({ strictProfiles: true }).strictProfiles).toBe(true);
   expect(run).not.toHaveBeenCalled();
 });
 
@@ -203,22 +180,18 @@ it.each([
   { profiles: { bad: { claude: { tools: ['Read'], allowedTools: ['Write'] } } } },
   { profiles: { bad: { claude: { tools: ['Bash(npm test:*)'] } } } },
   { defaults: { profile: 'absent' } },
-  { defaults: { idleTimeoutMs: 0 } },
   { profiles: { bad: { idleTimeoutMs: 2_147_483_648 } } },
-  { strictProfiles: 'true' },
 ])('rejects invalid profile declarations before the body: %j', (config) => {
   expect(() => capabilityManifest(config as Parameters<typeof capabilityManifest>[0])).toThrow();
 });
 
-it('accepts idleTimeoutMs as a profile limit on defaults, profiles and overrides', () => {
+it('accepts idleTimeoutMs as a profile limit on presets and profiles', () => {
   const manifest = capabilityManifest({
     defaults: { idleTimeoutMs: 100 },
     profiles: { scout: { extends: 'readonly', idleTimeoutMs: 250 } },
   });
-  expect(manifest.defaults.idleTimeoutMs).toBe(100);
   expect(manifest.profiles['readonly']?.idleTimeoutMs).toBe(100);
   expect(manifest.profiles['scout']?.idleTimeoutMs).toBe(250);
-  expect(capabilityManifest({}).defaults.idleTimeoutMs).toBeUndefined();
 });
 
 it('defaults expectsToolUse to roles that grant more than the text baseline', () => {
@@ -438,62 +411,6 @@ it('checks elevated built-ins at invocation and does not treat write as exec per
   );
 });
 
-it.each([
-  ['claude', claudeDefinition.capabilityKeys, claudeCapabilityKeys],
-  ['codex', codexDefinition.capabilityKeys, codexCapabilityKeys],
-] as const)(
-  'rejects every shared %s capability key at strict call sites, and only those',
-  (harness, declared, shared) => {
-    // One list drives the definition, the runtime check and the call-site types.
-    expect(declared).toBe(shared);
-    const manifest = capabilityManifest(
-      defineWorkflow({ ...base, strictProfiles: true, run: () => Promise.resolve('') }),
-    );
-    const call = (options: Record<string, unknown>) => () =>
-      resolveProfileCall(manifest, harness, { prompt: 'x', ...options }, [], {}, true);
-    for (const key of shared) {
-      // The strict check reads only the key's presence; isolation is raw only when inherited.
-      const value = key === 'isolation' ? 'inherit' : [];
-      expect(call({ [key]: value }), key).toThrow(`strictProfiles forbids call-site ${key};`);
-    }
-    expect(call({ isolation: 'restricted', model: 'm', effort: 'low' })).not.toThrow();
-  },
-);
-
-it('rejects raw capabilities under strictProfiles; escape-hatch calls still require class grants', async () => {
-  const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
-  const definition = defineWorkflow({
-    ...base,
-    strictProfiles: true,
-    requireGrants: true,
-    async run(ctx) {
-      // @ts-expect-error -- strictProfiles omits tools at type level too; the runtime still rejects it.
-      return (await ctx.claude.text('edit', { prompt: 'x', tools: ['Edit'] })).output;
-    },
-  });
-  await expect(
-    runWorkflow(definition, { ...setup(), harness: { invoke }, grants: ['all'] }),
-  ).rejects.toThrow('strictProfiles forbids call-site tools');
-  const legacy = { ...definition, strictProfiles: false };
-  await expect(
-    runWorkflow(legacy, { ...setup(), resume: true, harness: { invoke }, grants: ['text'] }),
-  ).resolves.toMatchObject({ status: 'completed' }); // saved all grant is sticky
-  await expect(
-    runWorkflow(legacy, { ...setup(), runId: 'raw', harness: { invoke }, grants: ['text'] }),
-  ).rejects.toThrow('requires write access');
-  await runWorkflow(legacy, {
-    ...setup(),
-    runId: 'raw',
-    resume: true,
-    harness: { invoke },
-    grants: ['write'],
-  });
-  expect(invoke.mock.calls.at(-1)?.[0].options).toMatchObject({
-    tools: ['Edit'],
-    allowedTools: ['Edit'],
-  });
-});
-
 it('keeps profile names and limits outside identity, persists rules, and detects semantic changes', async () => {
   let name: 'scout' | 'renamed' = 'scout';
   let stop = true;
@@ -547,36 +464,6 @@ it('keeps profile names and limits outside identity, persists rules, and detects
   ).rejects.toThrow('model changed');
 });
 
-it('uses sticky limits for unfinished calls and resets them to profile values', async () => {
-  const invoke = vi.fn<Harness['invoke']>().mockRejectedValue(new Error('offline'));
-  const definition = defineWorkflow({
-    ...base,
-    async run(ctx) {
-      return (await ctx.claude.text('ask', { prompt: 'x' })).output;
-    },
-  });
-  const options = { ...setup(), harness: { invoke } };
-  await expect(
-    runWorkflow(definition, { ...options, profileOverrides: [{ profile: 'text', maxTurns: 40 }] }),
-  ).rejects.toThrow('offline');
-  await expect(runWorkflow(definition, { ...options, resume: true })).rejects.toThrow('offline');
-  invoke.mockResolvedValue(reply);
-  const result = await runWorkflow(definition, { ...options, resume: true, policyReset: true });
-  expect(
-    invoke.mock.calls.map(([request]) => (request.options as { maxTurns?: number }).maxTurns),
-  ).toEqual([40, 40, 10]);
-  expect(result.profileOverrides).toEqual([]);
-  const updated = await runWorkflow(definition, {
-    ...options,
-    resume: true,
-    profileOverrides: [{ profile: 'text', maxTurns: 50 }],
-    grants: ['write'],
-  });
-  expect(updated.profileOverrides).toHaveLength(1);
-  expect(updated.grants).toEqual(['write']);
-  expect(invoke).toHaveBeenCalledTimes(3);
-});
-
 it.each(['turn-limit', 'budget-limit'] as const)(
   'reports %s with configured cap, role, reported turns/spend and a usable flag',
   async (kind) => {
@@ -615,51 +502,6 @@ it.each(['turn-limit', 'budget-limit'] as const)(
     expect(saved.steps['ask']?.attemptHistory?.[0]?.errorKind).toBe(kind);
   },
 );
-
-it.each(['warn', 'fail'] as const)(
-  'persists permission-denial diagnostics in %s mode',
-  async (mode) => {
-    const definition = defineWorkflow({
-      ...base,
-      profiles: { scout: { extends: 'readonly', onPermissionDenied: mode } },
-      async run(ctx) {
-        const result = await ctx.claude.text('ask', {
-          prompt: 'x',
-          profile: 'scout',
-          onError: 'return',
-        });
-        return result.ok ? result.value.output : result.error.kind;
-      },
-    });
-    const result = await runWorkflow(definition, {
-      ...setup(),
-      harness: { invoke: () => Promise.resolve({ ...reply, permissionDenials: 2 }) },
-    });
-    expect(result.output).toBe(mode === 'warn' ? 'ok' : 'permission');
-    expect(result.steps['ask']?.warnings).toEqual([
-      'Profile scout: 2 permission denials reported.',
-    ]);
-    if (mode === 'fail')
-      expect(result.steps['ask']?.failedAttempts?.[0]?.usage?.costUsd).toBe(0.31);
-  },
-);
-
-it('extracts counts without persisting permission-denial payloads or fabricating tool use', () => {
-  const metadata = {
-    type: 'result',
-    subtype: 'success',
-    result: 'ok',
-    num_turns: 5,
-    permission_denials: [{ tool_name: 'Read', tool_input: { secret: 'private path' } }],
-    total_cost_usd: 0.1,
-  };
-  const outcome = parseClaude(JSON.stringify(metadata), false);
-  expect(outcome).toMatchObject({ kind: 'success', response: { turns: 5, permissionDenials: 1 } });
-  expect(JSON.stringify(outcome)).not.toContain('private path');
-  expect(
-    parseClaude(JSON.stringify({ ...metadata, subtype: 'error_max_turns', is_error: true }), false),
-  ).toMatchObject({ kind: 'failure', failure: { turns: 5, permissionDenials: 1 } });
-});
 
 it('validates CLI numeric policy syntax and runtime profile/grant names', async () => {
   expect(parseProfileOverride('*.timeoutMs=1800000')).toEqual({
@@ -783,70 +625,8 @@ it('checks raw Codex sandbox calls, unknown runtime names, and fresh fork grants
   ).rejects.toThrow('Unknown profile: missing');
 });
 
-it('preserves adapter error objects and explains a step-policy cap that wins over a profile', async () => {
-  const error = new HarnessError({
-    harness: 'claude',
-    kind: 'turn-limit',
-    exit: { code: 1, signal: null },
-    failure: null,
-    reason: 'cap',
-    stderr: '',
-    stdout: '',
-  });
-  const original = error.message;
-  const definition = defineWorkflow({
-    ...base,
-    async run(ctx) {
-      return (await ctx.claude.text('ask', { prompt: 'x' })).output;
-    },
-  });
-  await expect(
-    runWorkflow(definition, {
-      ...setup(),
-      harness: { invoke: () => Promise.reject(error) },
-      policy: [{ match: 'ask', maxTurns: 3 }],
-    }),
-  ).rejects.toThrow(`--policy '{"match":"ask","maxTurns":6}'`);
-  expect(error.message).toBe(original);
-  expect((await readRun(setup())).error).toContain('turns=unknown; costUsd=unknown');
-});
-
-it('keeps denial diagnostics on successful envelopes with process failure', async () => {
-  const error = new HarnessError({
-    harness: 'claude',
-    kind: 'process',
-    exit: { code: 7, signal: null },
-    failure: null,
-    reason: 'process failure',
-    stderr: '',
-    stdout: '',
-    permissionDenials: 2,
-    turns: 4,
-    usage: reply.usage,
-  });
-  const definition = defineWorkflow({
-    ...base,
-    async run(ctx) {
-      return (await ctx.claude.text('ask', { prompt: 'x' })).output;
-    },
-  });
-  const failed: unknown = await runWorkflow(definition, {
-    ...setup(),
-    harness: { invoke: () => Promise.reject(error) },
-  }).catch((cause: unknown) => cause);
-  expect(failed).toBeInstanceOf(WorkflowRunError);
-  if (!(failed instanceof WorkflowRunError)) throw failed;
-  expect(failed.cause).toBe(error);
-  const saved = await readRun(setup());
-  expect(saved.steps['ask']?.warnings).toEqual(['Profile text: 2 permission denials reported.']);
-  expect(saved.steps['ask']?.failedAttempts?.[0]?.usage?.costUsd).toBe(0.31);
-  expect(parseProfileOverride('text.maxBudgetUsd=1e-7')).toEqual({
-    profile: 'text',
-    maxBudgetUsd: 1e-7,
-  });
-});
-
-// Marker values prove that nothing sensitive reaches a public manifest or checkpoint.
+// Marker values for the pending-grant case below; the redaction cases that scanned for them are
+// in capability-manifest.test.ts.
 const markers = {
   settings: 'marker-settings-theme',
   hook: 'marker-settings-hook',
@@ -876,117 +656,9 @@ const sensitiveProfile = (mcpToken = markers.mcpToken): AgentProfile => ({
     config: { 'model_providers.x.base_url': markers.codex, model_verbosity: 'low' },
   },
 });
-const profileP = (manifest: ReturnType<typeof resolveCapabilities>) => {
-  const profile = manifest.profiles['p'];
-  if (!profile) throw new Error('Missing profile p.');
-  return profile;
-};
-const sensitiveDefinition = (profiles: Record<string, AgentProfile>, fail: () => boolean) =>
-  defineWorkflow({
-    ...base,
-    profiles,
-    async run(ctx) {
-      await ctx.claude.text('first', { prompt: 'one', profile: 'p' });
-      await ctx.claude.text('second', { prompt: 'two', profile: 'p' });
-      if (fail()) throw new Error('pause');
-      return 'done';
-    },
-  });
-// Captured on main before the redaction change (#103) for sensitiveProfile(); it must never move.
+// Captured on main before the redaction change (#103) for sensitiveProfile(); it must never move
+// (capability-manifest.test.ts pins it too).
 const sensitiveGrantDigest = '629539c408eb9f6d26dce10eda94f73ded2530a730458dbfcfc9047665e2d5f3';
-
-it('reduces free-form controls to names and digests in public manifests only', () => {
-  const definition = { profiles: { p: sensitiveProfile() } };
-  const live = resolveCapabilities(definition);
-  const raw = structuredClone(live);
-  const manifest = capabilityManifest(definition);
-  const text = JSON.stringify(manifest);
-  for (const marker of Object.values(markers)) expect(text).not.toContain(marker);
-  const profile = profileP(manifest);
-  const liveProfile = profileP(live);
-  expect(profile.redacted).toEqual({
-    claude: {
-      settings: { sha256: digest(liveProfile.claude.settings), keys: ['hooks', 'theme'] },
-      mcpServers: { sha256: digest(liveProfile.claude.mcpServers), keys: ['tracker'] },
-      agents: { sha256: digest(liveProfile.claude.agents), keys: ['reviewer'] },
-      systemPrompt: { sha256: digest(markers.systemPrompt) },
-      appendSystemPrompt: { sha256: digest(markers.appendPrompt) },
-    },
-    codex: {
-      config: {
-        sha256: digest(liveProfile.codex.config),
-        keys: ['model_providers.x.base_url', 'model_verbosity'],
-      },
-    },
-  });
-  for (const field of ['settings', 'mcpServers', 'agents', 'systemPrompt', 'appendSystemPrompt'])
-    expect(profile.claude).not.toHaveProperty(field);
-  expect(profile.codex).not.toHaveProperty('config');
-  expect(profile.environment?.claude.set).toEqual(['PRIVATE']);
-  expect(profile.claude.isolation).toBe('inherit');
-  expect(manifest.defaults).not.toHaveProperty('redacted');
-  for (const [name, builtin] of Object.entries(manifest.profiles))
-    if (name !== 'p') expect(builtin).not.toHaveProperty('redacted');
-  expect(capabilityManifestSchema.parse(manifest)).toEqual(manifest);
-  // The live manifest keeps raw values and the projection leaves its input untouched.
-  expect(liveProfile.claude.mcpServers).toEqual(sensitiveProfile().claude?.mcpServers);
-  expect(liveProfile.codex.config).toEqual(sensitiveProfile().codex?.config);
-  expect(live).toEqual(raw);
-  expect(publicCapabilityManifest(live, [])).toEqual(manifest);
-  // A second pass changes nothing; registered env digests are covered with their own harness (#248).
-  expect(publicCapabilityManifest(manifest, [])).toEqual(manifest);
-});
-
-it('keeps grant digests of the live profile stable across redaction', () => {
-  const live = resolveCapabilities({ profiles: { p: sensitiveProfile() } });
-  expect(profileGrantDigest(profileP(live))).toBe(sensitiveGrantDigest);
-  const changed = resolveCapabilities({ profiles: { p: sensitiveProfile('other-token') } });
-  expect(profileGrantDigest(profileP(changed))).not.toBe(sensitiveGrantDigest);
-});
-
-it('checkpoints redacted manifests, runs with raw controls and detects a redacted-only change on resume', async () => {
-  let stop = true;
-  const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
-  const definition = sensitiveDefinition({ p: sensitiveProfile() }, () => stop);
-  const options = { ...setup(), harness: { invoke }, grants: ['p'] };
-  await expect(runWorkflow(definition, options)).rejects.toThrow('pause');
-  const saved = await readRun(setup());
-  const text = JSON.stringify(saved);
-  for (const marker of Object.values(markers)) expect(text).not.toContain(marker);
-  expect(saved.capabilities?.profiles['p']?.redacted?.claude?.mcpServers?.keys).toEqual([
-    'tracker',
-  ]);
-  expect(saved.grantedProfiles?.['p']).toBe(sensitiveGrantDigest);
-  expect(invoke.mock.calls[0]?.[0].options).toMatchObject({
-    settings: { theme: markers.settings },
-    mcpServers: { tracker: { env: { TOKEN: markers.mcpToken } } },
-    systemPrompt: markers.systemPrompt,
-    env: { set: { PRIVATE: markers.env } },
-  });
-  // Unchanged resume replays both steps and finishes without a new invocation.
-  stop = false;
-  await expect(runWorkflow(definition, { ...options, resume: true })).resolves.toMatchObject({
-    status: 'completed',
-  });
-  expect(invoke).toHaveBeenCalledTimes(2);
-});
-
-it('refuses a resume whose only change is a redacted value', async () => {
-  const profiles = { p: sensitiveProfile() };
-  const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
-  const definition = sensitiveDefinition(profiles, () => true);
-  const options = { ...setup(), harness: { invoke }, grants: ['p'] };
-  await expect(runWorkflow(definition, options)).rejects.toThrow('pause');
-  profiles.p = sensitiveProfile('rotated-token');
-  // A completed step that ran under the profile is detected by identity, even with a named grant.
-  await expect(runWorkflow(definition, { ...options, resume: true })).rejects.toThrow(
-    'option.mcpServers changed on a completed step',
-  );
-  await expect(
-    runWorkflow(definition, { ...options, resume: true, grants: ['all'] }),
-  ).rejects.toThrow('option.mcpServers changed on a completed step');
-  expect(invoke).toHaveBeenCalledTimes(2);
-});
 
 it('refuses a named grant for a pending step whose profile changed only in a redacted value', async () => {
   const profiles = { p: sensitiveProfile() };
@@ -1013,12 +685,6 @@ it('refuses a named grant for a pending step whose profile changed only in a red
     runWorkflow(definition, { ...options, resume: true, grants: ['all'] }),
   ).resolves.toMatchObject({ status: 'completed' });
 });
-
-const role = (manifest: ReturnType<typeof resolveCapabilities>, name: string) => {
-  const profile = manifest.profiles[name];
-  if (!profile) throw new Error(`missing profile ${name}`);
-  return profile;
-};
 
 // Registered harness sensitiveOptions (#247): headers is sensitive and a capability key, token is
 // sensitive only, and region is neither.
@@ -1049,241 +715,8 @@ const vaultProfile = (header?: string, token = vaultMarkers.token): AgentProfile
   harnesses: { vault: { headers: vaultHeaders(header), token, region: 'eu-west' } },
 });
 // Captured on main b707169 before #247 for vaultProfile() under the same registration without
-// sensitiveOptions (access 'write'), and with the header rotated to 'other'; neither may move.
+// sensitiveOptions (access 'write'); it may not move (capability-manifest.test.ts pins it too).
 const vaultGrantDigest = '74877c78d0261e0b6c35d6c480438597cbb275344cfd02977477d655622d9613';
-const rotatedVaultGrantDigest = '53f34a784c3da809af2498cc76cc878ae9beebda6d01f033a2d44eaf37ec1999';
-const vaultDefinition = (profiles: Record<string, AgentProfile>, fail: () => boolean) =>
-  defineWorkflow({
-    ...base,
-    harnesses: [vault],
-    profiles,
-    async run(ctx) {
-      await ctx.agent('vault').text('first', { prompt: 'one', profile: 'p' });
-      await ctx.agent('vault').text('second', { prompt: 'two', profile: 'p' });
-      if (fail()) throw new Error('pause');
-      return 'done';
-    },
-  });
-
-it('moves declared sensitive harness options to redacted digests in public manifests only', () => {
-  const definition = {
-    harnesses: [vault],
-    profiles: { p: vaultProfile(), child: { extends: 'p' } },
-  };
-  const live = resolveCapabilities(definition);
-  const raw = structuredClone(live);
-  const manifest = capabilityManifest(definition);
-  const text = JSON.stringify(manifest);
-  for (const marker of Object.values(vaultMarkers)) expect(text).not.toContain(marker);
-  for (const name of ['p', 'child']) {
-    const profile = role(manifest, name);
-    expect(profile.redacted).toEqual({
-      harnesses: {
-        vault: {
-          headers: { sha256: digest(vaultHeaders()), keys: ['Authorization', 'X-Trace'] },
-          token: { sha256: digest(vaultMarkers.token) },
-        },
-      },
-    });
-    // The non-sensitive option stays in plaintext; the capability copy loses the sensitive key.
-    expect(profile.harnesses?.['vault']).toEqual({ region: 'eu-west' });
-    expect(profile.harnessCapabilities?.['vault']).toEqual({});
-  }
-  expect(manifest.defaults).not.toHaveProperty('redacted');
-  for (const [name, profile] of Object.entries(manifest.profiles))
-    if (name !== 'p' && name !== 'child') expect(profile).not.toHaveProperty('redacted');
-  expect(capabilityManifestSchema.parse(manifest)).toEqual(manifest);
-  // The live manifest keeps raw values for execution, grants and identity, and is not mutated.
-  expect(live).toEqual(raw);
-  expect(role(live, 'p').harnessCapabilities?.['vault']).toEqual({ headers: vaultHeaders() });
-  expect(role(live, 'p').harnesses?.['vault']).toMatchObject({ token: vaultMarkers.token });
-  expect(publicCapabilityManifest(live, [vault])).toEqual(manifest);
-  // A second pass changes nothing; registered env digests are covered separately (#248).
-  expect(publicCapabilityManifest(manifest, [vault])).toEqual(manifest);
-  // Without the declarations, the projection leaves registered options alone.
-  expect(publicCapabilityManifest(live, undefined).profiles['p']?.harnesses?.['vault']).toEqual(
-    role(live, 'p').harnesses?.['vault'],
-  );
-});
-
-// Registered harness env (#248): env is a capability key and the only free-form option digested
-// outside `redacted`; secret is a declared sensitive option so one manifest mixes both paths.
-const envMarkers = { env: 'marker-env-harness-value', secret: 'marker-env-harness-secret' };
-const envHarness = defineHarness({
-  name: 'envh',
-  revision: 1,
-  options: z.object({
-    prompt: z.string(),
-    env: z.record(z.string(), z.string()).optional(),
-    secret: z.string().optional(),
-  }),
-  capabilities: { structuredOutput: 'none' },
-  capabilityKeys: ['env', 'secret'],
-  sensitiveOptions: ['secret'],
-  access: () => 'none',
-});
-const envProfile = (env: Record<string, string> = { TOKEN: envMarkers.env }): AgentProfile => ({
-  ...sensitiveProfile(),
-  harnesses: { envh: { env, secret: envMarkers.secret } },
-});
-
-describe('registered harness env digest (#248)', () => {
-  const definition = { harnesses: [envHarness], profiles: { p: envProfile() } };
-
-  it('digests env once in harnessCapabilities and drops the raw copy', () => {
-    const live = resolveCapabilities(definition);
-    expect(role(live, 'p').harnessCapabilities?.['envh']).toMatchObject({
-      env: { TOKEN: envMarkers.env },
-    });
-    const manifest = capabilityManifest(definition);
-    const profile = role(manifest, 'p');
-    expect(profile.harnessCapabilities?.['envh']).toEqual({
-      env: { sha256: digest({ TOKEN: envMarkers.env }) },
-    });
-    expect(profile.harnesses?.['envh']).not.toHaveProperty('env');
-    const text = JSON.stringify(manifest);
-    for (const marker of Object.values(envMarkers)) expect(text).not.toContain(marker);
-    expect(capabilityManifestSchema.parse(manifest)).toEqual(manifest);
-  });
-
-  it('is idempotent with built-in controls, declared sensitive options and registered env', () => {
-    const live = resolveCapabilities(definition);
-    const raw = structuredClone(live);
-    for (const declarations of [[envHarness], undefined]) {
-      const once = publicCapabilityManifest(live, declarations);
-      expect(publicCapabilityManifest(once, declarations)).toEqual(once);
-      expect(
-        publicCapabilityManifest(publicCapabilityManifest(once, declarations), declarations),
-      ).toEqual(once);
-      expect(capabilityManifestSchema.parse(once)).toEqual(once);
-      expect(role(once, 'p').harnessCapabilities?.['envh']?.['env']).toEqual({
-        sha256: digest({ TOKEN: envMarkers.env }),
-      });
-    }
-    // Built-in redactions and the declared sensitive option are in the same manifest.
-    const once = publicCapabilityManifest(live, [envHarness]);
-    expect(role(once, 'p').redacted?.claude?.settings).toBeDefined();
-    expect(role(once, 'p').redacted?.harnesses?.['envh']?.['secret']).toEqual({
-      sha256: digest(envMarkers.secret),
-    });
-    expect(live).toEqual(raw);
-  });
-
-  it('digests a live env shaped like a digest and then leaves the digest alone', () => {
-    const lookalike = { sha256: 'a'.repeat(64) };
-    const live = resolveCapabilities({
-      harnesses: [envHarness],
-      profiles: { p: envProfile(lookalike) },
-    });
-    expect(role(live, 'p').harnessCapabilities?.['envh']?.['env']).toEqual(lookalike);
-    const once = publicCapabilityManifest(live, [envHarness]);
-    const expected = { sha256: digest(lookalike) };
-    expect(role(once, 'p').harnessCapabilities?.['envh']?.['env']).toEqual(expected);
-    expect(publicCapabilityManifest(once, [envHarness])).toEqual(once);
-    expect(publicCapabilityManifest(once, undefined)).toEqual(once);
-  });
-
-  it('still digests a public-looking env that is not a digest', () => {
-    const once = publicCapabilityManifest(resolveCapabilities(definition), [envHarness]);
-    const bogus = { sha256: 'short', extra: 'marker-forged' };
-    const forged = {
-      ...once,
-      profiles: {
-        ...once.profiles,
-        p: { ...role(once, 'p'), harnessCapabilities: { envh: { env: bogus } } },
-      },
-    };
-    expect(
-      role(publicCapabilityManifest(forged, [envHarness]), 'p').harnessCapabilities?.['envh'],
-    ).toEqual({ env: { sha256: digest(bogus) } });
-  });
-});
-
-it('gives sensitive array options a digest only and leaves undeclared profiles unredacted', () => {
-  const lister = defineHarness({
-    name: 'lister',
-    revision: 1,
-    options: z.object({ prompt: z.string(), scopes: z.array(z.string()).optional() }),
-    capabilities: { structuredOutput: 'none' },
-    sensitiveOptions: ['scopes'],
-    access: () => 'none',
-  });
-  const manifest = capabilityManifest({
-    harnesses: [lister],
-    profiles: { p: { harnesses: { lister: { scopes: ['marker-scope'] } } }, q: {} },
-  });
-  expect(role(manifest, 'p').redacted).toEqual({
-    harnesses: { lister: { scopes: { sha256: digest(['marker-scope']) } } },
-  });
-  expect(JSON.stringify(manifest)).not.toContain('marker-scope');
-  expect(role(manifest, 'q')).not.toHaveProperty('redacted');
-  // A registration without sensitiveOptions publishes its options as before.
-  const open = defineHarness({ ...lister, sensitiveOptions: [] });
-  expect(
-    capabilityManifest({
-      harnesses: [open],
-      profiles: { p: { harnesses: { lister: { scopes: ['visible'] } } } },
-    }).profiles['p'],
-  ).toMatchObject({ harnesses: { lister: { scopes: ['visible'] } } });
-});
-
-it('keeps grant digests of sensitive registered options stable and sensitive to rotation', () => {
-  const live = resolveCapabilities({ harnesses: [vault], profiles: { p: vaultProfile() } });
-  expect(profileGrantDigest(role(live, 'p'))).toBe(vaultGrantDigest);
-  const rotated = resolveCapabilities({
-    harnesses: [vault],
-    profiles: { p: vaultProfile('other') },
-  });
-  expect(profileGrantDigest(role(rotated, 'p'))).toBe(rotatedVaultGrantDigest);
-});
-
-it('checkpoints redacted registered options, invokes with raw values and replays an unchanged resume', async () => {
-  let stop = true;
-  const invoke = vi.fn<HarnessAdapter['invoke']>().mockResolvedValue(reply);
-  const definition = vaultDefinition({ p: vaultProfile() }, () => stop);
-  const options = { ...setup(), adapters: { vault: { invoke } }, grants: ['p'] };
-  await expect(runWorkflow(definition, options)).rejects.toThrow('pause');
-  const saved = await readRun(setup());
-  const text = JSON.stringify(saved);
-  for (const marker of Object.values(vaultMarkers)) expect(text).not.toContain(marker);
-  expect(
-    saved.capabilities?.profiles['p']?.redacted?.harnesses?.['vault']?.['headers']?.keys,
-  ).toEqual(['Authorization', 'X-Trace']);
-  expect(saved.grantedProfiles?.['p']).toBe(vaultGrantDigest);
-  expect(invoke.mock.calls[0]?.[0].options).toMatchObject({
-    headers: vaultHeaders(),
-    token: vaultMarkers.token,
-    region: 'eu-west',
-  });
-  stop = false;
-  await expect(runWorkflow(definition, { ...options, resume: true })).resolves.toMatchObject({
-    status: 'completed',
-  });
-  expect(invoke).toHaveBeenCalledTimes(2);
-});
-
-it.each([
-  ['the capability-key header', () => vaultProfile('rotated-header')],
-  ['the token', () => vaultProfile(undefined, 'rotated-token')],
-])(
-  'refuses a resume whose only change is a rotated sensitive option (%s)',
-  async (_label, rotate) => {
-    const profiles = { p: vaultProfile() };
-    const invoke = vi.fn<HarnessAdapter['invoke']>().mockResolvedValue(reply);
-    const definition = vaultDefinition(profiles, () => true);
-    const options = { ...setup(), adapters: { vault: { invoke } }, grants: ['p'] };
-    await expect(runWorkflow(definition, options)).rejects.toThrow('pause');
-    profiles.p = rotate();
-    // Step identity still sees the raw value, even under --grant all.
-    await expect(
-      runWorkflow(definition, { ...options, resume: true, grants: ['all'] }),
-    ).rejects.toThrow('Step first: options changed on a completed step');
-    await expect(runWorkflow(definition, { ...options, resume: true })).rejects.toThrow(
-      'Step first: options changed on a completed step',
-    );
-    expect(invoke).toHaveBeenCalledTimes(2);
-  },
-);
 
 it('refuses a saved named grant for a pending step whose sensitive capability option rotated', async () => {
   const profiles = { p: vaultProfile() };
@@ -1312,11 +745,11 @@ it('refuses a saved named grant for a pending step whose sensitive capability op
 });
 
 // Rooted call-site directories were removed (#707; ADRs 0054 and 0062 record the old form).
-it('refuses claude.addDirRoots in profiles and defaults, naming the replacement', async () => {
+// The defaults and entry rows are in capability-manifest.test.ts.
+it('refuses claude.addDirRoots in profiles, naming the replacement', async () => {
   // The definitions are cast past the types, which no longer admit the key.
   const roots = ['runs'];
   const cases: readonly (readonly [object, string])[] = [
-    [{ defaults: { claude: { addDirRoots: roots } } }, 'defaults.claude.addDirRoots:'],
     [
       { profiles: { reader: { claude: { addDirRoots: roots } } } },
       'Profile reader claude.addDirRoots:',
@@ -1354,134 +787,13 @@ it('refuses claude.addDirRoots in profiles and defaults, naming the replacement'
   expect(invoke).not.toHaveBeenCalled();
 });
 
-it('refuses strict call-site Claude addDirs at runtime under every role', async () => {
-  const manifest = resolveCapabilities({
-    strictProfiles: true,
-    profiles: { reader: { extends: 'readonly', claude: { addDirs: ['docs'] } } },
-  });
-  for (const profile of [undefined, 'readonly', 'reader'])
-    expect(
-      () =>
-        resolveProfileCall(
-          manifest,
-          'claude',
-          { prompt: 'x', ...(profile === undefined ? {} : { profile }), addDirs: ['runs/a'] },
-          [],
-          {},
-          true,
-        ),
-      String(profile),
-    ).toThrow('strictProfiles forbids call-site addDirs;');
-  // The role's own static addDirs still reach the harness when the call passes none.
-  expect(
-    resolveProfileCall(manifest, 'claude', { prompt: 'x', profile: 'reader' }, [], {}, true).options
-      .addDirs,
-  ).toEqual(['docs']);
-  const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
-  const definition = defineWorkflow({
-    ...base,
-    strictProfiles: true,
-    profiles: { reader: { extends: 'readonly', claude: { addDirs: ['docs'] } } },
-    async run(ctx) {
-      const options = { prompt: 'x', profile: 'reader', addDirs: ['runs/a'] } as never;
-      return (await ctx.claude.text('read', options)).output;
-    },
-  });
-  await expect(runWorkflow(definition, { ...setup(), harness: { invoke } })).rejects.toThrow(
-    'strictProfiles forbids call-site addDirs;',
-  );
-  expect(invoke).not.toHaveBeenCalled();
-});
-
-it('rejects codex.addDirRoots in profiles and defaults with the reason', () => {
-  const roots = ['runs'];
-  const cases: readonly (readonly [object, string])[] = [
-    [
-      { profiles: { writer: { codex: { addDirRoots: roots } } } },
-      'Profile writer codex.addDirRoots:',
-    ],
-    [{ defaults: { codex: { addDirRoots: roots } } }, 'defaults.codex.addDirRoots:'],
-  ];
-  for (const [definition, where] of cases) {
-    for (const resolve of [resolveCapabilities, capabilityManifest]) {
-      expect(() => resolve(definition as never)).toThrow(where);
-      expect(() => resolve(definition as never)).toThrow('Codex addDirs are writable roots');
-      expect(() => resolve(definition as never)).toThrow('list them statically in codex.addDirs');
-    }
+it('rejects codex.addDirRoots in profiles with the reason', () => {
+  const definition = { profiles: { writer: { codex: { addDirRoots: ['runs'] } } } } as never;
+  for (const resolve of [resolveCapabilities, capabilityManifest]) {
+    expect(() => resolve(definition)).toThrow('Profile writer codex.addDirRoots:');
+    expect(() => resolve(definition)).toThrow('Codex addDirs are writable roots');
+    expect(() => resolve(definition)).toThrow('list them statically in codex.addDirs');
   }
-});
-
-it('keeps grant digests of profiles without roots', () => {
-  const manifest = resolveCapabilities({
-    profiles: { docsEditor: { extends: 'edit', claude: { addDirs: ['docs'] } } },
-  });
-  // Computed on unmodified main 4c3ebf5 (see test/fixtures/schema-revision/README.md).
-  expect(profileGrantDigest(role(manifest, 'edit'))).toBe(
-    '4a87c86d2adce1b7712d584da2a0cf6a16c3daf76fc049310af0af38ef53f5f9',
-  );
-  expect(profileGrantDigest(role(manifest, 'readonly'))).toBe(
-    '19aaa56680b71d1d6cba7dccaa13695368d337a391bd36ce4519707dcf0ab8b3',
-  );
-  expect(profileGrantDigest(role(manifest, 'docsEditor'))).toBe(
-    '7ce299811063fa4dfd34efcb9bb75f06c3b0552cc2882f7a87d34e6d1ca8a65c',
-  );
-});
-
-it('still reads a stored manifest whose role carries claude.addDirRoots', () => {
-  // Records written before #707 may carry rooted roles; the persisted schema keeps the field.
-  const manifest = capabilityManifest({ profiles: { scout: { extends: 'readonly' } } });
-  const scout = role(manifest, 'scout');
-  const stored = {
-    ...manifest,
-    profiles: {
-      ...manifest.profiles,
-      scout: { ...scout, claude: { ...scout.claude, addDirRoots: ['runs'] } },
-    },
-  };
-  const parsed = capabilityManifestSchema.parse(stored);
-  expect(parsed).toEqual(stored);
-  expect(parsed.profiles['scout']?.claude).toMatchObject({ addDirRoots: ['runs'] });
-  expect(() =>
-    capabilityManifestSchema.parse({
-      ...stored,
-      profiles: { scout: { ...scout, claude: { ...scout.claude, addDirRoots: [] } } },
-    }),
-  ).toThrow();
-});
-
-it('passes static Claude addDirs of a profile to the request, and none otherwise', async () => {
-  const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
-  const definition = defineWorkflow({
-    ...base,
-    profiles: { docs: { extends: 'readonly', claude: { addDirs: ['docs'] } } },
-    async run(ctx) {
-      await ctx.claude.text('docs', { prompt: 'x', profile: 'docs' });
-      return (await ctx.claude.text('plain', { prompt: 'x' })).output;
-    },
-  });
-  await runWorkflow(definition, { ...setup(), harness: { invoke } });
-  const [docs, plain] = invoke.mock.calls.map(([request]) => request.options);
-  expect(docs?.addDirs).toEqual(['docs']);
-  expect(plain).not.toHaveProperty('addDirs');
-  const saved = await readRun(setup());
-  expect(saved.steps['docs']?.request?.addDirs).toEqual(['docs']);
-  expect(saved.steps['plain']?.request).not.toHaveProperty('addDirs');
-});
-
-it('never accepts addDirRoots as a call option, even with strictProfiles: false', async () => {
-  const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
-  const definition = defineWorkflow({
-    ...base,
-    strictProfiles: false,
-    async run(ctx) {
-      const options = { prompt: 'x', addDirRoots: ['/'] } as { prompt: string };
-      return (await ctx.claude.text('read', options)).output;
-    },
-  });
-  await expect(runWorkflow(definition, { ...setup(), harness: { invoke } })).rejects.toThrow(
-    'Unrecognized key(s) "addDirRoots"',
-  );
-  expect(invoke).not.toHaveBeenCalled();
 });
 
 // ADR 0063 §5 (#577): grants, pins and strict call sites are opt-in.
@@ -1624,14 +936,6 @@ describe('requireGrants and strictProfiles opt-in (#577)', () => {
     expect((await readRun(setup())).requireGrants).toBe(true);
   });
 
-  it('saves the run-level flag when it is first given to a completed run', async () => {
-    const definition = defineWorkflow({ ...base, run: () => Promise.resolve('ok') });
-    await runWorkflow(definition, setup());
-    expect(await readRun(setup())).not.toHaveProperty('requireGrants');
-    await runWorkflow(definition, { ...setup(), resume: true, requireGrants: true });
-    expect((await readRun(setup())).requireGrants).toBe(true);
-  });
-
   it('refreshes the manifest when the flag is first given to a completed run', async () => {
     const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
     const options = { ...setup(), harness: { invoke } };
@@ -1768,41 +1072,5 @@ describe('requireGrants and strictProfiles opt-in (#577)', () => {
     );
     expect((refused as Error).message).toContain('disk full');
     expect(await readRun(setup())).not.toHaveProperty('requireGrants');
-  });
-
-  it('rejects a requireGrants that is not a boolean before the body', async () => {
-    const run = vi.fn(() => Promise.resolve('ok'));
-    const definition = { ...defineWorkflow({ ...base, run }), requireGrants: 'yes' as never };
-    await expect(runWorkflow(definition, setup())).rejects.toThrow(
-      'Workflow profiles requireGrants must be a boolean.',
-    );
-    expect(run).not.toHaveBeenCalled();
-  });
-
-  it('runs raw call-site capabilities when strictProfiles is omitted', async () => {
-    const invoke = vi.fn<Harness['invoke']>().mockResolvedValue(reply);
-    const definition = defineWorkflow({
-      ...base,
-      async run(ctx) {
-        await ctx.claude.text('t', { prompt: 'x', tools: ['Read'] });
-        return (await ctx.codex.text('c', { prompt: 'y', sandbox: 'workspace-write' })).output;
-      },
-    });
-    await expect(
-      runWorkflow(definition, { ...setup(), harness: { invoke } }),
-    ).resolves.toMatchObject({ status: 'completed' });
-    expect(invoke.mock.calls[0]?.[0].options).toMatchObject({
-      tools: ['Read'],
-      allowedTools: ['Read'],
-    });
-    expect(invoke.mock.calls[1]?.[0].options).toMatchObject({ sandbox: 'workspace-write' });
-    // The same calls stay refused under an explicit strictProfiles: true.
-    await expect(
-      runWorkflow(
-        { ...definition, strictProfiles: true },
-        { ...setup(), runId: 'strict', harness: { invoke } },
-      ),
-    ).rejects.toThrow('strictProfiles forbids call-site tools; declare a named profile.');
-    expect(invoke).toHaveBeenCalledTimes(2);
   });
 });
