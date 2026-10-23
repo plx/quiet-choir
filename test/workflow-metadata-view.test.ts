@@ -5,7 +5,7 @@ import {
   withoutHarnessOptions,
   type CompactWorkflowMetadataView,
 } from '../src/cli/workflow-metadata-view.js';
-import { defineWorkflow, z } from '../src/index.js';
+import { defineRoster, defineWorkflow, z } from '../src/index.js';
 import type { WorkflowDescription } from '../src/workflow/runtime/child-model.js';
 import { describeWorkflow } from '../src/workflow/runtime/definition.js';
 
@@ -182,7 +182,7 @@ it('omits only the root entrypoint that equals the document copy', () => {
 
 it('leaves a manifest without a matching default profile unchanged and never mutates input', () => {
   const full = describeWorkflow(
-    leaf('mut', { profiles: { vault: { extends: 'readonly' } } }),
+    leaf('mut', { roster: defineRoster({ vault: { harness: 'claude' } }) }),
     '/work/mut.workflow.ts',
   );
   const before = structuredClone(full);

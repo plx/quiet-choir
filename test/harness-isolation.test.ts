@@ -169,11 +169,9 @@ it('keeps checkout placement out of profiles while accepting provider configurat
     { isolation: { kind: 'worktree', base: 'main' } },
   ]) {
     expect(() =>
-      capabilityManifest({ roster: { r: { harness: 'claude', ...options } } as never }),
+      capabilityManifest({ roster: { r: { harness: 'claude', ...options } } }),
     ).toThrow();
-    expect(() =>
-      capabilityManifest({ roster: { r: { harness: 'codex', ...options } } as never }),
-    ).toThrow();
+    expect(() => capabilityManifest({ roster: { r: { harness: 'codex', ...options } } })).toThrow();
     expect(() => capabilityManifest({ defaults: { claude: options } as never })).toThrow();
   }
   expect(
