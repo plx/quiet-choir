@@ -878,7 +878,7 @@ export default defineWorkflow({
             items: filed.map((f) => ({ number: f.number ?? 0, title: f.title })),
           }).text
         : '';
-      const body = withFollowups(prBody(prText.body, n, E), section, A.prFooter);
+      const body = withFollowups(prBody(prText.body, n, E, repo), section, A.prFooter);
       const pushed = await publish(ctx, id('push'), {
         workdir: W,
         branch: started.branch,

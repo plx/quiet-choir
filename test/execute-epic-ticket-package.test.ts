@@ -317,11 +317,33 @@ describe('PR and issue bodies', () => {
   });
 
   it('makes a PR body close exactly its ticket and name the epic', () => {
-    expect(prBody('Closes #9.\nPart of #7.\n\nBody.', 9, 7)).toBe(
+    expect(prBody('Closes #9.\nPart of #7.\n\nBody.', 9, 7, repo)).toBe(
       'Closes #9.\nPart of #7.\n\nBody.',
     );
-    expect(prBody('Fixes #3 and closes #9.', 9, 7)).toBe('Refs #3 and closes #9.\n\nPart of #7.\n');
-    expect(prBody('Body only.', 9, 7)).toBe('Body only.\n\nCloses #9.\n\nPart of #7.\n');
+    expect(prBody('Fixes #3 and closes #9.', 9, 7, repo)).toBe(
+      'Refs #3 and closes #9.\n\nPart of #7.\n',
+    );
+    expect(prBody('Body only.', 9, 7, repo)).toBe('Body only.\n\nCloses #9.\n\nPart of #7.\n');
+  });
+
+  it('normalizes qualified and URL closing references by repository', () => {
+    // Another repository's #9 is not this ticket, and its closing keyword becomes Refs.
+    expect(prBody('Fixes other/repo#9. Part of #7.', 9, 7, repo)).toBe(
+      'Refs other/repo#9. Part of #7.\n\nCloses #9.\n',
+    );
+    // A qualified own reference closes the ticket; one naming the epic counts as a mention.
+    expect(prBody('Closes Acme/Widgets#9. Part of acme/widgets#7.', 9, 7, repo)).toBe(
+      'Closes Acme/Widgets#9. Part of acme/widgets#7.',
+    );
+    expect(prBody('Fixes acme/widgets#10 and closes #9. Part of #7.', 9, 7, repo)).toBe(
+      'Refs acme/widgets#10 and closes #9. Part of #7.',
+    );
+    expect(
+      prBody('Resolves https://github.com/acme/widgets/issues/10. Part of #7.', 9, 7, repo),
+    ).toBe('Refs https://github.com/acme/widgets/issues/10. Part of #7.\n\nCloses #9.\n');
+    expect(prBody('Fixes: https://github.com/acme/widgets/issues/9\n\nBody.', 9, 7, repo)).toBe(
+      'Fixes: https://github.com/acme/widgets/issues/9\n\nBody.\n\nPart of #7.\n',
+    );
   });
 
   it('adds the dependency line to a slice that depends on the previous one', () => {

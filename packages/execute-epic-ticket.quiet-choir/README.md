@@ -30,10 +30,10 @@ execute-epic-ticket.quiet-choir/
 
 The package imports `quiet-choir`, `quiet-choir/github` and `quiet-choir/std`, and the merge-down
 package: its `merge-down-pr` workflow (the landing child), its `MergeDownInput` contract, and its
-generic helpers (`plain`, `stripAnsi`, `tail`, `failedStep`, `dirtyTreeLog`, `ensureClosesBody`,
-`renderIssue`, `resolveRepo`, the `run` and `git` command wrappers and `provisionDependencies`).
-They are compiler dependencies of this package, so they are fingerprinted with it. Its
-`tsconfig.json` maps the quiet-choir specifiers to `../../src` with `paths`, as merge-down's does.
+generic helpers (`plain`, `stripAnsi`, `tail`, `failedStep`, `dirtyTreeLog`, `renderIssue`,
+`resolveRepo`, the `run` and `git` command wrappers and `provisionDependencies`). They are compiler
+dependencies of this package, so they are fingerprinted with it. Its `tsconfig.json` maps the
+quiet-choir specifiers to `../../src` with `paths`, as merge-down's does.
 
 ## Run a ticket with the package
 
@@ -211,9 +211,9 @@ without a `ticket` or an unknown `until` fails before the run starts.
   contract, rather than `ctx.ask`: the burn-down orchestrator acts on the returned statuses.
 - **An in-flight ticket with `until` short of `pr`** stops (`would land it`) instead of landing, and
   a named ticket that is already closed stops instead of blocking at the survey.
-- **The PR body** is normalized as the native `open-pr` did (closing keywords for other issues
-  become `Refs`, `Closes #N` and `Part of #E` added when missing), and the filed follow-ups are
-  listed from a template before the footer.
+- **The PR body** is normalized as the native `open-pr` did (closing keywords for other issues,
+  bare, qualified or as issue URLs, become `Refs`; `Closes #N` and `Part of #E` added when missing),
+  and the filed follow-ups are listed from a template before the footer.
 - **Slices** are filed as sub-issues of the epic with `issue.create` (an issue found by title is
   reused and linked to the epic), then one checklist step lists them after the parent.
 

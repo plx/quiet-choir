@@ -2,7 +2,7 @@
 // Nothing here imports quiet-choir or touches I/O, so test/execute-epic-ticket-package.test.ts
 // checks it directly. The types below are the structural parts of quiet-choir/github's epic
 // snapshot and nextTicket result that these rules read.
-import { ensureClosesBody, plain } from '../../merge-down.quiet-choir/lib/policy.js';
+import { plain } from '../../merge-down.quiet-choir/lib/policy.js';
 
 export { plain };
 
@@ -316,20 +316,43 @@ export function withFollowups(body: string, followups: string, footer: string): 
     : `${body.trimEnd()}\n\n${section}`;
 }
 
+// The native helper's closing forms: a closing keyword, then an issue reference (REF, below: bare
+// #12 or qualified owner/name#12) or a full issue URL, which GitHub also honours. Groups of
+// `closingRe`: 1 keyword, 2 separator, 3-4 qualifier and number of a #ref, 5-6 repository and
+// number of an issue URL.
+const URL_REF = String.raw`https?:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/issues\/(\d+)\b`;
+const CLOSING = String.raw`\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b`;
+const closingRe = (): RegExp =>
+  new RegExp(String.raw`${CLOSING}(:?\s+)(?:${REF.source}|${URL_REF})`, 'gi');
+const isOwn = (qualifier: string | undefined, repo: string): boolean =>
+  !qualifier || qualifier.toLowerCase() === repo.toLowerCase();
+
+/** Whether a `closingRe` match closes `issue` of `repo`. */
+function closesOwn(m: readonly (string | undefined)[], repo: string, issue: number): boolean {
+  const [qualifier, number] = m[4] !== undefined ? [m[3], m[4]] : [m[5], m[6]];
+  return isOwn(qualifier, repo) && Number(number) === issue;
+}
+
 /**
- * Make a PR body close exactly `issue`: a closing keyword aimed at another bare `#N` becomes
- * `Refs` (GitHub would close it on merge, and merge-down refuses a PR that closes several issues),
- * `Closes #issue.` is appended when missing, and `Part of #epic.` when the epic is not mentioned.
+ * Make a PR body close exactly `issue` of `repo`, as the native `normalizePrBody` did: a closing
+ * keyword aimed at anything else (another `#N`, `owner/repo#N` or an issue URL, here or elsewhere)
+ * becomes `Refs` with the rest of the reference kept (GitHub would close it on merge, and
+ * merge-down refuses a PR that closes several issues), `Closes #issue.` is appended unless one of
+ * the three forms already closes it, and `Part of #epic.` when the epic is not mentioned.
  */
-export function prBody(body: string, issue: number, epic: number): string {
-  const rewritten = body.replace(
-    /\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b(:?\s+)#(\d+)\b/gi,
-    (match, _keyword: string, gap: string, number: string) =>
-      Number(number) === issue ? match : `Refs${gap}#${number}`,
+export function prBody(body: string, issue: number, epic: number, repo: string): string {
+  const rewritten = body.replace(closingRe(), (...m: (string | undefined)[]) => {
+    const [match = '', keyword = '', gap = ''] = m;
+    return closesOwn(m, repo, issue)
+      ? match
+      : `Refs${gap}${match.slice(keyword.length + gap.length)}`;
+  });
+  const closes = [...rewritten.matchAll(closingRe())].some((m) => closesOwn(m, repo, issue));
+  const closing = closes ? rewritten : `${rewritten.trimEnd()}\n\nCloses #${String(issue)}.\n`;
+  const mentions = [...closing.matchAll(REF)].some(
+    (m) => isOwn(m[1], repo) && Number(m[2]) === epic,
   );
-  const closing = ensureClosesBody(rewritten, issue) ?? rewritten;
-  const epicRef = new RegExp(`(?<![\\w./-])#${String(epic)}\\b`);
-  return epicRef.test(closing) ? closing : `${closing.trimEnd()}\n\nPart of #${String(epic)}.\n`;
+  return mentions ? closing : `${closing.trimEnd()}\n\nPart of #${String(epic)}.\n`;
 }
 
 /** A slice body that depends on the slice filed before it, as the native helper wrote it. */
@@ -355,6 +378,8 @@ export function firstSentence(text: string): string {
 // ── Epic body edits ──────────────────────────────────────────────────────────────────────────
 
 const CHECKLIST = /^(\s*[-*+]\s+)\[( |x|X)\](\s+)(.*)$/;
+// An issue reference: bare (#12) or repository-qualified (owner/name#12). The lookbehind keeps
+// "owner/name#12" from also matching as a bare "#12", and skips anchors such as "page#12".
 const REF = /(?<![\w./-])(?:([\w.-]+\/[\w.-]+))?#(\d+)\b/g;
 
 /**
