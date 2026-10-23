@@ -59,15 +59,6 @@ export interface AgentProfile extends ProfileLimits {
     readonly appendSystemPrompt?: string;
     /** Overrides the profile-wide configuration mode; checkout placement stays per call. */
     readonly isolation?: HarnessIsolation;
-    /**
-     * Directories that bound call-site `addDirs` under `strictProfiles`. A call using this profile
-     * may pass `addDirs` whose canonical paths (symlinks resolved, `..` segments refused) equal or
-     * sit inside one of these roots; accepted entries are appended to this profile's own `addDirs`
-     * as canonical absolute paths. Roots resolve against the run's working directory and are
-     * pinned by named grants. Without roots, strict call sites cannot pass `addDirs`. Profile-only:
-     * never a call option.
-     */
-    readonly addDirRoots?: readonly string[];
   };
   /** Codex model, sandbox, effort and native controls. */
   readonly codex?: Omit<
@@ -84,12 +75,6 @@ export interface AgentProfile extends ProfileLimits {
   > & {
     /** Overrides the profile-wide configuration mode; checkout placement stays per call. */
     readonly isolation?: HarnessIsolation;
-    /**
-     * Not supported: Codex `addDirs` are writable sandbox roots, so Codex cannot take bounded
-     * call-site directories. List them statically in `codex.addDirs`; a definition that sets this
-     * fails validation.
-     */
-    readonly addDirRoots?: never;
   };
 }
 
@@ -230,16 +215,15 @@ export interface CapabilityManifest {
 }
 
 /**
- * Maps each key of profile or defaults type `T` that `Shape` does not declare to `never`, and
- * recurses into nested object values against the declared field type, so the `claude` and `codex`
- * blocks and structured values such as `env: { set, unset }` are checked too; declared keys whose
- * values are not objects map to `unknown`, so `Shape` alone checks them. `defineWorkflow`
- * intersects the literal `profiles` and `defaults` it infers with this, which keeps the
- * excess-property checks that inferring them would otherwise drop: an unknown key then fails as not
- * assignable to `never`. Arrays and shapes with an index signature (`harnesses`, native settings,
- * MCP servers and subagents, the flat `env` overlay) stay open. A union `Shape` accepts a value
- * that matches some member, so `env: { FOO: 'bar' }` still compiles as the flat overlay. It
- * distributes over unions of `T`.
+ * Maps each key of an inferred value type `T` that `Shape` does not declare to `never`, and
+ * recurses into nested object values against the declared field type, so structured values such as
+ * `env: { set, unset }` are checked too; declared keys whose values are not objects map to
+ * `unknown`, so `Shape` alone checks them. `defineRoster` intersects the literal entries it infers
+ * with this, which keeps the excess-property checks that inferring them would otherwise drop: an
+ * unknown key then fails as not assignable to `never`. Arrays and shapes with an index signature
+ * (native settings, MCP servers and subagents, the flat `env` overlay) stay open. A union `Shape`
+ * accepts a value that matches some member, so `env: { FOO: 'bar' }` still compiles as the flat
+ * overlay. It distributes over unions of `T`.
  */
 export type NoExtraKeys<T, Shape> = T extends readonly unknown[]
   ? unknown
@@ -269,96 +253,3 @@ export type NoExtraKeys<T, Shape> = T extends readonly unknown[]
           : never
       : never
     : unknown;
-
-/**
- * Whether profile or defaults type `X` may declare `claude.addDirRoots`: `true` when the key is
- * possibly present with a type other than `undefined`, so a widened {@link AgentProfile} counts as
- * rooted. It distributes over unions, so `true extends HasAddDirRoots<X>` means "some member may".
- * A helper of {@link AddDirProfilesOf}.
- */
-export type HasAddDirRoots<X> = X extends {
-  /** Claude block of the profile or defaults. */
-  readonly claude?: infer C;
-}
-  ? C extends object
-    ? 'addDirRoots' extends keyof C
-      ? [Exclude<C['addDirRoots' & keyof C], undefined>] extends [never]
-        ? false
-        : true
-      : false
-    : false
-  : false;
-
-/**
- * The profile name that key `K` (`extends` of a profile, `profile` of defaults) holds in profile or
- * defaults type `X`, with `undefined` for a member that omits it (meaning `text`). It distributes
- * over unions, so a union-typed profile yields every name one of its members may name, instead of
- * losing a key the members do not share. A helper of {@link AddDirProfilesOf}.
- */
-export type ProfileReferenceOf<X, K extends 'extends' | 'profile'> = X extends unknown
-  ? K extends keyof X
-    ? Extract<X[K], string | undefined>
-    : undefined
-  : never;
-
-/**
- * Whether the role named `N` has `claude.addDirRoots` from its own layer or its `extends` chain in
- * the profiles type `TProfiles`, ignoring workflow defaults (which {@link AddDirProfilesOf} checks
- * first). It mirrors profile resolution, where a layer replaces a parent's roots but cannot remove
- * them. A built-in, and `undefined` (an omitted `extends` or `defaults.profile`, meaning `text`),
- * is unrooted, because declared roles cannot reuse a built-in name; so is a name already in `Seen`
- * (a cycle, which the runtime rejects). A non-literal name, or a name `TProfiles` does not
- * describe, is rooted. It distributes over a union `N`. A helper of {@link AddDirProfilesOf}.
- */
-export type AddDirRootedName<
-  N extends string | undefined,
-  TProfiles,
-  Seen extends string = never,
-> = N extends string
-  ? [N] extends [Seen]
-    ? false
-    : string extends N
-      ? true
-      : N extends BuiltinProfile
-        ? false
-        : N extends keyof TProfiles
-          ? true extends HasAddDirRoots<TProfiles[N]>
-            ? true
-            : true extends AddDirRootedName<
-                  ProfileReferenceOf<TProfiles[N], 'extends'>,
-                  TProfiles,
-                  Seen | N
-                >
-              ? true
-              : false
-          : true
-  : false;
-
-/**
- * The `profile` values under which a strict Claude call may pass `addDirs`, computed from a
- * workflow's declared role names `TProfile`, its `profiles` type `TProfiles` and its `defaults` type
- * `TDefaults`. `undefined` in the result means a call that omits `profile` may pass them, because
- * the default profile is rooted. It mirrors profile resolution:
- *
- * - `defaults.claude.addDirRoots` roots every built-in and declared profile, and the omitted case.
- * - Otherwise a built-in (`text`, `readonly`, `edit`) is unrooted, and a declared role is rooted
- *   when it or a profile in its `extends` chain declares `claude.addDirRoots`. A cycle is unrooted
- *   (the runtime rejects it).
- * - `undefined` is included when `defaults.profile` (or `text` when absent) is rooted.
- *
- * When the types cannot prove a profile unrooted, it counts as rooted: a widened
- * {@link AgentProfile} or {@link AgentDefaults}, a non-literal `extends` or `defaults.profile`, a
- * union-typed profile or defaults any member of which is rooted, and a role in `TProfile` that
- * `TProfiles` does not describe. `defineWorkflow` computes this from the inferred `profiles` and
- * `defaults` and passes it as the last `WorkflowDefinition` type parameter; the runtime check stays
- * the backstop.
- */
-export type AddDirProfilesOf<TProfile extends string, TProfiles, TDefaults> =
-  true extends HasAddDirRoots<TDefaults>
-    ? BuiltinProfile | TProfile | undefined
-    : | {
-          [N in BuiltinProfile | TProfile]: true extends AddDirRootedName<N, TProfiles> ? N : never;
-        }[BuiltinProfile | TProfile]
-      | (true extends AddDirRootedName<ProfileReferenceOf<TDefaults, 'profile'>, TProfiles>
-          ? undefined
-          : never);

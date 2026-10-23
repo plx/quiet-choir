@@ -248,42 +248,6 @@ export type CapabilityKeysOf<D> = D extends {
   : never;
 
 /**
- * How a strict Claude call may combine `profile` and `addDirs`, given `TAddDirProfile`, the profile
- * values whose role declares `claude.addDirRoots` (`undefined` for a call that omits `profile` under
- * a rooted default). The union keeps every profile available without `addDirs`, pairs `addDirs`
- * with a rooted `profile`, and admits it without `profile` only when `undefined` is in the set.
- *
- * `TAddDirProfile` appears only as the checked type of conditional types, never in an `extends`
- * clause, so TypeScript does not measure contexts as invariant in it: a context with fewer rooted
- * profiles and the permissive default stay mutually assignable, which keeps typed definitions
- * assignable to unparameterized `WorkflowDefinition` parameters and typed contexts to helper
- * contracts. A helper of {@link CallOptions}.
- */
-export type ClaudeAddDirSelection<TProfile extends string, TAddDirProfile> =
-  | {
-      /** Any profile; `addDirs` needs a profile that declares `claude.addDirRoots`. */
-      readonly profile?: BuiltinProfile | TProfile | undefined;
-      /** Forbidden unless the selected profile declares `claude.addDirRoots`. */
-      readonly addDirs?: never;
-    }
-  | ([Exclude<TAddDirProfile, undefined>] extends [never]
-      ? never
-      : {
-          /** A profile that declares, inherits or defaults `claude.addDirRoots`. */
-          readonly profile: Exclude<TAddDirProfile, undefined>;
-          /** Directories bounded by the selected profile's `claude.addDirRoots`. */
-          readonly addDirs?: ClaudeOptions['addDirs'];
-        })
-  | ([Extract<TAddDirProfile, undefined>] extends [never]
-      ? never
-      : {
-          /** Omitted: the workflow's rooted default profile applies. */
-          readonly profile?: undefined;
-          /** Directories bounded by the default profile's `claude.addDirRoots`. */
-          readonly addDirs?: ClaudeOptions['addDirs'];
-        });
-
-/**
  * Call-site options of harness `K` with registration `D` in a workflow with declared roles `TProfile`.
  * `profile` accepts a built-in preset or a declared role. When `TStrict` is exactly `true` (a
  * workflow that sets `strictProfiles` to a literal `true`; omitted infers `false`), the harness's
@@ -292,39 +256,22 @@ export type ClaudeAddDirSelection<TProfile extends string, TAddDirProfile> =
  * registered harness every literal `capabilityKeys` entry. Forbidding the keys structurally, not only through
  * excess-property checks, also rejects a pre-built options variable and, with
  * `exactOptionalPropertyTypes`, an explicit `undefined`. A literal `false`, or a non-literal
- * `boolean`, keeps every option.
- *
- * Claude's `addDirs` is the one strict key a call can still set: `TAddDirProfile` lists the
- * `profile` values whose role declares `claude.addDirRoots` (see `AddDirProfilesOf`), with
- * `undefined` standing for a call that omits `profile` under a rooted default. A strict Claude call
- * may pass `addDirs` only together with such a profile, which is what the runtime check enforces.
- * The default `string | undefined` admits `addDirs` for every profile, so an unparameterized
- * `WorkflowContext` helper stays permissive and the runtime check remains the backstop.
+ * `boolean`, keeps every option. Claude's `addDirs` is forbidden like every other key: strict
+ * directories belong on a roster entry, and rooted call-site directories were removed (#707).
  */
 export type CallOptions<
   K extends string,
   D,
   TProfile extends string,
   TStrict extends boolean,
-  TAddDirProfile extends string | undefined = string | undefined,
 > = Extract<
   ([TStrict] extends [true]
     ? K extends 'claude' | 'codex'
       ? Omit<OptionsOf<D>, 'profile' | 'prompt' | 'isolation' | CapabilityKeysOf<D>> &
-          Readonly<
-            Partial<
-              Record<
-                Exclude<
-                  CapabilityKeysOf<D>,
-                  'isolation' | (K extends 'claude' ? 'addDirs' : never)
-                >,
-                never
-              >
-            >
-          > & {
+          Readonly<Partial<Record<Exclude<CapabilityKeysOf<D>, 'isolation'>, never>>> & {
             /** Native configuration mode; strict profiles own `'inherit'`. */
             readonly isolation?: Exclude<HarnessIsolation, 'inherit'> | undefined;
-          } & (K extends 'claude' ? ClaudeAddDirSelection<TProfile, TAddDirProfile> : unknown)
+          }
       : Omit<OptionsOf<D>, 'profile' | 'prompt' | CapabilityKeysOf<D>> &
           Readonly<Partial<Record<CapabilityKeysOf<D>, never>>>
     : Omit<OptionsOf<D>, 'profile' | 'prompt'>) & {
