@@ -36,6 +36,7 @@ import { cleanWorktrees } from '../src/workflow/runtime/worktree-clean.js';
 import { recordedEngine } from '../src/workflow/runtime/engine.js';
 import { digest } from '../src/workflow/runtime/json.js';
 import { pollIdentityKey } from '../src/workflow/runtime/poll-identity.js';
+import { profileGrantDigest, resolveCapabilities } from '../src/workflow/runtime/profiles.js';
 import { ReplayDivergenceError } from '../src/workflow/runtime/run-errors.js';
 import {
   hiddenRecordFields,
@@ -1169,14 +1170,25 @@ describe('revision-three records (static addDirs before bounded call-site roots,
     await writeFile(paths(runId).snapshot, fixture);
     await writeFile(paths(runId).journal, '');
   }
+  // The stored role is the readonly preset plus addDirs; the entry spells those values out.
+  const roster = defineRoster({
+    reader: {
+      harness: 'claude',
+      tools: ['Read', 'Grep', 'Glob'],
+      addDirs: ['docs'],
+      maxTurns: 25,
+      maxBudgetUsd: 2,
+      timeoutMs: 900_000,
+    },
+  });
   const reader = defineWorkflow({
     name: 'schema-revision',
     version: '1',
     input: z.null(),
     output: z.null(),
-    profiles: { reader: { extends: 'readonly', claude: { addDirs: ['docs'] } } },
+    roster,
     async run(ctx) {
-      await ctx.claude.text('read', { prompt: 'x', profile: 'reader' });
+      await ctx.roster.reader.text('read', { prompt: 'x' });
       return null;
     },
   });
@@ -1210,9 +1222,11 @@ describe('revision-three records (static addDirs before bounded call-site roots,
     expect(result.status).toBe('completed');
     const saved = await readRun({ stateDir, runId });
     expect(saved.steps['read']).toEqual(original.steps['read']);
-    expect(saved.capabilities?.profiles['reader']).toEqual(
-      original.capabilities?.profiles['reader'],
-    );
+    // The stored role was unpinned; resume replaces it with the pinned entry.
+    expect(saved.capabilities?.profiles['reader']).toEqual({
+      ...original.capabilities?.profiles['reader'],
+      harness: 'claude',
+    });
     expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
   });
 
@@ -1222,9 +1236,9 @@ describe('revision-three records (static addDirs before bounded call-site roots,
       version: '1',
       input: z.null(),
       output: z.null(),
-      profiles: { reader: { extends: 'readonly', claude: { addDirs: ['docs'] } } },
+      roster,
       async run(ctx) {
-        await ctx.claude.text('read', { prompt: 'x', profile: 'reader' });
+        await ctx.roster.reader.text('read', { prompt: 'x' });
         return null;
       },
     });
@@ -1693,9 +1707,12 @@ describe('revision-eight records (plaintext registered harness options, #247)', 
     input: z.null(),
     output: z.null(),
     harnesses: [vault],
-    profiles: { keeper: { harnesses: { vault: { token: 'fixture-token' } } } },
+    roster: defineRoster(
+      { keeper: { harness: 'vault', token: 'fixture-token' } },
+      { harnesses: [vault] },
+    ),
     async run(ctx) {
-      await ctx.agent('vault').text('read', { prompt: 'x', profile: 'keeper' });
+      await ctx.roster.keeper.text('read', { prompt: 'x' });
       return null;
     },
   });
@@ -1765,9 +1782,18 @@ describe('revision-nine records (a grant failure before recoveryCause, #284)', (
     version: '1',
     input: z.null(),
     output: z.null(),
+    roster: defineRoster({
+      Editor: {
+        harness: 'claude',
+        tools: ['Read', 'Grep', 'Glob', 'Edit', 'Write'],
+        maxTurns: 40,
+        maxBudgetUsd: 5,
+        timeoutMs: 1_800_000,
+      },
+    }),
     async run(ctx) {
       await ctx.now('prepare');
-      await ctx.claude.text('edit', { prompt: 'x', profile: 'edit' });
+      await ctx.roster.Editor.text('edit', { prompt: 'x' });
       return null;
     },
   });
@@ -1800,7 +1826,7 @@ describe('revision-nine records (a grant failure before recoveryCause, #284)', (
       stateDir,
       runId,
       resume: true,
-      grants: ['edit'],
+      grants: ['Editor'],
       harness: {
         invoke: (request) => {
           invoked.push(request.stepId);
@@ -2092,6 +2118,8 @@ describe('revision-thirteen records (a pre-attempt grant refusal classified unkn
     await writeFile(paths(runId).snapshot, fixture);
     await writeFile(paths(runId).journal, '');
   }
+  // A raw class-only call, not a roster entry: an entry without its grant is refused at launch,
+  // before the body runs, and records no rootCause, while this call is refused when it is reached.
   const granted = defineWorkflow({
     name: 'schema-revision',
     version: '1',
@@ -2099,7 +2127,10 @@ describe('revision-thirteen records (a pre-attempt grant refusal classified unkn
     output: z.null(),
     async run(ctx) {
       await ctx.now('prepare');
-      await ctx.claude.text('edit', { prompt: 'x', profile: 'edit' });
+      await ctx.claude.text('edit', {
+        prompt: 'x',
+        tools: ['Read', 'Grep', 'Glob', 'Edit', 'Write'],
+      });
       return null;
     },
   });
@@ -2130,7 +2161,7 @@ describe('revision-thirteen records (a pre-attempt grant refusal classified unkn
         requireGrants: true,
         harness: { invoke },
       }),
-    ).rejects.toThrow('--grant edit');
+    ).rejects.toThrow('--grant write');
     const saved = await readRun({ stateDir, runId });
     expect(saved.rootCause).toMatchObject({
       stepId: 'edit',
@@ -2449,10 +2480,18 @@ describe('revision-seventeen records (a saved grant before requireGrants, #577)'
       version: '1',
       input: z.null(),
       output: z.null(),
-      profiles: { fixer: { extends: 'edit' } },
+      roster: defineRoster({
+        fixer: {
+          harness: 'claude',
+          tools: ['Read', 'Grep', 'Glob', 'Edit', 'Write'],
+          maxTurns: 40,
+          maxBudgetUsd: 5,
+          timeoutMs: 1_800_000,
+        },
+      }),
       async run(ctx) {
         await ctx.now('prepare');
-        if (call) await ctx.claude.text('fix', { prompt: 'x', profile: 'fixer' });
+        if (call) await ctx.roster.fixer.text('fix', { prompt: 'x' });
         if (tail) throw new Error('fixture tail');
         return null;
       },
@@ -2498,18 +2537,38 @@ describe('revision-seventeen records (a saved grant before requireGrants, #577)'
   it('honour the saved named grant when a later resume turns the layer on', async () => {
     await install();
     const invoked: string[] = [];
+    const harness: Harness = {
+      invoke: (request) => {
+        invoked.push(request.stepId);
+        return Promise.resolve({ text: 'ok', sessionId: null });
+      },
+    };
+    // The saved pin digests the unpinned profile-era role, and the entry's digest includes its
+    // harness, so that pin does not admit the same-named entry.
+    await expect(
+      runWorkflow(fixer(false, true), {
+        ...options,
+        stateDir,
+        runId,
+        resume: true,
+        requireGrants: true,
+        harness,
+      }),
+    ).rejects.toThrow('--grant fixer');
+    expect(invoked).toEqual([]);
+    // A pin saved for the entry itself is honoured.
+    const entry = resolveCapabilities(fixer(false, true)).profiles['fixer'];
+    if (entry === undefined) throw new Error('missing fixer entry');
+    await editSnapshot(runId, (raw) => {
+      raw['grantedProfiles'] = { fixer: profileGrantDigest(entry) };
+    });
     const result = await runWorkflow(fixer(false, true), {
       ...options,
       stateDir,
       runId,
       resume: true,
       requireGrants: true,
-      harness: {
-        invoke: (request) => {
-          invoked.push(request.stepId);
-          return Promise.resolve({ text: 'ok', sessionId: null });
-        },
-      },
+      harness,
     });
     expect(result.status).toBe('completed');
     expect(invoked).toEqual(['fix']);
@@ -2545,7 +2604,16 @@ describe('revision-eighteen records (a manifest before roster pins, #579)', () =
       version: '1',
       input: z.null(),
       output: z.null(),
-      profiles: { scout: { extends: 'readonly' } },
+      // The stored scout role is the readonly preset, unpinned; the entry spells it out pinned.
+      roster: defineRoster({
+        scout: {
+          harness: 'claude',
+          tools: ['Read', 'Grep', 'Glob'],
+          maxTurns: 25,
+          maxBudgetUsd: 2,
+          timeoutMs: 900_000,
+        },
+      }),
       async run(ctx) {
         await ctx.now('prepare');
         if (tail) throw new Error('fixture tail');
@@ -2570,7 +2638,11 @@ describe('revision-eighteen records (a manifest before roster pins, #579)', () =
     expect(result.status).toBe('completed');
     const saved = await readRun({ stateDir, runId });
     expect(saved.steps['prepare']).toEqual(original.steps['prepare']);
-    expect(saved.capabilities?.profiles['scout']).toEqual(original.capabilities?.profiles['scout']);
+    // Resume replaces the stored unpinned role with the pinned entry.
+    expect(saved.capabilities?.profiles['scout']).toEqual({
+      ...original.capabilities?.profiles['scout'],
+      harness: 'claude',
+    });
     expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
   });
 });
