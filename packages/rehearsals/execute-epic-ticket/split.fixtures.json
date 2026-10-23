@@ -401,6 +401,10 @@
       "json": []
     },
     {
+      "step": "ticket/9/slice/1/find/recent",
+      "json": []
+    },
+    {
       "step": "ticket/9/slice/1/file",
       "argvPrefix": ["gh", "api", "graphql"],
       "call": 1,
@@ -472,6 +476,10 @@
     },
     {
       "step": "ticket/9/slice/2/find",
+      "json": []
+    },
+    {
+      "step": "ticket/9/slice/2/find/recent",
       "json": []
     },
     {

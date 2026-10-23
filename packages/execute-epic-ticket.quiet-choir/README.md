@@ -203,10 +203,13 @@ without a `ticket` or an unknown `until` fails before the run starts.
   sub-issue link (`addSubIssue` after a parent read; an issue under another parent is never moved).
 - **Title lookup before filing.** `issue.create` reconciles only by its run-scoped marker, so a run
   restarted with a new run ID could file again; every slice, follow-up and the follow-up epic is
-  first looked up by exact title among open issues, as the native helper filed. A slice or follow-up
-  found that way is linked as a sub-issue of its epic, since an interrupted run may have filed it
-  before the link; a slice that already belongs to another parent blocks the split, and such a
-  follow-up is kept where it is.
+  first looked up by exact title among open issues, as the native helper filed: among the parent's
+  open sub-issues (the epic's from the survey for a slice, the follow-up epic's for a follow-up),
+  then by an exact-title search, then, since the search index lags a just-filed issue, among the 100
+  newest open issues listed without a search, which is what the native helper's title-to-number
+  records covered. A slice or follow-up found that way is linked as a sub-issue of its epic, since
+  an interrupted run may have filed it before the link; a slice that already belongs to another
+  parent blocks the split, and such a follow-up is kept where it is.
 - **needs-decision stays a return-and-rerun** with `ticket` and `decision`, the native output
   contract, rather than `ctx.ask`: the burn-down orchestrator acts on the returned statuses.
 - **An in-flight ticket with `until` short of `pr`** stops (`would land it`) instead of landing, and

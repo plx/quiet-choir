@@ -37,9 +37,11 @@ import {
   appendLedger,
   ensureLabel,
   findOpenIssueByTitle,
+  type FoundIssue,
   insertChecklist,
   issueState,
   linkSubIssue,
+  openSubIssues,
   type IssueState,
   removeLabel,
   tick,
@@ -498,6 +500,11 @@ export default defineWorkflow({
         if (!keys.length || writeups.some((w) => w === undefined))
           return blocked('split', 'slice write-ups missing or incomplete');
         const filed: { number: number; title: string }[] = [];
+        // The epic's open sub-issues from the survey: an earlier run's linked slice is among them
+        // even while the search index lags.
+        const subIssues = snap.items
+          .filter((s) => s.state === 'OPEN' && s.repository.toLowerCase() === repo.toLowerCase())
+          .map((s) => ({ number: s.number, title: s.title, url: s.url ?? '' }));
         for (const [i, w] of writeups.entries()) {
           if (w === undefined) continue;
           const body = withDependency(
@@ -507,6 +514,7 @@ export default defineWorkflow({
           const found = await findOpenIssueByTitle(ctx, id('slice', i + 1, 'find'), {
             repo,
             title: w.title,
+            subIssues,
           });
           if (found !== null) {
             // An earlier run's slice, perhaps filed before its parent link: only a sub-issue of
@@ -782,6 +790,8 @@ export default defineWorkflow({
           schema: Writeups([firstKey, ...otherKeys]),
         });
         const filed: Filed[] = [];
+        // The follow-up epic's open sub-issues, read once when a draft first needs a lookup.
+        let subIssues: Promise<FoundIssue[]> | null = null;
         for (const item of items) {
           const key = item.key;
           const draft = drafted.ok ? drafted.value.issues.find((w) => w.key === key) : undefined;
@@ -822,6 +832,10 @@ export default defineWorkflow({
           const found = await findOpenIssueByTitle(ctx, id('followups', key, 'find'), {
             repo,
             title: draft.title,
+            subIssues: await (subIssues ??= openSubIssues(ctx, id('followups', 'sub-issues'), {
+              repo,
+              parent,
+            })),
           });
           if (found !== null) {
             // A follow-up only has to exist: one under another parent stays where it is.

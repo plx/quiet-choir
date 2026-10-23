@@ -534,7 +534,15 @@
       "stdout": "abc0001 Add the widget\nabc0002 Document the widget\n"
     },
     {
+      "step": "ticket/9/followups/sub-issues",
+      "json": []
+    },
+    {
       "step": "ticket/9/followups/f1/find",
+      "json": []
+    },
+    {
+      "step": "ticket/9/followups/f1/find/recent",
       "json": []
     },
     {

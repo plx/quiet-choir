@@ -348,36 +348,75 @@ export const FoundIssue = z.object({ number: z.int(), title: z.string(), url: z.
 export type FoundIssue = z.output<typeof FoundIssue>;
 
 /**
- * The open issue whose title is exactly `title`, or null: one search read, matched exactly in code.
- * `issue.create` reconciles only by its run-scoped marker, so a run restarted with a new run ID
- * looks for an earlier run's issue by title before filing, as the native helper did. The quoted
+ * The open issue whose title is exactly `title`, or null, matched exactly in code. `issue.create`
+ * reconciles only by its run-scoped marker, so a run restarted with a new run ID looks for an
+ * earlier run's issue by title before filing, as the native helper did: first among `subIssues`
+ * (the parent's open sub-issues, already read), then by a search read, then, since the search index
+ * lags a just-filed issue, among the 100 newest open issues listed without a search. The quoted
  * phrase keeps words such as "fix:" from being read as search qualifiers.
  */
 export async function findOpenIssueByTitle(
   ctx: WorkflowContext,
   id: string,
-  input: { readonly repo: string; readonly title: string },
+  input: {
+    readonly repo: string;
+    readonly title: string;
+    readonly subIssues?: readonly FoundIssue[];
+  },
 ): Promise<FoundIssue | null> {
+  const exact = (issues: readonly FoundIssue[]) =>
+    issues.find((issue) => issue.title === input.title) ?? null;
+  const known = exact(input.subIssues ?? []);
+  if (known !== null) return known;
+  const list = (stepId: string, search: readonly string[]) =>
+    ctx.exec.json(
+      stepId,
+      [
+        'gh',
+        'issue',
+        'list',
+        '-R',
+        input.repo,
+        '--state',
+        'open',
+        ...search,
+        '--limit',
+        '100',
+        '--json',
+        'number,title,url',
+      ],
+      { schema: z.array(FoundIssue), ...write },
+    );
+  const searched = exact(
+    await list(id, ['--search', `"${input.title.replace(/"/g, '')}" in:title`]),
+  );
+  return searched ?? exact(await list(`${id}/recent`, []));
+}
+
+/** The open sub-issues of `parent` that are issues of `repo` (GitHub allows a parent 100). */
+export async function openSubIssues(
+  ctx: WorkflowContext,
+  id: string,
+  input: { readonly repo: string; readonly parent: number },
+): Promise<FoundIssue[]> {
   const listed = await ctx.exec.json(
     id,
     [
       'gh',
-      'issue',
-      'list',
-      '-R',
-      input.repo,
-      '--state',
-      'open',
-      '--search',
-      `"${input.title.replace(/"/g, '')}" in:title`,
-      '--limit',
-      '100',
-      '--json',
-      'number,title,url',
+      'api',
+      `repos/${input.repo}/issues/${String(input.parent)}/sub_issues?per_page=100`,
+      '--jq',
+      '[.[] | {number, title, url: .html_url, state, repository_url}]',
     ],
-    { schema: z.array(FoundIssue), ...write },
+    {
+      schema: z.array(FoundIssue.extend({ state: z.string(), repository_url: z.string() })),
+      ...write,
+    },
   );
-  return listed.find((issue) => issue.title === input.title) ?? null;
+  const home = `/repos/${input.repo}`.toLowerCase();
+  return listed
+    .filter((i) => i.state === 'open' && i.repository_url.toLowerCase().endsWith(home))
+    .map(({ number, title, url }) => ({ number, title, url }));
 }
 
 /** Append `line` to the ledger file unless an identical line is already there. */

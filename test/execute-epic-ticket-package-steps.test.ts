@@ -91,7 +91,31 @@ const { runCheck } = await lib<{
     error: string | null;
   }>;
 }>('checks');
-const { tick, insertChecklist, removeLabel, appendLedger, linkSubIssue, issueState } = await lib<{
+interface FoundIssue {
+  number: number;
+  title: string;
+  url: string;
+}
+const {
+  tick,
+  insertChecklist,
+  removeLabel,
+  appendLedger,
+  linkSubIssue,
+  issueState,
+  findOpenIssueByTitle,
+  openSubIssues,
+} = await lib<{
+  findOpenIssueByTitle: (
+    ctx: WorkflowContext,
+    id: string,
+    input: { repo: string; title: string; subIssues?: readonly FoundIssue[] },
+  ) => Promise<FoundIssue | null>;
+  openSubIssues: (
+    ctx: WorkflowContext,
+    id: string,
+    input: { repo: string; parent: number },
+  ) => Promise<FoundIssue[]>;
   linkSubIssue: (
     ctx: WorkflowContext,
     id: string,
@@ -631,5 +655,74 @@ describe('sub-issue links and issue reads', () => {
     expect(await state(21)).toEqual({ number: 21, title: 'Registry', state: 'OPEN' });
     expect(await state(99)).toBeNull();
     expect(await state(30)).toBeNull();
+  });
+});
+
+describe('title lookup before filing', () => {
+  const registry = { number: 21, title: 'Registry', url: 'https://github.com/acme/widgets/21' };
+  /**
+   * A fake `gh` whose search finds nothing (the index lags), whose plain listing has `recent`, and
+   * whose epic #50 has `subIssues` (already in the `--jq` shape the step asks for).
+   */
+  async function fakeGh(recent: readonly FoundIssue[], subIssues: readonly unknown[] = []) {
+    const bin = join(real, 'bin');
+    await mkdir(bin);
+    const log = join(real, 'gh.log');
+    await writeFile(log, '');
+    const script = [
+      '#!/usr/bin/env node',
+      "const fs = require('node:fs');",
+      `const [log, recent, subIssues] = ${JSON.stringify([log, recent, subIssues])};`,
+      'const args = process.argv.slice(2);',
+      "fs.appendFileSync(log, args.join(' ') + '\\n');",
+      "if (args.includes('--search')) process.stdout.write('[]');",
+      "else if (args[0] === 'issue') process.stdout.write(JSON.stringify(recent));",
+      'else process.stdout.write(JSON.stringify(subIssues));',
+    ].join('\n');
+    await writeFile(join(bin, 'gh'), `${script}\n`);
+    await chmod(join(bin, 'gh'), 0o755);
+    vi.stubEnv('PATH', `${bin}${delimiter}${process.env['PATH'] ?? ''}`);
+    return { calls: async () => (await readFile(log, 'utf8')).split('\n').filter(Boolean) };
+  }
+  const repo = 'acme/widgets';
+  const find = (title: string, subIssues?: readonly FoundIssue[]) =>
+    inWorkflow(real, (ctx) =>
+      findOpenIssueByTitle(ctx, 'find', { repo, title, ...(subIssues ? { subIssues } : {}) }),
+    );
+
+  it('finds an issue the search index has not caught up with in the plain listing', async () => {
+    const gh = await fakeGh([{ ...registry, number: 22, title: 'Registry v2' }, registry]);
+    expect(await find('Registry')).toEqual(registry);
+    const calls = await gh.calls();
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toContain('--search');
+    expect(calls[1]).toBe(
+      'issue list -R acme/widgets --state open --limit 100 --json number,title,url',
+    );
+  });
+
+  it('is null when neither the search nor the listing has the exact title', async () => {
+    await fakeGh([{ ...registry, title: 'Registry, again' }]);
+    expect(await find('Registry')).toBeNull();
+  });
+
+  it("takes a match among the parent's sub-issues without reading GitHub", async () => {
+    const gh = await fakeGh([]);
+    expect(await find('Registry', [registry])).toEqual(registry);
+    expect(await gh.calls()).toEqual([]);
+  });
+
+  it('openSubIssues keeps the open sub-issues of the repository', async () => {
+    const raw = (number: number, state: string, owner = 'acme') => ({
+      number,
+      title: `Item ${String(number)}`,
+      url: `https://github.com/${owner}/widgets/issues/${String(number)}`,
+      state,
+      repository_url: `https://api.github.com/repos/${owner}/widgets`,
+    });
+    await fakeGh([], [raw(21, 'open'), raw(22, 'closed'), raw(23, 'open', 'other')]);
+    expect(
+      await inWorkflow(real, (ctx) => openSubIssues(ctx, 'subs', { repo, parent: 50 })),
+    ).toEqual([{ number: 21, title: 'Item 21', url: 'https://github.com/acme/widgets/issues/21' }]);
   });
 });
