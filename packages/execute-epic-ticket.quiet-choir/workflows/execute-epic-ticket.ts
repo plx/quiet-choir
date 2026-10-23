@@ -525,6 +525,7 @@ export default defineWorkflow({
             repo,
             title: w.title,
             subIssues,
+            exclude: [n, E],
           });
           if (found !== null) {
             // An earlier run's slice, perhaps filed before its parent link: only a sub-issue of
@@ -842,6 +843,7 @@ export default defineWorkflow({
           const found = await findOpenIssueByTitle(ctx, id('followups', key, 'find'), {
             repo,
             title: draft.title,
+            exclude: [n, E],
             subIssues: await (subIssues ??= openSubIssues(ctx, id('followups', 'sub-issues'), {
               repo,
               parent,

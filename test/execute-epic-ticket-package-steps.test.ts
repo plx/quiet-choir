@@ -109,7 +109,12 @@ const {
   findOpenIssueByTitle: (
     ctx: WorkflowContext,
     id: string,
-    input: { repo: string; title: string; subIssues?: readonly FoundIssue[] },
+    input: {
+      repo: string;
+      title: string;
+      subIssues?: readonly FoundIssue[];
+      exclude?: readonly number[];
+    },
   ) => Promise<FoundIssue | null>;
   openSubIssues: (
     ctx: WorkflowContext,
@@ -759,6 +764,20 @@ describe('title lookup before filing', () => {
   it('is null when neither the search nor the listing has the exact title', async () => {
     await fakeGh([{ ...registry, title: 'Registry, again' }]);
     expect(await find('Registry')).toBeNull();
+  });
+
+  it('never matches an excluded issue, such as the ticket a slice is split from', async () => {
+    const gh = await fakeGh([registry]);
+    const found = await inWorkflow(real, (ctx) =>
+      findOpenIssueByTitle(ctx, 'find', {
+        repo,
+        title: 'Registry',
+        subIssues: [registry],
+        exclude: [registry.number],
+      }),
+    );
+    expect(found).toBeNull();
+    expect(await gh.calls()).toHaveLength(2);
   });
 
   it("takes a match among the parent's sub-issues without reading GitHub", async () => {
