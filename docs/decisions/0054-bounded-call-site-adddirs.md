@@ -12,6 +12,19 @@
 - Amended by #577 ([0063](0063-bound-agents-and-typed-rosters.md) §5): strict profiles are opt-in
   (`strictProfiles` defaults to `false`), so bounded call-site directories apply under an explicit
   `strictProfiles: true`; §6's child checks and the grant notes apply only under `requireGrants`.
+- Amended by #707: rooted call-site directories are retired. Roster entries already refused
+  `addDirRoots`, and after profiles go `defaults.claude` would have been its only source, so
+  `claude.addDirRoots` in `defaults` or a profile is now refused when the definition loads, with
+  `rooted call-site directories were removed (#707, ADRs 0054 and 0062); list the directories statically in addDirs on a roster entry.`
+  Under `strictProfiles: true`, call-site Claude `addDirs` are always refused
+  (`strictProfiles forbids call-site addDirs`), like every other capability key. §6's root
+  delegation and the #391 ancestor recheck go too: with roots gone, a child's Claude `addDirs`
+  delegate by literal membership in its immediate parent's role, and each parent role was checked
+  the same way against its own parent, so the subset is transitive and bounds every descendant. The
+  ancestor recheck existed only because canonicalized roots could be narrowed to a symlink that a
+  middle child later retargeted. The persisted manifest schema still reads `claude.addDirRoots`, so
+  records written before #707 keep reading; their grant digests are unchanged for roles without
+  roots. The sections below record the historical form.
 
 ## Context
 

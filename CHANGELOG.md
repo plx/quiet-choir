@@ -2,6 +2,26 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Retire rooted call-site directories (#707, amending ADRs 0054 and 0062). A `defaults.claude` or
+  profile `claude` block that declares `addDirRoots` is refused when the definition loads, before
+  the schema parse, with
+  `<where>.addDirRoots: rooted call-site directories were removed (#707, ADRs 0054 and 0062); list the directories statically in addDirs on a roster entry.`;
+  roster entries already refused it, and their reason now reads
+  `rooted call-site directories were removed; list addDirs on the entry`. Under
+  `strictProfiles: true`, call-site Claude `addDirs` are always refused
+  (`strictProfiles forbids call-site addDirs`), on raw calls, bound agents and roster calls, and are
+  an optional `never` in the types like every other capability key. Child delegation checks a
+  child's Claude `addDirs` by literal membership in its parent's role only: the #391 ancestor
+  recheck and the run cwd it needed are gone, because the literal subset is transitive. Removed
+  exports: `ClaudeAddDirSelection`, `AddDirProfilesOf`, `AddDirRootedName`, `HasAddDirRoots` and
+  `ProfileReferenceOf`. `CallOptions` loses its fifth parameter and `WorkflowContext` and
+  `WorkflowDefinition` lose `TAddDirProfile`, so `WorkflowContext`'s `TRoster` is now its fifth
+  parameter and `WorkflowDefinition`'s its eighth. `defineWorkflow` has one signature again, without
+  the `TProfiles`/`TDefaults` inference or the fallback overload; inline `profiles` and `defaults`
+  literals keep TypeScript's ordinary excess-property checks, and a rejected definition reports
+  TS2322 instead of TS2769. Stored records whose capability manifest carries `claude.addDirRoots`
+  still read, and grant digests of roles without roots are unchanged. The Workflow Lab
+  `apiSnapshot.sha256` moves to the new `model.ts` hash in both batches.
 - Roster agents name their entry through an internal role channel instead of binding the public
   `profile` option (#706, ADR 0063 §4), so the public option can be removed later without touching
   rosters. The runner still spells the entry as `profile`, so a `ctx.roster.Name` call keeps the

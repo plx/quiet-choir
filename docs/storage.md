@@ -412,7 +412,8 @@ Revision 4 (#171) is nested-only too: a capability profile's `claude` gains the 
 ([ADR 0054](decisions/0054-bounded-call-site-adddirs.md)). Revision-3 records read, and their
 completed agent steps replay, unchanged. A revision-3 build cannot read a record whose capabilities
 declare `addDirRoots` (its strict manifest parse rejects the field), and refuses to rewrite any
-other revision-4 record instead of dropping `addDirs`. Revision 5 (#223) is nested-only as well: run
+other revision-4 record instead of dropping `addDirs`. Since #707 a definition cannot declare
+`addDirRoots`, but records that carry it still read. Revision 5 (#223) is nested-only as well: run
 `events` gain the type `wait.tolerated`, one entry per poll error that `onError` tolerated
 ([waits](waits.md#checks-and-outcomes)). Revision-4 records read unchanged, and a waiting poll's
 saved `lastError` count carries on after a resume. A revision-4 build cannot parse a record that
