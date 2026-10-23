@@ -75,7 +75,7 @@ following options accept a `Prompt` anywhere they accept a string:
 The runtime replaces the `Prompt` with its text before computing step identity. A `Prompt` and the
 equal string therefore fingerprint, record, rehearse and replay identically, and adapters always
 receive a string (`PromptText<O>` types their options). A roster stores a `Prompt` entry option as
-its text too, so `roster.Reviewer.appendSystemPrompt` is typed `string`. Profiles, `defaults`, Codex
+its text too, so `roster.Reviewer.appendSystemPrompt` is typed `string`. Roster entries, `defaults`, Codex
 options, native subagent `agents` and `ctx.ask` still take strings; use `.text` there.
 
 ## Template language and fixed settings

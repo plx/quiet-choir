@@ -136,7 +136,7 @@ these are not a billing ledger.
 
 Claude `onPermissionDenied: 'fail'` rejects a successful envelope that reports denied tools and
 lists their names. The default `warn` records them and prints a CLI warning. A per-call selection
-overrides the profile's policy and participates in semantic identity.
+overrides the entry's policy and participates in semantic identity.
 
 Adding the diagnostics field changes agent result-schema fingerprints once. In-flight runs with
 pre-streaming completed agent calls cannot reuse those calls after upgrading merely by accepting

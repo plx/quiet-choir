@@ -17,7 +17,7 @@ runtime. Explicit `defineWorkflow` type arguments are all-or-nothing: with a sho
 `strictProfiles: true` or a nonempty `children` list fails typecheck; drop the type arguments
 (preferred) or spell all seven. Direct definition calls preserve inferred output types. Name
 dispatch does not search the filesystem registry. Plain function helpers remain useful with
-`ctx.scope` or `ctx.within`; a typed workflow adds validated I/O, a recorded version, profile
+`ctx.scope` or `ctx.within`; a typed workflow adds validated I/O, a recorded version, requireGrants
 delegation and a visible frame. Do not wrap a child or a multi-effect helper in `ctx.step`.
 
 ## Identity and replay
@@ -94,11 +94,11 @@ resume sets the sticky guard; zero prohibits child entry. Recursion is allowed a
 guard. The refusal shows the workflow chain, and a raised cap resumes existing effects. It is
 policy, outside identity; `execute --policy-reset` restores the default before explicit overrides.
 
-## Profiles and observation
+## Rosters and observation
 
-By default a child's roles are its own: they are resolved from the child's declaration, no role is
-compared to the parent's, `options.profiles` is accepted and ignored, and the parent's `--profile`
-limit rules still apply by profile name. The child's own `strictProfiles` governs its call sites,
+By default a child's roster is its own: its entries are resolved from the child's declaration, no
+role is compared to the parent's, `options.profiles` is accepted and ignored, and the parent's
+`--profile` limit rules still apply by name. The child's own `strictProfiles` governs its call sites,
 and a child definition's `requireGrants` is ignored: only the root's setting, or the run's
 `--require-grants`, counts ([ADR 0063](decisions/0063-bound-agents-and-typed-rosters.md) §5).
 
@@ -106,17 +106,11 @@ and a child definition's `requireGrants` is ignored: only the root's setting, or
 
 Under `requireGrants`, child roles map to parent roles of the same name by default, and
 `options.profiles` maps a child's role to a differently named parent role (an unknown child role in
-it is an error). Declared/default child requirements are checked before child effects. Tools,
+it is an error). Child roster entries are checked before child effects. Tools,
 permissions, sandbox and native escape controls cannot exceed the delegated role; opaque controls
-require matching configuration. A child's Claude `addDirRoots` must lie inside the parent role's
-roots, and a child call's Claude directories must be listed by the parent role or, when absolute,
-lie canonically inside its roots (`claude.addDirRoots`, `claude.addDirs`); Codex directories need
-literal membership. A grandchild's Claude directories and roots must also pass the same check, at
-delegation and at every call, against every ancestor role in the chain, each canonicalized when
-checked (`exceeds ancestor profile …`), so a retargeted symlink root cannot widen a descendant
-beyond the top-level root. Missing or insufficient roles fail explicitly. Optional built-ins that
-the parent cannot delegate disappear from the child's available roles, so a grandchild cannot
-recover them. Raw call-site capabilities are checked too, even with `strictProfiles: false`. A
+require matching configuration. A child call's directories must be listed by the parent role
+(`claude.addDirs`, `codex.addDirs`): directory membership is literal. Missing or insufficient roles
+fail explicitly. Raw call-site capabilities are checked too, even with `strictProfiles: false`. A
 parent role that is elevated still needs the run's grant before the child uses it. A parent
 [roster entry](roster.md) delegates on its pinned harness only: the child role must be an entry
 pinned to the same harness at no higher access, or delegation fails with
@@ -125,11 +119,11 @@ child entry cannot run on, such as a parent's Claude `disallowedTools` for a Cod
 bind it.
 
 Under `requireGrants`, child models/effort inherit the mapped parent's values when omitted. Parent
-profile limit overrides pass through role mappings, and child call limits are bounded by the
-delegated parent limits. Child profile definitions remain the source of its requested tools; mapping
+`--profile` limit overrides pass through role mappings, and child call limits are bounded by the
+delegated parent limits. The child's entries remain the source of its requested tools; mapping
 never promotes it to additional parent tools. A delegated role that fails on permission denials
 stays failing: a child role that omits `onPermissionDenied` inherits `fail`, and an explicit child
-profile or Claude call `warn` is refused. Workflow JavaScript remains trusted operator code, not a
+entry or Claude call `warn` is refused. Workflow JavaScript remains trusted operator code, not a
 security sandbox.
 
 ### Observation
@@ -155,10 +149,10 @@ notices edits. Use required Zod fields for required input, and `.describe()` for
 Missing required input fails before a new run record or agent call; returning `{error: ...}` is an
 ordinary successful output and should not replace input validation.
 
-`workflow validate FILE --json` includes input/output JSON Schemas, descriptions, phases, profiles,
+`workflow validate FILE --json` includes input/output JSON Schemas, descriptions, phases,
 capabilities and a declared child tree, in a compact form: no harness option JSON Schemas, no
 `capabilities.defaults` (use `profiles[defaultProfile]`), a shared `capabilities.environment` with
-per-profile differences only, `profiles` as declared names, and no root `entrypoint` (it equals the
+per-entry differences only, `workflow.profiles` as a field that does not list roster entries, and no root `entrypoint` (it equals the
 document's own). Pass `--harness-schemas` for the complete document; `list-defs --json` follows the
 same rules. Recursive declarations end in `recursive: true` reference nodes. Inline children have
 `entrypoint: null` when no source entrypoint is known.

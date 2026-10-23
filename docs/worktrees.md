@@ -41,16 +41,16 @@ repository, cache root, isolated `cwd`, or a foreign handle) are configuration f
 never retried or settled as data, so correcting them and resuming runs the call live.
 
 ```ts
-const edit = await ctx.codex.text('edit', {
+// roster: { Editor: { harness: 'codex', sandbox: 'workspace-write' } }
+const edit = await ctx.roster.Editor.text('edit', {
   prompt: 'Fix the failing parser test.',
-  profile: 'editor',
   worktree: true,
 });
 if (!edit.worktree) throw new Error('Missing isolated change');
 const integration = await ctx.merge('integrate', [edit.worktree]);
 ```
 
-Declare the editing profile as usual (and grant it under `requireGrants`). Isolation does not grant
+Declare the editing entry in the roster (and grant it under `requireGrants`). Isolation does not grant
 tools or filesystem access. It is not a sandbox: a command can still write outside its directory.
 Native configuration now defaults to restricted mode; [harness isolation](harness-isolation.md)
 explains explicit opt-ins and remaining managed-policy dependencies. `worktree` is the only checkout
@@ -90,11 +90,7 @@ Use it as the `worktree` of an agent call, a local step, or an exec:
 
 ```ts
 const tree = await ctx.worktree('workspace');
-await ctx.claude.text('edit', {
-  prompt: 'Implement the change.',
-  profile: 'editor',
-  worktree: tree,
-});
+await ctx.roster.Editor.text('edit', { prompt: 'Implement the change.', worktree: tree });
 const test = await ctx.exec('test', ['npm', 'test'], { worktree: tree, onError: 'return' });
 await ctx.step('inspect', {
   input: { passed: test.ok, testCode: test.ok ? test.value.code : (test.error.code ?? null) },
@@ -184,7 +180,7 @@ Integrate into a branch with `commit`, then push `result.commit` in one `ctx.exe
 
 ```ts
 const tree = await ctx.worktree('ticket');
-await ctx.claude.text('fix', { prompt: 'Fix #42.', profile: 'editor', worktree: tree });
+await ctx.roster.Editor.text('fix', { prompt: 'Fix #42.', worktree: tree });
 const result = await ctx.merge('integrate', [tree], {
   strategy: 'squash',
   target: { branch: 'ticket-42' },

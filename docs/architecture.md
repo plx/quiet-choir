@@ -95,15 +95,15 @@ holes and undefined elements remain errors. Fresh bodies and replayed results re
 checkpoint copies. See [ADR 0017](decisions/0017-schema-first-values.md). Registered strict option
 schemas validate explicit requests before recording an effect; adapters reuse the same validators
 and apply their own defaults. Optional `Harness.policyDefaults` reports execution limits without
-effects. The core resolves named profiles above adapter defaults, call-site policy, and sticky run
+effects. The core resolves roster entries above adapter defaults, call-site policy, and sticky run
 overrides before invoking the adapter, and records per-attempt limits and provenance. `runWorkflow`
 and `readRun` share working-directory and storage resolution.
 
-Plain-data profile declarations publish a capability manifest without running the body. Strict
-profiles, an opt-in (`strictProfiles: true`), prohibit call-site capability replacements. Under the
-opt-in `requireGrants` layer the core preflights write/exec grants for declared/default roles,
-checks elevated built-in calls before invocation and bounds child roles by their parent's; named
-grants are pinned to tools/permissions/sandbox and saved for resume. Profile names and limits are
+The plain-data roster publishes a capability manifest without running the body. Strict call sites,
+an opt-in (`strictProfiles: true`), prohibit raw capability replacements. Under the
+opt-in `requireGrants` layer the core preflights write/exec grants for roster entries,
+checks elevated raw calls before invocation and bounds child roles by their parent's; named
+grants are pinned to tools/permissions/sandbox and saved for resume. Entry names and limits are
 policy; resolved semantic controls remain identity. See
 [ADR 0010](decisions/0010-agent-profiles-and-grants.md), as amended by
 [ADR 0063](decisions/0063-bound-agents-and-typed-rosters.md) §5.
@@ -219,7 +219,7 @@ See [ADR 0015](decisions/0015-observe-runs-without-changing-effect-identity.md) 
 ## CLI execution boundary
 
 Inline `ctx.workflow` enters a named child frame in the same run, with schema-validated I/O and
-explicit profile delegation. Frames share admission, budgets and cancellation, retain their own
+explicit delegation ceilings under `requireGrants`. Frames share admission, budgets and cancellation, retain their own
 identity/status, and use compact namespaces for deep nesting. Settled map ownership includes child
 frames; declared child identity is checked even when a committed mapper is skipped. Descriptive
 metadata stays outside runtime fingerprints. The loader publishes schemas and declared trees, and
@@ -333,7 +333,7 @@ pins. See [ADR 0022](decisions/0022-runtime-owned-worktree-isolation.md) and
 ## Integration boundary
 
 The workflow module declares package harnesses explicitly. Core execution resolves the registry,
-profiles and named adapters without loading native implementations. The two implicit built-in
+roster and named adapters without loading native implementations. The two implicit built-in
 contracts retain their revision-one identities. Adapter implementation modules use the public
 harness kit; ordinary service integrations use helpers over public context methods. See
 [ADR 0027](decisions/0027-typed-harness-registry-and-integration-helpers.md) for lookup precedence,

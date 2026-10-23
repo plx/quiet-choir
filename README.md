@@ -15,7 +15,7 @@ bundles a concise skill with topic-specific references for authoring, harness op
 inspection, and extensions; the runtime is installed separately.
 
 Use [inline child workflows](docs/child-workflows.md) to compose typed workflows in one run with
-recorded identities, delegated profiles and a visible tree. `workflow validate --json` publishes
+recorded identities, delegation ceilings under `requireGrants` and a visible tree. `workflow validate --json` publishes
 schemas and descriptions; `workflow list-defs` discovers trusted definitions for execution by name.
 
 ## Try it without an agent subscription
@@ -290,8 +290,9 @@ resume retains them. `model` and `effort` overrides require `--allow-model-overr
 callers use `RunOptions.policy`, `policyReset`, and `allowModelOverride`, or edit call-site limits
 without changing their source fingerprint. Globs use `*` within segments and `**` across `/`.
 
-The implicit `text` profile supplies a five-minute deadline, 10 Claude turns and a $0.50 per-call
-budget. `readonly` and `edit` supply larger limits. Custom harnesses receive those resolved options,
+The text baseline that raw calls start from supplies a five-minute deadline, 10 Claude turns and a
+$0.50 per-call budget. The `std.claude.*` and `std.codex.*` roster entries supply the read-only and
+edit limits. Custom harnesses receive those resolved options,
 must enforce them, and can report adapter-specific defaults through `policyDefaults(harness)`. See
 [the roster guide](docs/roster.md) for roster entries, bound agents, `--profile` recovery, opt-in
 strict capability checks and opt-in launch grants. `inspect --json` exposes saved rules and each
@@ -549,13 +550,13 @@ only in this repository; exclude chosen storage in other projects too.
 
 ## Harness defaults and limits
 
-The core resolves [roster entries and named profiles](docs/roster.md) before invoking a harness. The
-implicit `text` profile is tool-less for Claude, read-only for Codex, and limited to five minutes,
-10 Claude turns and $0.50 per Claude call. `readonly` grants file-reading tools; `edit` adds
-writing. Declare roles on `defineWorkflow` and select with `profile`; call sites may also pass raw
-tools or sandbox unless the workflow sets `strictProfiles: true`. Operator grants are opt-in: with
-`requireGrants: true` or `--require-grants`, write and exec roles need `--grant role` at launch and
-child roles are bounded by their parent's. `tools` implies `allowedTools` unless explicitly
+The core resolves [roster entries](docs/roster.md) before invoking a harness. The text baseline is
+tool-less for Claude, read-only for Codex, and limited to five minutes, 10 Claude turns and $0.50
+per Claude call; `std.claude.ReadOnly` grants file-reading tools and `std.claude.Edit` adds
+writing. Raw call sites may also pass tools or a sandbox unless the workflow sets
+`strictProfiles: true`. Operator grants are opt-in: with `requireGrants: true` or
+`--require-grants`, write and exec entries need `--grant Entry` at launch and child roles are
+bounded by their parent's. `tools` implies `allowedTools` unless explicitly
 narrowed. Claude defaults to `dontAsk`; allowed rules add to applicable native permissions. Codex
 uses approval policy `never`. Restricted Claude calls suppress inherited hooks/MCP; explicit opt-ins
 and managed policy still apply. Retained protocol data is capped at 8 MiB; Codex has no per-call USD

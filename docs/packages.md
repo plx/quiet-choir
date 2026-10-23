@@ -190,7 +190,7 @@ module. Beside it, `package` describes the whole package and is not compacted:
   or null.
 - `workflows` lists every declared workflow in declaration order, with its own module as
   `entrypoint`, its input JSON Schema, and `roster`: the workflow's [roster](roster.md) entries (the
-  manifest profiles pinned to a harness) in key order, each with the pinned harness's `access` and
+  entries listed under `capabilities.profiles`) in key order, each with the pinned harness's `access` and
   the entry's `model` for that harness (null when it sets none).
 - `prompts` lists the package's prompt sets and every set in each workflow's static tree, one per
   root, first seen first (package sets before workflow sets). `params` are the sorted keys of the
@@ -312,4 +312,4 @@ directory ([installing the plugins](plugins.md)).
 
 ## What comes next
 
-- #592 removes profiles.
+- #696 removes the profile API.

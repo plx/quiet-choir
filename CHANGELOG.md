@@ -2,6 +2,15 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Document rosters as the only agent inventory (#694, ADR 0063 §4). The "Appendix: requireGrants
+  and legacy profiles" in `docs/roster.md` is gone: `requireGrants: launch grants and pins` is now
+  its own section, with a short "Strict call sites" subsection for the opt-in `strictProfiles`.
+  The docs, README and both skill copies no longer teach declaring `profiles`, `defaults.profile`,
+  the call-site `profile:` option, `extends`, the preset names as selectable roles or the rooted
+  call-site directories of ADRs 0054 and 0062. Still documented: the `--profile Name.limit=`
+  override over roster entry names or `*`, the attempt `profile` field, requireGrants grants and
+  delegation ceilings with the `options.profiles` remap, and opt-in strict call sites. The Workflow
+  Lab Batch 01 notes now describe raw calls. No runtime change.
 - Retire the native Claude Code workflow scripts `merge-down-pr` and `execute-epic-ticket`, with
   their helper CLIs `merge-down.mjs`, `epic.mjs` and `rehearse.mjs` (#693). The packages
   `packages/merge-down.quiet-choir` and `packages/execute-epic-ticket.quiet-choir` are the
@@ -2654,7 +2663,7 @@
 
 - Workflow agent defaults, named profiles, capability manifests, launch grants and sticky
   `--profile` limit overrides are available. See
-  [agent profiles](docs/roster.md#appendix-requiregrants-and-legacy-profiles).
+  [agent profiles](docs/roster.md#requiregrants-launch-grants-and-pins).
 - **Privilege change:** Claude `tools` now implies `allowedTools` when omitted. Existing calls that
   expose Edit/Write/Bash may now execute those tools without interactive approval. Workflow runs
   require write/exec grants and default to strict declared profiles. Direct `CliHarness` callers own

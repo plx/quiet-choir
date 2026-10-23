@@ -33,7 +33,7 @@ observer runs through `context.exec`, and for each check of a
 that an observer or a command poll may pass `live: true` to keep a read-only check real, such as the
 CI status read in each check of a wait. `live` is refused in a step callback. Decisions
 (`ctx.decide`) never call their provider (see [decision fixtures](#decision-fixtures)). Durable
-sleeps complete immediately. Rehearsal preserves capability/profile validation and, under
+sleeps complete immediately. Rehearsal preserves capability/roster validation and, under
 `requireGrants`, still requires declared grants.
 
 ## Fixtures
@@ -677,7 +677,7 @@ capture basename, or `QUIET_CHOIR_FAKE_ROUTES` to a JSON file such as:
 Routes are first-match, support an optional harness, and use a regular expression for `prompt`.
 Defaults are the harness's text/structured success captures. `QUIET_CHOIR_FAKE_LOG` appends JSONL
 with argv, cwd, stdin, schema, call identity, scenario, and CLI version. Use shell environment
-variables or declared profile environments, respecting strict-profile rules. Logs contain complete
+variables or roster entry environments, respecting strict-profile rules. Logs contain complete
 prompts and schema data. These tools need a repository checkout; there is no `quiet-choir/testing`
 export. See [ADR 0016](decisions/0016-workflow-rehearsal.md).
 
