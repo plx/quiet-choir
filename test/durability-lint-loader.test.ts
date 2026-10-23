@@ -49,8 +49,10 @@ afterEach(async () => {
 
 // Each case compiles one fixture against the root tsconfig (src/ included); a failing validate
 // stops before import.
-// measured: 0.9-1.2 s per case alone, up to 5.1 s in a full coverage run (compile-dominated).
-describe('durability lint in the loader', { timeout: 20_000 }, () => {
+// measured: 0.9-1.2 s per case alone, up to 5.1 s in a full coverage run (compile-dominated),
+// except the first case, which compiles the engine source cold for the shared program cache:
+// 16-22 s on CI's Node.js 24 coverage shard 3/3 (Oct 2026 runs), past the old 20 s limit (#680).
+describe('durability lint in the loader', { timeout: 60_000 }, () => {
   it.each([
     ['m01-void', 'QC001', 10],
     ['m02-reused-id', 'QC005', 11],
