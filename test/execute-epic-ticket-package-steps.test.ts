@@ -281,6 +281,54 @@ describe('start', () => {
     );
   });
 
+  it('recognises its own earlier rebase of a pushed branch, keeping the old tip as the lease', async () => {
+    const { remote, checkout } = await origin();
+    const paths = pathsAt(join(real, 'root'));
+    await inWorkflow(checkout, (ctx) => start(ctx, 'start', startInput(paths)));
+    const pushed = await commit(paths.workdir, 'widget.ts', 'export {};\n', 'Add the widget');
+    sh(paths.workdir, 'push', '-q', 'origin', BRANCH);
+    await advanceMain(remote, 'other.txt', 'upstream\n');
+    const rebased = await inWorkflow(checkout, (ctx) => start(ctx, 'start', startInput(paths)));
+    expect(rebased).toMatchObject({ refused: null, rebase: 'rebased', remoteSha: pushed });
+    const head = sh(paths.workdir, 'rev-parse', 'HEAD');
+    expect(head).not.toBe(pushed);
+    const again = await inWorkflow(checkout, (ctx) => start(ctx, 'start', startInput(paths)));
+    expect(again).toMatchObject({ refused: null, rebase: 'up-to-date', remoteSha: pushed });
+    const published = await inWorkflow(checkout, (ctx) =>
+      publish(ctx, 'push', { workdir: paths.workdir, branch: BRANCH, sha: head, lease: pushed }),
+    );
+    expect(published).toEqual({ ok: true, value: { head, pushed: true } });
+  });
+
+  it('accepts a remote tip whose commits are patch-equivalent to its own', async () => {
+    const { remote, checkout } = await origin();
+    const paths = pathsAt(join(real, 'root'));
+    await inWorkflow(checkout, (ctx) => start(ctx, 'start', startInput(paths)));
+    await commit(paths.workdir, 'widget.ts', 'export {};\n', 'Add the widget');
+    const other = join(real, 'other-clone');
+    sh(real, 'clone', '-q', remote, other);
+    sh(other, 'checkout', '-q', '-b', BRANCH);
+    const copy = await commit(other, 'widget.ts', 'export {};\n', 'Add the widget, again');
+    sh(other, 'push', '-q', 'origin', BRANCH);
+    const started = await inWorkflow(checkout, (ctx) => start(ctx, 'start', startInput(paths)));
+    expect(started).toMatchObject({ refused: null, source: 'local', remoteSha: copy });
+  });
+
+  it('prunes the tracking ref of a ticket branch deleted on origin, so no lease is kept', async () => {
+    const { remote, checkout } = await origin();
+    const paths = pathsAt(join(real, 'root'));
+    await inWorkflow(checkout, (ctx) => start(ctx, 'start', startInput(paths)));
+    const head = await commit(paths.workdir, 'widget.ts', 'export {};\n', 'Add the widget');
+    sh(paths.workdir, 'push', '-q', 'origin', BRANCH);
+    sh(remote, 'branch', '-q', '-D', BRANCH);
+    const started = await inWorkflow(checkout, (ctx) => start(ctx, 'start', startInput(paths)));
+    expect(started).toMatchObject({ refused: null, source: 'local', remoteSha: null });
+    const published = await inWorkflow(checkout, (ctx) =>
+      publish(ctx, 'push', { workdir: paths.workdir, branch: BRANCH, sha: head, lease: null }),
+    );
+    expect(published).toEqual({ ok: true, value: { head, pushed: true } });
+  });
+
   it('rebases a reused branch onto a moved origin/main', async () => {
     const { remote, checkout } = await origin();
     const paths = pathsAt(join(real, 'root'));

@@ -135,6 +135,32 @@ async function heldElsewhere(
   return null;
 }
 
+/**
+ * Whether `sha`, a remote tip `branch` does not contain, is still this checkout's own: the branch
+ * once held it (it is an ancestor of an entry in the branch's reflog, as after start's own rebase
+ * of a pushed branch), or each of its commits is patch-equivalent to one the branch has.
+ */
+async function heldBefore(
+  context: StepContext,
+  W: string,
+  branch: string,
+  sha: string,
+): Promise<boolean> {
+  const ref = `refs/heads/${branch}`;
+  const logged = await run(context, ['git', 'rev-list', '-g', ref], { cwd: W });
+  const entries = logged.code === 0 ? [...new Set(logged.stdout.split('\n').filter(Boolean))] : [];
+  for (const entry of entries)
+    if (await gitOk(context, W, ['merge-base', '--is-ancestor', sha, entry])) return true;
+  const unmatched = await git(context, W, [
+    'log',
+    '--right-only',
+    '--cherry-pick',
+    '--format=%h',
+    `${ref}...${sha}`,
+  ]);
+  return unmatched === '';
+}
+
 /** The input of {@link start}. */
 export interface StartInput {
   readonly paths: Paths;
@@ -152,13 +178,14 @@ export interface StartInput {
  * a branch either tool pushed is the same ticket. A reused branch is rebased onto the default
  * branch; a conflicting rebase is aborted and reported as `conflict`. It refuses (`refused`, with
  * nothing changed) a rebase or merge in progress, uncommitted changes on another branch, commits on
- * a detached HEAD that no branch holds, a local branch that lacks commits its remote has, and a
- * branch checked out in another worktree (the native script's worktree may hold it).
+ * a detached HEAD that no branch holds, a local branch that lacks commits its remote has (unless
+ * the branch held them before a rebase), and a branch checked out in another worktree (the native
+ * script's worktree may hold it).
  */
 export function start(ctx: WorkflowContext, id: string, input: StartInput): Promise<StartedResult> {
   return ctx.step(id, {
     identity: 'version',
-    version: 'epic-ticket.start/2',
+    version: 'epic-ticket.start/3',
     input: { ...input, paths: { ...input.paths } },
     schema: Started,
     async run(context) {
@@ -175,9 +202,12 @@ export function start(ctx: WorkflowContext, id: string, input: StartInput): Prom
       }
       await mkdir(input.dir, { recursive: true });
       await git(context, W, ['fetch', '--quiet', 'origin', base]);
+      // --prune drops the tracking ref of a ticket branch deleted on origin (only under this
+      // refspec's destination), so a deleted branch's last SHA never becomes the push lease.
       await git(context, W, [
         'fetch',
         '--quiet',
+        '--prune',
         'origin',
         `+refs/heads/${prefix}/*:refs/remotes/origin/${prefix}/*`,
       ]);
@@ -241,8 +271,9 @@ export function start(ctx: WorkflowContext, id: string, input: StartInput): Prom
             refused: `the worktree ${W} is on a detached HEAD with commits no branch holds; put them on a branch before starting #${String(ticket)}: ${orphans.split('\n').slice(0, 5).join('; ')}`,
           });
       }
-      // The remote tip is the push lease only if the branch already holds it: a lease on commits
-      // another checkout pushed would let publish force them away.
+      // The remote tip is the push lease only if the branch already holds it, or held it before a
+      // rebase (start's own, on an earlier attempt): a lease on commits another checkout pushed
+      // would let publish force them away.
       const remoteRef = `refs/remotes/origin/${branch}`;
       const remoteSha = (await gitOk(context, W, ['rev-parse', '--verify', '--quiet', remoteRef]))
         ? await git(context, W, ['rev-parse', remoteRef])
@@ -255,7 +286,8 @@ export function start(ctx: WorkflowContext, id: string, input: StartInput): Prom
           '--is-ancestor',
           remoteSha,
           `refs/heads/${branch}`,
-        ]))
+        ])) &&
+        !(await heldBefore(context, W, branch, remoteSha))
       ) {
         const lacking = await git(context, W, [
           'log',

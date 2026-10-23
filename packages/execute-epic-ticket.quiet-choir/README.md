@@ -231,7 +231,10 @@ without a `ticket` or an unknown `until` fails before the run starts.
 - The start step refuses a ticket branch checked out in another worktree, which is what the native
   script's worktree does with a branch it started; check something else out there first. It also
   refuses a local ticket branch that lacks commits its `origin` branch has, rather than taking that
-  tip as the push lease; pull or reconcile them first.
+  tip as the push lease; pull or reconcile them first. The workflow's own rebase of a pushed branch
+  is recognised (the branch's reflog held the old tip, or each remote commit has a patch-equivalent
+  local one), and that tip stays the lease the push forces over. A ticket branch deleted on `origin`
+  is pruned from the scoped fetch, so it is pushed afresh with no lease.
 - Claude Code runs headless with the roster's `allowedTools` shell patterns; a command a prompt does
   not anticipate is denied. The Situation fragment lists exactly what the roster allows. The roster
   limits can be raised on resume with `--profile Surgeon.maxTurns=…`.

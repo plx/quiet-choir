@@ -252,6 +252,7 @@
         "git",
         "fetch",
         "--quiet",
+        "--prune",
         "origin",
         "+refs/heads/epic-7/*:refs/remotes/origin/epic-7/*"
       ],
