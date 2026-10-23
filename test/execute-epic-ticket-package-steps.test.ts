@@ -20,6 +20,10 @@ import {
 // specifier the root typecheck does not follow; the package's own typecheck covers them.
 vi.mock('quiet-choir', () => import('../src/index.js'));
 vi.mock('quiet-choir/github', () => import('../src/integrations/github.js'));
+
+// The start cases drive several real workflow runs and Git processes each: about 1-3 s alone, but
+// past the 5 s default in a full coverage run on a loaded machine.
+vi.setConfig({ testTimeout: 30_000 });
 const lib = async <T>(name: string): Promise<T> => {
   const url = new URL(
     `../packages/execute-epic-ticket.quiet-choir/lib/${name}.ts`,
