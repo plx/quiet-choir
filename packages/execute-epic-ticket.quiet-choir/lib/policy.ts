@@ -411,26 +411,12 @@ const CHECKLIST = /^(\s*[-*+]\s+)\[( |x|X)\](\s+)(.*)$/;
 const REF = /(?<![\w./-])(?:([\w.-]+\/[\w.-]+))?#(\d+)\b/g;
 
 /**
- * For each line, whether it belongs to a fenced code block (``` or ~~~, fence lines included). A
- * closing fence uses the opening fence's character and is at least as long; an unclosed fence runs
- * to the end. Examples in fences are never checklist items.
+ * For each line of a body, whether it belongs to fenced code: quiet-choir/github's
+ * `epicFencedLines`, which the caller passes so the edits skip exactly the lines the snapshot's
+ * checklist parser skips (fences in block quotes and list items included), while this module stays
+ * free of quiet-choir imports. Examples in fences are never checklist items.
  */
-export function fenceMask(lines: readonly string[]): boolean[] {
-  let fence: string | null = null;
-  return lines.map((line) => {
-    if (fence !== null) {
-      const close = /^\s*(`{3,}|~{3,})\s*$/.exec(line);
-      if (close?.[1]?.startsWith(fence.charAt(0)) && close[1].length >= fence.length) fence = null;
-      return true;
-    }
-    const open = /^\s*(`{3,}|~{3,})(.*)$/.exec(line);
-    if (open?.[1] && !(open[1].startsWith('`') && (open[2] ?? '').includes('`'))) {
-      fence = open[1];
-      return true;
-    }
-    return false;
-  });
-}
+export type FenceMask = (lines: readonly string[]) => readonly boolean[];
 
 /** The first issue of `repo` a checklist line's text names, ignoring inline code. */
 function firstOwnRef(text: string, repo: string): number | null {
@@ -448,7 +434,11 @@ interface ChecklistLine {
   readonly indent: number;
 }
 
-function checklistLines(lines: readonly string[], repo: string): ChecklistLine[] {
+function checklistLines(
+  lines: readonly string[],
+  repo: string,
+  fenceMask: FenceMask,
+): ChecklistLine[] {
   const fenced = fenceMask(lines);
   return lines.flatMap((line, index) => {
     if (fenced[index]) return [];
@@ -473,9 +463,14 @@ const eolOf = (text: string): string => (text.includes('\r\n') ? '\r\n' : '\n');
  * reference is `#number` ticked; null when there is nothing to change (already ticked, or not
  * listed), so a retry or resume never edits the body again.
  */
-export function tickBody(body: string, number: number, repo: string): string | null {
+export function tickBody(
+  body: string,
+  number: number,
+  repo: string,
+  fenceMask: FenceMask,
+): string | null {
   const lines = body.split(/\r?\n/);
-  const line = checklistLines(lines, repo).find((l) => l.ref === number);
+  const line = checklistLines(lines, repo, fenceMask).find((l) => l.ref === number);
   if (line === undefined || line.checked) return null;
   lines[line.index] = (lines[line.index] ?? '').replace(/\[ \]/, '[x]');
   return lines.join(eolOf(body));
@@ -504,10 +499,11 @@ export function insertAfter(
   parent: number,
   entries: readonly { readonly number: number; readonly title: string }[],
   repo: string,
+  fenceMask: FenceMask,
 ): string | null {
   const eol = eolOf(body);
   const lines = body.split(/\r?\n/);
-  const parsed = checklistLines(lines, repo);
+  const parsed = checklistLines(lines, repo, fenceMask);
   const listed = new Set(parsed.map((l) => l.ref));
   const fresh = entries.filter((e) => !listed.has(e.number));
   if (!fresh.length) return null;

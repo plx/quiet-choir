@@ -6,7 +6,6 @@ import {
   candidates,
   closeReason,
   counts,
-  fenceMask,
   firstSentence,
   homeItems,
   implementerSlot,
@@ -30,6 +29,7 @@ import {
   type EpicItem,
   type Selection,
 } from '../packages/execute-epic-ticket.quiet-choir/lib/policy.js';
+import { epicFencedLines } from '../src/integrations/github.js';
 
 // The contracts, prompts and state renderers import `quiet-choir`, which resolves to dist/, and npm
 // run check typechecks and tests before it builds. So the import maps to src/ here, and those
@@ -452,29 +452,37 @@ describe('tickBody', () => {
     '- [ ] `#5` code then #6 real',
   ].join('\n');
 
+  const tick = (text: string, number: number): string | null =>
+    tickBody(text, number, repo, epicFencedLines);
+
   it('ticks only the unchecked line of the ticket, keeping everything else', () => {
-    expect(tickBody(body, 2, repo)).toBe(body.replace('- [ ] #2', '- [x] #2'));
-    expect(tickBody(body, 3, repo)).toBe(body.replace('- [ ] #3', '- [x] #3'));
-    expect(tickBody(body, 6, repo)).toBe(body.replace('- [ ] `#5`', '- [x] `#5`'));
+    expect(tick(body, 2)).toBe(body.replace('- [ ] #2', '- [x] #2'));
+    expect(tick(body, 3)).toBe(body.replace('- [ ] #3', '- [x] #3'));
+    expect(tick(body, 6)).toBe(body.replace('- [ ] `#5`', '- [x] `#5`'));
   });
 
   it('returns null when the ticket is already ticked, unlisted or only in a fence', () => {
-    expect(tickBody(body, 1, repo)).toBeNull();
-    expect(tickBody(body, 4, repo)).toBeNull();
-    expect(tickBody(body, 5, repo)).toBeNull();
-    expect(tickBody(body, 99, repo)).toBeNull();
+    expect(tick(body, 1)).toBeNull();
+    expect(tick(body, 4)).toBeNull();
+    expect(tick(body, 5)).toBeNull();
+    expect(tick(body, 99)).toBeNull();
   });
 
   it('keeps CRLF line endings and honors same-repository qualified references', () => {
     const crlf = '- [ ] acme/widgets#2 Next\r\n- [ ] other/repo#3 Other\r\n';
-    expect(tickBody(crlf, 2, repo)).toBe(
-      '- [x] acme/widgets#2 Next\r\n- [ ] other/repo#3 Other\r\n',
-    );
-    expect(tickBody(crlf, 3, repo)).toBeNull();
+    expect(tick(crlf, 2)).toBe('- [x] acme/widgets#2 Next\r\n- [ ] other/repo#3 Other\r\n');
+    expect(tick(crlf, 3)).toBeNull();
   });
 
-  it('masks fenced code, including an unclosed fence', () => {
-    expect(fenceMask(['a', '~~~', 'b', '~~~', 'c', '```js', 'd'])).toEqual([
+  it('skips the lines the snapshot reads as fenced, in list items and block quotes', () => {
+    const listed = '- ~~~md\n  - [ ] #5 example\n  ~~~\n- [ ] #5 real';
+    expect(tick(listed, 5)).toBe('- ~~~md\n  - [ ] #5 example\n  ~~~\n- [x] #5 real');
+    const quoted = '> ~~~\n> - [ ] #5 example\n- [ ] #5 real\n> ~~~';
+    expect(tick(quoted, 5)).toBe('> ~~~\n> - [ ] #5 example\n- [x] #5 real\n> ~~~');
+  });
+
+  it('masks fenced code as the snapshot does, including an unclosed fence', () => {
+    expect(epicFencedLines(['a', '~~~', 'b', '~~~', 'c', '```js', 'd'])).toEqual([
       false,
       true,
       true,
@@ -482,6 +490,17 @@ describe('tickBody', () => {
       false,
       true,
       true,
+    ]);
+    expect(epicFencedLines(['- ~~~md', '  - [ ] #5 example', '  ~~~', '- [ ] #5 real'])).toEqual([
+      true,
+      true,
+      true,
+      false,
+    ]);
+    expect(epicFencedLines(['> ~~~', '> - [ ] #5 example', '- [ ] #5 real'])).toEqual([
+      true,
+      true,
+      false,
     ]);
   });
 });
@@ -493,28 +512,43 @@ describe('insertAfter', () => {
     { number: 22, title: 'Second\nslice' },
   ];
 
+  const insert = (
+    text: string,
+    parent: number,
+    entries: readonly { number: number; title: string }[],
+  ): string | null => insertAfter(text, parent, entries, repo, epicFencedLines);
+
   it('places the slices after the parent and its nested items, in order', () => {
-    expect(insertAfter(body, 2, slices, repo)).toBe(
+    expect(insert(body, 2, slices)).toBe(
       '## Items\n\n- [x] #1 Done\n- [ ] #2 Parent\n  - [ ] #3 Nested\n- [ ] #21 First slice\n- [ ] #22 Second slice\n- [ ] #4 Later\n',
     );
   });
 
   it('is idempotent, and finishes an insert an earlier attempt left partial', () => {
-    const once = insertAfter(body, 2, slices, repo) ?? '';
-    expect(insertAfter(once, 2, slices, repo)).toBeNull();
+    const once = insert(body, 2, slices) ?? '';
+    expect(insert(once, 2, slices)).toBeNull();
     const partial = body.replace('- [ ] #4', '- [ ] #21 First slice\n- [ ] #4');
-    expect(insertAfter(partial, 2, slices, repo)).toBe(once);
+    expect(insert(partial, 2, slices)).toBe(once);
   });
 
   it('appends after the last outer item, or under an Items heading, without the parent', () => {
-    expect(insertAfter('- [ ] #4 Later\n  - [ ] #5 Nested\n', 2, slices.slice(0, 1), repo)).toBe(
+    expect(insert('- [ ] #4 Later\n  - [ ] #5 Nested\n', 2, slices.slice(0, 1))).toBe(
       '- [ ] #4 Later\n  - [ ] #5 Nested\n- [ ] #21 First slice\n',
     );
-    expect(insertAfter('Intro.\n\n## Items\n', 2, slices.slice(0, 1), repo)).toBe(
+    expect(insert('Intro.\n\n## Items\n', 2, slices.slice(0, 1))).toBe(
       'Intro.\n\n## Items\n\n- [ ] #21 First slice\n',
     );
-    expect(insertAfter('Intro.', 2, slices.slice(0, 1), repo)).toBe(
+    expect(insert('Intro.', 2, slices.slice(0, 1))).toBe(
       'Intro.\n\n## Items\n\n- [ ] #21 First slice\n',
+    );
+  });
+
+  it('anchors at the real item, never at an example fenced in a list item or block quote', () => {
+    const listed = '- ~~~md\n  - [ ] #5 example\n  ~~~\n- [ ] #5 real';
+    expect(insert(listed, 5, slices.slice(0, 1))).toBe(`${listed}\n- [ ] #21 First slice`);
+    const quoted = '> ~~~\n> - [ ] #5 example\n- [ ] #5 real\n> ~~~\n> code';
+    expect(insert(quoted, 5, slices.slice(0, 1))).toBe(
+      '> ~~~\n> - [ ] #5 example\n- [ ] #5 real\n- [ ] #21 First slice\n> ~~~\n> code',
     );
   });
 });

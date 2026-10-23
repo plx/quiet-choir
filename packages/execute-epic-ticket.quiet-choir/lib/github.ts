@@ -10,7 +10,7 @@ import { existsSync } from 'node:fs';
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { z, type JsonValue, type StepContext, type WorkflowContext } from 'quiet-choir';
-import { parseGithubRepo } from 'quiet-choir/github';
+import { epicFencedLines, parseGithubRepo } from 'quiet-choir/github';
 import { run } from '../../merge-down.quiet-choir/lib/git.js';
 import { BodyEdit } from '../contracts.js';
 import { insertAfter, tickBody } from './policy.js';
@@ -95,7 +95,7 @@ export function tick(
 ): Promise<{ changed: boolean }> {
   const epic = { repo: input.repo, number: input.epic };
   return editEpic(ctx, id, { version: 'epic-ticket.tick/1', input: { ...input } }, epic, (body) =>
-    tickBody(body, input.ticket, parseGithubRepo(input.repo).nameWithOwner),
+    tickBody(body, input.ticket, parseGithubRepo(input.repo).nameWithOwner, epicFencedLines),
   );
 }
 
@@ -116,7 +116,13 @@ export function insertChecklist(
   };
   const epic = { repo: input.repo, number: input.epic };
   return editEpic(ctx, id, step, epic, (body) =>
-    insertAfter(body, input.parent, input.entries, parseGithubRepo(input.repo).nameWithOwner),
+    insertAfter(
+      body,
+      input.parent,
+      input.entries,
+      parseGithubRepo(input.repo).nameWithOwner,
+      epicFencedLines,
+    ),
   );
 }
 
