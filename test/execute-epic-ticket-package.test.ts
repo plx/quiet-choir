@@ -265,22 +265,28 @@ describe('counts and headlines', () => {
 });
 
 describe('slugify and branchName', () => {
-  it('matches the native epic.mjs slugify on a table of titles', async () => {
-    const native = (await import(
-      new URL('../.claude/workflows/execute-epic-ticket/epic.mjs', import.meta.url).href
-    )) as { slugify: (title: string, max?: number) => string };
-    const titles = [
-      'Add the widget',
-      "runner.ts: replace effect()'s 15 positional parameters with an EffectSpec",
-      'Port execute-epic-ticket from a native Workflow script to a quiet-choir package',
-      '  --leading and trailing--  ',
-      '!!!',
-      '',
-      'abcdefghij-abcdefghij-abcdefghij-abcdefgh-xyz',
-      'abcdefghijabcdefghijabcdefghijabcdefghijabcdefghij',
-      'Ünïcödé títle with 日本語',
+  it('slugifies a table of titles as the native script did', () => {
+    const cases: [string, string][] = [
+      ['Add the widget', 'add-the-widget'],
+      [
+        "runner.ts: replace effect()'s 15 positional parameters with an EffectSpec",
+        'runner-ts-replace-effect-s-15-positional',
+      ],
+      [
+        'Port execute-epic-ticket from a native Workflow script to a quiet-choir package',
+        'port-execute-epic-ticket-from-a-native',
+      ],
+      ['  --leading and trailing--  ', 'leading-and-trailing'],
+      ['!!!', 'issue'],
+      ['', 'issue'],
+      ['abcdefghij-abcdefghij-abcdefghij-abcdefgh-xyz', 'abcdefghij-abcdefghij-abcdefghij'],
+      [
+        'abcdefghijabcdefghijabcdefghijabcdefghijabcdefghij',
+        'abcdefghijabcdefghijabcdefghijabcdefghij',
+      ],
+      ['Ünïcödé títle with 日本語', 'n-c-d-t-tle-with'],
     ];
-    for (const title of titles) expect(slugify(title)).toBe(native.slugify(title));
+    for (const [title, slug] of cases) expect(slugify(title)).toBe(slug);
   });
 
   it('names a new ticket branch epic-E/N-slug, the native convention', () => {
