@@ -562,6 +562,29 @@ describe('epic body and label mechanics', () => {
     expect(await gh.patches()).toBe(1);
   });
 
+  it('tick and insertChecklist match owner/name#N lines under a host-qualified repository', async () => {
+    const hosted = 'ghe.example/acme/widgets';
+    const gh = await fakeGh('## Items\n\n- [ ] acme/widgets#9 Plugins\n- [ ] #10 Docs\n', []);
+    expect(
+      await inWorkflow(real, (ctx) => tick(ctx, 'tick', { repo: hosted, epic: 7, ticket: 9 })),
+    ).toEqual({
+      changed: true,
+    });
+    expect(
+      await inWorkflow(real, (ctx) =>
+        insertChecklist(ctx, 'checklist', {
+          repo: hosted,
+          epic: 7,
+          parent: 9,
+          entries: [{ number: 21, title: 'Registry' }],
+        }),
+      ),
+    ).toEqual({ changed: true });
+    expect(await gh.body()).toBe(
+      '## Items\n\n- [x] acme/widgets#9 Plugins\n- [ ] #21 Registry\n- [ ] #10 Docs\n',
+    );
+  });
+
   it('removeLabel treats a 404 as success, and skips a label the issue lacks', async () => {
     await fakeGh('', ['needs-decision']);
     expect(

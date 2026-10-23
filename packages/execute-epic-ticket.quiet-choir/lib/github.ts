@@ -95,7 +95,7 @@ export function tick(
 ): Promise<{ changed: boolean }> {
   const epic = { repo: input.repo, number: input.epic };
   return editEpic(ctx, id, { version: 'epic-ticket.tick/1', input: { ...input } }, epic, (body) =>
-    tickBody(body, input.ticket, input.repo),
+    tickBody(body, input.ticket, parseGithubRepo(input.repo).nameWithOwner),
   );
 }
 
@@ -116,7 +116,7 @@ export function insertChecklist(
   };
   const epic = { repo: input.repo, number: input.epic };
   return editEpic(ctx, id, step, epic, (body) =>
-    insertAfter(body, input.parent, input.entries, input.repo),
+    insertAfter(body, input.parent, input.entries, parseGithubRepo(input.repo).nameWithOwner),
   );
 }
 
