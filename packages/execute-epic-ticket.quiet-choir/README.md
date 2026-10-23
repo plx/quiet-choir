@@ -109,14 +109,14 @@ ticket. The landing child uses `<root>/merge-down` when `root` is given, else it
 
 ## How it works
 
-| Stage     | Who (model / effort)                                                   | What                                                                                                                                                                                                                                                                                                                 |
-| --------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Survey    | no agent                                                               | `gh.epic.snapshot` with the `epic-E/` head prefix, the states of outside dependencies, and `nextTicket` with the native hold labels. In-flight work first, then a finished split, then the first ready ticket; `ticket` pins one.                                                                                    |
-| Plan      | `Planner` opus / high (+ `Skeptic` opus / medium)                      | The `start` step prepares the ticket branch in the worktree; the planner decides ready, obsolete, needs-decision, blocked or split. An obsolete verdict closes only if the skeptic agrees, else the ticket is planned again once. A ready plan is saved as `plan.json`.                                              |
-| Implement | `ImplementTeam.mechanic` sonnet / high or `.surgeon` opus / high       | The slot by the plan's complexity and size (or `implementer`). The workflow then verifies the report (criteria, commits on the branch, commits of its own, a clean tree) and runs the full suite at that head; a failure gets one follow-up round (the mechanic escalates, the surgeon finishes) with the check log. |
-| Publish   | `Scribe` sonnet / medium ∥ `Scribe` sonnet / medium                    | The PR text from the plan, the report and the diff snapshot, beside the follow-up write-ups, which the workflow files (or matches to an open issue) under the follow-up epic. Push with lease at the checked head, then `pr.create`. In GitHub Codex mode, wait for Codex's first review.                            |
-| Land      | [`merge-down-pr`](../merge-down.quiet-choir/README.md), with its tiers | `ctx.workflow('land', mergeDownPr, input)`: review against the ticket, thread triage and fixes, the CI and review gate, the squash-merge and the issue summary, in the `land/` frame.                                                                                                                                |
-| Report    | no agent                                                               | Tick the ticket's checklist line, append the ledger line, and survey again for `remaining` and `next`.                                                                                                                                                                                                               |
+| Stage     | Who (model / effort)                                                   | What                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| --------- | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Survey    | no agent                                                               | `gh.epic.snapshot` with the `epic-E/` head prefix, the states of outside dependencies (an unreadable one counts as open, so only the tickets naming it wait), and `nextTicket` with the native hold labels. In-flight work first, then a finished split, then the first ready ticket; `ticket` pins one. Sub-issue epics only: a task-list epic blocks at survey. An in-flight PR from another repository blocks too. |
+| Plan      | `Planner` opus / high (+ `Skeptic` opus / medium)                      | The `start` step prepares the ticket branch in the worktree; the planner decides ready, obsolete, needs-decision, blocked or split. An obsolete verdict closes only if the skeptic agrees, else the ticket is planned again once. A ready plan is saved as `plan.json`.                                                                                                                                               |
+| Implement | `ImplementTeam.mechanic` sonnet / high or `.surgeon` opus / high       | The slot by the plan's complexity and size (or `implementer`). The workflow then verifies the report (criteria, commits on the branch, commits of its own, a clean tree) and runs the full suite at that head; a failure gets one follow-up round (the mechanic escalates, the surgeon finishes) with the check log.                                                                                                  |
+| Publish   | `Scribe` sonnet / medium ∥ `Scribe` sonnet / medium                    | The PR text from the plan, the report and the diff snapshot, beside the follow-up write-ups, which the workflow files (or matches to an open issue) under the follow-up epic. Push with lease at the checked head, then `pr.create`. In GitHub Codex mode, wait for Codex's first review.                                                                                                                             |
+| Land      | [`merge-down-pr`](../merge-down.quiet-choir/README.md), with its tiers | `ctx.workflow('land', mergeDownPr, input)`: review against the ticket, thread triage and fixes, the CI and review gate, the squash-merge and the issue summary, in the `land/` frame.                                                                                                                                                                                                                                 |
+| Report    | no agent                                                               | Tick the ticket's checklist line, append the ledger line, and survey again for `remaining` and `next`.                                                                                                                                                                                                                                                                                                                |
 
 Every mechanical step is a durable effect that costs no model call. There is no Clerk, Copyist or
 Recopyist and no verified relay. GitHub reads, waits and writes go through `quiet-choir/github`,
@@ -219,6 +219,11 @@ without a `ticket` or an unknown `until` fails before the run starts.
 
 ## Known limitations
 
+- Only epics with native sub-issues are surveyed. For a task-list epic `gh.epic.snapshot` has only
+  the checkboxes (no labels, dependencies, split markers or issue states), so selecting from it
+  would bypass the held, waiting and closed checks; the run blocks at survey instead. Attach the
+  tickets as sub-issues, or use the native script, which reads each item.
+
 - One root serves one unfinished run at a time: every run checks out its ticket's branch in the same
   `worktree/`. The check suite and the push refuse a worktree that is not on the ticket branch, but
   an agent is not probed before it edits the worktree (merge-down's `ownedAgent` is keyed by PR).
@@ -249,12 +254,13 @@ and rehearses the cases in
 verify-on-pr criterion and a follow-up, publish, then the merge-down child landing from merge-down's
 clean-land rules under `land/`, and the report), `obsolete-closed` (the skeptic agrees; close and
 tick), `needs-decision` (comment, ensure and add the label), `split` (two slices filed, the second
-depending on the first, the checklist insert and the split marker), `epic-done` and `stalled`. Every
-agent call and command is answered by the fixtures (`"commands": "fixture"`) and no rule may go
-unused. For `ready-landed` the script also requires the run record's `land` frame of `merge-down-pr`
-to be completed, and the summary that `workflow inspect` prints (`summarizeRun` and
-`formatRunSummary` from `dist/`) to show `land: merge-down-pr@1 completed`. It runs in
-`npm run check` and in the Package rehearsals CI job.
+depending on the first, the checklist insert and the split marker), `epic-done`, `stalled`,
+`task-list` (a task-list epic blocks at survey) and `unreadable-outside` (a dependency that 404s
+counts as open, and an unrelated ready ticket is still picked). Every agent call and command is
+answered by the fixtures (`"commands": "fixture"`) and no rule may go unused. For `ready-landed` the
+script also requires the run record's `land` frame of `merge-down-pr` to be completed, and the
+summary that `workflow inspect` prints (`summarizeRun` and `formatRunSummary` from `dist/`) to show
+`land: merge-down-pr@1 completed`. It runs in `npm run check` and in the Package rehearsals CI job.
 
 ## Measurements
 
@@ -268,7 +274,7 @@ Measured on this branch with the commands below, against the native originals.
 | Mechanics                                                | 1,497 lines in lib/ (531 of them pure policy)                | 1,694 lines in epic.mjs                                                                      |
 | Agent call sites                                         | 6 roster or team-slot calls                                  | 6 judgment `agent(` calls + 22 clerk relay calls (one `agent(` site)                         |
 | Model calls per mechanical step                          | 0                                                            | 1 haiku clerk (a sonnet copyist for the survey and report), plus a re-read on a failed relay |
-| Rehearsal                                                | 6 cases in packages/rehearsals/ (JSON) and the shared script | rehearse.mjs, 1,184 lines                                                                    |
+| Rehearsal                                                | 8 cases in packages/rehearsals/ (JSON) and the shared script | rehearse.mjs, 1,184 lines                                                                    |
 
 ```sh
 find packages/execute-epic-ticket.quiet-choir -type f ! -name README.md -print0 | xargs -0 cat | wc -l

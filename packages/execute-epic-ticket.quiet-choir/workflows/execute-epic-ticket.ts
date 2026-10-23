@@ -40,6 +40,7 @@ import {
   insertChecklist,
   issueState,
   linkSubIssue,
+  type IssueState,
   removeLabel,
   tick,
 } from '../lib/github.js';
@@ -155,13 +156,30 @@ export default defineWorkflow({
         { number: E, headRefPrefix: `${branchPrefix(E)}/` },
         read,
       );
-      const outside: GithubIssue[] = [];
-      for (const number of outsideReferences(snap))
-        outside.push(await gh.issue.view(ctx.id(...key, 'outside', number), { number }, read));
+      // A task-list item carries only its checkbox: no labels, dependencies, split or real state,
+      // so selecting from it would bypass every held, waiting and closed check.
+      if (snap.source === 'task-list') return { snap, selection: null };
+      const outside: IssueState[] = [];
+      for (const number of outsideReferences(snap)) {
+        const seen = await issueState(ctx, ctx.id(...key, 'outside', number), { repo, number });
+        // Unreadable (deleted, inaccessible or a pull request): left out, so it counts as open
+        // and only the tickets that name it wait.
+        const note = `unreadable reference #${String(number)} counts as open`;
+        if (seen !== null) outside.push(seen);
+        else if (!record.notes.includes(note)) {
+          ctx.log(`#${String(number)} cannot be read as an issue; tickets naming it wait`);
+          record.notes.push(note);
+        }
+      }
       return { snap, selection: nextTicket(snap, { outside, holdLabels: [...HOLD_LABELS] }) };
     };
     const { snap, selection } = await survey('survey');
     record.epicTitle = snap.epic.title;
+    if (selection === null)
+      return blocked(
+        'survey',
+        `epic #${String(E)} has no sub-issues; execute-epic-ticket.quiet-choir surveys sub-issue epics only (attach the tickets as sub-issues, or use the native script)`,
+      );
     const surveyCounts = counts(snap.items, selection);
     record.remaining = surveyCounts;
     ctx.log(
@@ -979,9 +997,11 @@ export default defineWorkflow({
       }),
     });
     const after = await survey('report', 'survey');
-    record.remaining = counts(after.snap.items, after.selection);
-    const next = after.selection.pick;
-    record.next = next ? { number: next.number, title: next.title, status: next.status } : null;
+    if (after.selection !== null) {
+      record.remaining = counts(after.snap.items, after.selection);
+      const next = after.selection.pick;
+      record.next = next ? { number: next.number, title: next.title, status: next.status } : null;
+    }
     return finish('landed', {
       headline:
         `#${String(T.number)} "${T.title}" landed as PR #${String(target.pr)} (${String(landed.mergeCommit).slice(0, 7)}). ${plain(landed.headline ?? '')}`.trim(),

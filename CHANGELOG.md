@@ -17,10 +17,11 @@
   before filing are check-then-act `gh api` steps. Its own default root
   (`<main checkout>-epic-burndown-package`) keeps the native script a safe fallback until #592, and
   the shared `epic-E/N-slug` branches let either tool resume a ticket. `npm run packages:rehearse`
-  now validates and rehearses every package from one table: six new cases (ready ticket landed
-  through the merge-down child, obsolete closed, needs-decision, split, epic-done, stalled), and a
-  case can require an inline child frame to complete and show in the inspect summary.
-  `npm run typecheck` and `durability:check` cover the new package.
+  now validates and rehearses every package from one table: eight new cases (ready ticket landed
+  through the merge-down child, obsolete closed, needs-decision, split, epic-done, stalled, a
+  task-list epic blocked at survey, an unreadable dependency counted as open), and a case can
+  require an inline child frame to complete and show in the inspect summary. `npm run typecheck` and
+  `durability:check` cover the new package.
 - Teach agents to author and run packages (#591, ADR 0065 section 5). Both skill copies gain
   `references/packages.md`, a condensed authoring reference covering layout, `definePackage`, the
   shared roster, prompts, teams, `--workflow`, the `validate` package section, discovery,

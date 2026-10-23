@@ -1,0 +1,151 @@
+{
+  "version": 1,
+  "calls": [],
+  "exec": [
+    {
+      "step": "repo-info",
+      "json": {
+        "data": {
+          "viewer": {
+            "login": "epic-bot"
+          },
+          "repository": {
+            "nameWithOwner": "acme/widgets",
+            "isPrivate": false,
+            "viewerPermission": "ADMIN",
+            "defaultBranchRef": {
+              "name": "main"
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "survey/epic/7",
+      "json": {
+        "data": {
+          "viewer": {
+            "login": "epic-bot"
+          },
+          "repository": {
+            "issue": {
+              "number": 7,
+              "title": "Epic: widgets",
+              "state": "OPEN",
+              "url": "https://github.com/acme/widgets/issues/7",
+              "body": "## Items\n\n- [ ] #9 Second widget\n- [ ] #10 Widget theme\n",
+              "subIssuesSummary": {
+                "total": 2,
+                "completed": 0
+              },
+              "subIssues": {
+                "pageInfo": {
+                  "hasNextPage": false
+                },
+                "nodes": [
+                  {
+                    "number": 9,
+                    "title": "Second widget",
+                    "state": "OPEN",
+                    "stateReason": null,
+                    "url": "https://github.com/acme/widgets/issues/9",
+                    "body": "Depends on #42.",
+                    "repository": {
+                      "nameWithOwner": "acme/widgets"
+                    },
+                    "labels": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "assignees": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "blockedBy": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "closedByPullRequestsReferences": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "comments": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    }
+                  },
+                  {
+                    "number": 10,
+                    "title": "Widget theme",
+                    "state": "OPEN",
+                    "stateReason": null,
+                    "url": "https://github.com/acme/widgets/issues/10",
+                    "body": "",
+                    "repository": {
+                      "nameWithOwner": "acme/widgets"
+                    },
+                    "labels": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "assignees": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "blockedBy": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "closedByPullRequestsReferences": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    },
+                    "comments": {
+                      "pageInfo": {
+                        "hasNextPage": false
+                      },
+                      "nodes": []
+                    }
+                  }
+                ]
+              }
+            },
+            "pullRequests": {
+              "pageInfo": {
+                "hasNextPage": false
+              },
+              "nodes": []
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "survey/outside/42",
+      "argvPrefix": ["gh", "api", "repos/acme/widgets/issues/42"],
+      "code": 1,
+      "stdout": "",
+      "stderr": "gh: Not Found (HTTP 404)\n"
+    }
+  ],
+  "unmatched": "error",
+  "commands": "fixture"
+}
