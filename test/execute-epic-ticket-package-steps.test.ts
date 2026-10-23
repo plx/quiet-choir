@@ -198,6 +198,10 @@ async function origin(): Promise<{ remote: string; checkout: string }> {
   await mkdir(checkout);
   sh(real, 'init', '-q', '--bare', '-b', 'main', remote);
   sh(checkout, 'init', '-q', '-b', 'main');
+  // The steps under test run git themselves (start rebases), so the checkout and the worktrees it
+  // adds need an identity of their own: CI runners have no global one and cannot guess it.
+  sh(checkout, 'config', 'user.name', 't');
+  sh(checkout, 'config', 'user.email', 't@example.com');
   await writeFile(join(checkout, 'README.md'), 'hello\n');
   sh(checkout, 'add', '.');
   sh(checkout, 'commit', '-q', '-m', 'init');
