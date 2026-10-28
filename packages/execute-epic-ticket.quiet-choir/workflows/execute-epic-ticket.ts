@@ -15,6 +15,7 @@ import {
   type GithubIssueWithComments,
 } from 'quiet-choir/github';
 import { MergeDownInput } from '../../merge-down.quiet-choir/contracts.js';
+import { toolchainNote } from '../../merge-down.quiet-choir/lib/policy.js';
 import { resolveRepo } from '../../merge-down.quiet-choir/lib/prepare.js';
 import mergeDownPr from '../../merge-down.quiet-choir/workflows/merge-down-pr.js';
 import {
@@ -76,7 +77,7 @@ import {
 import { renderEpic, renderIssue } from '../lib/state.js';
 import { ImplementTeam } from '../lib/teams.js';
 import { prompts, type Situation } from '../prompts.js';
-import { roster } from '../roster.js';
+import { roster, toolchainAgents, type Staff } from '../roster.js';
 
 type Ledger = EpicTicketResult;
 type Status = Ledger['status'];
@@ -145,6 +146,9 @@ export default defineWorkflow({
       ctx.log(`Blocked at ${stage}: ${reason}`);
       return finish('blocked', { blocked: { stage, reason } });
     };
+
+    // The roster's roles; with a toolchain, bound with its shell rules instead of npm's (#735).
+    const R: Staff = A.toolchain === undefined ? ctx.roster : toolchainAgents(ctx, A.toolchain);
 
     // ── Survey ──────────────────────────────────────────────────────────────────────────────
     ctx.phase('Survey');
@@ -380,10 +384,11 @@ export default defineWorkflow({
         base: DEF,
         dir,
         planFile: file,
+        toolchain: toolchainNote(A.toolchain),
       });
 
       const planTicket = async (replan: { kind: string; check: string } | null) => {
-        const planned = await ctx.roster.Planner.value(id('plan', replan ? 'again' : 'first'), {
+        const planned = await R.Planner.value(id('plan', replan ? 'again' : 'first'), {
           ...place,
           prompt: prompts.Plan({
             situation: situation(started.planFile),
@@ -408,7 +413,7 @@ export default defineWorkflow({
       // Closing a ticket on one model's word is how work gets lost: an independent skeptic must
       // agree, or the ticket is planned again with the skeptic's findings.
       if (verdict.readiness === 'obsolete') {
-        const checked = await ctx.roster.Skeptic.value(id('skeptic'), {
+        const checked = await R.Skeptic.value(id('skeptic'), {
           ...place,
           prompt: prompts.Skeptic({
             situation: situation(null),
@@ -494,7 +499,7 @@ export default defineWorkflow({
           });
         const keys = slices.map((_, i) => `slice-${String(i + 1)}`);
         const written = keys.length
-          ? await ctx.roster.Scribe.value(id('slices'), {
+          ? await R.Scribe.value(id('slices'), {
               ...place,
               prompt: prompts.WriteSlices({
                 situation: situation(null),
@@ -598,8 +603,8 @@ export default defineWorkflow({
       // ── Implement ─────────────────────────────────────────────────────────────────────────
       ctx.phase('Implement');
       const team: ImplementTeam = ImplementTeam.from({
-        mechanic: ctx.roster.Mechanic,
-        surgeon: ctx.roster.Surgeon,
+        mechanic: R.Mechanic,
+        surgeon: R.Surgeon,
       });
       const schema = Implemented([firstId, ...otherIds]);
       const planText = JSON.stringify(plan, null, 1);
@@ -755,7 +760,7 @@ export default defineWorkflow({
       const writePr = async () => {
         const snapped = await snapshot(ctx, id('snapshot'), { workdir: W, dir, base: DEF });
         if (!snapped.ok) return { error: `snapshot: ${snapped.error.message}` };
-        const text = await ctx.roster.Scribe.value(id('pr-text'), {
+        const text = await R.Scribe.value(id('pr-text'), {
           ...place,
           prompt: prompts.WritePr({
             situation: situation(planFile),
@@ -789,7 +794,7 @@ export default defineWorkflow({
         const [firstKey, ...otherKeys] = items.map((f) => f.key);
         if (firstKey === undefined) return [];
         const parent = await ensureFollowupEpic();
-        const drafted = await ctx.roster.Scribe.value(id('followups', 'draft'), {
+        const drafted = await R.Scribe.value(id('followups', 'draft'), {
           ...place,
           prompt: prompts.WriteFollowups({
             situation: situation(planFile),
@@ -987,6 +992,7 @@ export default defineWorkflow({
         followupEpic,
         followupEpicTitle: A.followupEpicTitle,
         checkCommand: overrides.checkCommand ?? A.checkCommand,
+        ...(A.toolchain === undefined ? {} : { toolchain: A.toolchain }),
         standingNotes: landingNotes({
           standingNotes: A.standingNotes,
           ticket: T.number,

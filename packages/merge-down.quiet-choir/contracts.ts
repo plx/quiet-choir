@@ -5,6 +5,32 @@ import { z } from 'quiet-choir';
 const severity = z.enum(['blocker', 'major', 'minor']);
 const complexity = z.enum(['mechanical', 'subtle']);
 
+const rule = z.string().trim().min(1);
+
+/**
+ * The repository's toolchain as the agents see it (#735). Absent, the roster's npm rules and the
+ * prompts' npm instructions apply; present, `read` and `edit` replace the npm shell rules (the git,
+ * gh, `ls` and `wc` rules stay) and `guidance` replaces the npm formatting, focused-check and
+ * lockfile instructions.
+ */
+export const Toolchain = z.object({
+  read: z
+    .array(rule)
+    .default([])
+    .describe('allowedTools rules for every role, e.g. "Bash(swift build:*)".'),
+  edit: z
+    .array(rule)
+    .default([])
+    .describe('allowedTools rules the editing roles add, e.g. "Bash(just reformat:*)".'),
+  guidance: z
+    .string()
+    .trim()
+    .min(1)
+    .describe('Markdown: how to format touched files, run focused checks and reconcile lockfiles.'),
+});
+/** Parsed toolchain. */
+export type Toolchain = z.output<typeof Toolchain>;
+
 /**
  * Input. `until` short of `merge` publishes nothing (no push, comment, issue or merge). The native
  * script's `error` status for bad arguments is this schema's refusal before the run starts.
@@ -41,6 +67,7 @@ export const MergeDownInput = z.object({
   standingNotes: z.array(z.string()).default([]),
   checkCommand: z.string().min(1).default('npm run check'),
   requiredChecks: z.array(z.string().min(1)).default([]),
+  toolchain: Toolchain.optional(),
 });
 /** Parsed input. */
 export type MergeDownInput = z.output<typeof MergeDownInput>;

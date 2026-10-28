@@ -74,6 +74,9 @@ export const EpicTicketInput = z
       .optional()
       .describe("OWNER/REPO; default: the current checkout's GitHub repository."),
     checkCommand: z.string().min(1).default('npm run check'),
+    toolchain: md.toolchain.describe(
+      "The agents' toolchain (#735): shell rules and guidance in place of npm's; passed to the landing child.",
+    ),
   })
   .superRefine((input, ctx) => {
     if (input.decision !== undefined && input.ticket === undefined)
