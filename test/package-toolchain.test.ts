@@ -1,27 +1,24 @@
 // A run's toolchain in the merge-down and execute-epic-ticket packages (#735): the shell rules the
 // bound roles get in place of npm's, and the prompt text that replaces the npm instructions.
-import { describe, expect, it } from 'vitest';
-import {
-  roster as epicRoster,
-  toolchainAgents as epicAgents,
-} from '../packages/execute-epic-ticket.quiet-choir/roster.js';
-import { prompts as epicPrompts } from '../packages/execute-epic-ticket.quiet-choir/prompts.js';
-import { Toolchain } from '../packages/merge-down.quiet-choir/contracts.js';
-import { shellProse, toolchainNote } from '../packages/merge-down.quiet-choir/lib/policy.js';
-import { prompts as mdPrompts } from '../packages/merge-down.quiet-choir/prompts.js';
-import {
-  roster as mdRoster,
-  toolchainAgents as mdAgents,
-} from '../packages/merge-down.quiet-choir/roster.js';
+import { describe, expect, it, vi } from 'vitest';
 
-const swift = Toolchain.parse({
-  read: ['Bash(swift package describe:*)'],
-  edit: ['Bash(swift build:*)', 'Bash(swift test:*)', 'Bash(just reformat:*)'],
-  guidance: 'Format with `just reformat`; run focused tests with `swift test --filter <Suite>`.',
-});
+// The packages import `quiet-choir`, which resolves to dist/, and npm run check lints, typechecks
+// and tests before it builds. So the imports map to src/ here, and the modules load by a computed
+// specifier the root typecheck does not follow; the packages' own typecheck covers them.
+vi.mock('quiet-choir', () => import('../src/index.js'));
+vi.mock('quiet-choir/github', () => import('../src/integrations/github.js'));
+vi.mock('quiet-choir/std', () => import('../src/std/index.js'));
+const load = async <T>(path: string): Promise<T> => {
+  const url = new URL(`../packages/${path}.ts`, import.meta.url);
+  return (await import(url.href)) as T;
+};
 
-/** A context whose claude.bind returns the options it was given. */
-const binder = { claude: { bind: (options: unknown) => options } } as never;
+interface Toolchain {
+  read: string[];
+  edit: string[];
+  guidance: string;
+}
+type Note = { read: string; edit: string; guidance: string } | null;
 interface Bound {
   model: string;
   effort: string;
@@ -32,6 +29,36 @@ interface Bound {
   allowedTools: string[];
   disallowedTools: string[];
 }
+type Render = (params: Record<string, unknown>) => { text: string };
+interface RosterModule {
+  roster: Record<string, Bound>;
+  toolchainAgents: (ctx: unknown, toolchain: Toolchain) => Record<string, Bound>;
+}
+
+const { Toolchain } = await load<{ Toolchain: { parse: (value: unknown) => Toolchain } }>(
+  'merge-down.quiet-choir/contracts',
+);
+const { shellProse, toolchainNote } = await load<{
+  shellProse: (rules: readonly string[]) => string;
+  toolchainNote: (toolchain: Toolchain | undefined) => Note;
+}>('merge-down.quiet-choir/lib/policy');
+const mdRoster = await load<RosterModule>('merge-down.quiet-choir/roster');
+const epicRoster = await load<RosterModule>('execute-epic-ticket.quiet-choir/roster');
+const { prompts: mdPrompts } = await load<{ prompts: Record<string, Render> }>(
+  'merge-down.quiet-choir/prompts',
+);
+const { prompts: epicPrompts } = await load<{ prompts: Record<string, Render> }>(
+  'execute-epic-ticket.quiet-choir/prompts',
+);
+
+const swift = Toolchain.parse({
+  read: ['Bash(swift package describe:*)'],
+  edit: ['Bash(swift build:*)', 'Bash(swift test:*)', 'Bash(just reformat:*)'],
+  guidance: 'Format with `just reformat`; run focused tests with `swift test --filter <Suite>`.',
+});
+
+/** A context whose claude.bind returns the options it was given. */
+const binder = { claude: { bind: (options: unknown) => options } };
 const npm = (rules: readonly string[]) => rules.filter((r) => /\b(npm|npx|node)\b/.test(r));
 
 describe('shellProse and toolchainNote', () => {
@@ -52,20 +79,14 @@ describe('shellProse and toolchainNote', () => {
 });
 
 describe.each([
-  ['merge-down', mdRoster, mdAgents, ['Reviewer', 'Judge', 'Scribe'], ['Mechanic', 'Surgeon']],
-  [
-    'execute-epic-ticket',
-    epicRoster,
-    epicAgents,
-    ['Planner', 'Skeptic', 'Scribe'],
-    ['Mechanic', 'Surgeon'],
-  ],
-] as const)('%s toolchainAgents', (_name, roster, agents, readers, editors) => {
-  const staff = agents(binder, swift) as unknown as Record<string, Bound>;
-  const entries = roster as unknown as Record<string, Bound>;
+  ['merge-down', mdRoster, ['Reviewer', 'Judge', 'Scribe'], ['Mechanic', 'Surgeon']],
+  ['execute-epic-ticket', epicRoster, ['Planner', 'Skeptic', 'Scribe'], ['Mechanic', 'Surgeon']],
+] as const)('%s toolchainAgents', (_name, module, readers, editors) => {
+  const staff = module.toolchainAgents(binder, swift);
+  const entries = module.roster;
 
   it('keeps every role with its entry model, effort and limits', () => {
-    expect(Object.keys(staff).sort()).toEqual(Object.keys(roster).sort());
+    expect(Object.keys(staff).sort()).toEqual(Object.keys(entries).sort());
     for (const [name, bound] of Object.entries(staff)) {
       const entry = entries[name];
       expect(entry).toBeDefined();
@@ -124,14 +145,14 @@ describe('toolchain prompts', () => {
     detail: '',
     files: [],
   };
-  const implement = (toolchain: ReturnType<typeof toolchainNote>) =>
-    mdPrompts.Implement({
+  const implement = (toolchain: Note) =>
+    mdPrompts['Implement']?.({
       situation: { ...mdSituation, toolchain },
       standingNotes: [],
       items: [item],
       retry: false,
       repair: null,
-    }).text;
+    }).text ?? '';
 
   it('keeps the npm instructions without a toolchain', () => {
     const text = implement(null);
@@ -148,26 +169,27 @@ describe('toolchain prompts', () => {
   });
 
   it('does the same for the epic implementer, and drops this repository-specific guidance', () => {
-    const text = epicPrompts.Implement({
-      situation: {
-        repo: 'acme/widgets',
-        epic: { number: 4, title: 'E' },
-        ticket: { number: 5, title: 'T' },
-        branch: 'b',
-        worktree: '/w',
-        base: 'main',
-        dir: '/d',
+    const text =
+      epicPrompts['Implement']?.({
+        situation: {
+          repo: 'acme/widgets',
+          epic: { number: 4, title: 'E' },
+          ticket: { number: 5, title: 'T' },
+          branch: 'b',
+          worktree: '/w',
+          base: 'main',
+          dir: '/d',
+          planFile: '/d/plan.json',
+          toolchain: toolchainNote(swift),
+        },
+        standingNotes: [],
+        plan: '{}',
         planFile: '/d/plan.json',
-        toolchain: toolchainNote(swift),
-      },
-      standingNotes: [],
-      plan: '{}',
-      planFile: '/d/plan.json',
-      commitTrailer: '',
-      checkCommand: 'just check',
-      retry: false,
-      followup: null,
-    }).text;
+        commitTrailer: '',
+        checkCommand: 'just check',
+        retry: false,
+        followup: null,
+      }).text ?? '';
     expect(text).not.toMatch(/\bnpx\b|\bnpm\b|TypeDoc|CHANGELOG/);
     expect(text).toContain(swift.guidance);
     expect(text).toContain('(`just check`)');
