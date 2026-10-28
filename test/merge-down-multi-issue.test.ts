@@ -1,8 +1,24 @@
 // A pull request that closes several issues (#736): merge-down reviews it against all of them, so
 // the Situation fragment names the others and points at issue.md, and a one-issue PR reads as before.
-import { describe, expect, it } from 'vitest';
-import { linkedIssue } from '../packages/merge-down.quiet-choir/lib/policy.js';
-import { prompts } from '../packages/merge-down.quiet-choir/prompts.js';
+import { describe, expect, it, vi } from 'vitest';
+
+// The package imports `quiet-choir`, which resolves to dist/, and npm run check lints and tests
+// before it builds. So the import maps to src/ here, and the modules load by a computed specifier
+// the root typecheck does not follow; the package's own typecheck covers them.
+vi.mock('quiet-choir', () => import('../src/index.js'));
+const load = async <T>(name: string): Promise<T> => {
+  const url = new URL(`../packages/merge-down.quiet-choir/${name}.ts`, import.meta.url);
+  return (await import(url.href)) as T;
+};
+const { linkedIssue } = await load<{
+  linkedIssue: (
+    pr: { body: string; headRefName: string; closingIssues: [] },
+    repo: string,
+  ) => unknown;
+}>('lib/policy');
+const { prompts } = await load<{
+  prompts: Record<string, (params: Record<string, unknown>) => { text: string }>;
+}>('prompts');
 
 const situation = {
   repo: 'acme/widgets',
@@ -18,14 +34,14 @@ const situation = {
   toolchain: null,
 };
 const review = (alsoCloses: { number: number; title: string }[]) =>
-  prompts.ReviewChange({
+  prompts['ReviewChange']?.({
     situation: { ...situation, alsoCloses },
     rebase: { status: 'clean', upstreamDelta: '', resolutions: '[]', concerns: '[]' },
     standingNotes: [],
     laterInStack: 0,
     parentEpic: 4,
     unresolvedThreads: 0,
-  }).text;
+  }).text ?? '';
 
 describe('several closed issues', () => {
   it('lists every other closing reference of this repository after the primary one', () => {
