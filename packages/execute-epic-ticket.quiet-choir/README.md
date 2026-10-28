@@ -107,9 +107,10 @@ refuse until `--accept-code-change`.
 The worktree and state live under `<main checkout>-epic-burndown-package/` by default (`root`
 overrides it): `worktree/` and `state/epic-E/issue-N/` (`issue.md`, `epic.md`, `plan.json`, the
 check logs and the diff snapshot), plus `state/epic-E/ledger.jsonl`. They differ from the native
-script's `-epic-burndown/`, but the branches do not: a ticket's branch is `epic-E/N-<slug>` with the
-native slug, and the survey links PRs by that prefix, so a branch or PR either tool made is the same
-ticket. The landing child uses `<root>/merge-down` when `root` is given, else its own default root.
+script's `-epic-burndown/`, but the branches do not: a ticket's branch is `epic-E/N-<slug>` (or
+`<branchPrefix>N-<slug>`) with the native slug, and the survey links PRs by that prefix, so a branch
+or PR either tool made is the same ticket. The landing child uses `<root>/merge-down` when `root` is
+given, else its own default root.
 
 ## How it works
 
@@ -141,24 +142,26 @@ agreement.
 
 ## Input
 
-| Field               | Default                                 | Meaning                                                                                                                                                                                  |
-| ------------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `epic`              | required                                | The epic whose checklist and sub-issues are the tickets.                                                                                                                                 |
-| `ticket`            | none                                    | Work on this ticket instead of the survey's choice.                                                                                                                                      |
-| `decision`          | none                                    | The maintainer's answer to a `needs-decision` question on `ticket`; posted on the issue (removing the label) before planning.                                                            |
-| `until`             | `land`                                  | `survey`, `plan`, `implement`, `pr` or `land`. `survey` and `plan` change nothing; `implement` commits only to the local branch.                                                         |
-| `followupEpic`      | none                                    | Epic for follow-ups; found by title or created on first need, and carried in the result.                                                                                                 |
-| `followupEpicTitle` | `Epic: enhancements, wave 3`            | Title of that epic.                                                                                                                                                                      |
-| `standingNotes`     | `[]`                                    | Decisions every planner, implementer and landing reviewer applies without re-litigating; also passed to the child.                                                                       |
-| `maxCandidates`     | 3                                       | Tickets to try when earlier ones turn out blocked by an undeclared dependency.                                                                                                           |
-| `implementer`       | `auto`                                  | `auto` (by the plan), `mechanic` or `surgeon`.                                                                                                                                           |
-| `mergeDown`         | `{}`                                    | Overrides for the merge-down child: `root`, `until`, `codex`, `codexMode`, `codexModel`, `codexEffort`, Codex rounds, CI repairs, `checkCommand`, `requiredChecks`, `mergeMethod`, `ci`. |
-| `commitTrailer`     | `''`                                    | Lines every implementation commit message ends with.                                                                                                                                     |
-| `prFooter`          | the Claude Code line                    | Text the PR description ends with.                                                                                                                                                       |
-| `root`              | `<main checkout>-epic-burndown-package` | Directory for `worktree/` and `state/`.                                                                                                                                                  |
-| `repo`              | the checkout's GitHub repository        | `OWNER/REPO`.                                                                                                                                                                            |
-| `checkCommand`      | `npm run check`                         | The full check suite, for this run and (unless `mergeDown.checkCommand` says otherwise) for the child.                                                                                   |
-| `toolchain`         | none (npm)                              | The agents' toolchain, passed to the landing child too; see merge-down's [Toolchain](../merge-down.quiet-choir/README.md#toolchain).                                                     |
+| Field               | Default                                 | Meaning                                                                                                                                                                                     |
+| ------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `epic`              | required                                | The epic whose checklist and sub-issues are the tickets.                                                                                                                                    |
+| `ticket`            | none                                    | Work on this ticket instead of the survey's choice.                                                                                                                                         |
+| `decision`          | none                                    | The maintainer's answer to a `needs-decision` question on `ticket`; posted on the issue (removing the label) before planning.                                                               |
+| `until`             | `land`                                  | `survey`, `plan`, `implement`, `pr` or `land`. `survey` and `plan` change nothing; `implement` commits only to the local branch.                                                            |
+| `followupEpic`      | none                                    | Epic for follow-ups; found by title or created on first need, and carried in the result.                                                                                                    |
+| `followupEpicTitle` | `Epic: enhancements, wave 3`            | Title of that epic.                                                                                                                                                                         |
+| `standingNotes`     | `[]`                                    | Decisions every planner, implementer and landing reviewer applies without re-litigating; also passed to the child.                                                                          |
+| `maxCandidates`     | 3                                       | Tickets to try when earlier ones turn out blocked by an undeclared dependency.                                                                                                              |
+| `implementer`       | `auto`                                  | `auto` (by the plan), `mechanic` or `surgeon`.                                                                                                                                              |
+| `mergeDown`         | `{}`                                    | Overrides for the merge-down child: `root`, `until`, `codex`, `codexMode`, `codexModel`, `codexEffort`, Codex rounds, CI repairs, `checkCommand`, `requiredChecks`, `mergeMethod`, `ci`.    |
+| `commitTrailer`     | `''`                                    | Lines every implementation commit message ends with.                                                                                                                                        |
+| `prFooter`          | the Claude Code line                    | Text the PR description ends with.                                                                                                                                                          |
+| `root`              | `<main checkout>-epic-burndown-package` | Directory for `worktree/` and `state/`.                                                                                                                                                     |
+| `repo`              | the checkout's GitHub repository        | `OWNER/REPO`.                                                                                                                                                                               |
+| `checkCommand`      | `npm run check`                         | The full check suite, for this run and (unless `mergeDown.checkCommand` says otherwise) for the child.                                                                                      |
+| `toolchain`         | none (npm)                              | The agents' toolchain, passed to the landing child too; see merge-down's [Toolchain](../merge-down.quiet-choir/README.md#toolchain).                                                        |
+| `branchPrefix`      | `epic-<E>/`                             | The head-branch prefix before the ticket number: the survey links open PRs named `<prefix><N>-…` as in flight, and new ticket branches are `<prefix><N>-<slug>` (for example `plx/issue-`). |
+| `holdLabels`        | `blocked`, `needs-decision`, `on-hold`  | Labels that hold a ticket, in place of the defaults (for example `discussion-needed`).                                                                                                      |
 
 The native `tools`, `mergeDownTools` and `mergeDownScript` are gone: the child is imported
 statically, and its source is fingerprinted with this package.

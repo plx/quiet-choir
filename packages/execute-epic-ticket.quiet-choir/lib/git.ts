@@ -25,7 +25,7 @@ import {
   type Started as StartedResult,
   type Verified as VerifiedResult,
 } from '../contracts.js';
-import { branchName, branchPrefix } from './policy.js';
+import { branchName, ticketPrefix } from './policy.js';
 
 /** Where a run keeps its worktree and state: `<root>/worktree` and `<root>/state/epic-E/issue-N`. */
 export interface Paths {
@@ -102,16 +102,17 @@ async function ticketBranches(
   prefix: string,
   ticket: number,
 ): Promise<string[]> {
+  // A prefix that ends in a slash matches its directory; any other (`plx/issue-`) needs a glob.
   const listed = await git(context, W, [
     'for-each-ref',
     '--format=%(refname)',
-    `${namespace}/${prefix}/`,
+    prefix.endsWith('/') ? `${namespace}/${prefix}` : `${namespace}/${prefix}*`,
   ]);
   return listed
     .split('\n')
     .filter(Boolean)
     .map((ref) => ref.slice(namespace.length + 1))
-    .filter((branch) => branch.startsWith(`${prefix}/${String(ticket)}-`))
+    .filter((branch) => branch.startsWith(`${prefix}${String(ticket)}-`))
     .sort();
 }
 
@@ -169,6 +170,8 @@ export interface StartInput {
   readonly epic: number;
   readonly ticket: number;
   readonly title: string;
+  /** The configured branch prefix (#739); omitted is `epic-E/`, keeping the step's identity. */
+  readonly prefix?: string;
 }
 
 /**
@@ -192,7 +195,7 @@ export function start(ctx: WorkflowContext, id: string, input: StartInput): Prom
       const { paths, base, epic, ticket } = input;
       const W = paths.workdir;
       const target = `origin/${base}`;
-      const prefix = branchPrefix(epic);
+      const prefix = ticketPrefix(epic, input.prefix);
       let worktreeCreated = false;
       if (!existsSync(join(W, '.git'))) {
         await mkdir(paths.root, { recursive: true });
@@ -209,7 +212,7 @@ export function start(ctx: WorkflowContext, id: string, input: StartInput): Prom
         '--quiet',
         '--prune',
         'origin',
-        `+refs/heads/${prefix}/*:refs/remotes/origin/${prefix}/*`,
+        `+refs/heads/${prefix}*:refs/remotes/origin/${prefix}*`,
       ]);
       const planPath = join(input.dir, 'plan.json');
       const result = (fields: Partial<StartedResult>): StartedResult => ({
@@ -239,7 +242,7 @@ export function start(ctx: WorkflowContext, id: string, input: StartInput): Prom
           ? [local, 'local']
           : remote !== undefined
             ? [remote, 'remote']
-            : [branchName(epic, ticket, input.title), 'new'];
+            : [branchName(epic, ticket, input.title, input.prefix), 'new'];
       const resumed = source !== 'new';
       const ref = await checkedOut(context, W);
       const current = ref?.replace(/^refs\/heads\//, '') ?? null;

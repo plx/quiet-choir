@@ -49,7 +49,6 @@ import {
   tick,
 } from '../lib/github.js';
 import {
-  branchPrefix,
   candidates,
   closeReason,
   counts,
@@ -68,6 +67,7 @@ import {
   prBody,
   shaCommits,
   stillHeld,
+  ticketPrefix,
   unsettled,
   waitingHeadline,
   withDependency,
@@ -162,7 +162,7 @@ export default defineWorkflow({
     const survey = async (...key: string[]) => {
       const snap = await gh.epic.snapshot(
         ctx.id(...key, 'epic', E),
-        { number: E, headRefPrefix: `${branchPrefix(E)}/` },
+        { number: E, headRefPrefix: ticketPrefix(E, A.branchPrefix) },
         read,
       );
       // A task-list item carries only its checkbox: no labels, dependencies, split or real state,
@@ -182,7 +182,7 @@ export default defineWorkflow({
       }
       return {
         snap,
-        selection: nextTicket(snap, { outside, holdLabels: [...HOLD_LABELS] }),
+        selection: nextTicket(snap, { outside, holdLabels: A.holdLabels ?? [...HOLD_LABELS] }),
         outside,
       };
     };
@@ -366,6 +366,7 @@ export default defineWorkflow({
         epic: E,
         ticket: n,
         title: c.title,
+        ...(A.branchPrefix === undefined ? {} : { prefix: A.branchPrefix }),
       });
       if (started.refused !== null) return blocked('start', started.refused);
       if (started.rebase === 'conflict')
