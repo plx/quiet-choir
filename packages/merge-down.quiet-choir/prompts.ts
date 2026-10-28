@@ -15,6 +15,8 @@ export const Situation = z.object({
   branch: z.string(),
   dir: z.string(),
   upstreamDelta: z.boolean(),
+  /** The run's toolchain (#735): its allowed commands as prose, and its guidance; null for npm. */
+  toolchain: z.object({ read: z.string(), edit: z.string(), guidance: z.string() }).nullable(),
 });
 export type Situation = z.output<typeof Situation>;
 

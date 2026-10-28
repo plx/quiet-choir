@@ -14,14 +14,15 @@ Conflicted files now: {{ conflicted | join(', ') }}
 
 Resolve so the result keeps both the PR's intent and the upstream changes: a semantic merge, not
 picking a side. If upstream renamed or reshaped something this PR uses or extends, adapt the PR's
-code to the new shape, including in files without textual conflicts when you notice them. For
+code to the new shape, including in files without textual conflicts when you notice them.{% if situation.toolchain %} For
+a lockfile or generated file, follow the toolchain notes above.{% else %} For
 package-lock.json, take the new base's version (`git checkout --ours package-lock.json`; during a
 rebase "ours" is the new base), run `npm install --no-audit --no-fund` to reconcile it with
-package.json, and stage it. Stage your resolutions and continue with
+package.json, and stage it.{% endif %} Stage your resolutions and continue with
 `git -c core.editor=true rebase --continue`; repeat for any later conflicting commit. Never skip
 commits, abort, or push.
 {% include "_fragments/Guidance.md" %}
-A quick `npx tsc --noEmit -p tsconfig.json` can confirm types; the full check suite runs in a later
+{% if situation.toolchain %}A focused check from the toolchain notes can confirm the result{% else %}A quick `npx tsc --noEmit -p tsconfig.json` can confirm types{% endif %}; the full check suite runs in a later
 stage. When the rebase has completed, run `git rev-parse HEAD` and report it as head; the workflow
 then checks that no rebase is still in progress and that the PR's commits survived. Return
 completed, head, one entry per file you resolved non-trivially (what you kept or adapted, and why),

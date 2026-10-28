@@ -154,8 +154,11 @@ async function checkSources(pkg) {
   // function; codex review is a command effect, not ctx.codex.
   for (const file of await sources(pkg.root)) {
     const text = await readFile(file, 'utf8');
+    // roster.ts may bind the roster's own roles for a run's toolchain (#735); calls still go
+    // through those roles.
+    const binder = (line) => file.endsWith('/roster.ts') && /\bctx\.claude\.bind\(/.test(line);
     for (const [index, line] of text.split('\n').entries())
-      if (/\bctx\.(claude|codex)\b|\bctx\.agent\(/.test(line))
+      if (/\bctx\.(claude|codex)\b|\bctx\.agent\(/.test(line) && !binder(line))
         fail(
           `${relative(repository, file)}:${String(index + 1)}: raw harness call; use ctx.roster`,
         );

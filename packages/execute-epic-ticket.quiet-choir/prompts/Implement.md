@@ -49,11 +49,15 @@ Rules:
   each ending with a blank line and then:
 {{ commitTrailer }}
 {% else %}.{% endif %} No new branches, no amending or rewriting existing commits.
-- Before checking, format and lint what you touched:
+{% if situation.toolchain %}- Before checking, format and lint what you touched, as the toolchain notes above say.
+- Then run the focused checks for what you changed, as the toolchain notes above say. Do not run the
+  full check suite
+{% else %}- Before checking, format and lint what you touched:
   `npx eslint --fix <files> && npx prettier --write <files>` (prettier last: eslint --fix can leave
   formatting that format:check rejects).
 - Then run the focused checks for what you changed, such as `npx vitest run <test files>`,
   `npx tsc --noEmit -p tsconfig.json` and `npm run lint`. Do not run the full check suite
+{% endif %}
   (`{{ checkCommand }}`): it takes longer than your shell allows, and the workflow runs it at your
   final head and sends any failure back with its log. Never weaken, skip, or delete tests to get
   green; if a failure is unrelated to your change and pre-existing on origin/{{ situation.base }},

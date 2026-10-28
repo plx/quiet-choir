@@ -156,6 +156,29 @@ Tags are counted in pure code.
 | `standingNotes`      | `[]`                                 | Decisions every reviewer, resolver and fixer applies without re-litigating.                          |
 | `checkCommand`       | `npm run check`                      | The local check suite.                                                                               |
 | `requiredChecks`     | `[]`                                 | CI check names that must register before a green rollup counts; one that never does blocks the gate. |
+| `toolchain`          | none (npm)                           | The agents' toolchain: `read` and `edit` shell rules and `guidance`; see [Toolchain](#toolchain).    |
+
+## Toolchain
+
+The roster and prompts are written for this repository's npm toolchain: agents may run `npx tsc`,
+`npx eslint`, `npx prettier`, `npx vitest`, `node --test` and `npm ci`/`npm install`, and are told
+to format and check with them. For another repository pass `toolchain` (#735):
+
+```json
+{
+  "read": ["Bash(swift package describe:*)"],
+  "edit": ["Bash(swift build:*)", "Bash(swift test:*)", "Bash(just reformat:*)"],
+  "guidance": "Format touched files with `just reformat`; run focused tests with `swift test --filter <Suite>`."
+}
+```
+
+`read` rules go to every role and `edit` rules to the editing ones (`Mechanic`, `Surgeon`), in place
+of the npm rules; the git, `gh`, `ls` and `wc` rules and the no-push rule stay. `guidance` replaces
+the npm formatting, focused-check and lockfile instructions, and the prompts list the commands
+actually allowed. The roles keep their entries' models, efforts and limits, but they are bound from
+the entries rather than called as roster entries (a roster call cannot widen its entry's
+`allowedTools`), so `--profile` limit overrides reach them only as `*`. Without `toolchain` the
+roster entries are called as before, with the same fingerprints and prompts.
 
 ## Result
 
@@ -212,9 +235,10 @@ invalid input fails before the run starts.
   group cancelled for a newer duplicate, as the native script did before #645. This repository's CI
   uses `cancel-in-progress`, so a live gate can read a cancelled duplicate as a failure and spend a
   repair round or block. Filed as #665; not reimplemented here.
-- Claude Code runs headless with the roster's `allowedTools` shell patterns; a command a prompt does
-  not anticipate is denied rather than prompted. The roster limits (for example `Surgeon` at 200
-  turns, USD 25 and two hours) can be raised on resume with `--profile Surgeon.maxTurns=…`.
+- Claude Code runs headless with the roster's `allowedTools` shell patterns (or a `toolchain`'s); a
+  command a prompt does not anticipate is denied rather than prompted. The roster limits (for
+  example `Surgeon` at 200 turns, USD 25 and two hours) can be raised on resume with
+  `--profile Surgeon.maxTurns=…`.
 - `HOST/OWNER/REPO` (GitHub Enterprise) is not supported by the few raw `gh api` reads in
   `lib/prepare.ts` and the polls.
 

@@ -6,8 +6,13 @@
 // Each agent works with its cwd set to the PR worktree and the state directory added, so its prompt
 // uses plain `git` and `npx` commands, and the allowed shell patterns below are what the prompts
 // ask for. No agent may push, and none writes to GitHub: the workflow publishes.
-import { defineRoster } from 'quiet-choir';
+//
+// A run that supplies a toolchain (#735) gets the same roles from toolchainAgents: the npm rules
+// are replaced by the toolchain's, and everything else (models, efforts, limits, the git and gh
+// rules, the no-push rule) is read from the entries below.
+import { defineRoster, type Agent, type WorkflowContext } from 'quiet-choir';
 import * as std from 'quiet-choir/std';
+import type { Toolchain } from './contracts.js';
 
 const read = ['Read', 'Grep', 'Glob'];
 const edit = [...read, 'Edit', 'Write'];
@@ -35,7 +40,7 @@ const verify = [
   'Bash(npx vitest:*)',
   'Bash(node --test:*)',
 ];
-const change = [
+const commit = [
   'Bash(git add:*)',
   'Bash(git commit:*)',
   'Bash(git rm:*)',
@@ -43,9 +48,8 @@ const change = [
   'Bash(git checkout --ours:*)',
   'Bash(git checkout --theirs:*)',
   'Bash(git -c core.editor=true rebase --continue:*)',
-  'Bash(npm install:*)',
-  'Bash(npm ci:*)',
 ];
+const change = [...commit, 'Bash(npm install:*)', 'Bash(npm ci:*)'];
 const noPush = ['Bash(git push:*)'];
 
 const reader = {
@@ -59,7 +63,7 @@ const editor = {
   disallowedTools: noPush,
 };
 
-export const roster = defineRoster({
+const entries = {
   Reviewer: {
     harness: 'claude',
     model: 'opus',
@@ -101,4 +105,45 @@ export const roster = defineRoster({
     maxBudgetUsd: 5,
     timeoutMs: 1_800_000,
   },
-});
+} as const;
+
+export const roster = defineRoster(entries);
+
+/** The roster's roles, as bound agents. */
+export type Staff = Record<keyof typeof entries, Agent>;
+
+/**
+ * The roster's roles for a run with a toolchain (#735): each entry's model, effort and limits, with
+ * the toolchain's shell rules in place of the npm ones. A roster entry's capabilities are fixed when
+ * the package loads and a roster call cannot widen them, so the roles are bound here, from the
+ * entries, rather than declared twice.
+ */
+export function toolchainAgents(ctx: WorkflowContext, toolchain: Toolchain): Staff {
+  const reading = {
+    tools: [...read, 'Bash'],
+    allowedTools: [...read, ...inspect, ...toolchain.read],
+  };
+  const editing = {
+    tools: [...edit, 'Bash'],
+    allowedTools: [...edit, ...inspect, ...toolchain.read, ...commit, ...toolchain.edit],
+  };
+  const role = (name: keyof typeof entries, shell: typeof reading): Agent => {
+    const entry = entries[name];
+    return ctx.claude.bind({
+      model: entry.model,
+      effort: entry.effort,
+      maxTurns: entry.maxTurns,
+      maxBudgetUsd: entry.maxBudgetUsd,
+      timeoutMs: entry.timeoutMs,
+      ...shell,
+      disallowedTools: noPush,
+    });
+  };
+  return {
+    Reviewer: role('Reviewer', reading),
+    Judge: role('Judge', reading),
+    Mechanic: role('Mechanic', editing),
+    Surgeon: role('Surgeon', editing),
+    Scribe: role('Scribe', reading),
+  };
+}

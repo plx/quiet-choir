@@ -2,6 +2,12 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- The merge-down and execute-epic-ticket packages take an optional `toolchain` input (#735): `read`
+  and `edit` shell rules that replace the npm rules of their agents, and `guidance` that replaces
+  the npm formatting, focused-check and lockfile instructions in their prompts, so they can land and
+  implement work in repositories that are not npm projects. execute-epic-ticket passes it to its
+  merge-down child. Without it, the roster calls, their fingerprints and the rendered prompts are
+  unchanged.
 - Remove the public profile surface (#726, amending ADR 0010; ADR 0063 §4). Roster entries are the
   only declared roles, and `text` is the implicit baseline and the default role. Removed: the
   workflow `profiles` field and its `extends` chain, the `readonly` and `edit` presets,

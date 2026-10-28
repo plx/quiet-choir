@@ -158,6 +158,7 @@ agreement.
 | `root`              | `<main checkout>-epic-burndown-package` | Directory for `worktree/` and `state/`.                                                                                                                             |
 | `repo`              | the checkout's GitHub repository        | `OWNER/REPO`.                                                                                                                                                       |
 | `checkCommand`      | `npm run check`                         | The full check suite, for this run and (unless `mergeDown.checkCommand` says otherwise) for the child.                                                              |
+| `toolchain`         | none (npm)                              | The agents' toolchain, passed to the landing child too; see merge-down's [Toolchain](../merge-down.quiet-choir/README.md#toolchain).                                |
 
 The native `tools`, `mergeDownTools` and `mergeDownScript` are gone: the child is imported
 statically, and its source is fingerprinted with this package.
@@ -242,9 +243,9 @@ without a `ticket` or an unknown `until` fails before the run starts.
   is recognised (the branch's reflog held the old tip, or each remote commit has a patch-equivalent
   local one), and that tip stays the lease the push forces over. A ticket branch deleted on `origin`
   is pruned from the scoped fetch, so it is pushed afresh with no lease.
-- Claude Code runs headless with the roster's `allowedTools` shell patterns; a command a prompt does
-  not anticipate is denied. The Situation fragment lists exactly what the roster allows. The roster
-  limits can be raised on resume with `--profile Surgeon.maxTurns=…`.
+- Claude Code runs headless with the roster's `allowedTools` shell patterns (or a `toolchain`'s); a
+  command a prompt does not anticipate is denied. The Situation fragment lists exactly what the
+  roster allows. The roster limits can be raised on resume with `--profile Surgeon.maxTurns=…`.
 - The landing child keeps merge-down's own limitations (its README lists them, for example #665's
   cancelled duplicate CI runs).
 

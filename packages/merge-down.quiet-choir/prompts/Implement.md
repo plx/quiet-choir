@@ -39,11 +39,13 @@ Rules:
   item fixed and put the exact edit in notes; don't report it partly fixed for that.
 - Commit on the current local branch in small logical commits with concise imperative messages. No
   new branches, no amending or rewriting existing commits, no push.
-- Before checking, format and lint what you touched:
+{% if situation.toolchain %}- Before checking, format and lint what you touched, as the toolchain notes above say.
+- Then run the focused checks for what you changed, as the toolchain notes above say. Do not run the
+  full check suite{% else %}- Before checking, format and lint what you touched:
   `npx eslint --fix <files> && npx prettier --write <files>` (prettier last: eslint --fix can leave
   formatting that format:check rejects).
 - Then run the focused checks for what you changed, such as `npx vitest run <test files>` and
-  `npx tsc --noEmit -p tsconfig.json`. Do not run the full check suite: it takes longer than your
+  `npx tsc --noEmit -p tsconfig.json`. Do not run the full check suite{% endif %}: it takes longer than your
   shell allows, and the workflow runs it at your final head and sends any failure back to you with
   its log. Never weaken or skip tests to get green.
 - Finally run `git rev-parse HEAD`. Return one entry per item key: status (fixed | partly |

@@ -621,3 +621,30 @@ export function deferredDetail(input: {
   const notes = input.notes.length ? `\nFixer notes: ${input.notes.join(' ')}` : '';
   return `${input.item.detail}\n\nThe fixer ${how} this in PR #${String(input.pr)}${commit}: ${input.report.summary}${notes}`;
 }
+
+/** Shell rules as the prose an allowlist sentence lists: `Bash(swift build:*)` is `swift build`. */
+export function shellProse(rules: readonly string[]): string {
+  const commands = rules.flatMap((rule) => {
+    const match = /^Bash\((.+?)(?::\*)?\)$/u.exec(rule.trim());
+    return match?.[1] === undefined ? [] : [`\`${match[1]}\``];
+  });
+  return [...new Set(commands)].join(', ');
+}
+
+/** What the Situation fragment says about a run's toolchain (#735), or null for the npm default. */
+export function toolchainNote(
+  toolchain:
+    | {
+        readonly read: readonly string[];
+        readonly edit: readonly string[];
+        readonly guidance: string;
+      }
+    | undefined,
+): { read: string; edit: string; guidance: string } | null {
+  if (toolchain === undefined) return null;
+  return {
+    read: shellProse(toolchain.read),
+    edit: shellProse(toolchain.edit),
+    guidance: toolchain.guidance,
+  };
+}

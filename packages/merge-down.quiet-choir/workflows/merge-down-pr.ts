@@ -44,6 +44,7 @@ import {
   underLimit,
   unfixed,
   unregisteredRequired,
+  toolchainNote,
   type PlannedReply,
   type ThreadDecision,
   type WorkItem,
@@ -51,7 +52,7 @@ import {
 import { preparePr, readThreads, resolvePaths, resolveRepo, summary } from '../lib/prepare.js';
 import { FixTeam, ResolveTeam } from '../lib/teams.js';
 import { prompts, type Situation } from '../prompts.js';
-import { roster } from '../roster.js';
+import { roster, toolchainAgents, type Staff } from '../roster.js';
 
 type Ledger = MergeDownResult;
 type Status = Ledger['status'];
@@ -242,7 +243,10 @@ export default defineWorkflow({
       branch: SYNC.localBranch,
       dir: DIR,
       upstreamDelta: SYNC.forkPoint !== null,
+      toolchain: toolchainNote(A.toolchain),
     };
+    // The roster's roles; with a toolchain, bound with its shell rules instead of npm's (#735).
+    const R: Staff = A.toolchain === undefined ? ctx.roster : toolchainAgents(ctx, A.toolchain);
     const place = { cwd: W, addDirs: [DIR], onError: 'return' } as const;
     // What an agent that edits the worktree checks first (see ownedAgent).
     const owner = { workdir: W, pr: A.pr, dir: DIR };
@@ -253,7 +257,7 @@ export default defineWorkflow({
     if (SYNC.status === 'conflict') {
       ctx.phase('Rebase');
       const team: ResolveTeam = ResolveTeam.from({
-        resolver: kind === 'dependency' ? ctx.roster.Mechanic : ctx.roster.Surgeon,
+        resolver: kind === 'dependency' ? R.Mechanic : R.Surgeon,
       });
       const resolved = await ownedAgent(ctx, 'resolve', owner, () =>
         team.resolver.value('resolve', {
@@ -320,7 +324,7 @@ export default defineWorkflow({
     const [check0, firstReview, firstLocal] = await Promise.all([
       check('check-0'),
       kind === 'dependency'
-        ? (majorBump(PR.title) ? ctx.roster.Reviewer : ctx.roster.Mechanic)
+        ? (majorBump(PR.title) ? R.Reviewer : R.Mechanic)
             .value('dependency-review', {
               ...place,
               prompt: prompts.ReviewDependency({
@@ -331,7 +335,7 @@ export default defineWorkflow({
               schema: DependencyReview,
             })
             .then((r) => (r.ok ? ({ dependency: r.value } as const) : null))
-        : ctx.roster.Reviewer.value('review', {
+        : R.Reviewer.value('review', {
             ...place,
             prompt: prompts.ReviewChange({
               situation,
@@ -420,7 +424,7 @@ export default defineWorkflow({
           `- ${id}: ${f.title} (${f.verdict ? `${f.verdict}, ` : ''}${f.disposition}${outcome(id, f.disposition)})`,
       );
       const ask = (shortfall: { covered: number; ids: string[] } | null) =>
-        ctx.roster.Reviewer.value(ctx.id('codex-triage', round, shortfall ? 'retry' : 'first'), {
+        R.Reviewer.value(ctx.id('codex-triage', round, shortfall ? 'retry' : 'first'), {
           ...place,
           prompt: prompts.TriageLocalReview({
             situation,
@@ -534,7 +538,7 @@ export default defineWorkflow({
       const reasons = escalationReasons(change);
       if (reasons.length) {
         ctx.log(`Escalating review: ${reasons.join('; ')}`);
-        const deep = await ctx.roster.Judge.value('escalated-review', {
+        const deep = await R.Judge.value('escalated-review', {
           ...place,
           prompt: prompts.EscalatedReview({
             situation,
@@ -582,8 +586,8 @@ export default defineWorkflow({
 
     // ── Fix (∥ follow-up filing) ────────────────────────────────────────────────────────────
     const team: FixTeam = FixTeam.from({
-      mechanic: ctx.roster.Mechanic,
-      surgeon: ctx.roster.Surgeon,
+      mechanic: R.Mechanic,
+      surgeon: R.Surgeon,
     });
     let fixRound = 0;
     let filings = 0;
@@ -610,7 +614,7 @@ export default defineWorkflow({
     const fileFollowups = async (items: WorkItem[]): Promise<Filed | { error: string }> => {
       const batch = ++filings;
       const keys = items.map((i) => i.key) as [string, ...string[]];
-      const drafted = await ctx.roster.Scribe.value(ctx.id('followups', batch, 'draft'), {
+      const drafted = await R.Scribe.value(ctx.id('followups', batch, 'draft'), {
         ...place,
         prompt: prompts.DraftFollowups({
           situation,
@@ -1121,7 +1125,7 @@ export default defineWorkflow({
         const fresh = await readThreads(ctx, gh, { number: A.pr, paths, key: `r${String(r)}` });
         for (const t of fresh.threads) threadInfo.set(t.id, t);
         const settled = record.threads.map((t) => `- ${t.title}: ${t.verdict}, ${t.action}`);
-        const triage = await ctx.roster.Reviewer.value(ctx.id('gate', r, 'triage'), {
+        const triage = await R.Reviewer.value(ctx.id('gate', r, 'triage'), {
           ...place,
           prompt: prompts.TriageThreads({
             situation,
@@ -1311,7 +1315,7 @@ export default defineWorkflow({
         codexReviewsRequested: codexRequests,
         notes: record.notes,
       };
-      const report = await ctx.roster.Scribe.value('report', {
+      const report = await R.Scribe.value('report', {
         ...place,
         prompt: prompts.IssueSummary({
           issue: ISSUE.number,
