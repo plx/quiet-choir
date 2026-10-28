@@ -2,6 +2,9 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- merge-down lands a pull request that closes several issues instead of blocking it at prepare
+  (#736): every other issue of the repository is reviewed with the primary one (issue.md holds them
+  all), land confirms or performs each close, and the ledger lists them in `alsoClosed`.
 - merge-down takes `ci: 'ignore'` (#738), also as an execute-epic-ticket `mergeDown` override, for a
   repository whose GitHub CI cannot run: the gate and land skip the CI waits and the land guard's
   rollup check, and the ledger notes it; the local check suite and the reviewers still gate. The

@@ -225,11 +225,13 @@ export default defineWorkflow({
       `#${String(A.pr)} ${PR.title}: ${kind}${ISSUE ? `, issue #${String(ISSUE.number)}` : ''}; rebase ${SYNC.status}; ${String(prSummary.codex.unresolvedThreads)} open Codex thread(s); CI ${PR.checks.state}`,
     );
     if (PR.isDraft) return blocked('prepare', 'PR is a draft');
-    if (ISSUE?.alsoCloses.length) {
-      // GitHub would close all of them on merge, but the review judges the PR against one issue.
-      const all = [ISSUE.number, ...ISSUE.alsoCloses].map((n) => `#${String(n)}`).join(', ');
-      return blocked('prepare', `PR closes several issues (${all}); split it or land it by hand`);
-    }
+    // A PR that closes several issues (#736) is reviewed against all of them (issue.md holds every
+    // one of this repository's), and land confirms each one closed.
+    const ALSO = prepared.also;
+    if (ISSUE?.alsoCloses.length)
+      record.notes.push(
+        `PR closes ${[ISSUE.number, ...ISSUE.alsoCloses].map((n) => `#${String(n)}`).join(', ')}; reviewed against ${ALSO.length ? 'all of this repository’s' : 'the first'}, #${String(ISSUE.number)} as the primary issue`,
+      );
     if (SYNC.status === 'blocked') return blocked('rebase', SYNC.reason ?? 'sync refused');
     if (SYNC.status === 'error')
       return blocked('rebase', `rebase failed without conflicts; see ${String(SYNC.log)}`);
@@ -268,6 +270,7 @@ export default defineWorkflow({
       dir: DIR,
       upstreamDelta: SYNC.forkPoint !== null,
       toolchain: toolchainNote(A.toolchain),
+      alsoCloses: ALSO.map((i) => ({ number: i.number, title: i.title })),
     };
     // The roster's roles; with a toolchain, bound with its shell rules instead of npm's (#735).
     const R: Staff = A.toolchain === undefined ? ctx.roster : toolchainAgents(ctx, A.toolchain);
@@ -1311,6 +1314,42 @@ export default defineWorkflow({
         state = (await gh.issue.view('land/issue', { number: ISSUE.number }, write)).state;
       }
       Object.assign(record.issue, { state, closedManually });
+    }
+    // The other issues it closes (#736): GitHub closes them on merge; close any it did not.
+    if (kind === 'change' && ALSO.length) {
+      record.alsoClosed = [];
+      for (const other of ALSO) {
+        const closed = await ctx.poll(ctx.id('land', 'also-closed', other.number), {
+          input: { issue: other.number },
+          schema: z.literal('closed'),
+          command: [
+            'gh',
+            'api',
+            `repos/${info.nameWithOwner}/issues/${String(other.number)}`,
+            '--jq',
+            '{state: .state}',
+          ],
+          output: z.object({ state: z.string() }),
+          done: (issue: { state: string }) =>
+            issue.state === 'closed' ? { done: true, value: 'closed' as const } : { done: false },
+          every: 3_000,
+          timeoutMs: 60_000,
+        });
+        if (closed.by === 'poll') {
+          record.alsoClosed.push({ number: other.number, state: 'CLOSED', closedManually: false });
+          continue;
+        }
+        const result = await gh.issue.close(
+          ctx.id('land', 'also-close', other.number),
+          { number: other.number, comment: closedNote(A.pr, mergeCommit), reason: 'completed' },
+          write,
+        );
+        record.alsoClosed.push({
+          number: other.number,
+          state: result.state,
+          closedManually: result.acted,
+        });
+      }
     }
     // GitHub deletes the merged head branch and retargets children shortly after the merge.
     if (prepared.children.length) {

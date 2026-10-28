@@ -1,6 +1,6 @@
 Repository {{ situation.repo }}, PR #{{ situation.pr }} "{{ situation.title }}"
 ({{ situation.url }}){% if situation.issue %}, which implements issue #{{ situation.issue.number }}
-"{{ situation.issue.title }}"{% else %}, which has no linked issue{% endif %}. The PR is checked
+"{{ situation.issue.title }}"{% if situation.alsoCloses %} and also closes {% for i in situation.alsoCloses %}#{{ i.number }} "{{ i.title }}"{% if not loop.last %}, {% endif %}{% endfor %} (judge it against every one of them: issue.md holds them all){% endif %}{% else %}, which has no linked issue{% endif %}. The PR is checked
 out, rebased onto {{ situation.base }}, in the dedicated git worktree {{ situation.worktree }}
 (local branch {{ situation.branch }}), which is your working directory. Work only there: run `git`
 and {% if situation.toolchain %}toolchain{% else %}`npx`{% endif %} commands from it as they are (no `cd`, no `git -C`), and use absolute paths with file
