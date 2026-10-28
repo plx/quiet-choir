@@ -921,6 +921,84 @@ export function mergeArgv(
   );
 }
 
+/**
+ * GitHub's answer to the synchronous merge of a pull request in a native stack (#747): stacks merge
+ * only through the asynchronous endpoint. @internal
+ */
+export const STACKED_MERGE_REFUSAL = /asynchronous merge endpoint/iu;
+
+/** The REST API version that documents the asynchronous merge endpoint. @internal */
+export const ASYNC_MERGE_API_VERSION = '2026-03-10';
+
+/** Whether a refused synchronous merge must go through the asynchronous endpoint. @internal */
+export function stackedRefusal(error: {
+  readonly message: string;
+  readonly status?: string | number | undefined;
+}): boolean {
+  return String(error.status ?? '') === '403' && STACKED_MERGE_REFUSAL.test(error.message);
+}
+
+/**
+ * Request an asynchronous direct merge pinned to `sha` (`PUT pulls/N/merge-async`), the only merge
+ * GitHub accepts for a pull request in a native stack. The request is GitHub's to run; its result
+ * is polled with {@link mergeAsyncResultArgv}. @internal
+ */
+export function mergeAsyncArgv(
+  repo: GithubRepo,
+  number: number,
+  method: GithubPrMergeMethod,
+  sha: string,
+): [string, ...string[]] {
+  return apiArgv(
+    repo,
+    '-H',
+    `X-GitHub-Api-Version: ${ASYNC_MERGE_API_VERSION}`,
+    '-X',
+    'PUT',
+    `repos/${repo.owner}/${repo.name}/pulls/${String(number)}/merge-async`,
+    '-f',
+    `merge_method=${method}`,
+    '-f',
+    'merge_action=direct_merge',
+    '-f',
+    `sha=${sha}`,
+  );
+}
+
+/** The result of the asynchronous merge request `uuid`. @internal */
+export function mergeAsyncResultArgv(
+  repo: GithubRepo,
+  number: number,
+  uuid: string,
+): [string, ...string[]] {
+  return apiArgv(
+    repo,
+    '-H',
+    `X-GitHub-Api-Version: ${ASYNC_MERGE_API_VERSION}`,
+    `repos/${repo.owner}/${repo.name}/pulls/${String(number)}/merge-async/${encodeURIComponent(uuid)}`,
+  );
+}
+
+/**
+ * An asynchronous merge request or its result (`pending`, `merged`, `enqueued` or `failed`, with
+ * the request's `uuid` while pending), or GitHub's error body when gh exits 1. @internal
+ */
+export const asyncMergeResponseSchema = z.looseObject({
+  status: z.union([z.string(), z.int()]).optional(),
+  message: z.string().optional(),
+  details: z
+    .looseObject({
+      uuid: z.string().optional(),
+      message: z.string().optional(),
+      sha: z.string().optional(),
+    })
+    .nullable()
+    .optional(),
+});
+
+/** A validated asynchronous merge response. @internal */
+export type AsyncMergeResponse = z.infer<typeof asyncMergeResponseSchema>;
+
 /** Every workflow run of a commit, one slurped array of pages. @internal */
 export function runsListArgv(repo: GithubRepo, sha: string): [string, ...string[]] {
   return apiArgv(

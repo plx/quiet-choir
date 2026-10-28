@@ -68,6 +68,7 @@ interface FakePull {
   readonly merge_commit_sha: string | null;
   readonly mergeable?: boolean;
   readonly merge_method?: string;
+  readonly stacked?: boolean;
 }
 interface FakeRun {
   readonly id: number;
@@ -526,6 +527,29 @@ describe('pr.merge', { timeout: 30_000 }, () => {
       expect(putCalls(after.calls), runId).toHaveLength(1);
       expect(after.pulls['9']?.merged, runId).toBe(false);
     }
+  });
+
+  it('merges a pull request in a native stack through the asynchronous endpoint (#747)', async () => {
+    const { runner, state } = await fake({ pulls: pull(9, { stacked: true }) });
+    const result = await outcome(runner, 'stacked', (ctx) =>
+      client(ctx).pr.merge('merge', { number: 9, sha: HEAD, method: 'merge' }),
+    );
+    expect(result.output).toEqual({
+      merged: true,
+      number: 9,
+      mergeCommit: MERGE_COMMIT_9,
+      head: HEAD,
+      acted: true,
+    });
+    const after = await state();
+    expect(after.pulls['9']?.merge_method).toBe('merge');
+    const argvs = after.calls.map((call) => call.argv.join(' '));
+    expect(argvs.filter((argv) => argv.includes('merge-async'))).toEqual([
+      expect.stringMatching(
+        /-X PUT .*pulls\/9\/merge-async -f merge_method=merge -f merge_action=direct_merge -f sha=0123/,
+      ),
+      expect.stringMatching(/pulls\/9\/merge-async\/async-9$/),
+    ]);
   });
 
   it('merges with the method given and confirms it with one read', async () => {
