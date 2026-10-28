@@ -29,6 +29,7 @@ export const MergeDownOverrides = z.object({
   checkCommand: md.checkCommand.unwrap().optional(),
   requiredChecks: md.requiredChecks.unwrap().optional(),
   mergeMethod: md.mergeMethod.unwrap().optional(),
+  ci: md.ci.unwrap().optional(),
 });
 /** Parsed overrides. */
 export type MergeDownOverrides = z.output<typeof MergeDownOverrides>;
