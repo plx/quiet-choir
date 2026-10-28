@@ -97,11 +97,6 @@ const ASYNC_API_VERSION = 'X-GitHub-Api-Version: 2026-03-10';
 const ASYNC_POLLS = 120;
 const ASYNC_DELAY_MS = 5_000;
 
-/** A pull request's place in a GitHub stack, from the 2026-03-10 REST view. */
-const StackView = z.looseObject({
-  stack: z.looseObject({ number: z.int(), position: z.int(), size: z.int() }).nullable().optional(),
-});
-
 /** An asynchronous merge request or its result; an error body when gh exits 1 on a 4xx. */
 const AsyncMerge = z.looseObject({
   status: z.union([z.string(), z.int()]).optional(),
@@ -266,21 +261,15 @@ export function landMerge(ctx: WorkflowContext, id: string, input: LandInput): P
         ),
         { schema: MergeResponse, okExitCodes: [0, 1] },
       );
-      // A stacked PR (#747): GitHub merges it only asynchronously, and merging one also merges the
-      // open PRs below it in its stack, so only the bottom one is merged here.
+      // A stacked PR (#747): GitHub merges it only asynchronously. Merging one also merges the open
+      // PRs below it in its stack, but the base guard above already holds: only the lowest open PR
+      // of a stack targets the default branch (GitHub retargets and rebases the next one when a PR
+      // lands, and a landed PR keeps its position, so `position` itself says nothing).
       if (
         !('merged' in response) &&
         String(response.status ?? '') === '403' &&
         STACKED_REFUSAL.test(response.message)
       ) {
-        const view = await context.exec.json(api('-H', ASYNC_API_VERSION, pullPath), {
-          schema: StackView,
-        });
-        const stack = view.stack ?? null;
-        if (stack !== null && stack.position > 1)
-          return refuse(
-            `PR is at position ${String(stack.position)} of stack #${String(stack.number)}; merging it would also merge the ${String(stack.position - 1)} open PR(s) below it`,
-          );
         const asyncPath = `${pullPath}/merge-async`;
         let result = await context.exec.json(
           api(

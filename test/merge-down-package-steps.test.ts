@@ -310,11 +310,10 @@ describe('landMerge on a GitHub stack (#747)', () => {
   };
 
   /**
-   * A fake `gh` for a stacked PR: the synchronous PUT answers GitHub's 403, the 2026-03-10 view
-   * places the PR at `position`, and the asynchronous request is pending until its first poll says
-   * merged. Every call is logged to `<real>/calls`.
+   * A fake `gh` for a stacked PR: the synchronous PUT answers GitHub's 403, and the asynchronous
+   * request is pending until its first poll says merged. Every call is logged to `<real>/calls`.
    */
-  async function fakeStackGh(position: number): Promise<string> {
+  async function fakeStackGh(): Promise<string> {
     const bin = join(real, 'bin');
     await mkdir(bin);
     const flag = join(real, 'merged');
@@ -343,7 +342,6 @@ describe('landMerge on a GitHub stack (#747)', () => {
         'Merging stacked PRs via this endpoint is not supported. Use the asynchronous merge endpoint instead.',
       status: '403',
     });
-    const stack = JSON.stringify({ stack: { number: 54, position, size: 6 } });
     await writeFile(
       join(bin, 'gh'),
       [
@@ -353,7 +351,6 @@ describe('landMerge on a GitHub stack (#747)', () => {
         `  *"merge-async/u1"*) touch '${flag}'; echo '{"status":"merged","details":{"sha":"mmm"}}';;`,
         `  *"-X PUT"*merge-async*) echo '{"status":"pending","details":{"uuid":"u1"}}';;`,
         `  *"-X PUT"*) echo '${refused}'; exit 1;;`,
-        `  *X-GitHub-Api-Version*) echo '${stack}';;`,
         `  *reviewThreads*) echo '${threads}';;`,
         `  *code-scanning*) echo '[]';;`,
         `  *) if [ -f '${flag}' ]; then echo '${pull(true)}'; else echo '${pull(false)}'; fi;;`,
@@ -366,8 +363,8 @@ describe('landMerge on a GitHub stack (#747)', () => {
     return calls;
   }
 
-  it('merges the bottom PR asynchronously at the gated head with the merge method', async () => {
-    const calls = await fakeStackGh(1);
+  it('merges a stacked PR asynchronously at the gated head with the merge method', async () => {
+    const calls = await fakeStackGh();
     const landed = await runWorkflow(
       definition((ctx) => landMerge(ctx, 'land', input)),
       setup(),
@@ -378,20 +375,6 @@ describe('landMerge on a GitHub stack (#747)', () => {
     expect(log).toContain('merge_action=direct_merge');
     expect(log).toContain(`sha=${head}`);
     expect(log).toContain('merge-async/u1');
-  });
-
-  it('refuses a PR above the bottom of its stack, without an asynchronous request', async () => {
-    const calls = await fakeStackGh(3);
-    const landed = await runWorkflow(
-      definition((ctx) => landMerge(ctx, 'land', input)),
-      setup(),
-    );
-    expect(landed.output).toEqual({
-      merged: false,
-      reason:
-        'PR is at position 3 of stack #54; merging it would also merge the 2 open PR(s) below it',
-    });
-    expect(await readFile(calls, 'utf8')).not.toContain('merge-async');
   });
 });
 
