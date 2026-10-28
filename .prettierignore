@@ -15,3 +15,6 @@ test/fixtures/prompts/
 
 # Package prompt templates: rendered text is step identity, so a formatter must never rewrite them.
 packages/*/prompts/
+
+# Workflow Lab package prompt templates: the same rule as packages/*/prompts/.
+comparisons/batches/*/ported/*.quiet-choir/prompts/

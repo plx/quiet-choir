@@ -14,19 +14,21 @@ import {
   load,
   lifecycle,
   names,
+  packageRoot,
   project,
   runOptions,
   snapshot,
   pristine,
 } from './idiomatic-fixtures.mjs';
 import { verificationStage } from '../batches/02-idiomatic-ports/ported/lifecycle-stages.ts';
+import packagedVerification from '../batches/03-packaged-ports/ported/sdlc-orchestrator.quiet-choir/workflows/lifecycle-verification.ts';
 
 export async function killCase(root, batch, name) {
   const env = await fixture(root),
     marker = join(env.root, 'kill-marker');
   const config = join(env.root, 'worker.json');
   await writeFile(config, JSON.stringify({ ...env, processRunner: undefined, batch, name }));
-  if (batch === 2 && name === 'test-gap-filler') {
+  if (batch >= 2 && name === 'test-gap-filler') {
     await writeFile(
       join(env.cwd, 'kill-check.mjs'),
       `import assert from 'node:assert/strict';\nimport {existsSync,writeFileSync} from 'node:fs';\nimport {value} from './target.mjs';\nif(value===0&&!existsSync(${JSON.stringify(join(env.root, 'resume-marker'))})){writeFileSync(${JSON.stringify(marker)},JSON.stringify({stepId:'mutants/zero/check',writeLocation:'source-checkout',boundary:'test running with mutated target'}));setInterval(()=>{},1000);}else assert.equal(value,1);\n`,
@@ -82,7 +84,7 @@ export async function killCase(root, batch, name) {
     }
     const point = JSON.parse(text);
     const filesystemAfterKill = await snapshot(env.cwd);
-    if (batch === 2 && name === 'test-gap-filler') {
+    if (batch >= 2 && name === 'test-gap-filler') {
       assert.equal(filesystemAfterKill.targetPristine, false);
       child.kill('SIGKILL');
     }
@@ -118,10 +120,10 @@ export async function killCase(root, batch, name) {
     const filesystem = await snapshot(env.cwd);
     assert.equal(completedCallsPaidAgain, 0);
     assert.equal(result.status, 'completed');
-    if (batch === 2) assert.equal(filesystem.targetPristine, true);
+    if (batch >= 2) assert.equal(filesystem.targetPristine, true);
     if (name === 'test-gap-filler') {
-      assert.equal(filesystem.targetPristine, batch === 2);
-      assert.equal(callsPaidAgain, batch === 2 ? 0 : 1);
+      assert.equal(filesystem.targetPristine, batch >= 2);
+      assert.equal(callsPaidAgain, batch >= 2 ? 0 : 1);
     }
     return {
       initialStatus: 'SIGKILL',
@@ -150,7 +152,8 @@ const settledSteps = (run, pattern) =>
     .filter(([id, step]) => pattern.test(id) && step.status === 'settled-failed')
     .map(([, step]) => step);
 
-export async function extraContracts(root) {
+/** Batch 02 and Batch 03 share these contracts; Batch 03 adds a failed falsifier. */
+export async function extraContracts(root, batch = 2) {
   const results = [];
   for (const [name, mode] of [
     ['release-notes', 'missing-coverage'],
@@ -165,11 +168,12 @@ export async function extraContracts(root) {
     ['bug-hunt', 'call-cap'],
     ['sdlc-orchestrator', 'redo'],
     ['sdlc-orchestrator', 'full-lifecycle'],
+    ...(batch === 3 ? [['incident-investigation', 'failed-falsifier']] : []),
   ]) {
     const env = await fixture(join(root, `${name}-${mode}`)),
-      definition = await load(2, name);
-    const { harness, calls } = harnessFor(2, name, env, { mode });
-    const opts = runOptions(env, mode, harness, inputFor(2, name, env));
+      definition = await load(batch, name);
+    const { harness, calls } = harnessFor(batch, name, env, { mode });
+    const opts = runOptions(env, mode, harness, inputFor(batch, name, env));
     if (mode === 'full-lifecycle') {
       opts.input.allowedStages = lifecycle;
       opts.input.since = env.since;
@@ -185,7 +189,8 @@ export async function extraContracts(root) {
       await assert.rejects(drive(definition, opts), /Expected a clean repository/u);
       const failed = await readRun(opts);
       assert.equal(failed.status, 'failed');
-      assert.equal(calls.length, 3);
+      // Batch 02 runs three collector lenses, Batch 03 the upstream's four evidence domains.
+      assert.equal(calls.length, batch === 3 ? 4 : 3);
       results.push({
         workflow: name,
         fixture: mode,
@@ -251,6 +256,11 @@ export async function extraContracts(root) {
       assert.equal(result.output.failedSkeptics, 1);
       assert.equal(result.output.status, 'degraded');
     }
+    if (mode === 'failed-falsifier') {
+      assert.equal(result.output.hypotheses[1].verdict, null);
+      assert.equal(result.output.confidence, 'medium');
+      assert.equal(result.output.rootCause, 'Lost update');
+    }
     if (mode === 'failed-finders') {
       assert.equal(result.output.dryRounds, 0);
       assert.equal(result.output.failedFinders, 6);
@@ -284,7 +294,7 @@ export async function extraContracts(root) {
     });
   }
   const qa = await fixture(join(root, 'lifecycle-verify-timeout')),
-    verifyStage = verificationStage;
+    verifyStage = batch === 3 ? packagedVerification : verificationStage;
   const qaOptions = {
     ...runOptions(qa, 'lifecycle-verify-timeout', undefined, {
       stage: 'qa',
@@ -315,9 +325,9 @@ export async function extraContracts(root) {
     completedCallsPaidAgain: 0,
   });
   const env = await fixture(join(root, 'spend-gate')),
-    definition = await load(2, 'bug-hunt');
-  const { harness, calls } = harnessFor(2, 'bug-hunt', env);
-  const opts = runOptions(env, 'spend', harness, inputFor(2, 'bug-hunt', env));
+    definition = await load(batch, 'bug-hunt');
+  const { harness, calls } = harnessFor(batch, 'bug-hunt', env);
+  const opts = runOptions(env, 'spend', harness, inputFor(batch, 'bug-hunt', env));
   await assert.rejects(drive(definition, { ...opts, maxRunCostUsd: 0.025 }), /maxRunCostUsd/u);
   const before = calls.length,
     stopped = await readRun(opts);
@@ -338,13 +348,13 @@ export async function extraContracts(root) {
     completedCallsPaidAgain: 0,
   });
   const target = await fixture(join(root, 'unknown-mutation'));
-  const mutation = await load(2, 'test-gap-filler');
-  const inert = harnessFor(2, 'test-gap-filler', target);
+  const mutation = await load(batch, 'test-gap-filler');
+  const inert = harnessFor(batch, 'test-gap-filler', target);
   const mutationOptions = runOptions(
     target,
     'unknown',
     inert.harness,
-    inputFor(2, 'test-gap-filler', target),
+    inputFor(batch, 'test-gap-filler', target),
   );
   let inject = true;
   mutationOptions.processRunner = {
@@ -373,18 +383,18 @@ export async function extraContracts(root) {
   return results;
 }
 
-export async function cliContracts(root) {
+/** A Batch 02 workflow file, or a Batch 03 package directory, as the CLI takes it. */
+const cliTarget = (batch, name) =>
+  batch === 3
+    ? packageRoot(name)
+    : join(project, 'comparisons/batches/02-idiomatic-ports/ported', `${name}.workflow.ts`);
+
+export async function cliContracts(root, batch = 2) {
   const results = [];
   for (const name of names) {
     const validated = spawnSync(
       process.execPath,
-      [
-        join(project, 'bin/run.js'),
-        'workflow',
-        'validate',
-        join(project, 'comparisons/batches/02-idiomatic-ports/ported', `${name}.workflow.ts`),
-        '--json',
-      ],
+      [join(project, 'bin/run.js'), 'workflow', 'validate', cliTarget(batch, name), '--json'],
       { cwd: project, encoding: 'utf8', timeout: 30_000 },
     );
     assert.equal(validated.status, 0, validated.stderr + validated.stdout);
@@ -424,11 +434,11 @@ export async function cliContracts(root) {
     );
   const executed = cli(
     'execute',
-    join(project, 'comparisons/batches/02-idiomatic-ports/ported/sdlc-orchestrator.workflow.ts'),
+    cliTarget(batch, 'sdlc-orchestrator'),
     '--run-id',
     'cli-lifecycle',
     '--input',
-    JSON.stringify(inputFor(2, 'sdlc-orchestrator', env)),
+    JSON.stringify(inputFor(batch, 'sdlc-orchestrator', env)),
     '--harness',
     `fixture:${fixtures}`,
     '--grant',

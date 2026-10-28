@@ -1,0 +1,32 @@
+{
+  "id": "03-packaged-ports",
+  "number": "03",
+  "label": "03 · Packaged ports",
+  "description": "The six Batch 02 rewrites as *.quiet-choir packages: prose in typed markdown templates, std roster tiers that restore the upstream's effort choices, std review and panel patterns, packages composed as children, and a decider-screened autoApprove.",
+  "revision": "9b5404d11b885b28380d3eb17471ef7b17601b5e",
+  "sourceUrl": "https://github.com/hesreallyhim/ultracode-workflows/tree/9b5404d11b885b28380d3eb17471ef7b17601b5e/plugins/ultracode-workflows/workflows",
+  "sourceFileBase": "https://github.com/hesreallyhim/ultracode-workflows/blob/9b5404d11b885b28380d3eb17471ef7b17601b5e/plugins/ultracode-workflows/workflows/",
+  "baseline": "02-idiomatic-ports",
+  "validation": "Root-strict TypeScript; CLI validation of every package with no prompt warnings; the Batch 02 fixture intents with real temporary Git and test commands, actual SIGKILL recovery and the F1–F5 matrix; every agent call rendered from a template; requireGrants delegation; and CLI fixture decisions for autoApprove. 70 recorded results, no live agents or decision host: they measure orchestration contracts, not model quality.",
+  "commonChanges": [
+    "Each workflow is a <name>.quiet-choir package (ADR 0065): package.ts names the entry, workflows/ holds control flow only, contracts.ts the Zod schemas, roster.ts the agents, prompts.ts and prompts/ the prose, lib/ the mechanics and resources/ static files. Every file under the root is fingerprinted, so a template or resource edit is refused on resume like a code edit.",
+    "Every agent prompt is a MiniJinja template with typed parameters (ADR 0064), checked before any effect; the verifier asserts that every agent call records its template. With prose out of the control flow, the templates restore much of the upstream's guidance that Batch 02 had cut to one line.",
+    "Rosters spread std.claude and std.codex capability fragments with std.tiers models, so every role pins a model and effort, and the upstream's per-call effort choices return as entries. Roles are narrower than Batch 02's shared Reader: drafters and the ranker have no tools, and only setters and the implementer write.",
+    "Higher-order patterns come from quiet-choir/std, filled from the roster as teams (ADR 0067): release-notes' fact-check loop is std.patterns.reviewRevise, and bug-hunt's finder and skeptic panels are std.patterns.tolerantPanel.",
+    "sdlc-orchestrator composes packages: the bootstrap and release-notes packages' workflows are its typed inline children, delegating onto its Reader and Writer ceilings under --require-grants, and autoApprove returns as a Gatekeeper decision-provider screen (ADR 0066) whose fallback is the human review.",
+    "Packages import only quiet-choir and its std and decision subpaths, plus the two sibling packages SDLC composes, so the small contracts (Sha, Path, Argv) are repeated per package instead of shared through a batch helper. The originals are the same pinned bytes. Interfaces follow Batch 02 except where a note says an upstream input or output returned; nothing here measures model quality."
+  ],
+  "apiFindings": [
+    "A roster cannot be subset: roster: { Reviewer: roster.Reviewer } fails typecheck (TS2353), although the package authoring reference shows it, so the SDLC package declares one roster per workflow.",
+    "std.patterns.reviewRevise returns { approved, draft } without the critic's last feedback, so release-notes reports factChecked rather than Batch 02's concern list.",
+    "std.patterns.tolerantPanel returns answers without their item indices, which suits anonymous votes but not per-hypothesis verdicts; incident-investigation uses a settled ctx.map instead.",
+    "Template whitespace needs care: trimBlocks also eats the newline after an include, so a fragment that is its own paragraph needs {% include … +%}; and a parameter named range is shadowed by MiniJinja's range() in the unused-parameter check.",
+    "std.tiers are Claude-only, so the Codex entries set effort on std.codex.ReadOnly directly; the SDLC delegation ceilings are roster entries that the orchestrator itself never calls."
+  ],
+  "apiSnapshot": {
+    "package": "quiet-choir 0.0.0",
+    "sha256": "30d7871faaecfc20bbfab9d0ceb14bb514c404fa57eaba63ce62c87ba8775ad6",
+    "file": "src/workflow/runtime/model.ts",
+    "description": "Validated against the quiet-choir API whose model file has this hash, with workflow packages, prompt templates, roster-only roles, std fragments, tiers and patterns, teams and decision providers. This model-file hash is provenance for that file, not the entire runtime; the ports import the built checkout."
+  }
+}

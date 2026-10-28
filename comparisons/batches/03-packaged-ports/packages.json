@@ -1,0 +1,578 @@
+{
+  "release-notes": {
+    "name": "release-notes",
+    "version": "1",
+    "description": "Shard a commit range across diff-reading summarizers, draft audience-aware notes, and fact-check them in both directions",
+    "whenToUse": "Cutting a release or backfilling a changelog, when the notes must be readable and provably cover the range. Input: {since, until?, audience?, out?, publication?}.",
+    "entry": "release-notes",
+    "workflows": [
+      {
+        "name": "release-notes",
+        "version": "packaged-03",
+        "description": "Compute a Git manifest, summarize disjoint slices, fact-check with reviewRevise and write notes in code.",
+        "module": "workflows/release-notes.ts",
+        "roster": [
+          {
+            "name": "Drafter",
+            "harness": "claude",
+            "access": "none",
+            "model": "sonnet",
+            "description": "Drafts and revises the notes from the summaries alone; uses no tools.",
+            "effort": "medium"
+          },
+          {
+            "name": "FactChecker",
+            "harness": "claude",
+            "access": "read",
+            "model": "opus",
+            "description": "Checks the notes against the range in both directions; never edits.",
+            "effort": "high"
+          },
+          {
+            "name": "Summarizer",
+            "harness": "claude",
+            "access": "read",
+            "model": "sonnet",
+            "description": "Summarizes one disjoint slice of commits from its patch; never edits.",
+            "effort": "low"
+          }
+        ]
+      }
+    ],
+    "deciders": {},
+    "prompts": [
+      {
+        "root": "comparisons/batches/03-packaged-ports/ported/release-notes.quiet-choir/prompts",
+        "entries": [
+          {
+            "name": "Summarize",
+            "file": "Summarize.md",
+            "description": "Summarize one disjoint slice of the range from its patch.",
+            "params": ["patch", "shas"],
+            "variables": ["patch", "shas"]
+          },
+          {
+            "name": "Draft",
+            "file": "Draft.md",
+            "description": "Draft audience-aware notes from the slice summaries.",
+            "params": ["audience", "changes", "missing"],
+            "variables": ["audience"]
+          },
+          {
+            "name": "FactCheck",
+            "file": "FactCheck.md",
+            "description": "Fact-check the notes in both directions (the critic of reviewRevise).",
+            "params": ["changes", "log", "missing", "notes", "span"],
+            "variables": ["log", "notes", "span"]
+          },
+          {
+            "name": "Revise",
+            "file": "Revise.md",
+            "description": "Revise the notes from fact-check feedback (the actor of reviewRevise).",
+            "params": ["changes", "feedback", "missing", "notes"],
+            "variables": ["feedback", "notes"]
+          }
+        ]
+      }
+    ],
+    "files": {
+      "count": 12,
+      "bytes": 13101,
+      "sha256": "906186af227da392f5132e3fd65c179a644a8c7c95ee5e113436b290f2a2abdd"
+    }
+  },
+  "project-bootstrap": {
+    "name": "project-bootstrap",
+    "version": "1",
+    "description": "Detect the stack, approve one hashed setup plan, apply each concern in its own worktree, and prove the integration with code-run commands",
+    "whenToUse": "Standing up a new project's tooling and CI from a spec, or retrofitting it onto a repository that lacks it; nothing is written before a human approves the plan. Input: {spec, stack?, concerns?}.",
+    "entry": "project-bootstrap",
+    "workflows": [
+      {
+        "name": "project-bootstrap",
+        "version": "packaged-03",
+        "description": "Approve one saved plan, isolate each setter, and verify its integration, settling command failures.",
+        "module": "workflows/project-bootstrap.ts",
+        "roster": [
+          {
+            "name": "Planner",
+            "harness": "claude",
+            "access": "read",
+            "model": "opus",
+            "description": "Plans disjoint setup concerns and argv verification commands; never edits.",
+            "effort": "high"
+          },
+          {
+            "name": "Setter",
+            "harness": "claude",
+            "access": "write",
+            "model": "sonnet",
+            "description": "Applies one approved concern to the files it owns, in an isolated checkout.",
+            "effort": "high"
+          },
+          {
+            "name": "Surveyor",
+            "harness": "claude",
+            "access": "read",
+            "model": "sonnet",
+            "description": "Inventories existing setup against the specification; never edits.",
+            "effort": "medium"
+          }
+        ]
+      }
+    ],
+    "deciders": {},
+    "prompts": [
+      {
+        "root": "comparisons/batches/03-packaged-ports/ported/project-bootstrap.quiet-choir/prompts",
+        "entries": [
+          {
+            "name": "Detect",
+            "file": "Detect.md",
+            "description": "Choose or detect the stack and inventory existing tooling.",
+            "params": ["inventory", "spec", "stack"],
+            "variables": ["inventory", "spec", "stack"]
+          },
+          {
+            "name": "Plan",
+            "file": "Plan.md",
+            "description": "Plan disjoint concerns and the commands that prove them.",
+            "params": ["allowed", "detected", "spec"],
+            "variables": ["allowed", "detected", "spec"]
+          },
+          {
+            "name": "Apply",
+            "file": "Apply.md",
+            "description": "Apply one concern of the approved plan; the plan JSON comes last.",
+            "params": ["concern", "digest", "plan"],
+            "variables": ["concern", "digest", "plan"]
+          }
+        ]
+      }
+    ],
+    "files": {
+      "count": 10,
+      "bytes": 14645,
+      "sha256": "fd044c4645bb641cb1a483ba8f6d0e766fd0d1400397e88de266cb44e10e50c8"
+    }
+  },
+  "test-gap-filler": {
+    "name": "test-gap-filler",
+    "version": "1",
+    "description": "Find and rank the riskiest test gaps in one source file, write a test, and let code run the baseline and every mutation check",
+    "whenToUse": "Hardening an operator-selected source file before a risky change or after an incident, when a test must be proven to kill mutants rather than claimed to. Input: {target, testFile, testCommand, behavior, maxGaps?, maxMutants?}.",
+    "entry": "test-gap-filler",
+    "workflows": [
+      {
+        "name": "test-gap-filler",
+        "version": "packaged-03",
+        "description": "Generate a test and mutation plan; code owns guarded writes, tests and interrupted-attempt recovery.",
+        "module": "workflows/test-gap-filler.ts",
+        "roster": [
+          {
+            "name": "GapFinder",
+            "harness": "claude",
+            "access": "read",
+            "model": "sonnet",
+            "description": "Finds test gaps in the target through one lens; never edits.",
+            "effort": "medium"
+          },
+          {
+            "name": "Ranker",
+            "harness": "claude",
+            "access": "none",
+            "model": "opus",
+            "description": "Ranks the discovered gaps by blast radius; uses no tools.",
+            "effort": "high"
+          },
+          {
+            "name": "TestAuthor",
+            "harness": "claude",
+            "access": "read",
+            "model": "sonnet",
+            "description": "Proposes the test file and the mutants it must kill; never edits.",
+            "effort": "high"
+          }
+        ]
+      }
+    ],
+    "deciders": {},
+    "prompts": [
+      {
+        "root": "comparisons/batches/03-packaged-ports/ported/test-gap-filler.quiet-choir/prompts",
+        "entries": [
+          {
+            "name": "FindGaps",
+            "file": "FindGaps.md",
+            "description": "Find gaps through the coverage or the risk lens.",
+            "params": ["behavior", "lens", "source", "target"],
+            "variables": ["behavior", "lens", "source", "target"]
+          },
+          {
+            "name": "Rank",
+            "file": "Rank.md",
+            "description": "Rank the merged gaps by blast radius.",
+            "params": ["gaps", "maxGaps"],
+            "variables": ["gaps", "maxGaps"]
+          },
+          {
+            "name": "PlanTests",
+            "file": "PlanTests.md",
+            "description": "Propose the test file and independent single-anchor mutants.",
+            "params": ["behavior", "gaps", "source", "target", "testFile"],
+            "variables": ["behavior", "gaps", "source", "target", "testFile"]
+          }
+        ]
+      }
+    ],
+    "files": {
+      "count": 10,
+      "bytes": 14807,
+      "sha256": "309a46e7f75df29be3c8eaf546732472952c4a963ae524c9fadde5f39f6d20cf"
+    }
+  },
+  "incident-investigation": {
+    "name": "incident-investigation",
+    "version": "1",
+    "description": "Hypothesis-free evidence collection over a pinned Git window, competing hypotheses, one falsifier each, and a confidence derived in code",
+    "whenToUse": "Post-incident root-cause analysis from a repository and symptoms, structured to resist first-plausible-story bias; read-only throughout. Input: {incident, since, until?, artifacts?, domains?}.",
+    "entry": "incident-investigation",
+    "workflows": [
+      {
+        "name": "incident-investigation",
+        "version": "packaged-03",
+        "description": "Investigate an incident with a pinned Git window, read-only Codex roles and a structural confidence.",
+        "module": "workflows/incident-investigation.ts",
+        "roster": [
+          {
+            "name": "Collector",
+            "harness": "codex",
+            "access": "read",
+            "model": null,
+            "description": "Collects facts for one evidence domain, without a hypothesis; never edits.",
+            "effort": null
+          },
+          {
+            "name": "Falsifier",
+            "harness": "codex",
+            "access": "read",
+            "model": null,
+            "description": "Tries to falsify exactly one hypothesis by checking its predictions.",
+            "effort": "high"
+          },
+          {
+            "name": "Reporter",
+            "harness": "codex",
+            "access": "read",
+            "model": null,
+            "description": "Writes the report from the verdicts and the confidence the workflow derived.",
+            "effort": "high"
+          },
+          {
+            "name": "Theorist",
+            "harness": "codex",
+            "access": "read",
+            "model": null,
+            "description": "Generates competing, falsifiable hypotheses from the pooled evidence.",
+            "effort": "high"
+          }
+        ]
+      }
+    ],
+    "deciders": {},
+    "prompts": [
+      {
+        "root": "comparisons/batches/03-packaged-ports/ported/incident-investigation.quiet-choir/prompts",
+        "entries": [
+          {
+            "name": "Collect",
+            "file": "Collect.md",
+            "description": "Collect facts for one domain before any hypothesis exists.",
+            "params": ["artifacts", "domain", "incident", "log"],
+            "variables": ["artifacts", "domain", "incident", "log"]
+          },
+          {
+            "name": "Hypothesize",
+            "file": "Hypothesize.md",
+            "description": "Generate three to five mechanically distinct, falsifiable hypotheses.",
+            "params": ["evidence", "incident"],
+            "variables": ["incident"]
+          },
+          {
+            "name": "Falsify",
+            "file": "Falsify.md",
+            "description": "Attack the predictions of exactly one hypothesis.",
+            "params": ["evidence", "hypothesis", "incident", "rivals"],
+            "variables": ["hypothesis", "incident", "rivals"]
+          },
+          {
+            "name": "Report",
+            "file": "Report.md",
+            "description": "Write the report around the confidence the workflow derived.",
+            "params": ["confidence", "evidence", "incident", "judged"],
+            "variables": ["confidence", "incident", "judged"]
+          }
+        ]
+      }
+    ],
+    "files": {
+      "count": 13,
+      "bytes": 17268,
+      "sha256": "24d8a0f5776f699dc8d42574fe9e1ecb711fcd56b5ef00d8490ce008c044e42e"
+    }
+  },
+  "sdlc-orchestrator": {
+    "name": "sdlc-orchestrator",
+    "version": "1",
+    "description": "Tailor a lifecycle, run each stage as a typed inline child under one run ID, and checkpoint every stage with a durable human review",
+    "whenToUse": "Driving a feature from requirements to a gated release with human checkpoints. Input: {goal, testCommand, allowedStages?, autoApprove?}; --workflow lifecycle-verification runs one gate alone.",
+    "entry": "sdlc-orchestrator",
+    "workflows": [
+      {
+        "name": "sdlc-orchestrator",
+        "version": "packaged-03",
+        "description": "Tailor a lifecycle, run typed children inline and checkpoint stage-specific durable reviews.",
+        "module": "workflows/sdlc-orchestrator.ts",
+        "roster": [
+          {
+            "name": "Intake",
+            "harness": "claude",
+            "access": "read",
+            "model": "opus",
+            "description": "Tailors the ordered stage plan to the goal and the repository; never edits.",
+            "effort": "high"
+          },
+          {
+            "name": "Reader",
+            "harness": "claude",
+            "access": "read",
+            "model": null,
+            "description": "Delegation ceiling for read-only child roles; never called directly.",
+            "effort": null
+          },
+          {
+            "name": "Writer",
+            "harness": "claude",
+            "access": "write",
+            "model": null,
+            "description": "Delegation ceiling for isolated child writers; never called directly.",
+            "effort": null
+          }
+        ]
+      },
+      {
+        "name": "lifecycle-document",
+        "version": "packaged-03",
+        "description": "Draft, gate and commit one lifecycle document.",
+        "module": "workflows/lifecycle-document.ts",
+        "roster": [
+          {
+            "name": "Author",
+            "harness": "claude",
+            "access": "read",
+            "model": "sonnet",
+            "description": "Drafts one lifecycle document from the goal and prior artifacts; never edits.",
+            "effort": "medium"
+          },
+          {
+            "name": "Reviewer",
+            "harness": "claude",
+            "access": "read",
+            "model": "opus",
+            "description": "Gates one lifecycle document before the next stage builds on it.",
+            "effort": "high"
+          }
+        ]
+      },
+      {
+        "name": "lifecycle-implementation",
+        "version": "packaged-03",
+        "description": "Implement in an isolated checkout, verify in code, then integrate.",
+        "module": "workflows/lifecycle-implementation.ts",
+        "roster": [
+          {
+            "name": "Implementer",
+            "harness": "claude",
+            "access": "write",
+            "model": "sonnet",
+            "description": "Implements the goal in an isolated checkout; code runs verification.",
+            "effort": "high"
+          }
+        ]
+      },
+      {
+        "name": "lifecycle-verification",
+        "version": "packaged-03",
+        "description": "Run a QA or release gate command and settle its outcome as the stage gate.",
+        "module": "workflows/lifecycle-verification.ts",
+        "roster": []
+      }
+    ],
+    "deciders": {
+      "Gatekeeper": {
+        "provider": "jev",
+        "model": null,
+        "description": "Screens a stage whose gate passed when autoApprove is set."
+      }
+    },
+    "prompts": [
+      {
+        "root": "comparisons/batches/03-packaged-ports/ported/sdlc-orchestrator.quiet-choir/prompts",
+        "entries": [
+          {
+            "name": "Intake",
+            "file": "Intake.md",
+            "description": "Tailor the ordered stage plan.",
+            "params": ["allowed", "artifacts", "goal"],
+            "variables": ["allowed", "artifacts", "goal"]
+          },
+          {
+            "name": "Draft",
+            "file": "Draft.md",
+            "description": "Write one lifecycle document; the stage commits it.",
+            "params": ["answer", "artifacts", "goal", "stage"],
+            "variables": ["stage"]
+          },
+          {
+            "name": "Review",
+            "file": "Review.md",
+            "description": "Gate one lifecycle document.",
+            "params": ["answer", "artifacts", "content", "goal", "stage"],
+            "variables": ["content", "stage"]
+          },
+          {
+            "name": "Implement",
+            "file": "Implement.md",
+            "description": "Implement the goal in an isolated checkout.",
+            "params": ["answer", "artifacts", "goal"],
+            "variables": []
+          }
+        ]
+      },
+      {
+        "root": "comparisons/batches/03-packaged-ports/ported/project-bootstrap.quiet-choir/prompts",
+        "entries": [
+          {
+            "name": "Detect",
+            "file": "Detect.md",
+            "description": "Choose or detect the stack and inventory existing tooling.",
+            "params": ["inventory", "spec", "stack"],
+            "variables": ["inventory", "spec", "stack"]
+          },
+          {
+            "name": "Plan",
+            "file": "Plan.md",
+            "description": "Plan disjoint concerns and the commands that prove them.",
+            "params": ["allowed", "detected", "spec"],
+            "variables": ["allowed", "detected", "spec"]
+          },
+          {
+            "name": "Apply",
+            "file": "Apply.md",
+            "description": "Apply one concern of the approved plan; the plan JSON comes last.",
+            "params": ["concern", "digest", "plan"],
+            "variables": ["concern", "digest", "plan"]
+          }
+        ]
+      },
+      {
+        "root": "comparisons/batches/03-packaged-ports/ported/release-notes.quiet-choir/prompts",
+        "entries": [
+          {
+            "name": "Summarize",
+            "file": "Summarize.md",
+            "description": "Summarize one disjoint slice of the range from its patch.",
+            "params": ["patch", "shas"],
+            "variables": ["patch", "shas"]
+          },
+          {
+            "name": "Draft",
+            "file": "Draft.md",
+            "description": "Draft audience-aware notes from the slice summaries.",
+            "params": ["audience", "changes", "missing"],
+            "variables": ["audience"]
+          },
+          {
+            "name": "FactCheck",
+            "file": "FactCheck.md",
+            "description": "Fact-check the notes in both directions (the critic of reviewRevise).",
+            "params": ["changes", "log", "missing", "notes", "span"],
+            "variables": ["log", "notes", "span"]
+          },
+          {
+            "name": "Revise",
+            "file": "Revise.md",
+            "description": "Revise the notes from fact-check feedback (the actor of reviewRevise).",
+            "params": ["changes", "feedback", "missing", "notes"],
+            "variables": ["feedback", "notes"]
+          }
+        ]
+      }
+    ],
+    "files": {
+      "count": 15,
+      "bytes": 22328,
+      "sha256": "acecf971f4230c834d30e16eeef321f1dac13a7994c48ea0bfe6b1e80ce826c1"
+    }
+  },
+  "bug-hunt": {
+    "name": "bug-hunt",
+    "version": "1",
+    "description": "Loop rotating-lens finder panels until two consecutive rounds find nothing new; settle a skeptic panel per candidate",
+    "whenToUse": "Exhaustive bug discovery on a codebase or subsystem, when you want the tail of the distribution and an honest count of what could not be decided. Input: {scope, maxRounds?, votes?, maxCalls?}.",
+    "entry": "bug-hunt",
+    "workflows": [
+      {
+        "name": "bug-hunt",
+        "version": "packaged-03",
+        "description": "Run tolerant finder and skeptic panels, preserve uncertainty, and bound logical admissions.",
+        "module": "workflows/bug-hunt.ts",
+        "roster": [
+          {
+            "name": "Finder",
+            "harness": "claude",
+            "access": "read",
+            "model": "sonnet",
+            "description": "Hunts concrete runtime bugs through one lens; never edits.",
+            "effort": "medium"
+          },
+          {
+            "name": "Skeptic",
+            "harness": "claude",
+            "access": "read",
+            "model": "opus",
+            "description": "Tries to refute one bug claim by reading the code; never edits.",
+            "effort": "high"
+          }
+        ]
+      }
+    ],
+    "deciders": {},
+    "prompts": [
+      {
+        "root": "comparisons/batches/03-packaged-ports/ported/bug-hunt.quiet-choir/prompts",
+        "entries": [
+          {
+            "name": "Find",
+            "file": "Find.md",
+            "description": "Hunt one lens of one round; an empty list is valid.",
+            "params": ["lens", "round", "scope"],
+            "variables": ["lens", "round", "scope"]
+          },
+          {
+            "name": "Refute",
+            "file": "Refute.md",
+            "description": "One independent skeptic seat trying to refute a candidate.",
+            "params": ["bug", "seat", "votes"],
+            "variables": ["bug", "seat", "votes"]
+          }
+        ]
+      }
+    ],
+    "files": {
+      "count": 8,
+      "bytes": 11595,
+      "sha256": "01ffcfc2425b0ed1c15e5bc5a204c974dd962ae671c898ccf98b803b1f835912"
+    }
+  }
+}

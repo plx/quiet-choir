@@ -21,6 +21,11 @@ const workflows = (directory) =>
     .filter((name) => name.endsWith('.workflow.ts'))
     .sort()
     .map((name) => join(repository, directory, name));
+const packageWorkflows = (directory) =>
+  readdirSync(join(repository, directory, 'workflows'))
+    .filter((name) => name.endsWith('.ts'))
+    .sort()
+    .map((name) => join(repository, directory, 'workflows', name));
 const groups = [
   {
     config: 'tsconfig.json',
@@ -34,11 +39,18 @@ const groups = [
   // explicitly rather than by the *.workflow.ts suffix; the lint follows their imports into lib/.
   ...['merge-down.quiet-choir', 'execute-epic-ticket.quiet-choir'].map((pkg) => ({
     config: `packages/${pkg}/tsconfig.json`,
-    files: readdirSync(join(repository, 'packages', pkg, 'workflows'))
-      .filter((name) => name.endsWith('.ts'))
-      .sort()
-      .map((name) => join(repository, 'packages', pkg, 'workflows', name)),
+    files: packageWorkflows(join('packages', pkg)),
   })),
+  // Workflow Lab Batch 03 is one package per workflow, all under the batch's own tsconfig.
+  {
+    config: 'comparisons/batches/03-packaged-ports/tsconfig.json',
+    files: readdirSync(join(repository, 'comparisons/batches/03-packaged-ports/ported'))
+      .filter((name) => name.endsWith('.quiet-choir'))
+      .sort()
+      .flatMap((pkg) =>
+        packageWorkflows(join('comparisons/batches/03-packaged-ports/ported', pkg)),
+      ),
+  },
 ];
 
 const problems = [];

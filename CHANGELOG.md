@@ -2,6 +2,30 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Add Workflow Lab Batch 03, `03-packaged-ports`: the six Batch 02 rewrites as one
+  `<name>.quiet-choir` package each (ADR 0065), now the reader default and the active primitive
+  acceptance suite, with Batch 02 kept compiled and checked as its `baseline`. Every agent prompt is
+  a typed MiniJinja template (ADR 0064) that restores the upstream guidance Batch 02 had cut;
+  rosters spread `std.claude`/`std.codex` fragments and `std.tiers`, bringing back the upstream's
+  per-call effort choices as entries; release-notes runs its fact-check loop through
+  `std.patterns.reviewRevise` and bug-hunt its panels through `std.patterns.tolerantPanel`, filled
+  as teams (ADR 0067); incident-investigation regains hypothesis-free collectors, falsifiable
+  predictions and a confidence derived in code; and sdlc-orchestrator composes the bootstrap and
+  release-notes packages as typed inline children, delegating onto `Reader`/`Writer` ceilings under
+  `--require-grants`, and restores `autoApprove` as a `Gatekeeper` roster decider (ADR 0066) whose
+  fallback is the human review. `comparisons/scripts/verify-packaged-ports.mjs` reruns the Batch 02
+  fixture intents and F1–F5 matrix against the packages and adds package validation and hygiene,
+  template, requireGrants and CLI decision-fixture contracts (70 results), and writes
+  `packages.json`, the CLI package sections the reader shows. The Batch 02 and Batch 03 verifiers
+  now share `fault-matrix.mjs` and the parametrized fixtures, fault and kill scripts; Batch 02's
+  recorded reports are unchanged. The reader compares the upstream original, the earlier ports
+  (Batch 02 or 01, with their helper files) and the package in three panels, adds a Package view
+  (files by part, line composition, roster with effort, decider and template inventory) and a
+  measured Batch 02 versus Batch 03 table, follows the viewer's light or dark theme, and keeps state
+  in the page when the host refuses hash changes; `batch.json` gains the optional `baseline` and
+  `apiFindings` keys. `comparisons:check` and `durability:check` cover the new batch, and
+  `.prettierignore` keeps formatters off its templates. `model.ts` and the API snapshot are
+  unchanged.
 - Remove the public profile surface (#726, amending ADR 0010; ADR 0063 §4). Roster entries are the
   only declared roles, and `text` is the implicit baseline and the default role. Removed: the
   workflow `profiles` field and its `extends` chain, the `readonly` and `edit` presets,

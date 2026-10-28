@@ -7,14 +7,19 @@ Versioned comparisons of the same pinned Claude Code JavaScript workflows and Qu
 ports. Batch 01 contains all 26 workflows from
 [ultracode-workflows at 9b5404d](https://github.com/hesreallyhim/ultracode-workflows/tree/9b5404d11b885b28380d3eb17471ef7b17601b5e/plugins/ultracode-workflows/workflows).
 Batch 02 rewrites six of them around code-owned effects, named roster entries, isolated writers,
-settled panels and inline children. Both batches preserve the original source bytes and license.
+settled panels and inline children. Batch 03 restructures those six as workflow packages
+(`<name>.quiet-choir`), with typed prompt templates, `quiet-choir/std` roster tiers and patterns,
+teams, packages composed as inline children, and a decision-provider screen. Every batch preserves
+the original source bytes and license.
 
-**Batch 02 is the active primitive regression suite and the reader default.** Batch 01 is retained
-as its historical comparison baseline. This transition also makes all 26 Batch 01 ports compile
-under the root settings: all seven former compiler relaxations are gone. Its shared `callOptions`
-helper omits undefined option fields, and typed composition/indexing fixes replace local casts. The
-initial audit counted 273 errors; the pre-#65 audit against the expanded API counted 396; there are
-now zero. Those historical counts describe different snapshots.
+**Batch 03 is the active primitive regression suite and the reader default.** Batch 02 is retained
+as its comparison baseline, and Batch 01 as the historical baseline before it; both stay compiled
+and checked. Batch 03 declares Batch 02 as its `baseline`, so the reader compares the upstream
+original, the earlier ports and the package side by side. The Batch 02 transition also made all 26
+Batch 01 ports compile under the root settings: all seven former compiler relaxations are gone. Its
+shared `callOptions` helper omits undefined option fields, and typed composition/indexing fixes
+replace local casts. The initial audit counted 273 errors; the pre-#65 audit against the expanded
+API counted 396; there are now zero. Those historical counts describe different snapshots.
 
 Batch 01 retains its loose final JSON schemas and source-style orchestration. It has 70 fixtures: 61
 differential cases, six durable-question contracts, two intentional inherited-crash corrections, and
@@ -25,6 +30,19 @@ ordering; the original snapshots are never edited to manufacture equality, and `
 enforces that. Its shared helpers forward to `ctx.phase` and `ctx.log`, and its legacy context
 forwards `worktree`/`merge` alongside durable commands, files, waits, `ask`/`approve` and `value`
 overloads; the recovery verifier inspects saved runs through `readRun({ runId, stateDir })`.
+
+Batch 03 keeps Batch 02's fixture intents, inputs and most step IDs, so its
+[verification](batches/03-packaged-ports/verification.json) and
+[metrics](batches/03-packaged-ports/metrics.json) pair with Batch 02's row for row. Each package
+holds `package.ts`, control flow in `workflows/`, Zod `contracts.ts`, `roster.ts`, `prompts.ts` with
+markdown templates in `prompts/`, mechanics in `lib/` and, for test-gap-filler, the mutation worker
+in `resources/`. Its verifier also validates every package through the CLI (recording the package
+sections in [packages.json](batches/03-packaged-ports/packages.json), which the reader shows),
+asserts that every agent call renders a template, enforces the package hygiene of
+`scripts/rehearse-packages.mjs`, runs the SDLC lifecycle under `requireGrants` through its
+delegation ceilings, and runs `autoApprove` through the CLI fixture harness with decision answers.
+The [notes](batches/03-packaged-ports/notes.json) say which upstream inputs and outputs return, and
+`batch.json` lists the API friction the port met (`apiFindings`).
 
 Batch 02 has real input/output schemas and root-strict types. Its
 [notes](batches/02-idiomatic-ports/notes.json),
@@ -51,6 +69,7 @@ explicit in the notes and limit direct comparisons of call counts.
 | `batches/<id>/`                      | Originals, ports, metadata, attribution and verification results    |
 | `scripts/verify-ports.mjs`           | Batch 01 differential baseline plus the strict/question checks      |
 | `scripts/verify-idiomatic-ports.mjs` | Batch 02 paired fixtures and the F1–F5 matrix                       |
+| `scripts/verify-packaged-ports.mjs`  | Batch 03 fixtures, F1–F5 matrix and package/decider/grant contracts |
 | `scripts/check-api-snapshot.mjs`     | Fails when a batch's `apiSnapshot.sha256` is not the API file's     |
 | `scripts/api-snapshot.mjs`           | Snapshot check and derivation of the API revision (with a test)     |
 | `scripts/check-source-hashes.mjs`    | Fails when an original or LICENSE differs from `source-hashes.json` |
@@ -60,8 +79,10 @@ explicit in the notes and limit direct comparisons of call counts.
 | `../.context/comparison-site/`       | Generated publishing checkout; ignored by this repository           |
 
 The strict/question checks live in `verify-strict-ports.mjs` and `verify-question-ports.mjs`, with
-the shared reply generator in `fixture-sample.mjs`. The Batch 02 verifier uses
-`verify-idiomatic-faults.mjs`, `idiomatic-fixtures.mjs` and `idiomatic-kill-worker.mjs`.
+the shared reply generator in `fixture-sample.mjs`. The Batch 02 and Batch 03 verifiers share
+`fault-matrix.mjs` (F1, F2, F4), `verify-idiomatic-faults.mjs` (F3 and the extra and CLI contracts),
+`idiomatic-fixtures.mjs` (fixtures and inert replies for both batches) and
+`idiomatic-kill-worker.mjs`.
 
 ## Build and verify locally
 
@@ -74,37 +95,44 @@ python3 -m http.server 4173 --directory .context/comparison-site/dist
 ```
 
 Open `http://localhost:4173`. The builder checks pinned source hashes, the API snapshot hash and
-required metadata, derives each batch's API revision from the checkout's history, embeds both
-batches and copies the static reader. It does not execute ports, upload or deploy anything.
-`comparisons:check` first checks that every batch's `originals/*.js` files and `LICENSE` match the
-hashes pinned in `source-hashes.json` (failing on any mismatch, unrecorded file or stale entry),
-then that `apiSnapshot.sha256` matches the API file in every batch (see the snapshot policy below),
-and runs the node tests for both checks, then compiles both batches under root settings, verifies
-the Batch 01 baseline and runs the Batch 02 paired fault suite in read-only `--check` mode after the
-package build. It is part of `npm run check` and the CI quality job. The fixture suite needs local
-Git and process identity inspection; it uses no native model CLI, credentials, network or paid
-inference.
+required metadata, derives each batch's API revision from the checkout's history, embeds every
+batch, with each package's files and CLI manifest, and copies the static reader. It does not execute
+ports, upload or deploy anything. `comparisons:check` first checks that every batch's
+`originals/*.js` files and `LICENSE` match the hashes pinned in `source-hashes.json` (failing on any
+mismatch, unrecorded file or stale entry), then that `apiSnapshot.sha256` matches the API file in
+every batch (see the snapshot policy below), and runs the node tests for both checks, then compiles
+every batch under root settings, verifies the Batch 01 baseline and runs the Batch 02 and Batch 03
+fault suites in read-only `--check` mode after the package build. It is part of `npm run check` and
+the CI quality job. The fixture suite needs local Git and process identity inspection; it uses no
+native model CLI, credentials, network or paid inference.
 
 Regenerate reports only for an intentional change, then review their diffs:
 
 ```sh
 node --import tsx comparisons/scripts/verify-ports.mjs
 node --import tsx comparisons/scripts/verify-idiomatic-ports.mjs
+node --import tsx comparisons/scripts/verify-packaged-ports.mjs
 ```
 
 ## Regression and snapshot policy
 
-A PR changing a primitive exercised by Batch 02 must update the matching port, port notes and fault
-row in the **same PR**, even when the API still compiles. The mapping is:
+A PR changing a primitive exercised by Batch 03 must update the matching package, port notes and
+fault row in the **same PR**, even when the API still compiles. The mapping is:
 
-| Primitive                                                       | Acceptance port                |
-| --------------------------------------------------------------- | ------------------------------ |
-| Commands/files, schema-first values (#58, #52)                  | release-notes, test-gap-filler |
-| Questions, isolated integration, roles (#55, #59, #45)          | project-bootstrap              |
-| Codex structured output and restricted reads (#35, #60)         | incident-investigation         |
-| Inline children, scoped IDs and stage decisions (#63, #44, #55) | sdlc-orchestrator              |
-| Settled maps, admission limits and usage gates (#42, #47, #62)  | bug-hunt                       |
-| Accepted-code replay (#41)                                      | Every F4 row                   |
+| Primitive                                                           | Acceptance package             |
+| ------------------------------------------------------------------- | ------------------------------ |
+| Commands/files, schema-first values (#58, #52)                      | release-notes, test-gap-filler |
+| Questions, isolated integration, roles (#55, #59, #45)              | project-bootstrap              |
+| Codex structured output and restricted reads (#35, #60)             | incident-investigation         |
+| Inline children, scoped IDs and stage decisions (#63, #44, #55)     | sdlc-orchestrator              |
+| Settled maps, admission limits and usage gates (#42, #47, #62)      | bug-hunt                       |
+| Accepted-code replay (#41)                                          | Every F4 row                   |
+| Packages, prompt templates, rosters (ADRs 0063–0065)                | Every package                  |
+| std tiers and patterns, teams (ADR 0067)                            | release-notes, bug-hunt        |
+| Decision providers and roster deciders, child delegation (ADR 0066) | sdlc-orchestrator              |
+
+Batch 02 still compiles and runs in `--check` mode, so a primitive change that breaks it must keep
+it passing too; it no longer has to adopt new idioms.
 
 The API file's SHA-256 is the contract. Update `apiSnapshot.sha256` in **every** batch in the same
 PR that changes `src/workflow/runtime/model.ts` (`shasum -a 256 src/workflow/runtime/model.ts`);
@@ -116,8 +144,8 @@ hashes to the recorded value, shown in the reader's Target API block. Publish fr
 commit is the one on main that last set the file to that hash; the builder warns and shows "not yet
 committed" when no reachable commit matches, for example for uncommitted work or a shallow clone.
 The check itself needs no git history. The hash identifies one API file, not the entire runtime.
-Reproduce an older report using its recorded runtime **and matching batch revision**. Batch 01 stays
-compiled and checked as the paired baseline; future primitive acceptance belongs to Batch 02.
+Reproduce an older report using its recorded runtime **and matching batch revision**. Batches 01 and
+02 stay compiled and checked as paired baselines; future primitive acceptance belongs to Batch 03.
 Further intentional API/idiom comparisons belong in a new numbered batch.
 
 ## Run a port
@@ -147,6 +175,24 @@ npm run cli -- workflow execute \
   --max-agents 3 --max-run-cost-usd 5 --max-run-agent-attempts 30
 ```
 
+A Batch 03 port is a package directory, which the CLI takes wherever it takes a workflow file:
+
+```sh
+npm run cli -- workflow validate \
+  comparisons/batches/03-packaged-ports/ported/bug-hunt.quiet-choir --json
+npm run cli -- workflow execute \
+  comparisons/batches/03-packaged-ports/ported/bug-hunt.quiet-choir \
+  --run-id hunt-3 --input '{"scope":"src/","maxRounds":2}' --max-run-cost-usd 5
+```
+
+The SDLC package declares three more workflows (`--workflow lifecycle-verification` runs one gate
+alone). Under `--require-grants` its children delegate onto the orchestrator's `Reader` and `Writer`
+entries, so a lifecycle launch needs `--grant Writer`, and a bootstrap package launch
+`--grant Setter`. `autoApprove: true` asks the `Gatekeeper` decider before each passing stage's
+review; a live run needs a jev-compatible host in
+`--harness-config '{"decisions":{"jev":{"baseUrl":"..."}}}'` and its token in `TYPESAFE_API_KEY`,
+and anything short of a confident continue still asks the human.
+
 Cost gates use available reported usage, including failures; unknown costs remain unknown and
 already admitted work may overshoot. Resume a budget-stopped run with a higher cap. A suspended
 approval/stage gate exits 75: inspect `workflow pending`, answer its exact step with
@@ -157,27 +203,32 @@ Batch 01 makes raw calls: it preserves its optional `$claude` input (`model`, `t
 `allowedTools`, `maxTurns`, `maxBudgetUsd`, `timeoutMs`) and sets `strictProfiles: false`. Tools are
 disabled by default; tools imply allowedTools unless narrowed, and under `--require-grants` elevated
 raw tools need write/exec/all launch grants. Its 68 original per-call effort choices are supported.
-Use a roster for new workflows, as Batch 02 does. The local support files shown in the reader are
-batch helpers, not additions to the runtime API; Batch 02's `support.ts` re-exports `json`, `git`
-and `committedArtifact` from `quiet-choir/std`.
+Use a roster for new workflows, as Batches 02 and 03 do. The local support files shown in the reader
+are batch helpers, not additions to the runtime API; Batch 02's `support.ts` re-exports `json`,
+`git` and `committedArtifact` from `quiet-choir/std`.
 
 ## Add a batch
 
-1. Create a new directory under `comparisons/batches/`, such as `03-revised-api`; leave previous
-   batches and their IDs intact. Use Batch 02's file shapes as the template. For an API comparison,
+1. Create a new directory under `comparisons/batches/`, such as `04-revised-api`; leave previous
+   batches and their IDs intact. Use Batch 03's file shapes as the template. For an API comparison,
    keep the upstream originals fixed so differences isolate the Quiet Choir changes.
 2. Store the pinned upstream `.js` files in `originals/`, preserve `LICENSE`, and record each file's
    SHA-256 in `source-hashes.json`, keyed by filename including `.js`, with the batch-root license
    under the key `LICENSE` (`shasum -a 256 <file>`). Do not format the originals.
    `comparisons:check` fails on a mismatch, a missing entry or a stale entry.
-3. Add `.workflow.ts` ports and their local helpers to `ported/`, plus a batch `tsconfig.json`. Keep
-   workflow names stable across batches so switching batches retains the selected workflow.
+3. Add the ports to `ported/`, plus a batch `tsconfig.json`: either `.workflow.ts` files with their
+   local helpers, or one `<name>.quiet-choir` package per workflow, whose entry module is
+   `workflows/<name>.ts`. The reader shows a package's files by part and its `packages.json`
+   manifest. Keep workflow names stable across batches so switching batches retains the selected
+   workflow.
 4. Fill in `batch.json`: matching directory `id`, display `number`/`label`/`description`, upstream
    `revision`/`sourceUrl`/`sourceFileBase`, `commonChanges`, and an accurate `validation` statement.
-   Record `apiSnapshot.package` (its package version), `file` (the API file), `sha256` (that file's
-   hash) and `description`, and no other keys; there is no `revision` field, because the site
-   derives it from main. For the current API file, use
-   `shasum -a 256 src/workflow/runtime/model.ts`. The file hash is not a full runtime fingerprint.
+   Optionally set `baseline` to the batch ID the reader compares against (it must be registered) and
+   `apiFindings` to the API friction the port met. Record `apiSnapshot.package` (its package
+   version), `file` (the API file), `sha256` (that file's hash) and `description`, and no other
+   keys; there is no `revision` field, because the site derives it from main. For the current API
+   file, use `shasum -a 256 src/workflow/runtime/model.ts`. The file hash is not a full runtime
+   fingerprint.
 5. Add one `catalog.json` entry per workflow: `name` matching both source filenames, `description`,
    `whenToUse`, `phases`, argument `fields`, call-site `counts`, and `hasBudget`. These describe the
    source workflow; call-site counts are not the number of agents a run will invoke.
@@ -187,8 +238,8 @@ and `committedArtifact` from `quiet-choir/std`.
    Adapt or add a verifier for the new batch's scenarios and API, run it, and save its
    `verification.json` (and, for paired measurements, an optional `metrics.json`). The existing
    verifiers check only their own batches: `verify-ports.mjs` covers Batch 01 and
-   `verify-idiomatic-ports.mjs` covers Batch 02. Update `batch.json.validation` from the actual
-   results.
+   `verify-idiomatic-ports.mjs` covers Batch 02 and `verify-packaged-ports.mjs` Batch 03 (with its
+   `packages.json`). Update `batch.json.validation` from the actual results.
 8. Add the directory ID to `batches/index.json`; put it first if it should be the default. Rebuild
    and preview Source comparison, Port notes, and Shared support for the new batch and an existing
    bookmark. New batches using the same source and data contract need no UI code changes.

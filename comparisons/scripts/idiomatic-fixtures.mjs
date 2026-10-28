@@ -37,17 +37,22 @@ export const bug = {
   evidence: 'Concurrent increments overwrite',
   failureScenario: 'Two writes read the same old value',
 };
+/** Batch 03 ports are packages: one `<name>.quiet-choir` directory per workflow. */
+export const packageRoot = (name) =>
+  join(project, 'comparisons/batches/03-packaged-ports/ported', `${name}.quiet-choir`);
 export const load = async (batch, name) =>
   (
     await import(
       pathToFileURL(
-        join(
-          project,
-          'comparisons/batches',
-          batch === 1 ? '01-direct-ports' : '02-idiomatic-ports',
-          'ported',
-          `${name}.workflow.ts`,
-        ),
+        batch === 3
+          ? join(packageRoot(name), 'workflows', `${name}.ts`)
+          : join(
+              project,
+              'comparisons/batches',
+              batch === 1 ? '01-direct-ports' : '02-idiomatic-ports',
+              'ported',
+              `${name}.workflow.ts`,
+            ),
       )
     )
   ).default;
@@ -163,6 +168,7 @@ export async function reply(batch, name, request, env, mode = 'normal') {
     }
     return output;
   }
+  if (batch === 3) return packagedReply(name, request, env, mode);
   if (name === 'release-notes') {
     if (id.endsWith('/summarize'))
       return {
@@ -271,6 +277,118 @@ export async function reply(batch, name, request, env, mode = 'normal') {
   }
   throw new Error(`Unhandled fixture request: ${name} ${id}`);
 }
+// Batch 03 replies: the same intents and fixture data as Batch 02, keyed by the packages' step IDs
+// (std.patterns adds `answer`, `review/<n>` and `revise/<n>` leaves).
+async function packagedReply(name, request, env, mode) {
+  const id = request.call.stepId,
+    prompt = request.options.prompt;
+  if (name === 'release-notes') {
+    if (id.endsWith('/summarize'))
+      return {
+        changes:
+          mode === 'missing-coverage'
+            ? []
+            : request.outputSchema.properties.changes.items.properties.sha.enum.map((sha) => ({
+                sha,
+                kind: 'feature',
+                summary: 'Document project',
+                userVisible: true,
+                migrationNote: null,
+              })),
+      };
+    if (/(?:^|\/)fact-check\/review\/\d+$/u.test(id)) return { approved: true, feedback: '' };
+    return 'Release notes: documented project';
+  }
+  if (name === 'project-bootstrap') {
+    if (id === 'detect')
+      return { stack: 'Node.js', existing: [], missing: ['foundation', 'tests'] };
+    if (id === 'plan') return reply(2, name, request, env, mode);
+    if (id.endsWith('/apply')) {
+      const foundation = prompt.startsWith('Apply only concern foundation');
+      await writeFile(
+        join(request.cwd, foundation ? 'setup.txt' : 'checks.txt'),
+        foundation ? 'foundation\n' : 'tests\n',
+      );
+      return { summary: 'Applied approved concern' };
+    }
+  }
+  if (name === 'test-gap-filler') return reply(2, name, request, env, mode);
+  if (name === 'incident-investigation') {
+    if (id.endsWith('/collect')) {
+      assert.equal(request.harness, 'codex');
+      assert.equal(request.options.sandbox, 'read-only');
+      if (mode === 'dirty')
+        await writeFile(join(request.cwd, 'unexpected.txt'), 'collector violated read-only intent');
+      return {
+        facts: [
+          {
+            fact: 'Commit added README',
+            source: env.until,
+            timestamp: '2020-01-01T00:00:00Z',
+            oddity: false,
+          },
+        ],
+      };
+    }
+    if (id === 'hypotheses')
+      return {
+        hypotheses: [
+          {
+            id: 'H1',
+            story: 'Lost update',
+            mechanism: 'Concurrent writes overwrite each other',
+            predictions: ['Two writers read the same value'],
+            priorPlausibility: 'high',
+          },
+          {
+            id: 'H2',
+            story: 'Configuration drift',
+            mechanism: 'A changed default reorders writes',
+            predictions: ['A configuration file changed in the window'],
+            priorPlausibility: 'low',
+          },
+        ],
+      };
+    if (id.endsWith('/falsify'))
+      return {
+        verdict: id.startsWith('falsifiers/0/') ? 'survives' : 'falsified',
+        reasoning: 'Fixture evidence',
+        checkedPredictions: [],
+      };
+    return 'Incident report: lost update';
+  }
+  if (name === 'sdlc-orchestrator') {
+    if (id === 'intake')
+      return {
+        plan: mode === 'full-lifecycle' ? lifecycle : ['requirements', 'spec'],
+        rationale: 'Prepare feature',
+      };
+    for (const [stage, child] of [
+      ['bootstrap', 'project-bootstrap'],
+      ['release-notes', 'release-notes'],
+    ]) {
+      if (id.startsWith(`${stage}/`))
+        return packagedReply(
+          child,
+          { ...request, call: { ...request.call, stepId: id.split('/work/')[1] } },
+          env,
+          mode,
+        );
+    }
+    if (id.startsWith('implement/') && id.endsWith('/apply')) {
+      await writeFile(join(request.cwd, 'implementation.txt'), 'Implemented fixture\n');
+      return 'Implemented fixture';
+    }
+    if (id.endsWith('/review')) return { summary: 'Ready', gate: 'pass', details: [] };
+    return 'Fixture lifecycle document';
+  }
+  if (name === 'bug-hunt') {
+    if (/\/finders\/\d+\/answer$/u.test(id))
+      return { bugs: id.startsWith('round/0/') ? [bug] : [] };
+    return { refuted: /\/skeptics\/\d+\/1\/answer$/u.test(id), reasoning: 'Fixture evidence' };
+  }
+  throw new Error(`Unhandled fixture request: ${name} ${id}`);
+}
 export const response = (output, request) => ({
   text: request.outputSchema ? JSON.stringify(output) : output,
   sessionId: 'fixture',
@@ -318,6 +436,20 @@ export function harnessFor(batch, name, env, { mode = 'normal', fault = null, on
         name === 'bug-hunt' &&
         mode === 'failed-finders' &&
         request.call.stepId.endsWith('/find')
+      )
+        throw exitFailure(request);
+      if (
+        batch === 3 &&
+        name === 'bug-hunt' &&
+        ((mode === 'failed-skeptic' && /\/skeptics\/\d+\/2\/answer$/u.test(request.call.stepId)) ||
+          (mode === 'failed-finders' && /\/finders\/\d+\/answer$/u.test(request.call.stepId)))
+      )
+        throw exitFailure(request);
+      if (
+        batch === 3 &&
+        name === 'incident-investigation' &&
+        mode === 'failed-falsifier' &&
+        request.call.stepId.startsWith('falsifiers/1/')
       )
         throw exitFailure(request);
       return response(await reply(batch, name, request, env, mode), request);

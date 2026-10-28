@@ -5,13 +5,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { format } from 'prettier';
-import { readRun, runWorkflow } from 'quiet-choir';
+import { degradation, fixResume, options, scenario, stable } from './fault-matrix.mjs';
 import {
   command,
   drive,
   fixture,
   harnessFor,
-  inputFor,
   load,
   names,
   project,
@@ -32,119 +31,6 @@ const stderr = console.error;
 console.error = () => {};
 let sequence = 0;
 const setup = async () => fixture(join(root, String(sequence++)));
-const stable = (value) =>
-  Array.isArray(value)
-    ? value.map(stable)
-    : value && typeof value === 'object'
-      ? Object.fromEntries(
-          Object.keys(value)
-            .sort()
-            .map((key) => [key, stable(value[key])]),
-        )
-      : value;
-const degradation = (record) =>
-  record.status !== 'completed'
-    ? null
-    : [
-        'degraded',
-        'call-limit',
-        'needs-review',
-        'verification-failed',
-        'baseline-failed',
-        'gaps-remain',
-      ].includes(record.output?.status);
-function repeated(calls, before) {
-  const old = new Set(calls.slice(0, before).map((call) => call.call.stepId));
-  return calls.slice(before).filter((call) => old.has(call.call.stepId)).length;
-}
-function options(env, batch, name, harness) {
-  return runOptions(env, `batch-${batch}-${name}`, harness, inputFor(batch, name, env));
-}
-async function scenario(batch, name, fault) {
-  const env = await setup(),
-    definition = await load(batch, name);
-  const { harness, calls } = harnessFor(batch, name, env, { fault });
-  const opts = options(env, batch, name, harness);
-  let first;
-  try {
-    first = (await drive(definition, opts)).result;
-  } catch {
-    first = await readRun(opts);
-  }
-  const afterFault = await snapshot(env.cwd),
-    before = calls.length;
-  const completedIDs = new Set(
-    Object.entries(first.steps)
-      .filter(([, step]) => step.status === 'completed')
-      .map(([id]) => id),
-  );
-  const { result: final } = await drive(definition, { ...opts, resume: true });
-  assert.equal(final.status, 'completed');
-  const completedCallsPaidAgain = calls
-    .slice(before)
-    .filter((call) => completedIDs.has(call.call.stepId)).length;
-  assert.equal(completedCallsPaidAgain, 0);
-  return {
-    initialStatus: first.status,
-    finalStatus: final.status,
-    callsPaidAgain: repeated(calls, before),
-    completedCallsPaidAgain,
-    filesystemAfterFault: afterFault,
-    filesystem: await snapshot(env.cwd),
-    outputAdmitsDegradation: degradation(final),
-  };
-}
-async function fixResume(batch, name) {
-  const env = await setup(),
-    base = await load(batch, name);
-  const { harness, calls } = harnessFor(batch, name, env),
-    opts = options(env, batch, name, harness);
-  // Only the final statement changes. No workflow/effect contract is redefined.
-  const beforeSource =
-    'const output = await base.run(ctx, input); throw new Error("one-line fixture tail");';
-  const afterSource = beforeSource.replace(
-    'throw new Error("one-line fixture tail")',
-    'return output',
-  );
-  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-  const wrap = (source) => ({
-    ...base,
-    run: (ctx, input) => new AsyncFunction('base', 'ctx', 'input', source)(base, ctx, input),
-  });
-  const fingerprint = (source) => createHash('sha256').update(source).digest('hex');
-  await assert.rejects(
-    drive(wrap(beforeSource), { ...opts, fingerprint: fingerprint(beforeSource) }),
-    /one-line fixture tail/u,
-  );
-  const before = calls.length;
-  await assert.rejects(
-    runWorkflow(wrap(afterSource), {
-      ...opts,
-      resume: true,
-      fingerprint: fingerprint(afterSource),
-    }),
-    /changed|fingerprint/iu,
-  );
-  const { result } = await drive(wrap(afterSource), {
-    ...opts,
-    resume: true,
-    fingerprint: fingerprint(afterSource),
-    acceptCodeChange: true,
-  });
-  assert.equal(result.status, 'completed');
-  assert.equal(calls.length, before);
-  return {
-    initialStatus: 'failed',
-    finalStatus: result.status,
-    callsPaidAgain: 0,
-    completedCallsPaidAgain: 0,
-    filesystem: await snapshot(env.cwd),
-    outputAdmitsDegradation: degradation(result),
-    evidence:
-      'Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit.',
-  };
-}
-
 try {
   const sharedFormattedLines = {};
   for (const id of ['01-direct-ports', '02-idiomatic-ports']) {
@@ -277,8 +163,8 @@ try {
         ).length,
         strictErrors: 0,
         faults: {
-          F1: await scenario(batch, name, 'F1'),
-          F2: await scenario(batch, name, 'F2'),
+          F1: await scenario(setup, batch, name, 'F1'),
+          F2: await scenario(setup, batch, name, 'F2'),
           F3: ['incident-investigation', 'bug-hunt'].includes(name)
             ? {
                 finalStatus: 'not-applicable',
@@ -288,7 +174,7 @@ try {
                 reason: 'Read-only intent: no prescribed write effect to kill',
               }
             : await killCase(join(root, `kill-${batch}-${name}`), batch, name),
-          F4: await fixResume(batch, name),
+          F4: await fixResume(setup, batch, name),
           F5: suspended
             ? {
                 initialStatus: 'suspended',

@@ -67,7 +67,7 @@ class KillStore extends FileRunStore {
                 ((name === 'release-notes' && stepId === 'write') ||
                   (name === 'sdlc-orchestrator' && stepId.endsWith('/write'))),
             );
-            if (batch === 2 && completed && !existsSync(marker))
+            if (batch >= 2 && completed && !existsSync(marker))
               die({
                 stepId: completed[0],
                 writeLocation: name === 'release-notes' ? 'source-checkout' : 'isolated-checkout',
@@ -82,7 +82,7 @@ class KillStore extends FileRunStore {
   }
 }
 const input = inputFor(batch, name, env);
-if (batch === 2 && name === 'test-gap-filler')
+if (batch >= 2 && name === 'test-gap-filler')
   input.testCommand = [process.execPath, 'kill-check.mjs'];
 const opts = {
   ...runOptions(env, 'kill-case', harness, input),

@@ -1,0 +1,168 @@
+[
+  {
+    "name": "release-notes",
+    "description": "Shard a commit range across diff-reading summarizers, draft audience-aware notes, and bidirectionally fact-check claims against commits",
+    "whenToUse": "Cutting a release or backfilling a changelog — when the notes must be both readable and provably true to the range",
+    "phases": [
+      {
+        "title": "Collect",
+        "detail": "resolve the range into a commit manifest"
+      },
+      {
+        "title": "Summarize",
+        "detail": "parallel diff-readers over commit slices"
+      },
+      {
+        "title": "Draft",
+        "detail": "audience-aware notes from the summaries"
+      },
+      {
+        "title": "Fact-check",
+        "detail": "claims<->commits in both directions"
+      }
+    ],
+    "fields": ["since", "until", "audience", "out"],
+    "counts": {
+      "agent": 6,
+      "parallel": 1,
+      "pipeline": 0,
+      "workflow": 0
+    },
+    "hasBudget": false
+  },
+  {
+    "name": "project-bootstrap",
+    "description": "Detect or choose the stack, set up toolchain/lint/tests/CI/containers in parallel, then prove the pipeline runs green — idempotent, report-only by default",
+    "whenToUse": "Standing up a new project's dev environment and CI from a spec, or retrofitting tooling onto a repo that lacks it",
+    "phases": [
+      {
+        "title": "Detect",
+        "detail": "read existing setup + choose stack"
+      },
+      {
+        "title": "Plan",
+        "detail": "one setup plan across concerns"
+      },
+      {
+        "title": "Set up",
+        "detail": "one agent per independent concern"
+      },
+      {
+        "title": "Prove",
+        "detail": "run lint/test/build/CI-dry-run"
+      }
+    ],
+    "fields": ["apply", "spec", "stack", "concerns"],
+    "counts": {
+      "agent": 6,
+      "parallel": 1,
+      "pipeline": 0,
+      "workflow": 0
+    },
+    "hasBudget": false
+  },
+  {
+    "name": "test-gap-filler",
+    "description": "Find untested high-risk code via coverage tooling + risk analysis, rank by blast radius, write and mutation-check tests per gap",
+    "whenToUse": "Raising test coverage where it matters most — before risky changes, after incidents, or ratcheting a legacy repo",
+    "phases": [
+      {
+        "title": "Find gaps",
+        "detail": "coverage tooling ∥ risk-based reading"
+      },
+      {
+        "title": "Prioritize",
+        "detail": "rank by blast radius, pick top N"
+      },
+      {
+        "title": "Fill",
+        "detail": "write, run, and mutation-check tests per gap"
+      }
+    ],
+    "fields": ["scope", "count", "framework"],
+    "counts": {
+      "agent": 5,
+      "parallel": 1,
+      "pipeline": 1,
+      "workflow": 0
+    },
+    "hasBudget": false
+  },
+  {
+    "name": "incident-investigation",
+    "description": "Hypothesis-free parallel evidence collection, competing root-cause hypotheses, one falsifier per hypothesis, and a survivors-only report",
+    "whenToUse": "Post-incident root-cause analysis from a repo plus symptoms — structured to resist first-plausible-story bias",
+    "phases": [
+      {
+        "title": "Evidence",
+        "detail": "four hypothesis-free collectors"
+      },
+      {
+        "title": "Hypothesize",
+        "detail": "generate competing explanations"
+      },
+      {
+        "title": "Falsify",
+        "detail": "one dedicated falsifier per hypothesis"
+      },
+      {
+        "title": "Report",
+        "detail": "timeline + root cause from survivors"
+      }
+    ],
+    "fields": ["incident", "window", "artifacts"],
+    "counts": {
+      "agent": 4,
+      "parallel": 2,
+      "pipeline": 0,
+      "workflow": 0
+    },
+    "hasBudget": false
+  },
+  {
+    "name": "sdlc-orchestrator",
+    "description": "Resumable lifecycle driver: runs leaf SDLC workflows inline, hands off conductor stages (spec, implementation) to the session, and pauses at every human checkpoint with full resumable state",
+    "whenToUse": "Driving a feature from requirements to a gated release with human checkpoints — the capstone that chains the library's workflows",
+    "phases": [
+      {
+        "title": "Intake",
+        "detail": "assess entry point + tailor the stage plan"
+      },
+      {
+        "title": "Drive",
+        "detail": "run/hand-off stages until a checkpoint"
+      }
+    ],
+    "fields": ["goal", "state", "inputs", "answers", "plan", "completed", "autoApprove"],
+    "counts": {
+      "agent": 2,
+      "parallel": 0,
+      "pipeline": 0,
+      "workflow": 1
+    },
+    "hasBudget": true
+  },
+  {
+    "name": "bug-hunt",
+    "description": "Loop diverse bug-finder rounds until two consecutive rounds find nothing new; majority-vote verify every candidate",
+    "whenToUse": "Exhaustive bug discovery on a codebase or subsystem — when you want the tail of the distribution, not just the obvious top findings",
+    "phases": [
+      {
+        "title": "Hunt",
+        "detail": "rotating-lens finder rounds"
+      },
+      {
+        "title": "Verify",
+        "detail": "majority-vote skeptic panel per candidate"
+      }
+    ],
+    "fields": ["scope", "maxRounds", "votes"],
+    "counts": {
+      "agent": 2,
+      "parallel": 3,
+      "pipeline": 0,
+      "workflow": 0
+    },
+    "hasBudget": true
+  }
+]

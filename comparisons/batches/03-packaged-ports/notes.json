@@ -1,0 +1,65 @@
+{
+  "release-notes": {
+    "summary": "Pin the commit manifest in code, summarize disjoint slices from their patches, draft for a named audience, and fact-check in both directions with std.patterns.reviewRevise before code publishes the bytes.",
+    "preserved": "Batch 02's code-owned manifest, disjoint slices, set-arithmetic coverage, exclusive or committed publication and bounded fact-check/revision remain, with the same step IDs for the Git commands, slices and write.",
+    "changes": [
+      "Packaged: workflows/release-notes.ts is control flow only; contracts.ts holds the slice schema derived from each slice's own SHAs, lib/git.ts the window, patch and log commands, and four templates under prompts/ the prose.",
+      "The upstream's audience input returns, and so does its guidance: diff-not-message summaries, breaking changes first with migration notes, the bidirectional fact-check (claims to commits, commits to claims, emphasis). Summaries carry userVisible and a migration note; the output lists breaking changes and deprecations again.",
+      "The fact-check loop is std.patterns.reviewRevise with a ReviewTeam of Drafter (actor) and FactChecker (critic): up to maxRevisions + 1 checks as fact-check/review/<n>, a revision after each rejection except the last. The fact-checker also receives a code-owned git log of the range, so it is not limited to the summaries it checks.",
+      "Roles narrow: Summarizer is the Copyist tier at the upstream's low effort, Drafter has no tools (std.claude.Text), FactChecker is the Skeptic tier at high effort."
+    ],
+    "evaluation": "The success fixture asserts the manifest equals rev-list, full coverage, factChecked and byte-exact publication, and every agent call records its template. reviewRevise returns { approved, draft } only, so the output carries factChecked instead of Batch 02's concern list; the critic's feedback stays in the run record (workflow inspect). Coverage proves commit representation, not factual accuracy. F3 kills after the file write and before its checkpoint, as in Batch 02."
+  },
+  "project-bootstrap": {
+    "summary": "Detect the stack, approve one hashed plan, apply each concern in its own worktree, and integrate only after code-run verification.",
+    "preserved": "Batch 02's canonical plan digest, durable approval before any write, disjoint file ownership checked on each receipt, per-concern worktrees, settled verification commands and publication only on success all remain, with the same step IDs.",
+    "changes": [
+      "Packaged: the digest, ownership and preview rules are pure functions in lib/plan.ts, the Git baseline and verification loop are lib/checks.ts, and the three prompts are templates; the Apply template still ends with the approved plan JSON, which the fixture parses back and compares with the approved subject.",
+      "The upstream's stack override returns as an optional input, and the Surveyor reports the stack it chose, which the output records.",
+      "Roles: Surveyor (Scribe tier) and Planner (the Planner tier, the upstream's high-effort plan) read; only the Setter (std.claude.Edit with the Mechanic tier) writes, always inside a runtime-owned worktree, so under --require-grants a launch grants --grant Setter alone."
+    ],
+    "evaluation": "Fixtures check the approved digest against a sorted-key hash of the approved subject, two isolated setter checkouts, the plan in each setter prompt, a real exit 7 and a self-SIGKILLed verify command settled as verification-failed, and a resume that pays nothing again. Commands are approved operator-privileged programs; argv is not a sandbox, and worktrees isolate repository edits only."
+  },
+  "test-gap-filler": {
+    "summary": "Find and rank high-risk test gaps in an operator-selected source file, then propose a test and mutants; code owns the guarded test write, the baseline verdict and every mutation, including restoration after an interrupted attempt.",
+    "preserved": "Batch 02's interface, serial mutation of one target, settled baseline and the mutation worker's reconcile-then-mutate-then-restore contract are unchanged, with the same step IDs (mutants/<id>/check).",
+    "changes": [
+      "Packaged: the mutation worker is a real file, resources/mutation-worker.mjs, instead of a String.raw literal. lib/mutation.ts reads it when the module loads and passes its text with node -e, so the text stays part of every check's command identity, and the file is also in the package fingerprint.",
+      "The coverage and risk lenses get the upstream's distinct charters in one template; the Ranker has no tools and is the Planner tier (the upstream's high-effort rank), and the TestAuthor is read-only at the Mechanic tier.",
+      "Pure rules (unique gaps, single-anchor mutants) are in lib/mutation.ts; the workflow module keeps only the sequence."
+    ],
+    "evaluation": "F3 kills the owner while a child test runs against mutated bytes, then resumes with orphan cleanup and verifies byte-identical pristine content. Settled baseline failures (nonzero exit, signal, timeout), surviving mutants and an unknown external edit (refused, then restored by the operator) are covered as in Batch 02. Test effectiveness beyond the fixture is not established."
+  },
+  "incident-investigation": {
+    "summary": "Pin the Git window, collect facts in four hypothesis-free domains with read-only Codex roles, falsify each competing hypothesis, and derive the report's confidence from the verdicts in code.",
+    "preserved": "The pinned window, read-only Codex roles and the three code-owned clean-repository checks (before, after collection, after the report) remain.",
+    "changes": [
+      "The upstream's structure returns now that prose and contracts live outside the control flow: four collector charters (diffs, logs, config, deps) in one template, facts with source, timestamp and oddity, hypotheses with falsifiable predictions, and one falsifier per hypothesis with a falsified, survives or untestable verdict.",
+      "Confidence is structural and computed in lib/policy.ts, as upstream: one survivor with a rival falsified is high, a lone survivor medium, several split, none none. A falsifier that failed leaves its hypothesis unchallenged, which caps a lone survivor at medium.",
+      "Collectors and falsifiers are settled maps (onError: 'return'), restoring the upstream's tolerance of a failed member with explicit accounting: uncollected domains and null verdicts are in the output. tolerantPanel is not used here because its answers drop the item index a verdict must keep.",
+      "Roles: Collector, Theorist, Falsifier and Reporter are std.codex.ReadOnly; the last three keep the upstream's high effort."
+    ],
+    "evaluation": "The dirty-collector fixture still fails at the code status check, now after four collectors. A failed-falsifier fixture shows the unchallenged hypothesis and the capped confidence. The success fixture gets high confidence from one survivor and one falsified rival. Ignored files, external writes and transient changes restored before status remain outside the check; Codex sandbox enforcement is covered by the harness tests."
+  },
+  "sdlc-orchestrator": {
+    "summary": "Tailor a lifecycle and run every stage as a typed inline child under one run ID, composing the bootstrap and release-notes packages, with a durable review per stage that a decider may answer when autoApprove is set.",
+    "preserved": "Batch 02's tailored plan, typed children, stage-local redo answers, release gate before release notes and bounded redo remain, with the same frame and question IDs.",
+    "changes": [
+      "One package, four workflows: the orchestrator and its document, implementation and verification stages, each runnable alone with --workflow. Bootstrap and release notes are the sibling packages' workflows, imported and declared as children, so their prompt roots join the static tree's fingerprint.",
+      "Each child's roster is its own; options.profiles maps child entries onto the orchestrator's Reader and Writer delegation ceilings, so under --require-grants one --grant Writer covers the setters and the implementer, and a launch without it is refused before any call.",
+      "autoApprove returns (Batch 02 dropped it) as a decide-then-act screen: when set and a stage's own gate passed, the Gatekeeper roster decider answers a choice question; only a confident continue skips the human review, and a low-confidence answer, a review answer or a failed screen still asks. Unlike upstream, a concerns gate always reaches the human.",
+      "Stage records note whether a human or the decider reviewed them."
+    ],
+    "evaluation": "Fixtures check one run ID, redo answers placed only in the requesting stage, the ten-stage lifecycle with approved bootstrap, implementation, QA, release gate and release publication on a clean checkout, the same lifecycle under requireGrants with and without the Writer grant, CLI exit 75 then answer and resume, and two CLI autoApprove runs (a confident decider skips both reviews; low confidence on spec asks the human). The decider runs from fixture answers; no live decision host is contacted, and a live run needs one configured. No content-quality equivalence is claimed."
+  },
+  "bug-hunt": {
+    "summary": "Rotate read-only finder panels until two dry rounds, deduplicate candidates, and settle a skeptic panel per candidate with std.patterns.tolerantPanel, keeping undecided outcomes and failure counts.",
+    "preserved": "Batch 02's convergence rule, dedup against everything seen, majority arithmetic with missing seats, logical-call cap and explicit failed/skipped/undecided counts remain.",
+    "changes": [
+      "Both panels are std.patterns.tolerantPanel calls filled from the roster (a PanelTeam with Finder, then Skeptic). Each member's outcome is journaled, so a failed vote stays failed on resume; the version option names the prompt and schema, which the settled map's fingerprint does not show. Leaf IDs become round/<r>/finders/<i>/answer and round/<r>/skeptics/<k>/<seat>/answer.",
+      "The upstream's full lens descriptions and the majority, key and severity rules live in lib/policy.ts; findings are sorted most severe first, as upstream returned them.",
+      "Roles: Finder is the Scribe tier; Skeptic is the Skeptic tier at the upstream's high effort. Skeptic items carry the candidate, so its panel's fingerprint covers what is judged."
+    ],
+    "evaluation": "Fixtures inject a failing skeptic seat (undecided), failing finders (no dry convergence), a three-call cap and a reported-cost stop with a higher-cap resume, as in Batch 02. Fixture cost is simulated usage, not billing; concurrent admissions can overshoot a cost threshold."
+  }
+}
