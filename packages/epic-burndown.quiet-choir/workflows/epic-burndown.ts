@@ -48,7 +48,7 @@ export default defineWorkflow({
         blocked: result.blocked,
       });
       record.followupEpic = result.followupEpic ?? record.followupEpic;
-      record.remaining = (result.remaining ?? null);
+      record.remaining = result.remaining ?? null;
       ctx.log(`Run ${String(run)}: ${result.status}. ${result.headline ?? ''}`);
       if (result.status === 'epic-done') {
         record.status = 'epic-done';
