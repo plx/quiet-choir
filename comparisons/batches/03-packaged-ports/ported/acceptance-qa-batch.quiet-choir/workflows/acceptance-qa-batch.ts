@@ -1,17 +1,21 @@
 // acceptance-qa-batch: control flow only. Code refuses a dirty checkout and pins HEAD; a copyist
-// transcribes the backlog and code admits only verbatim criteria. Per ticket a demonstrator writes
-// one probe per criterion, and a breaker writes attack probes for the tickets that earned it. A
-// human approves each probe list, code runs every probe alone in a pinned checkout, and the exit
-// codes, not the agents, decide each ticket's verdict.
+// transcribes the backlog, and code admits only tickets whose criteria are whole backlog items
+// under that ticket and reports the items nobody copied. Per ticket a demonstrator writes one
+// probe per criterion, and a breaker writes attack probes for the tickets that earned it. A human
+// approves each probe list, code runs every probe alone in a pinned checkout, and the exit codes
+// (0 or FailExit; anything else is no verdict), not the agents, decide each ticket's verdict.
 import { defineWorkflow } from 'quiet-choir';
 import {
   AcceptanceInput,
   AcceptanceOutput,
   AttacksFor,
   Backlog,
+  FailExit,
   PlanFor,
   type Ticket,
 } from '../contracts.js';
+import { approvalOf, renderAttack, renderProbe } from '../lib/approval.js';
+import { admit } from '../lib/backlog.js';
 import { baseCommit, dirtyPaths, readBacklog, runProbe } from '../lib/checkout.js';
 import {
   assess,
@@ -20,7 +24,7 @@ import {
   breakerStatus,
   criterionProbes,
 } from '../lib/evidence.js';
-import { admit, approvalOf, attackable, counts, grade, runStatus } from '../lib/policy.js';
+import { attackable, counts, grade, runStatus } from '../lib/policy.js';
 import { prompts } from '../prompts.js';
 import { roster } from '../roster.js';
 
@@ -43,6 +47,7 @@ export default defineWorkflow({
       deferred: [],
       skipped: [],
       rejected: [],
+      unclaimed: [],
       probeDigest: null,
       attackDigest: null,
     };
@@ -52,21 +57,26 @@ export default defineWorkflow({
     const base = await baseCommit(ctx);
     // Every agent reads the commit the probes run against, never the live checkout.
     const pinned = { base: { commit: base } };
-    const { scope, probeCommand: argv } = input;
+    const { scope, probeCommand: argv, probeTimeoutMs } = input;
     const { tickets, skipped, runContext } = await ctx.roster.Ingester.value('ingest', {
       worktree: pinned,
       schema: Backlog,
       prompt: prompts.Ingest({ backlog: backlog.content, scope, argv }),
     });
-    const { admitted, rejected } = admit(tickets, backlog.content);
+    const transcribed = admit(tickets, skipped, backlog.content);
+    const { admitted, rejected } = transcribed;
     const chosen = admitted.slice(0, input.maxTickets);
     const deferred = admitted.slice(input.maxTickets).map(({ id, title }) => ({ id, title }));
-    const head = { ...report, base, runContext, skipped, rejected, deferred };
-    if (!chosen.length) return { ...head, status: rejected.length ? 'degraded' : 'empty' };
-    const brief = { scope, runContext, argv, base };
+    const unclaimed = transcribed.unclaimed.filter(
+      (entry) => entry.ticket === null || chosen.some((ticket) => ticket.id === entry.ticket),
+    );
+    const head = { ...report, base, runContext, skipped, rejected, unclaimed, deferred };
+    if (!chosen.length)
+      return { ...head, status: rejected.length || unclaimed.length ? 'degraded' : 'empty' };
+    const brief = { scope, runContext, argv, base, failCode: FailExit };
     const key = (ticket: Ticket) => ctx.id(ticket.id);
-    const run = (probe: string) =>
-      runProbe(ctx, { base, argv, probe, timeoutMs: input.probeTimeoutMs });
+    const run = (probe: string) => runProbe(ctx, { base, argv, probe, timeoutMs: probeTimeoutMs });
+    const how = `Each probe runs as ${JSON.stringify(argv)} with the program on stdin, alone in a fresh checkout at ${base}, with your privileges and inherited environment, for at most ${probeTimeoutMs} ms.`;
 
     // A demonstrator that fails leaves its ticket unverified rather than failing the batch.
     const plans = await ctx.map(
@@ -81,23 +91,27 @@ export default defineWorkflow({
         }),
     );
     const probes = criterionProbes(chosen, plans);
-    const probeList = approvalOf(probes);
+    const probeList = approvalOf(
+      probes,
+      `${how} Exit 0 shows the criterion holds, exit ${FailExit} that it does not, and anything else gives no verdict.`,
+      renderProbe,
+    );
     const probesApproved =
       probes.length > 0 &&
       (
         await ctx.approve('approve-probes', {
           title: 'Probes',
           prompt:
-            'Run these agent-written probes with the probe command, each in a pinned checkout?',
+            'Run these agent-written probes with your privileges and environment, each in a checkout at the base?',
           subject: { base, argv, digest: probeList.digest, probes },
-          details: probeList.preview,
+          details: probeList.details,
         })
       ).approved;
     const probeRuns = probesApproved
       ? await ctx.map(
           'criteria',
           probes,
-          { concurrency: 4, key: (item) => ctx.id(item.ticket, item.criterion) },
+          { concurrency: 4, key: (item) => ctx.id(item.ticket, item.position) },
           (item) => run(item.probe),
         )
       : [];
@@ -118,15 +132,20 @@ export default defineWorkflow({
         }),
     );
     const attacks = attackProbes(targets, proposals);
-    const attackList = approvalOf(attacks);
+    const attackList = approvalOf(
+      attacks,
+      `${how} Exit 0 shows the feature withstood the attack, exit ${FailExit} that the break reproduced, and anything else gives no verdict.`,
+      renderAttack,
+    );
     const attacksApproved =
       attacks.length > 0 &&
       (
         await ctx.approve('approve-attacks', {
           title: 'Attacks',
-          prompt: 'Run these agent-written attack probes, each in a pinned checkout?',
+          prompt:
+            'Run these agent-written attack probes with your privileges and environment, each in a checkout at the base?',
           subject: { base, argv, digest: attackList.digest, attacks },
-          details: attackList.preview,
+          details: attackList.details,
         })
       ).approved;
     const attackRuns = attacksApproved
@@ -140,13 +159,20 @@ export default defineWorkflow({
 
     const graded = assessed.map((assessment) => {
       const tried = attackResults(assessment.ticket, attacks, attackRuns);
-      return grade(assessment, tried, breakerStatus(proposals[targets.indexOf(assessment)], tried));
+      const breaker = breakerStatus(proposals[targets.indexOf(assessment)], tried);
+      const missing = unclaimed.filter((entry) => entry.ticket === assessment.ticket.id);
+      return grade(
+        assessment,
+        tried,
+        breaker,
+        missing.map((entry) => entry.item),
+      );
     });
     const declined =
       (probes.length > 0 && !probesApproved) || (attacks.length > 0 && !attacksApproved);
     return {
       ...head,
-      status: runStatus(declined, graded, rejected, deferred),
+      status: runStatus(declined, graded, { rejected, unclaimed, deferred }),
       tickets: graded,
       ...counts(graded),
       probeDigest: probes.length ? probeList.digest : null,

@@ -4,6 +4,12 @@ import { z } from 'quiet-choir';
 export const Sha = z.string().regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/u);
 export const Digest = z.string().regex(/^[a-f0-9]{64}$/u);
 export const Argv = z.tuple([z.string().min(1)]).rest(z.string());
+/**
+ * The exit code a probe uses for "the criterion does not hold" or "the break reproduced". Exit 0
+ * is the other verdict, and anything else (Node's and Python's uncaught-exception exit 1, a
+ * timeout, a signal, a command that cannot start) is a probe that gave no verdict.
+ */
+export const FailExit = 3;
 
 export const Ticket = z.object({
   id: z.string().min(1).max(80).describe('The backlog ID, or T1, T2 and so on when it has none'),
@@ -20,7 +26,10 @@ export const Skipped = z.object({ id: z.string().min(1), reason: z.string().min(
 export type Skipped = z.infer<typeof Skipped>;
 export const Backlog = z.object({
   tickets: z.array(Ticket).max(100),
-  skipped: z.array(Skipped).max(100).describe('Tickets with no checkable criteria, and why'),
+  skipped: z
+    .array(Skipped)
+    .max(1000)
+    .describe('Tickets with no checkable criteria or past the hundredth, and why'),
   runContext: z.string().min(1).describe('How a probe program can exercise this project'),
 });
 
@@ -32,9 +41,13 @@ export const PlanFor = (criteria: number) =>
     criteria: z
       .array(
         z.object({
-          claim: z.string().min(1).describe('What the probe checks, or what a human must check'),
+          claim: z
+            .string()
+            .min(1)
+            .max(2000)
+            .describe('What the probe checks, or what a human must check'),
           probe: Probe.nullable().describe(
-            'Exits 0 only if the criterion holds; null when this checkout cannot demonstrate it',
+            `Exits 0 if the criterion holds and ${FailExit} if it does not; null when this checkout cannot demonstrate it`,
           ),
         }),
       )
@@ -47,10 +60,10 @@ export const AttacksFor = (max: number) =>
     attacks: z
       .array(
         z.object({
-          description: z.string().min(1),
+          description: z.string().min(1).max(1000),
           severity: Severity.describe('What a reproduced break would mean'),
           probe: Probe.describe(
-            'Exits 0 if the feature withstands the attack, nonzero if it breaks',
+            `Exits 0 if the feature withstands the attack and ${FailExit} if the break reproduces`,
           ),
         }),
       )
@@ -63,7 +76,12 @@ export type Attack = Attacks['attacks'][number];
 export const Run = z.object({
   code: z.number().int().nullable(),
   signal: z.string().nullable(),
-  failure: z.string().nullable().describe('Why no exit code was observed: timeout, signal, spawn'),
+  failure: z
+    .object({ kind: z.string(), message: z.string() })
+    .nullable()
+    .describe(
+      'Set when the probe gave no exit code: the settled error kind (timeout, or process for a signal or a command that could not start) and its message',
+    ),
   stdout: z.string().describe('The last 1000 characters'),
   stderr: z.string().describe('The last 1000 characters'),
 });
@@ -127,11 +145,25 @@ export const AcceptanceOutput = z.object({
   passed: z.number().int().nonnegative().describe('pass and pass-pending-manual, as upstream'),
   failed: z.number().int().nonnegative(),
   unverified: z.number().int().nonnegative(),
+  inconclusive: z
+    .number()
+    .int()
+    .nonnegative()
+    .describe(
+      `Criterion and attack runs that gave no verdict: an exit other than 0 or ${FailExit}, a timeout, a signal, or a command that could not start`,
+    ),
   deferred: z.array(z.object({ id: z.string(), title: z.string() })),
   skipped: z.array(Skipped).describe('Tickets the ingester found no checkable criteria for'),
   rejected: z
     .array(Skipped)
-    .describe('Tickets code refused: a duplicate ID or a reworded criterion'),
+    .describe(
+      'Tickets code refused: a duplicate ID, an ID the backlog lacks, or a criterion that is not a whole backlog item under its ticket',
+    ),
+  unclaimed: z
+    .array(z.object({ ticket: z.string().nullable(), item: z.string() }))
+    .describe(
+      'Backlog list items no transcribed criterion copied: under a checked ticket, or under no ticket the ingester named',
+    ),
   probeDigest: Digest.nullable(),
   attackDigest: Digest.nullable(),
 });

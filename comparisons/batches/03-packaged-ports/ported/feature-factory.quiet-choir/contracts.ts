@@ -43,7 +43,8 @@ export const Ticket = z.object({
 });
 export type Ticket = z.infer<typeof Ticket>;
 
-const moduleShape = {
+/** A planned module; its key order is the order of the approved plan text. */
+export const Module = z.object({
   name: z.string().min(1).max(60).describe('A short module name, unique in the plan'),
   isFoundation: z
     .boolean()
@@ -53,9 +54,9 @@ const moduleShape = {
     .min(1)
     .max(20)
     .describe('Repository directories or files this module alone may change'),
+  ticketIds: z.array(TicketId).min(1).max(30),
   notes: z.string().min(1).nullable().describe('Guidance for the builder, or null'),
-};
-export const Module = z.object({ ...moduleShape, ticketIds: z.array(TicketId).min(1).max(30) });
+});
 export type Module = z.infer<typeof Module>;
 export const Deferral = z.object({ ticket: TicketId, reason: z.string().min(1) });
 export const Plan = z.object({ modules: z.array(Module).min(1), deferred: z.array(Deferral) });
@@ -69,7 +70,7 @@ export const PlanFor = (tickets: readonly Ticket[], max: number) => {
   return z
     .object({
       modules: z
-        .array(z.object({ ...moduleShape, ticketIds: z.array(z.enum(ids)).min(1).max(30) }))
+        .array(Module.extend({ ticketIds: z.array(z.enum(ids)).min(1).max(30) }))
         .min(1)
         .max(max),
       deferred: z
@@ -220,6 +221,9 @@ export const FeatureFactoryOutput = z.object({
   limits: z.object({
     modules: z.number().int().min(1).describe('Modules the call cap and maxModules admit'),
     callsAdmitted: Count.describe('Upper bound of the agent calls admitted so far'),
+    unlistedFiles: Count.nullable().describe(
+      'Tracked files past the 400 listed to the planner, which it can still read; null before planning',
+    ),
   }),
   plan: Plan.extend({ digest: Digest }).nullable(),
   modules: z.array(ModuleRecord),

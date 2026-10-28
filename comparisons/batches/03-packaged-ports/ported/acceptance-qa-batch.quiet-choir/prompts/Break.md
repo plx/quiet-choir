@@ -16,11 +16,11 @@ How to exercise this project: {{ runContext }}
 Attack the feature's edges: malformed and boundary inputs, permission and authentication gaps,
 concurrency, empty and huge data, and the interactions its criteria never mention. Propose at most
 {{ maxAttacks }} attacks, each with a probe that exits 0 when the feature withstands the attack and
-nonzero when the break reproduces. The workflow runs every probe and keeps as breaks only the
-attacks whose probes fail, so propose the attacks you expect to succeed rather than a survey.
-Severity says what a reproduced break would mean: breaks-criterion defeats an acceptance criterion
-in a case the criterion should have covered, degrades harms the feature without defeating a
-criterion, and cosmetic is only visible. Coming back with no attack is a real result.
+{{ failCode }} when the break reproduces. The workflow runs every probe and keeps as breaks only the
+attacks whose probes exit {{ failCode }}, so propose the attacks you expect to succeed rather than
+a survey. Severity says what a reproduced break would mean: breaks-criterion defeats an acceptance
+criterion in a case the criterion should have covered, degrades harms the feature without
+defeating a criterion, and cosmetic is only visible. Coming back with no attack is a real result.
 {%- for result in criteria %}
 {%- if result.probe %}
 

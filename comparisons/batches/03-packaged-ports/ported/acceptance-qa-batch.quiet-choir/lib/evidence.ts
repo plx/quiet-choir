@@ -14,7 +14,14 @@ import { attackOutcome, criterionStatus } from './policy.js';
 
 /** A settled agent answer, as a settled map returns it. */
 type Answer<T> = { readonly ok: true; readonly value: T } | { readonly ok: false };
-export type CriterionProbe = { ticket: string; criterion: number; probe: string };
+/** What a human approves for one criterion: the criterion, the agent's claim and its probe. */
+export type CriterionProbe = {
+  ticket: string;
+  position: number;
+  criterion: string;
+  claim: string;
+  probe: string;
+};
 export type AttackProbe = Attack & { ticket: string; attack: number };
 
 /** Every criterion probe of every answered plan; a null probe is an undemonstrable criterion. */
@@ -22,9 +29,11 @@ export const criterionProbes = (chosen: Ticket[], plans: Answer<Plan>[]): Criter
   chosen.flatMap((ticket, index) => {
     const plan = plans[index];
     if (!plan?.ok) return [];
-    return plan.value.criteria.flatMap(({ probe }, criterion) =>
-      probe === null ? [] : [{ ticket: ticket.id, criterion, probe }],
-    );
+    return plan.value.criteria.flatMap(({ claim, probe }, position) => {
+      const criterion = ticket.acceptanceCriteria[position];
+      if (probe === null || criterion === undefined) return [];
+      return [{ ticket: ticket.id, position, criterion, claim, probe }];
+    });
   });
 
 /** One ticket's criteria as code read them back, before any attack. */
@@ -46,7 +55,7 @@ export function assess(
     const criteria = ticket.acceptanceCriteria.map((criterion, position): CriterionResult => {
       const entry = plan?.ok ? plan.value.criteria[position] : undefined;
       const at = probes.findIndex(
-        (probe) => probe.ticket === ticket.id && probe.criterion === position,
+        (probe) => probe.ticket === ticket.id && probe.position === position,
       );
       const run = runs[at] ?? null;
       const status = !entry

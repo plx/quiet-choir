@@ -69,8 +69,8 @@ export default defineWorkflow({
     const range = { span, count: manifest.length, log, patch };
     const tests = await runTests(ctx, input.testCommands, input.commandTimeoutMs);
     const evidence = await gatherEvidence(ctx, input.evidenceCommands, input.commandTimeoutMs);
-    // A command that rewrote a tracked file ran later commands on another tree; its untracked
-    // artifacts (coverage, caches) are allowed and never reach the pinned readers.
+    // A tracked file a command rewrote means later commands did not run on the gated tree.
+    // Untracked artifacts (coverage, caches) are allowed; the pinned readers never see them.
     const after = await dirt(ctx, 'clean-after-commands', false);
     if (after.length)
       return refused(changedByCommands(after), blockOn, window, ran(tests, evidence));

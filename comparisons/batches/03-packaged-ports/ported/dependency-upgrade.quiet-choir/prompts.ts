@@ -54,10 +54,13 @@ export const prompts = definePrompts(import.meta.dirname + '/prompts', {
   },
   Triage: {
     file: 'Triage.md',
-    description: 'Cluster the code-run failures by root cause, naming the files a fix must change.',
+    description:
+      'Cluster the code-run failures by root cause, for the fixers or, at the cap, for the report.',
     params: z.object({
       ...upgrade,
       ...breaking,
+      install: z.string().nullable(),
+      repair: z.boolean().describe('Fixers follow; false at the fix-round cap'),
       testFocus: z.array(z.string()),
       allowed: z.array(z.string()),
       failures: z.array(Failure),

@@ -40,6 +40,7 @@ const tail = (text: string) => text.slice(-1000);
 /**
  * Run one approved probe alone: a fresh checkout pinned at `base` (step `tree`), then the
  * operator's command with the probe on stdin (step `probe`). No probe sees another's side effects.
+ * It inherits the operator's environment and privileges, as the approval question says.
  */
 export async function runProbe(
   ctx: WorkflowContext,
@@ -57,11 +58,11 @@ export async function runProbe(
     const { code, signal, stdout, stderr } = result.value;
     return { code, signal, failure: null, stdout: tail(stdout), stderr: tail(stderr) };
   }
-  const { code, signal, kind, stdoutTail, stderrTail } = result.error;
+  const { code, signal, kind, message, stdoutTail, stderrTail } = result.error;
   return {
     code: code ?? null,
     signal: signal ?? null,
-    failure: kind,
+    failure: { kind, message: message.slice(0, 500) },
     stdout: stdoutTail ?? '',
     stderr: stderrTail ?? '',
   };

@@ -99,7 +99,10 @@ export function planProblems(
   return problems;
 }
 
-/** The plan with a fixed key order: the text a human approves and every builder receives. */
+/**
+ * The plan in its schema's key order, so the output's plan serializes to the text a human approves
+ * and every builder receives.
+ */
 export const canonicalPlan = (plan: Plan): Plan => ({
   modules: plan.modules.map(({ name, isFoundation, fileAreas, ticketIds, notes }) => ({
     name,

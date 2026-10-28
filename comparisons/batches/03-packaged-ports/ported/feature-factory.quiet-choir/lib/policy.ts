@@ -1,5 +1,6 @@
-// Pure rules: the children's delegation maps, the records a module's build, review and repair
-// leave, and the final status verdict.
+// Pure rules: the children's delegation maps, the build outcomes in plan order and what later
+// modules may build on, the records a module's build, review and repair leave, and the final
+// status verdict.
 import type { MapStepError, Settled } from 'quiet-choir';
 import type { FeatureFactoryOutput, Module, ModuleRecord } from '../contracts.js';
 import type { Built, Fixed } from './stages.js';
@@ -25,11 +26,47 @@ export const backlogOf = (backlog: {
   gaps: backlog.coverage?.gaps.length ?? 0,
 });
 
-/** A module's record from its build outcome, or from why it was skipped or failed. */
-export function recordOf(
-  module: Module,
-  outcome: (Built & { base: string }) | { skipped: string } | { failed: string },
-): ModuleRecord {
+/** A module's build outcome: a builder's, or why it never built. */
+export type Outcome = (Built & { base: string }) | { skipped: string } | { failed: string };
+
+/** A builder outcome whose tickets later modules may build on. */
+const accepted = (outcome: Outcome | undefined) =>
+  outcome !== undefined &&
+  'build' in outcome &&
+  (outcome.build === 'done' || outcome.build === 'partial' || outcome.build === 'unchanged');
+
+/** The tickets of the modules that landed so far; `outcomes` follows the build order. */
+export const landed = (order: readonly Module[], outcomes: readonly Outcome[]) =>
+  new Set(order.flatMap((module, index) => (accepted(outcomes[index]) ? module.ticketIds : [])));
+
+/** The foundations that landed so far, which a later builder's checkout holds. */
+export const builtOn = (order: readonly Module[], outcomes: readonly Outcome[]) =>
+  order.flatMap((module, index) =>
+    module.isFoundation && accepted(outcomes[index]) ? [module.name] : [],
+  );
+
+/** The change an outcome integrates, if any. */
+export const changeOf = (outcome: Outcome | undefined) =>
+  outcome && 'change' in outcome ? outcome.change : null;
+
+/** The features' outcomes in plan order: skipped, the settled builder's, or its map failure. */
+export function settleFeatures(
+  skips: readonly (string | null)[],
+  results: readonly Settled<Built, MapStepError>[],
+  base: string,
+): Outcome[] {
+  let next = 0;
+  return skips.map((skipped) => {
+    if (skipped) return { skipped };
+    const result = results[next++];
+    return result?.ok
+      ? { ...result.value, base }
+      : { failed: `Build failed: ${result?.error.message.slice(0, 500) ?? 'no outcome'}` };
+  });
+}
+
+/** A module's record from its build outcome. */
+export function recordOf(module: Module, outcome: Outcome | undefined): ModuleRecord {
   const plan = {
     name: module.name,
     foundation: module.isFoundation,
@@ -39,15 +76,12 @@ export function recordOf(
     repair: null,
   };
   const none = { blockers: [], outside: [], base: null, commit: null, files: [] };
+  if (!outcome) return { ...plan, ...none, build: 'failed', summary: 'No outcome' };
   if ('skipped' in outcome) return { ...plan, ...none, build: 'skipped', summary: outcome.skipped };
   if ('failed' in outcome) return { ...plan, ...none, build: 'failed', summary: outcome.failed };
   const { build, summary, blockers, outside, files, commit, base } = outcome;
   return { ...plan, build, summary, blockers, outside, base, commit, files };
 }
-
-/** A builder outcome whose tickets later modules may build on. */
-export const accepted = (outcome: Built) =>
-  outcome.build === 'done' || outcome.build === 'partial' || outcome.build === 'unchanged';
 
 interface ReviewOutput {
   status: 'nothing-to-review' | 'complete' | 'degraded' | 'limited';

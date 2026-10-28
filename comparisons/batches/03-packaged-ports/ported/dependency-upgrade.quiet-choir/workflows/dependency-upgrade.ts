@@ -2,8 +2,9 @@
 // files that name the package; a web researcher and a usage analyst run in parallel, a planner
 // joins their results and a human approves the exact plan. One upgrader applies it in its own
 // worktree. Each round, code installs and verifies the integrated commit in a fresh checkout; on
-// red, a triager clusters the failures and up to three fixers repair disjoint files. Code
-// publishes only a green tree whose changes the plan allows, onto a checkout that has not moved.
+// red, a triager clusters the failures and up to three fixers repair disjoint files, and past
+// maxFixRounds the triage only reports what still fails. Code stops once the checkout moves, and
+// publishes only a green tree whose changes the plan allows.
 import { defineWorkflow, type WorktreeChange, type WorktreeHandle } from 'quiet-choir';
 import {
   Applied,
@@ -23,13 +24,14 @@ import {
   capEvidence,
   classify,
   digestOf,
-  failing,
+  leftFailing,
   outsidePlan,
   owned,
   planText,
   preview,
   reported,
   settleFixes,
+  unattempted,
   usageFiles,
 } from '../lib/policy.js';
 import { fixCluster } from '../lib/stages.js';
@@ -126,6 +128,10 @@ export default defineWorkflow({
     });
     if (!approval.approved) return { ...report, status: 'declined', approvedDigest };
     const approved = { ...report, approvedDigest };
+    // ctx.merge integrates onto the checkout's current HEAD, so a checkout that moved since the
+    // base would put a tree no command verified under every later round: stop before paying.
+    const moved = async (id: string) => (await headCommit(ctx, id)) !== base;
+    if (await moved(ctx.id('head', 'approved'))) return { ...approved, status: 'base-moved' };
 
     ctx.phase('Apply');
     // One upgrader: the manifest bump and the code changes form one dependent sequence.
@@ -138,14 +144,17 @@ export default defineWorkflow({
     if ('refused' in verdict)
       return { ...approved, status: 'refused', refusal: `Upgrader ${verdict.refused}` };
     if (!verdict.change) return { ...approved, status: 'unchanged', remaining: plan.steps };
+    if (await moved(ctx.id('head', 'applied'))) return { ...approved, status: 'base-moved' };
 
     ctx.phase('Stabilize');
     const changes: WorktreeChange[] = [verdict.change];
     let commit = (await ctx.merge('integrate', changes, { onConflict: 'fail' })).commit;
     const verification: Round[] = [];
     let green: WorktreeHandle | null = null;
-    // Each round verifies once; a red round triages and fixes unless it is the last. A round whose
-    // fixers change nothing stops early: verifying the same commit again would not converge.
+    let stop: 'unstable' | 'base-moved' = 'unstable';
+    // Each round verifies once; a red round is triaged, and fixed unless it is past maxFixRounds,
+    // when the triage only reports. A round whose fixers change nothing stops early: verifying the
+    // same commit again would not converge.
     for (let round = 0; green === null; round++) {
       const step = await ctx.scope(ctx.id('round', round), async () => {
         const pass = await verifyCommit(ctx, {
@@ -154,20 +163,28 @@ export default defineWorkflow({
           commands: verifyCommands,
         });
         const checked = { commit, install: pass.install, checks: pass.checks, passed: pass.passed };
-        if (pass.passed || round >= input.maxFixRounds)
-          return { record: { ...checked, clusters: [] }, tree: pass.tree, next: null };
+        const done = (record: Round) => ({ record, tree: pass.tree, next: null, moved: false });
+        if (pass.passed) return done({ ...checked, triage: 'none', clusters: [] });
+        const repair = round < input.maxFixRounds;
+        // Settled, like upstream's unavailable verifier: a failed triage ends the loop unstable.
         const triage = await ctx.roster.Triager.value('triage', {
           worktree: pass.tree,
           schema: Clusters,
+          onError: 'return',
           prompt: prompts.Triage({
             ...upgrade,
             breaking,
+            install,
+            repair,
             testFocus: plan.testFocus,
             allowed,
             failures: pass.failures,
           }),
         });
-        const { fixing, skipped } = assign(triage.clusters, allowed);
+        if (!triage.ok) return done({ ...checked, triage: 'failed', clusters: [] });
+        const { clusters } = triage.value;
+        if (!repair) return done({ ...checked, triage: 'report', clusters: unattempted(clusters) });
+        const { fixing, skipped } = assign(clusters, allowed);
         // `version` names what the mapper's source does not show: fixCluster, its prompt and schema.
         const results = await ctx.map(
           'fixes',
@@ -186,27 +203,38 @@ export default defineWorkflow({
         );
         const outcomes = settleFixes(fixing, results);
         const fixes = outcomes.flatMap((outcome) => (outcome.change ? [outcome.change] : []));
-        const record = { ...checked, clusters: [...outcomes.map(reported), ...skipped] };
-        if (!fixes.length) return { record, tree: pass.tree, next: null };
+        const record: Round = {
+          ...checked,
+          triage: 'repair',
+          clusters: [...outcomes.map(reported), ...skipped],
+        };
+        if (!fixes.length) return done(record);
+        if (await moved('head')) return { ...done(record), moved: true };
         changes.push(...fixes);
         // Fixers own disjoint files of the same commit, so their changes cannot conflict.
         const merged = await ctx.merge('integrate', changes, { onConflict: 'fail' });
-        return { record, tree: pass.tree, next: merged.commit };
+        return { ...done(record), next: merged.commit };
       });
       verification.push(step.record);
       if (step.record.passed) green = step.tree;
-      else if (step.next === null) break;
-      else commit = step.next;
+      else if (step.next !== null) commit = step.next;
+      else {
+        if (step.moved) stop = 'base-moved';
+        break;
+      }
     }
     const stabilized = { ...approved, rounds: verification.length, verification };
     const last = verification.at(-1);
     if (green === null || !last)
-      return { ...stabilized, status: 'unstable', remaining: last ? failing(last) : [], commit };
+      return {
+        ...stabilized,
+        status: stop,
+        remaining: last && stop === 'unstable' ? leftFailing(last) : [],
+        commit,
+      };
 
     ctx.phase('Publish');
-    // ctx.merge rebases onto the checkout's current HEAD, so a checkout that moved since the base
-    // would receive a tree no command verified.
-    if ((await headCommit(ctx, 'head')) !== base)
+    if (await moved(ctx.id('head', 'publish')))
       return { ...stabilized, status: 'base-moved', commit };
     // The green tree holds what the install and verification commands changed, such as the
     // lockfile; its handle has no receipt, so code diffs the integration against the base.

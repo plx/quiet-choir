@@ -4,7 +4,14 @@ import { definePrompts, z } from 'quiet-choir';
 import { CriterionResult, Ticket } from './contracts.js';
 
 const argv = z.array(z.string());
-const brief = { ticket: Ticket, scope: z.string(), runContext: z.string(), argv, base: z.string() };
+const brief = {
+  ticket: Ticket,
+  scope: z.string(),
+  runContext: z.string(),
+  argv,
+  base: z.string(),
+  failCode: z.int().min(2).max(125),
+};
 
 export const prompts = definePrompts(import.meta.dirname + '/prompts', {
   Ingest: {

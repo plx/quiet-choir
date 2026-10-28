@@ -12,6 +12,10 @@ manifests and lockfiles aside:
 
 - {{ file }}
 {%- endfor +%}
+
+Read each listed file. Record it as a usage site when it imports or requires the package, with WHICH
+of the package's APIs it touches and how heavily; otherwise record it as unrelated, with why (a
+similarly named package, a comment, a string).
 {% else %}
 The workflow searched every tracked file for the name "{{ package }}" and found it in no file besides
 the manifests and lockfiles.
@@ -21,9 +25,7 @@ the manifests and lockfiles.
 {{ unmapped }} further files also mention the name; the workflow reports them as unmapped.
 {% endif %}
 
-Read each listed file. Record it as a usage site when it imports or requires the package, with WHICH
-of the package's APIs it touches and how heavily; otherwise record it as unrelated, with why (a
-similarly named package, a comment, a string). The search is a plain text match, so also look for
-the usage it misses, such as re-exports and dynamic imports, and add those files as usage sites.
-Identify the wrappers or adapter modules that concentrate the usage: they make an upgrade cheaper,
-so say so in the indirect exposure.
+The search is a plain text match, so also look for the usage it misses, such as re-exports and
+dynamic imports, and add those files as usage sites, with the APIs they touch. Identify the wrappers
+or adapter modules that concentrate the usage: they make an upgrade cheaper, so say so in the
+indirect exposure.

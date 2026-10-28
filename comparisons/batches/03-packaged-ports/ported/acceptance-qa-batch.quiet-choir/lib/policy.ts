@@ -1,8 +1,6 @@
-// Pure rules: which transcribed tickets are admitted, what a probe's exit means, when a ticket is
-// worth attacking, its verdict, the run status, and the digest of an approved probe list.
-import { createHash } from 'node:crypto';
-import * as std from 'quiet-choir/std';
-import type { Assessed } from './evidence.js';
+// Pure rules: what a probe's exit means, when a ticket is worth attacking, its verdict and what a
+// human still has to check, the run status, and the counts.
+import { FailExit } from '../contracts.js';
 import type {
   AcceptanceOutput,
   AttackResult,
@@ -11,58 +9,34 @@ import type {
   Graded,
   Run,
   Skipped,
-  Ticket,
 } from '../contracts.js';
-
-const normalize = (text: string) => text.replace(/\s+/gu, ' ').trim();
-
-/** The texts a criterion may be quoted from: the backlog, and every string in it when it is JSON. */
-function sources(content: string): string[] {
-  const texts = [normalize(content)];
-  const walk = (value: unknown): void => {
-    if (typeof value === 'string') texts.push(normalize(value));
-    else if (value && typeof value === 'object') Object.values(value).forEach(walk);
-  };
-  try {
-    walk(JSON.parse(content));
-  } catch {
-    // Markdown or plain text: the normalized backlog is the only source.
-  }
-  return texts;
-}
+import type { Unclaimed } from './backlog.js';
+import type { Assessed } from './evidence.js';
 
 /**
- * Tickets whose criteria all appear verbatim (up to whitespace) in the backlog, first ID wins. A
- * reworded criterion would change what the verdict is about, so its ticket is rejected, not fixed.
+ * Exit 0 and exit FailExit are the two verdicts. Any other exit (a crash, a bad import), a
+ * timeout, a signal or a command that could not start gave none, so it cannot fail a ticket.
  */
-export function admit(tickets: Ticket[], content: string) {
-  const texts = sources(content);
-  const seen = new Set<string>();
-  const admitted: Ticket[] = [];
-  const rejected: Skipped[] = [];
-  for (const ticket of tickets) {
-    const reworded = ticket.acceptanceCriteria.find(
-      (criterion) => !texts.some((text) => text.includes(normalize(criterion))),
-    );
-    if (seen.has(ticket.id))
-      rejected.push({ id: ticket.id, reason: 'Duplicate ticket ID; the first is checked' });
-    else if (reworded !== undefined)
-      rejected.push({ id: ticket.id, reason: `Criterion not in the backlog: ${reworded}` });
-    else admitted.push(ticket);
-    seen.add(ticket.id);
-  }
-  return { admitted, rejected };
-}
-
-/** Exit 0 demonstrates, another exit code fails, and no exit code (timeout, signal) proves nothing. */
-export const criterionStatus = (run: Run): CriterionStatus =>
+const verdictOf = (run: Run): 'zero' | 'fail' | null =>
   run.failure !== null || run.code === null
-    ? 'inconclusive'
+    ? null
     : run.code === 0
-      ? 'demonstrated'
-      : 'failed';
+      ? 'zero'
+      : run.code === FailExit
+        ? 'fail'
+        : null;
+export const criterionStatus = (run: Run): CriterionStatus =>
+  (({ zero: 'demonstrated', fail: 'failed', none: 'inconclusive' }) as const)[
+    verdictOf(run) ?? 'none'
+  ];
 export const attackOutcome = (run: Run): AttackResult['outcome'] =>
-  run.failure !== null || run.code === null ? 'inconclusive' : run.code === 0 ? 'held' : 'broke';
+  (({ zero: 'held', fail: 'broke', none: 'inconclusive' }) as const)[verdictOf(run) ?? 'none'];
+
+/** Why a run gave no verdict, for the manual list. */
+const noVerdict = (run: Run | null) =>
+  run?.failure
+    ? `${run.failure.kind}: ${run.failure.message}`
+    : `exit ${run?.code ?? 'none'}, not 0 or ${FailExit}`;
 
 /** Upstream attacks only a ticket that earned defending: something shown, nothing failed. */
 export const attackable = (criteria: CriterionResult[]) =>
@@ -70,18 +44,19 @@ export const attackable = (criteria: CriterionResult[]) =>
   !criteria.some((result) => result.status === 'failed');
 
 function manualChecks(
-  criteria: CriterionResult[],
+  { criteria, demonstrator }: Assessed,
   attacks: AttackResult[],
-  demonstrator: Graded['demonstrator'],
   breaker: Graded['breaker'],
+  unclaimed: string[],
 ): string[] {
-  const checks =
-    demonstrator === 'failed' ? ['The demonstrator failed; demonstrate every criterion'] : [];
+  const checks = unclaimed.map((item) => `Not transcribed from the backlog: ${item}`);
+  if (demonstrator === 'failed')
+    checks.push('The demonstrator failed; demonstrate every criterion');
   for (const [index, result] of criteria.entries()) {
     const name = `Criterion ${index + 1}`;
     if (result.status === 'undemonstrable') checks.push(`${name}: ${result.claim ?? ''}`);
     if (result.status === 'inconclusive')
-      checks.push(`${name}: the probe ended without an exit code (${result.run?.failure ?? ''})`);
+      checks.push(`${name}: the probe gave no verdict (${noVerdict(result.run)})`);
     if (result.status === 'unrun' && demonstrator === 'answered')
       checks.push(`${name}: its probe was not approved`);
   }
@@ -89,7 +64,7 @@ function manualChecks(
   if (breaker === 'declined') checks.push('The attack probes were not approved');
   for (const attack of attacks)
     if (attack.outcome === 'inconclusive' && attack.severity === 'breaks-criterion')
-      checks.push(`Attack without an exit code: ${attack.description}`);
+      checks.push(`Attack without a verdict (${noVerdict(attack.run)}): ${attack.description}`);
   return checks;
 }
 
@@ -98,11 +73,13 @@ function manualChecks(
  * was demonstrated; pending manual when anything is left for a human; pass otherwise.
  */
 export function grade(
-  { ticket, criteria, demonstrator }: Assessed,
+  assessed: Assessed,
   attacks: AttackResult[],
   breaker: Graded['breaker'],
+  unclaimed: string[],
 ): Graded {
-  const manual = manualChecks(criteria, attacks, demonstrator, breaker);
+  const { ticket, criteria, demonstrator } = assessed;
+  const manual = manualChecks(assessed, attacks, breaker, unclaimed);
   const broken = attacks.some(
     (attack) => attack.outcome === 'broke' && attack.severity === 'breaks-criterion',
   );
@@ -118,18 +95,32 @@ export function grade(
   return { id, title, verdict, criteria, attacks, demonstrator, breaker, manual };
 }
 
-/** A human decline outranks agent failures, which outrank the ticket cap. */
+/** Criterion and attack runs that gave no verdict. */
+export const inconclusiveRuns = (tickets: Graded[]) =>
+  tickets.reduce(
+    (total, ticket) =>
+      total +
+      ticket.criteria.filter((result) => result.status === 'inconclusive').length +
+      ticket.attacks.filter((attack) => attack.outcome === 'inconclusive').length,
+    0,
+  );
+
+/**
+ * A human decline outranks degradation (a failed agent, a rejected or unclaimed transcription, a
+ * probe that gave no verdict), which outranks the ticket cap.
+ */
 export function runStatus(
   declined: boolean,
   tickets: Graded[],
-  rejected: Skipped[],
-  deferred: unknown[],
+  transcription: { rejected: Skipped[]; unclaimed: Unclaimed[]; deferred: unknown[] },
 ): AcceptanceOutput['status'] {
   if (declined) return 'declined';
   const failed = tickets.some(
     (ticket) => ticket.demonstrator === 'failed' || ticket.breaker === 'failed',
   );
-  if (failed || rejected.length) return 'degraded';
+  const { rejected, unclaimed, deferred } = transcription;
+  if (failed || rejected.length || unclaimed.length || inconclusiveRuns(tickets) > 0)
+    return 'degraded';
   return deferred.length ? 'limited' : 'complete';
 }
 
@@ -138,25 +129,5 @@ export const counts = (tickets: Graded[]) => ({
   passed: tickets.filter((ticket) => ticket.verdict.startsWith('pass')).length,
   failed: tickets.filter((ticket) => ticket.verdict === 'fail').length,
   unverified: tickets.filter((ticket) => ticket.verdict === 'unverified').length,
+  inconclusive: inconclusiveRuns(tickets),
 });
-
-/** Sorted keys at every depth: results come back from the checkpoint with their keys reordered. */
-const sorted = (value: unknown): unknown =>
-  Array.isArray(value)
-    ? value.map(sorted)
-    : value !== null && typeof value === 'object'
-      ? Object.fromEntries(
-          Object.keys(value)
-            .sort()
-            .map((key) => [key, sorted((value as Record<string, unknown>)[key])]),
-        )
-      : value;
-
-/** The approved list as sorted-key JSON: its SHA-256 and a bounded preview for the question. */
-export function approvalOf(list: unknown[]) {
-  const text = std.exec.json(sorted(list));
-  return {
-    digest: createHash('sha256').update(text).digest('hex'),
-    preview: Buffer.from(text).subarray(0, 15_000).toString('utf8'),
-  };
-}

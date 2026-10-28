@@ -37,8 +37,10 @@ const formatCheck = [
 ].join('\n');
 const source = {
   format: 'export const format = (greeting, name) => `${greeting}, ${name}!`;\n',
-  hello: "import { format } from '../lib/format.mjs';\n\nexport const hello = (name) => format('Helo', name);\n",
-  fixed: "import { format } from '../lib/format.mjs';\n\nexport const hello = (name) => format('Hello', name);\n",
+  hello:
+    "import { format } from '../lib/format.mjs';\n\nexport const hello = (name) => format('Helo', name);\n",
+  fixed:
+    "import { format } from '../lib/format.mjs';\n\nexport const hello = (name) => format('Hello', name);\n",
   goodbye:
     "import { format } from '../lib/format.mjs';\n\nexport const goodbye = (name) => format('Goodbye', name);\n",
 };
@@ -115,25 +117,32 @@ function merge(request) {
     openQuestions: [],
   };
 }
-/** One module per ticket the planner sees, keyed by the ticket's title in the prompt. */
-function plan(prompt, mode) {
+/**
+ * One module per ticket the planner sees, keyed by the ticket's title in the prompt, up to the
+ * module limit it states; a ticket past it is deferred. The plan-retry mode's first attempt gives
+ * hello all of src/, overlapping goodbye's area.
+ */
+function plan(request, mode) {
+  const prompt = request.options.prompt;
+  const max = Number(/at most (\d+) implementation module/u.exec(prompt)[1]);
   const ids = Object.fromEntries(
     [...prompt.matchAll(/^- (T\d+): (.+) \[/gmu)].map((match) => [match[2], match[1]]),
   );
-  const modules = [
+  const wanted = [
     ['format', ids[items.formatter[0]], true],
     ['hello', ids[items.hello[0]], false],
     ['goodbye', ids[items.goodbye[0]], false],
-  ]
-    .filter(([, id]) => id)
-    .map(([name, id, isFoundation]) => ({
-      name,
-      isFoundation,
-      fileAreas: areas[name],
-      ticketIds: [id],
-      notes: mode === 'declined' && isFoundation ? 'Keep it pure (decline)' : null,
-    }));
-  return { modules, deferred: [] };
+  ].filter(([, id]) => id);
+  const overlap = mode === 'plan-retry' && request.call.attempt === 1;
+  const modules = wanted.slice(0, max).map(([name, id, isFoundation]) => ({
+    name,
+    isFoundation,
+    fileAreas: overlap && name === 'hello' ? ['src'] : areas[name],
+    ticketIds: [id],
+    notes: mode === 'declined' && isFoundation ? 'Keep it pure (decline)' : null,
+  }));
+  const deferred = wanted.slice(max).map(([, id]) => ({ ticket: id, reason: 'Module limit' }));
+  return { modules, deferred };
 }
 
 const moduleOf = (prompt) => /^Implement the "([a-z]+)" module/mu.exec(prompt)?.[1];
@@ -170,8 +179,11 @@ function review(request) {
   const target = reviewed(prompt);
   if (leaf(id) === 'scope') return { summary: `Adds the ${target} module.`, riskNotes: null };
   if (/\/reviews\/[a-z-]+\/review$/u.test(id)) {
-    // Each review reads a snapshot of its own module's head.
-    assert.ok(existsSync(join(request.cwd, target === 'format' ? 'lib/format.mjs' : `src/${target}.mjs`)));
+    // Each review reads a snapshot of its own module's head, without the other feature.
+    const own = { format: 'lib/format.mjs', hello: 'src/hello.mjs', goodbye: 'src/goodbye.mjs' };
+    assert.ok(existsSync(join(request.cwd, own[target])));
+    const other = target === 'hello' ? own.goodbye : own.hello;
+    assert.equal(existsSync(join(request.cwd, other)), false);
     return { findings: target === 'hello' ? [typo] : [] };
   }
   if (/\/verify\/\d+\/refute$/u.test(id))
@@ -185,7 +197,7 @@ export async function reply(request, env, mode) {
   if (/^decompose\/lenses\/\d+\/read$/u.test(id)) return lens(request.options.prompt, mode);
   if (id === 'decompose/merge') return merge(request);
   if (/^decompose\/audit\/\d+$/u.test(id)) return { gaps: [] };
-  if (id === 'plan') return plan(request.options.prompt, mode);
+  if (id === 'plan') return plan(request, mode);
   if (/^(?:foundations\/\d+|features\/\d+)\/build$/u.test(id)) {
     assert.notEqual(request.cwd, env.cwd);
     return build(request, mode);
@@ -208,7 +220,10 @@ export function fail(request, mode) {
     (mode === 'feature-fails' &&
       /^features\/\d+\/build$/u.test(id) &&
       moduleOf(prompt) === 'goodbye') ||
-    (mode === 'review-fails' && isReview(id) && leaf(id) === 'scope' && reviewed(prompt) === 'hello')
+    (mode === 'review-fails' &&
+      isReview(id) &&
+      leaf(id) === 'scope' &&
+      reviewed(prompt) === 'hello')
   );
 }
 
@@ -263,7 +278,7 @@ export function check({ result, env, calls, suspended }) {
     gaps: 0,
   });
   // 11 decomposition, 2 plan and 3 x (1 build + 1 scope + 1 reviewer + 4 skeptics + 1 report + 1 fix).
-  assert.deepEqual(output.limits, { modules: 4, callsAdmitted: 13 + 3 * 9 });
+  assert.deepEqual(output.limits, { modules: 4, callsAdmitted: 13 + 3 * 9, unlistedFiles: 0 });
   const { digest, ...plan } = output.plan;
   assert.deepEqual(
     plan.modules.map((module) => [module.name, module.isFoundation, module.fileAreas]),
@@ -278,7 +293,7 @@ export function check({ result, env, calls, suspended }) {
   assert.equal(builders.length, 3);
   for (const call of builders) {
     const text = call.options.prompt.split('Approved plan:\n')[1];
-    assert.deepEqual(JSON.parse(text), plan);
+    assert.equal(text, JSON.stringify(plan, null, 2));
     assert.equal(createHash('sha256').update(text).digest('hex'), digest);
     assert.ok(call.options.prompt.includes(`Approved plan digest: ${digest}`));
   }
@@ -430,6 +445,35 @@ export const modes = [
       assert.equal(output.plan, null);
       assert.equal(calls.length, 5);
       untouched(env);
+    },
+  },
+  {
+    mode: 'call-cap',
+    // 11 decomposition + 2 plan calls leave 18 of 31, two modules of 9: goodbye is deferred.
+    input: () => ({ ...formatOnly(), maxCalls: 31 }),
+    check({ result, env }) {
+      const { output } = result;
+      assert.equal(output.status, 'limited');
+      assert.equal(degraded(output), true);
+      assert.deepEqual(output.limits, { modules: 2, callsAdmitted: 31, unlistedFiles: 0 });
+      assert.deepEqual(output.plan.deferred, [{ ticket: 'T3', reason: 'Module limit' }]);
+      assert.deepEqual(builds(output), [
+        ['format', 'done'],
+        ['hello', 'done'],
+      ]);
+      published(env, output, ['lib/format.mjs', 'src/hello.mjs']);
+    },
+  },
+  {
+    mode: 'plan-retry',
+    // Overlapping areas fail the plan schema; the one schema retry re-asks and succeeds.
+    check({ result, calls }) {
+      assert.equal(result.output.status, 'applied');
+      const planners = calls.filter((call) => call.call.stepId === 'plan');
+      assert.equal(planners.length, 2);
+      // The retry re-sends the same prompt: the refusal's problems never reach the planner.
+      assert.equal(planners[1].options.prompt, planners[0].options.prompt);
+      assert.deepEqual(result.output.plan.modules[1].fileAreas, ['src/hello.mjs']);
     },
   },
   {

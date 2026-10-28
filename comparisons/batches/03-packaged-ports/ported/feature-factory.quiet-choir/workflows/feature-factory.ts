@@ -4,17 +4,11 @@
 // worktree with its receipt checked against its areas. Every built module gets a deep-code-review
 // child over its own snapshot, confirmed findings go to an isolated fixer, and code integrates the
 // accepted changes, runs the operator's commands and publishes only a verified integration.
-import { defineWorkflow, type WorktreeChange } from 'quiet-choir';
+import { defineWorkflow } from 'quiet-choir';
 import * as std from 'quiet-choir/std';
 import deepCodeReview from '../../deep-code-review.quiet-choir/workflows/deep-code-review.js';
 import prdDecompose from '../../prd-decompose.quiet-choir/workflows/prd-decompose.js';
-import {
-  FeatureFactoryInput,
-  FeatureFactoryOutput,
-  PlanFor,
-  type Module,
-  type ModuleRecord,
-} from '../contracts.js';
+import { FeatureFactoryInput, FeatureFactoryOutput, PlanFor, type Module } from '../contracts.js';
 import { assertClean, baseCommit, inventory, passed, verify } from '../lib/checks.js';
 import {
   DECOMPOSE_REPAIRS,
@@ -27,15 +21,19 @@ import {
   unbuildable,
 } from '../lib/plan.js';
 import {
-  accepted,
   backlogOf,
+  builtOn,
+  changeOf,
   delegation,
   finalStatus,
+  landed,
   recordOf,
   repairOf,
   reviewOf,
+  settleFeatures,
+  type Outcome,
 } from '../lib/policy.js';
-import { buildModule, repairModule, type Built } from '../lib/stages.js';
+import { buildModule, repairModule } from '../lib/stages.js';
 import { prompts } from '../prompts.js';
 import { roster } from '../roster.js';
 
@@ -44,6 +42,13 @@ export default defineWorkflow({
   version: 'packaged-03',
   description:
     'Decompose a PRD as a child, build an approved disjoint module plan in worktrees, review each module as a child, repair, verify and publish.',
+  phases: [
+    { title: 'Decompose', detail: 'prd-decompose child -> ticketed backlog' },
+    { title: 'Plan modules', detail: 'disjoint, ordered modules under the call cap; approved' },
+    { title: 'Implement', detail: 'foundations in order, then features in parallel, in worktrees' },
+    { title: 'Review', detail: 'one deep-code-review child per built module' },
+    { title: 'Stabilize', detail: 'isolated repairs, integration, verification, publication' },
+  ],
   roster,
   prompts: [prompts],
   children: [prdDecompose, deepCodeReview],
@@ -69,7 +74,7 @@ export default defineWorkflow({
     const { tickets } = backlog;
     const report = {
       backlog: backlogOf(backlog),
-      limits: { modules: limit, callsAdmitted: bounds.decompose },
+      limits: { modules: limit, callsAdmitted: bounds.decompose, unlistedFiles: null },
       plan: null,
       modules: [],
       integrated: null,
@@ -80,6 +85,7 @@ export default defineWorkflow({
     if (!tickets.length) return { ...report, status: 'no-tickets' };
 
     ctx.phase('Plan modules');
+    const files = await inventory(ctx, base, 400);
     const planned = await ctx.roster.Planner.value('plan', {
       schema: PlanFor(tickets, limit),
       prompt: prompts.Plan({
@@ -87,7 +93,7 @@ export default defineWorkflow({
         tickets,
         sequencing: backlog.sequencing,
         openQuestions: backlog.openQuestions,
-        ...(await inventory(ctx, base, 400)),
+        ...files,
       }),
       retry: { maxAttempts: 2, on: ['schema'] },
     });
@@ -97,6 +103,7 @@ export default defineWorkflow({
     const limits = {
       modules: limit,
       callsAdmitted: bounds.decompose + bounds.plan + plan.modules.length * bounds.module,
+      unlistedFiles: files.omitted,
     };
     const approval = await ctx.approve('approve-plan', {
       title: 'Module plan',
@@ -109,70 +116,39 @@ export default defineWorkflow({
 
     ctx.phase('Implement');
     const order = buildOrder(plan);
-    const ticketsOf = (module: Module) =>
-      tickets.filter((ticket) => module.ticketIds.includes(ticket.id));
-    const work = { digest, plan: text };
-    const modules: ModuleRecord[] = [];
-    const changes: (WorktreeChange | null)[] = [];
-    const landed = new Set<string>();
-    const builtOn: string[] = [];
-    const settle = (module: Module, outcome: Built, from: string) => {
-      modules.push(recordOf(module, { ...outcome, base: from }));
-      changes.push(outcome.change);
-      if (!accepted(outcome)) return;
-      for (const id of module.ticketIds) landed.add(id);
-      if (module.isFoundation) builtOn.push(module.name);
-    };
+    const job = (module: Module, from: string, outcomes: Outcome[]) => ({
+      digest,
+      plan: text,
+      module,
+      tickets: tickets.filter((ticket) => module.ticketIds.includes(ticket.id)),
+      builtOn: builtOn(order, outcomes),
+      base: from,
+    });
     // Foundations build in order, each on the last one that landed.
+    const outcomes: Outcome[] = [];
     let tip = base;
-    const foundations = order.filter((module) => module.isFoundation);
-    for (const [index, module] of foundations.entries()) {
-      const skipped = unbuildable(module, tickets, landed);
-      if (skipped) {
-        modules.push(recordOf(module, { skipped }));
-        changes.push(null);
-        continue;
-      }
+    for (const [index, module] of order.filter((each) => each.isFoundation).entries()) {
+      const skipped = unbuildable(module, tickets, landed(order, outcomes));
       const builder = ctx.within(ctx.id('foundations', index)).roster.Builder;
-      const outcome = await buildModule(builder, {
-        ...work,
-        module,
-        tickets: ticketsOf(module),
-        builtOn: [...builtOn],
-        base: tip,
-      });
-      settle(module, outcome, tip);
-      tip = outcome.change?.commit ?? tip;
+      const outcome = skipped
+        ? { skipped }
+        : { ...(await buildModule(builder, job(module, tip, outcomes))), base: tip };
+      outcomes.push(outcome);
+      tip = changeOf(outcome)?.commit ?? tip;
     }
     // Every feature builds in parallel on the foundations; one that needs a missing one is skipped.
     const features = order.filter((module) => !module.isFoundation);
-    const skips = features.map((module) => unbuildable(module, tickets, landed));
-    const buildable = features.filter((_, index) => !skips[index]);
+    const skips = features.map((module) => unbuildable(module, tickets, landed(order, outcomes)));
     // `version` names what the mapper's source does not show: buildModule, its prompt and schema.
     const results = await ctx.map(
       'features',
-      buildable,
-      { concurrency: Math.max(1, buildable.length), onError: 'return', version: 'build/1' },
-      (module) =>
-        buildModule(ctx.roster.Builder, {
-          ...work,
-          module,
-          tickets: ticketsOf(module),
-          builtOn,
-          base: tip,
-        }),
+      features.filter((_, index) => !skips[index]),
+      { concurrency: features.length || 1, onError: 'return', version: 'build/1' },
+      (module) => buildModule(ctx.roster.Builder, job(module, tip, outcomes)),
     );
-    let next = 0;
-    for (const [index, module] of features.entries()) {
-      const skipped = skips[index];
-      const result = skipped ? undefined : results[next++];
-      if (result?.ok) settle(module, result.value, tip);
-      else {
-        const failed = `Build failed: ${result?.error.message.slice(0, 500) ?? 'no outcome'}`;
-        modules.push(recordOf(module, skipped ? { skipped } : { failed }));
-        changes.push(null);
-      }
-    }
+    outcomes.push(...settleFeatures(skips, results, tip));
+    const modules = order.map((module, index) => recordOf(module, outcomes[index]));
+    const changes = outcomes.map(changeOf);
 
     ctx.phase('Review');
     // Each module's review reads only its own change: its snapshot against the commit it built on.

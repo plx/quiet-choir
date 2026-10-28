@@ -1,9 +1,10 @@
-// Pure rules: the evidence and usage caps, coverage of the code-found files, the approved plan text
-// and digest, the files the upgrade may change, a writer's receipt checked against them, the
-// disjoint cluster assignment with upstream's three-fixer cap, and the command verdicts.
+// Pure rules: the evidence and usage caps, coverage of the code-found files, the approved plan text,
+// digest and preview, the files the upgrade may change, a writer's receipt checked against them,
+// the disjoint cluster assignment with upstream's three-fixer cap, the command verdicts and what an
+// unstable upgrade reports as left failing.
 import { createHash } from 'node:crypto';
 import type { MapStepError, Settled, WorktreeChange } from 'quiet-choir';
-import type { Check, Cluster, ClusterOutcome, Impact, Plan } from '../contracts.js';
+import type { Check, Cluster, ClusterOutcome, Impact, Plan, Round } from '../contracts.js';
 
 /** Upstream's stabilize round runs at most three fixers, on the first clusters. */
 export const FIXERS_PER_ROUND = 3;
@@ -52,9 +53,26 @@ export const planText = (upgrade: { package: string; from: string; to: string },
 /** The SHA-256 of the approved plan text. */
 export const digestOf = (text: string): string => createHash('sha256').update(text).digest('hex');
 
-/** A bounded preview for the approval question; the subject carries the whole plan. */
-export const preview = (text: string): string =>
-  Buffer.from(text).subarray(0, 15_000).toString('utf8');
+/** The most UTF-8 bytes of plan text the approval details show (the runtime allows 16384). */
+const DETAILS_BYTES = 15_000;
+
+/**
+ * The approval details: the whole plan text when it fits, else its first characters within the
+ * limit and a line saying how much is left out, never a split character. The subject holds it all.
+ */
+export function preview(text: string): string {
+  const bytes = Buffer.byteLength(text);
+  if (bytes <= DETAILS_BYTES) return text;
+  let used = 0,
+    end = 0;
+  for (const char of text) {
+    const size = Buffer.byteLength(char);
+    if (used + size > DETAILS_BYTES) break;
+    used += size;
+    end += char.length;
+  }
+  return `${text.slice(0, end)}\n... (${String(bytes - used)} more bytes; the subject holds the whole plan)`;
+}
 
 /** Every file the upgrade may change: the plan's files and the operator's manifests. */
 export const allowedFiles = (plan: Plan, manifests: string[]) =>
@@ -142,9 +160,8 @@ export const reported = ({ description, files, fix, summary }: ClusterOutcome): 
   summary,
 });
 
-/** A command passed: it exited 0 with complete output. */
-export const green = (check: Check) =>
-  check.failure === null && check.code === 0 && !check.truncated;
+/** A command passed: it exited 0. Truncated output is recorded, never a failure. */
+export const green = (check: Check) => check.failure === null && check.code === 0;
 
 /** A failing command's outcome in words. */
 export function outcomeOf(check: Check): string {
@@ -153,12 +170,32 @@ export function outcomeOf(check: Check): string {
     : check.code === null
       ? null
       : `exit ${String(check.code)}`;
-  if (check.failure !== null) return exit ? `${check.failure}, ${exit}` : check.failure;
-  return check.truncated ? `${exit ?? 'exit'} with truncated output` : (exit ?? 'no exit code');
+  const outcome =
+    check.failure === null
+      ? (exit ?? 'no exit code')
+      : exit
+        ? `${check.failure}, ${exit}`
+        : check.failure;
+  return check.truncated ? `${outcome}, output truncated` : outcome;
 }
 
-/** The commands a round left failing, as the output's remaining list. */
+/** The commands a round left failing. */
 export const failing = (round: { install: Check | null; checks: Check[] }) =>
   [...(round.install ? [round.install] : []), ...round.checks]
     .filter((check) => !green(check))
     .map((check) => `${check.argv.join(' ')}: ${outcomeOf(check)}`);
+
+/** At the fix-round cap the triager's clusters are reported, and no fixer runs. */
+export const unattempted = (clusters: Cluster[]): ClusterOutcome[] =>
+  clusters.map((cluster) => ({
+    ...cluster,
+    fix: 'not-attempted',
+    summary: 'No fix round was left',
+  }));
+
+/**
+ * What an unstable upgrade leaves: the root causes the last round's triage named (none of them was
+ * fixed, or the loop would have verified again), else that round's failing commands.
+ */
+export const leftFailing = (round: Round) =>
+  round.clusters.length ? round.clusters.map((cluster) => cluster.description) : failing(round);

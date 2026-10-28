@@ -98,16 +98,27 @@ export type Failure = z.infer<typeof Failure>;
 export const ClusterOutcome = z.object({
   description: z.string(),
   files: z.array(Path).describe('The files its fixer owned, or the files it named'),
-  fix: z.enum(['applied', 'unchanged', 'refused', 'failed', 'unowned', 'deferred']),
+  fix: z.enum([
+    'applied',
+    'unchanged',
+    'refused',
+    'failed',
+    'unowned',
+    'deferred',
+    'not-attempted',
+  ]),
   summary: z.string(),
 });
 export type ClusterOutcome = z.infer<typeof ClusterOutcome>;
-/** One verification of an integrated commit, and the repair round that followed it, if any. */
+/** One verification of an integrated commit, and the triage and repair that followed it. */
 export const Round = z.object({
   commit: Sha,
   install: Check.nullable(),
   checks: z.array(Check),
   passed: z.boolean(),
+  triage: z
+    .enum(['none', 'repair', 'report', 'failed'])
+    .describe('none when green; report at the fix-round cap, with no fixers; failed if it failed'),
   clusters: z.array(ClusterOutcome),
 });
 export type Round = z.infer<typeof Round>;
@@ -172,7 +183,11 @@ export const UpgradeOutput = z.object({
   approvedDigest: Digest.nullable(),
   rounds: z.number().int().nonnegative().describe('Verifications run'),
   verification: z.array(Round),
-  remaining: z.array(z.string()).describe('Plan steps not attempted, or failing commands left'),
+  remaining: z
+    .array(z.string())
+    .describe(
+      'Plan steps not attempted; when unstable, the root causes of the last red round, or its failing commands when the triage named none',
+    ),
   refusal: z.string().nullable(),
   commit: Sha.nullable(),
 });

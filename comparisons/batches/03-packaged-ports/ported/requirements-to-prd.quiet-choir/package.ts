@@ -11,7 +11,7 @@ export default definePackage({
   description:
     'Extract quoted findings from raw requirement material through four lenses, draft a PRD traced to them, attack it with ambiguity, scope and feasibility critics, revise once, and surface unknowns as open questions',
   whenToUse:
-    'Turning meeting notes, briefs, transcripts or feedback piles into a PRD honest enough to build from, with unknowns surfaced rather than invented; answers come back as input or through durable question rounds. Input: {input, product?, answers?, questionRounds?, out?, publication?, maxMaterialBytes?}.',
+    'Turning meeting notes, briefs, transcripts or feedback piles into a PRD honest enough to build from, with unknowns surfaced rather than invented; answers come back as input (a re-run redoes an earlier PRD at out through replace) or through durable question rounds. Input: {input, product?, answers?, questionRounds?, out?, replace?, publication?, maxMaterialBytes?}.',
   workflows: [requirementsToPrd],
   entry: requirementsToPrd,
   prompts: [prompts],
