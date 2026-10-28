@@ -116,10 +116,13 @@ export interface LandInput {
   readonly viewer: string;
   /** Names of the checks that must be on the head at landing, whatever else CI reports. */
   readonly requiredChecks: readonly string[];
+  /** How GitHub merges (#737); omitted is `squash`, so a squash run keeps its step identity. */
+  readonly method?: 'merge' | 'rebase';
 }
 
 /**
- * Check the landing guards and squash-merge the PR at `head`, in one step. A PR already merged at
+ * Check the landing guards and merge the PR at `head` (squash unless `method` says otherwise), in
+ * one step. A PR already merged at
  * `head` is reported merged (`acted: false`), so a retry after a merge whose answer was lost finds
  * it. Any guard that fails (the PR closed, merged at another head, moved, retargeted, a CI rollup
  * of another commit, CI pending or failed or lacking a required check, a thread whose last comment is not the viewer's, an open alert) and a merge GitHub refuses
@@ -221,7 +224,7 @@ export function landMerge(ctx: WorkflowContext, id: string, input: LandInput): P
           'PUT',
           `${pullPath}/merge`,
           '-f',
-          'merge_method=squash',
+          `merge_method=${input.method ?? 'squash'}`,
           '-f',
           `sha=${input.head}`,
         ),

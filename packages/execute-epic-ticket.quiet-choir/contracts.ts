@@ -28,6 +28,7 @@ export const MergeDownOverrides = z.object({
   maxCiRepairs: md.maxCiRepairs.unwrap().optional(),
   checkCommand: md.checkCommand.unwrap().optional(),
   requiredChecks: md.requiredChecks.unwrap().optional(),
+  mergeMethod: md.mergeMethod.unwrap().optional(),
 });
 /** Parsed overrides. */
 export type MergeDownOverrides = z.output<typeof MergeDownOverrides>;

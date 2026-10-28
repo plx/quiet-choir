@@ -2,6 +2,9 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- merge-down takes `mergeMethod` (`squash` by default, `merge` or `rebase`; #737), also as an
+  execute-epic-ticket `mergeDown` override, so a repository that keeps a PR's commits can land it
+  with a merge commit. A squash run's land step keeps its identity.
 - The merge-down and execute-epic-ticket packages take an optional `toolchain` input (#735): `read`
   and `edit` shell rules that replace the npm rules of their agents, and `guidance` that replaces
   the npm formatting, focused-check and lockfile instructions in their prompts, so they can land and

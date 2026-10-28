@@ -10,7 +10,7 @@ export default definePackage({
   name: 'merge-down',
   version: '1',
   description:
-    'Land one PR: rebase onto main, review against its issue with a local Codex review, triage threads, fix, gate on CI + Codex, squash-merge, report',
+    'Land one PR: rebase onto main, review against its issue with a local Codex review, triage threads, fix, gate on CI + Codex, merge (squash by default), report',
   whenToUse:
     'Merging down a stack of agent-authored PRs (or Dependabot PRs) one PR per run, in stack order. Input: {pr, repo?, followupEpic?, parentEpic?, until?}.',
   workflows: [mergeDownPr],
