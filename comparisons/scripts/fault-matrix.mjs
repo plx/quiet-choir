@@ -3,7 +3,16 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readRun, runWorkflow } from 'quiet-choir';
-import { drive, harnessFor, inputFor, load, runOptions, snapshot } from './idiomatic-fixtures.mjs';
+import {
+  drive,
+  harnessFor,
+  inputFor,
+  load,
+  packagedFixtures,
+  prepare,
+  runOptions,
+  snapshot,
+} from './idiomatic-fixtures.mjs';
 
 export const stable = (value) =>
   Array.isArray(value)
@@ -16,8 +25,9 @@ export const stable = (value) =>
         )
       : value;
 // A status that admits it, or (Batch 03 incident-investigation, which has no status) a domain
-// left uncollected or a hypothesis left unchallenged by a failed settled member.
-export const degradation = (record) =>
+// left uncollected or a hypothesis left unchallenged by a failed settled member, or a Batch 03
+// fixture module's own `degraded(output)` rule for the workflow `name`.
+export const degradation = (record, name) =>
   record.status !== 'completed'
     ? null
     : [
@@ -29,7 +39,8 @@ export const degradation = (record) =>
         'gaps-remain',
       ].includes(record.output?.status) ||
       Boolean(record.output?.uncollected?.length) ||
-      Boolean(record.output?.hypotheses?.some((hypothesis) => hypothesis.verdict === null));
+      Boolean(record.output?.hypotheses?.some((hypothesis) => hypothesis.verdict === null)) ||
+      Boolean(packagedFixtures[name]?.degraded?.(record.output));
 export function repeated(calls, before) {
   const old = new Set(calls.slice(0, before).map((call) => call.call.stepId));
   return calls.slice(before).filter((call) => old.has(call.call.stepId)).length;
@@ -38,7 +49,7 @@ export function options(env, batch, name, harness) {
   return runOptions(env, `batch-${batch}-${name}`, harness, inputFor(batch, name, env));
 }
 export async function scenario(setup, batch, name, fault) {
-  const env = await setup(),
+  const env = await prepare(batch, name, await setup()),
     definition = await load(batch, name);
   const { harness, calls } = harnessFor(batch, name, env, { fault });
   const opts = options(env, batch, name, harness);
@@ -68,11 +79,11 @@ export async function scenario(setup, batch, name, fault) {
     completedCallsPaidAgain,
     filesystemAfterFault: afterFault,
     filesystem: await snapshot(env.cwd),
-    outputAdmitsDegradation: degradation(final),
+    outputAdmitsDegradation: degradation(final, name),
   };
 }
 export async function fixResume(setup, batch, name) {
-  const env = await setup(),
+  const env = await prepare(batch, name, await setup()),
     base = await load(batch, name);
   const { harness, calls } = harnessFor(batch, name, env),
     opts = options(env, batch, name, harness);
@@ -116,7 +127,7 @@ export async function fixResume(setup, batch, name) {
     callsPaidAgain: 0,
     completedCallsPaidAgain: 0,
     filesystem: await snapshot(env.cwd),
-    outputAdmitsDegradation: degradation(result),
+    outputAdmitsDegradation: degradation(result, name),
     evidence:
       'Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit.',
   };

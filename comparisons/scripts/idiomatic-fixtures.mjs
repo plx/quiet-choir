@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, readFile, writeFile, realpath } from 'node:fs/promises';
+import { mkdir, readFile, readdir, writeFile, realpath } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { NodeProcessRunner, HarnessError, runWorkflow, writeAnswer } from 'quiet-choir';
@@ -15,6 +15,30 @@ export const names = [
   'sdlc-orchestrator',
   'bug-hunt',
 ];
+// Batch 03 fixture modules for the ports beyond Batch 02's six, keyed by workflow name; see
+// packaged-fixtures/README.md. Files starting with `_` are their shared support, not fixtures.
+const fixturesDir = fileURLToPath(new URL('./packaged-fixtures/', import.meta.url));
+export const packagedFixtures = Object.fromEntries(
+  await Promise.all(
+    (await readdir(fixturesDir))
+      .filter((file) => file.endsWith('.mjs') && !file.startsWith('_'))
+      .sort()
+      .map(async (file) => {
+        const name = file.slice(0, -'.mjs'.length);
+        try {
+          return [name, await import(pathToFileURL(join(fixturesDir, file)))];
+        } catch (error) {
+          // A module that fails to load fails only the checks of its own package.
+          const broken = () => {
+            throw new Error(`Fixture module ${file} failed to load`, { cause: error });
+          };
+          return [name, { input: broken, reply: broken, check: broken }];
+        }
+      }),
+  ),
+);
+/** Every Batch 03 package: Batch 02's six, then the fixture-module ports in name order. */
+export const packagedNames = [...names, ...Object.keys(packagedFixtures)];
 export const lifecycle = [
   'requirements',
   'spec',
@@ -117,6 +141,7 @@ export async function fixture(root) {
   };
 }
 export function inputFor(batch, name, env) {
+  if (batch === 3 && packagedFixtures[name]) return packagedFixtures[name].input(env);
   if (batch === 1)
     return {
       $claude: { tools: ['Read', 'Grep', 'Glob', 'Write', 'Edit', 'Bash'] },
@@ -280,6 +305,7 @@ export async function reply(batch, name, request, env, mode = 'normal') {
 // Batch 03 replies: the same intents and fixture data as Batch 02, keyed by the packages' step IDs
 // (std.patterns adds `answer`, `review/<n>` and `revise/<n>` leaves).
 async function packagedReply(name, request, env, mode) {
+  if (packagedFixtures[name]) return packagedFixtures[name].reply(request, env, mode);
   const id = request.call.stepId,
     prompt = request.options.prompt;
   if (name === 'release-notes') {
@@ -445,6 +471,7 @@ export function harnessFor(batch, name, env, { mode = 'normal', fault = null, on
           (mode === 'failed-finders' && /\/finders\/\d+\/answer$/u.test(request.call.stepId)))
       )
         throw exitFailure(request);
+      if (batch === 3 && packagedFixtures[name]?.fail?.(request, mode)) throw exitFailure(request);
       if (
         batch === 3 &&
         name === 'incident-investigation' &&
@@ -464,9 +491,15 @@ export async function drive(definition, options, { redo = false, onSuspended } =
   while (result.status === 'suspended') {
     assert.ok(++suspended <= 64, 'Fixture must not loop through unbounded questions');
     await onSuspended?.(result);
+    const packaged = packagedFixtures[definition.name];
     for (const question of result.pending) {
-      let value;
-      if (question.stepId.endsWith('approve-plan')) value = { approved: true };
+      let value = packaged?.answer?.(question);
+      if (value !== undefined);
+      else if (
+        question.stepId.endsWith('approve-plan') ||
+        (packaged && /(?:^|\/)approve-[^/]+$/u.test(question.stepId))
+      )
+        value = { approved: true };
       else {
         const again = redo && !redone;
         value = {
@@ -487,6 +520,13 @@ export async function drive(definition, options, { redo = false, onSuspended } =
   }
   return { result, suspended };
 }
+/** Let a Batch 03 fixture module add its own files to a fresh fixture repository. */
+export async function prepare(batch, name, env) {
+  if (batch === 3) await packagedFixtures[name]?.setup?.(env);
+  return env;
+}
+/** A Batch 03 fixture module's F3 kill point, or null. */
+export const killSpec = (batch, name) => (batch === 3 && packagedFixtures[name]?.kill) || null;
 export const runOptions = (env, runId, harness, input) => ({
   cwd: env.cwd,
   stateDir: env.stateDir,

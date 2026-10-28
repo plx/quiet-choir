@@ -2,20 +2,16 @@
 import { appendFileSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { FileRunStore, NodeProcessRunner } from 'quiet-choir';
-import { drive, harnessFor, inputFor, load, runOptions } from './idiomatic-fixtures.mjs';
+import { drive, harnessFor, inputFor, killSpec, load, runOptions } from './idiomatic-fixtures.mjs';
 
 const config = JSON.parse(readFileSync(process.argv[2], 'utf8'));
-const { batch, name, root, cwd, since, until, stateDir, worktrees } = config;
+const { batch, name, root, cwd, stateDir } = config;
 const resume = process.argv.includes('--resume');
-const env = {
-  root,
-  cwd,
-  since,
-  until,
-  stateDir,
-  worktrees,
-  processRunner: new NodeProcessRunner(),
-};
+// Every fixture field, including any a Batch 03 fixture module's setup added.
+const env = { ...config, processRunner: new NodeProcessRunner() };
+// A Batch 03 fixture module names its own kill point: a step ID pattern and a boundary.
+const spec = killSpec(batch, name);
+const killAt = spec && new RegExp(spec.step, 'u');
 const marker = join(root, 'kill-marker');
 function die(point) {
   writeFileSync(marker, JSON.stringify(point));
@@ -51,6 +47,8 @@ harness.invoke = async (request) => {
     }
   } else if (name === 'project-bootstrap' && id.endsWith('/apply') && !existsSync(marker)) {
     die({ stepId: id, writeLocation: 'isolated-checkout', boundary: 'before harness response' });
+  } else if (spec?.boundary === 'response' && killAt.test(id) && !existsSync(marker)) {
+    die({ stepId: id, writeLocation: spec.writeLocation, boundary: 'before harness response' });
   }
   return output;
 };
@@ -65,12 +63,15 @@ class KillStore extends FileRunStore {
               ([stepId, step]) =>
                 step.status === 'completed' &&
                 ((name === 'release-notes' && stepId === 'write') ||
-                  (name === 'sdlc-orchestrator' && stepId.endsWith('/write'))),
+                  (name === 'sdlc-orchestrator' && stepId.endsWith('/write')) ||
+                  (spec?.boundary === 'checkpoint' && killAt.test(stepId))),
             );
             if (batch >= 2 && completed && !existsSync(marker))
               die({
                 stepId: completed[0],
-                writeLocation: name === 'release-notes' ? 'source-checkout' : 'isolated-checkout',
+                writeLocation:
+                  spec?.writeLocation ??
+                  (name === 'release-notes' ? 'source-checkout' : 'isolated-checkout'),
                 boundary: 'after bytes, before terminal checkpoint append',
               });
             return target.append(record, settings);

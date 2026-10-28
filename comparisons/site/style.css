@@ -314,6 +314,25 @@ nav#workflows a[aria-current='page'] {
   border-left-color: var(--blue);
   font-weight: 650;
 }
+.nav-group {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin: 14px 11px 4px;
+  font: 500 11px var(--mono);
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.nav-group:first-child {
+  margin-top: 0;
+}
+.newer {
+  margin: -14px 0 22px;
+  font-size: 14px;
+  color: var(--muted);
+}
 .nav-number {
   font: 12px var(--mono);
   opacity: 0.6;
@@ -1035,6 +1054,11 @@ pre.snippet {
   nav#workflows a {
     flex: none;
     padding: 9px;
+  }
+  .nav-group {
+    flex: none;
+    align-self: center;
+    margin: 0 4px 0 10px;
   }
   aside footer {
     display: none;

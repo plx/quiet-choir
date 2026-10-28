@@ -61,5 +61,16 @@
       "Roles: Finder is the Scribe tier; Skeptic is the Skeptic tier at the upstream's high effort. Skeptic items carry the candidate, so its panel's fingerprint covers what is judged."
     ],
     "evaluation": "Fixtures inject a failing skeptic seat (undecided), failing finders (no dry convergence), a three-call cap and a reported-cost stop with a higher-cap resume, as in Batch 02. Fixture cost is simulated usage, not billing; concurrent admissions can overshoot a cost threshold."
+  },
+  "dead-code-sweep": {
+    "summary": "Sweep three modalities as a tolerant panel, give every candidate a settled skeptic that keeps it unless it is cleared, and delete an approved, digested list in an isolated worktree that code verifies before publishing.",
+    "preserved": "The upstream's three sweeps (exports never imported, unreachable from entry points, stale by history), the per-candidate falsification with its default to keep, the report-only default and the single remover that sees how deletions interact all remain; Batch 01's step IDs for the sweeps, the cross-check and the removal stay.",
+    "changes": [
+      "Packaged: workflows/dead-code-sweep.ts is control flow only; contracts.ts holds the input (apply needs a verification command), candidate, verdict and output schemas, lib/policy.ts the merge, cap and list digest, lib/checks.ts the base commit and verification commands, and three templates under prompts/ the prose.",
+      "The sweeps are std.patterns.tolerantPanel: a failed sweep is counted in failedSweeps instead of failing the run. The cross-check is a settled ctx.map, so a skeptic that fails keeps its candidate as unchecked-and-kept instead of aborting or deleting.",
+      "Removal is gated by ctx.approve over the exact list and its digest, runs as the Edit-tier Remover in a worktree pinned to the base commit, is ownership-checked to the listed files, integrated, verified by the operator's commands in a fresh verification worktree, and only then merged into the checkout.",
+      "A cap on candidates is reported (unchecked) rather than silent, and the status names each outcome: nothing-dead, report, declined, verification-failed or applied."
+    ],
+    "evaluation": "The success fixture finds an unimported legacy.mjs from two modalities, approves it, deletes it in the remover's worktree and requires the verification command (which fails while the file exists) to pass before the checkout changes; other calls must be read-only. Modes cover report-only, a failing skeptic (the candidate is kept) and a red verification (the checkout is untouched). F3 kills the remover after its edit and before its response is recorded. The fixtures prove the gating and accounting, not that a real sweep finds dead code."
   }
 }

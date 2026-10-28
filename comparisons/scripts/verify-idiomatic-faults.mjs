@@ -11,10 +11,12 @@ import {
   fixture,
   harnessFor,
   inputFor,
+  killSpec,
   load,
   lifecycle,
   names,
   packageRoot,
+  prepare,
   project,
   runOptions,
   snapshot,
@@ -24,7 +26,7 @@ import { verificationStage } from '../batches/02-idiomatic-ports/ported/lifecycl
 import packagedVerification from '../batches/03-packaged-ports/ported/sdlc-orchestrator.quiet-choir/workflows/lifecycle-verification.ts';
 
 export async function killCase(root, batch, name) {
-  const env = await fixture(root),
+  const env = await prepare(batch, name, await fixture(root)),
     marker = join(env.root, 'kill-marker');
   const config = join(env.root, 'worker.json');
   await writeFile(config, JSON.stringify({ ...env, processRunner: undefined, batch, name }));
@@ -120,7 +122,9 @@ export async function killCase(root, batch, name) {
     const filesystem = await snapshot(env.cwd);
     assert.equal(completedCallsPaidAgain, 0);
     assert.equal(result.status, 'completed');
-    if (batch >= 2) assert.equal(filesystem.targetPristine, true);
+    // A Batch 03 fixture module may integrate an edit of target.mjs on purpose.
+    if (batch >= 2 && (killSpec(batch, name)?.pristine ?? true))
+      assert.equal(filesystem.targetPristine, true);
     if (name === 'test-gap-filler') {
       assert.equal(filesystem.targetPristine, batch >= 2);
       assert.equal(callsPaidAgain, batch >= 2 ? 0 : 1);

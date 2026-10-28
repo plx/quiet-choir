@@ -191,6 +191,47 @@ function codePanel(panel, side, label, files, selectedKey, accent) {
   return `<article class="code-panel ${accent}" aria-label="${escape(side)}: ${escape(label)}"><div class="code-heading"><span class="side-label">${escape(side)}</span><span class="code-title">${escape(label)}</span><button class="copy" data-copy="${panel}" aria-label="Copy ${escape(side.toLowerCase())} source">Copy</button></div><div class="code-filename">${picker}<span class="file-meta">${escape(language(file.path))} · ${lineCount(file.content)} lines</span></div><pre tabindex="0" aria-label="${escape(label)} source code"><code>${highlight(file.content, file.path)}</code></pre></article>`;
 }
 
+/** The batch whose ports this batch revises, when it declares one. */
+const baselineOf = (b) => data.batches.find((other) => other.id === b.baseline) ?? null;
+/**
+ * The workflow list. A batch with a baseline groups the workflows that batch also ported apart
+ * from the ones ported here for the first time, so a missing intermediate port is visible.
+ */
+function navigation() {
+  const mixed = batch.workflows.some((w) => w.package) && batch.workflows.some((w) => !w.package);
+  const item = (w, i) =>
+    link(
+      { batch: batch.id, workflow: w.name, earlierFile: null, currentFile: null, file: null },
+      `<span class="nav-number">${pad(i + 1)}</span>${escape(title(w.name))}${mixed && w.package ? '<span class="nav-tag">pkg</span>' : ''}`,
+      w.name === workflow.name ? 'aria-current="page"' : '',
+    );
+  const baseline = baselineOf(batch);
+  if (!baseline) return batch.workflows.map(item).join('');
+  const revised = batch.workflows.filter((w) =>
+    baseline.workflows.some((other) => other.name === w.name),
+  );
+  const fresh = batch.workflows.filter((w) => !revised.includes(w));
+  return [
+    [`Revised from ${baseline.label}`, revised, 0],
+    ['First idiomatic port', fresh, revised.length],
+  ]
+    .filter(([, list]) => list.length)
+    .map(
+      ([label, list, offset]) =>
+        `<p class="nav-group"><span>${escape(label)}</span><span class="num">${pad(list.length)}</span></p>${list.map((w, i) => item(w, offset + i)).join('')}`,
+    )
+    .join('');
+}
+/** Newer batches that ported this workflow again, newest first. */
+function newerPorts() {
+  const order = data.batches.map((b) => b.id);
+  return data.batches.filter(
+    (b) =>
+      order.indexOf(b.id) < order.indexOf(batch.id) &&
+      b.workflows.some((w) => w.name === workflow.name),
+  );
+}
+
 function render() {
   batch = data.batches.find((b) => b.id === params.batch) ?? data.batches[0];
   workflow =
@@ -202,15 +243,7 @@ function render() {
   $('#batch').value = batch.id;
   $('#batch-description').textContent = batch.description;
   $('#count').textContent = pad(batch.workflows.length);
-  $('#workflows').innerHTML = batch.workflows
-    .map((w, i) =>
-      link(
-        { batch: batch.id, workflow: w.name, earlierFile: null, currentFile: null, file: null },
-        `<span class="nav-number">${pad(i + 1)}</span>${escape(title(w.name))}${w.package ? '<span class="nav-tag">pkg</span>' : ''}`,
-        w.name === workflow.name ? 'aria-current="page"' : '',
-      ),
-    )
-    .join('');
+  $('#workflows').innerHTML = navigation();
   $('#provenance').innerHTML =
     `Source: hesreallyhim / ultracode-workflows<a href="${escape(batch.sourceUrl)}" target="_blank" rel="noreferrer">Snapshot ${escape(batch.revision.slice(0, 7))} ↗</a><a href="./license.txt">MIT · © 2026 Really Him</a>`;
   const notes = workflow.notes;
@@ -221,7 +254,12 @@ function render() {
     `<div class="breadcrumb"><span>WORKFLOW LAB</span><span>/</span><span>${escape(batch.label.toUpperCase())}</span><span>/</span><span>${escape(workflow.name)}</span></div>
     <div class="heading-row"><div><h1>${escape(title(workflow.name))}</h1><p class="summary">${escape(notes?.summary ?? workflow.description)}</p></div><span class="badge">${badge}</span></div>
     <div class="phases" aria-label="Original workflow phases">${(workflow.phases ?? []).map((p, i) => `<span class="phase" title="${escape(p.detail)}"><span class="phase-number">${pad(i + 1)}</span>${escape(p.title)}</span>`).join('')}</div>
-    <div class="review-strip"><strong>Port note:</strong> ${escape(notes?.changes?.[0] ?? 'Direct port. Preserve prompts and control flow; make the API differences explicit.')}</div>
+    <div class="review-strip"><strong>Port note:</strong> ${escape(notes?.changes?.[0] ?? 'Direct port. Preserve prompts and control flow; make the API differences explicit.')}</div>${newerPorts()
+      .map(
+        (b) =>
+          `<p class="newer">A newer port exists: ${link({ batch: b.id, workflow: workflow.name, view: 'source', earlierFile: null, currentFile: null, file: null }, `${escape(b.label)} →`)}</p>`,
+      )
+      .join('')}
     <div class="tabbar" role="tablist" aria-label="Comparison view">${available
       .map(
         ([id, label]) =>
@@ -300,6 +338,11 @@ function sourceView() {
     return `<div class="code-grid">${codePanel('original', 'Before', 'Claude Code', panelFiles('original'), 'original', '')}${codePanel('current', 'After', 'Quiet Choir', panelFiles('current'), 'ported', 'after')}</div><div class="source-footer">Original source is preserved verbatim. The port uses named Quiet Choir effects explicitly. Read ${link({ view: 'notes' }, 'port notes')} for equivalence limits. ${escape(batch.validation)}</div>`;
   const compare = compares.some(([id]) => id === params.compare) ? params.compare : 'three';
   const current = panelFiles('current');
+  const earlierFiles = panelFiles('earlier');
+  const earlierKey = params.earlierFile ?? `${earlier[0].batch.id}:${workflow.name}.workflow.ts`;
+  const earlierFile = earlierFiles.find((file) => file.key === earlierKey) ?? earlierFiles[0];
+  const baseline = baselineOf(batch);
+  const skipped = baseline && !earlier.some(({ batch: b }) => b.id === baseline.id);
   const panels = {
     original: codePanel(
       'original',
@@ -312,9 +355,9 @@ function sourceView() {
     earlier: codePanel(
       'earlier',
       'Earlier port',
-      'Quiet Choir',
-      panelFiles('earlier'),
-      params.earlierFile ?? `${batch.baseline}:${workflow.name}.workflow.ts`,
+      earlierFile.group,
+      earlierFiles,
+      earlierFile.key,
       'earlier',
     ),
     current: codePanel(
@@ -339,7 +382,11 @@ function sourceView() {
     )
     .join(
       '',
-    )}</div><span class="compare-hint">Pick any file of the earlier ports or the package in each panel's header.</span></div><div class="code-grid cols-${shownPanels.length}">${shownPanels.map((panel) => panels[panel]).join('')}</div><div class="source-footer">The upstream source is preserved verbatim. The earlier port panel holds ${earlier.map(({ batch: b }) => escape(b.label)).join(' and ')}, with ${escape(earlier[0].batch.label)} first; the package panel opens on the control-flow module. Read ${link({ view: 'package' }, 'the package')} for its parts, roster and templates, and ${link({ view: 'notes' }, 'port notes')} for equivalence limits.</div>`;
+    )}</div><span class="compare-hint">Pick any file of the earlier ports or the package in each panel's header.</span></div><div class="code-grid cols-${shownPanels.length}">${shownPanels.map((panel) => panels[panel]).join('')}</div><div class="source-footer">The upstream source is preserved verbatim. ${
+    skipped
+      ? `${escape(baseline.label)} rewrote only ${baseline.workflows.length} workflows and never ported this one, so the earlier port panel holds ${escape(earlier[0].batch.label)}, the direct port, with its shared helpers.`
+      : `The earlier port panel holds ${earlier.map(({ batch: b }) => escape(b.label)).join(' and ')}, with ${escape(earlier[0].batch.label)} first.`
+  } The package panel opens on the control-flow module. Read ${link({ view: 'package' }, 'the package')} for its parts, roster and templates, and ${link({ view: 'notes' }, 'port notes')} for equivalence limits.</div>`;
 }
 
 function composition(pkg) {
@@ -415,30 +462,44 @@ function packageView() {
 
 function measuredTable() {
   const current = workflow.measured?.[String(Number(batch.number))];
+  if (!current) return '';
   const earlier = earlierPorts()[0];
   const before = earlier?.workflow.measured?.[String(Number(earlier.batch.number))];
-  if (!current || !before) return '';
   const fault = (cell) =>
     !cell || cell.finalStatus === 'not-applicable'
       ? 'n/a'
       : `${cell.initialStatus ?? '—'} → ${cell.finalStatus}; ${cell.callsPaidAgain} repaid${cell.outputAdmitsDegradation ? '; output admits it' : ''}`;
+  const faults = {
+    F1: 'process failure',
+    F2: 'invalid output',
+    F3: 'SIGKILL at a write',
+    F4: 'code fix and resume',
+    F5: 'human question',
+  };
+  // Without a measured earlier port the Batch 03 column stands alone.
   const rows = [
-    ['Control-flow lines', before.formattedLines, current.formattedLines],
+    ['Control-flow lines', before?.formattedLines, current.formattedLines],
     [
       'Package',
       'one workflow file + shared batch helpers',
       `${current.package.lines} lines in ${current.package.files} files`,
     ],
-    ['Agent calls (success fixture)', before.agentCalls, current.agentCalls],
+    ['Agent calls (success fixture)', before?.agentCalls, current.agentCalls],
     ['Calls through prompt templates', 'none (inline strings)', current.templatedCalls],
-    ['Write-capable calls', before.writeToolCalls, current.writeToolCalls],
-    ...['F1', 'F2', 'F3', 'F4', 'F5'].map((f) => [
-      `${f} ${{ F1: 'process failure', F2: 'invalid output', F3: 'SIGKILL at a write', F4: 'code fix and resume', F5: 'human question' }[f]}`,
-      fault(before.faults[f]),
+    ['Write-capable calls', before?.writeToolCalls, current.writeToolCalls],
+    ...Object.entries(faults).map(([f, label]) => [
+      `${f} ${label}`,
+      before && fault(before.faults[f]),
       fault(current.faults[f]),
     ]),
   ];
-  return `<div class="note-block"><h2>Measured on the fixture path</h2><div><div class="table-wrap"><table class="measured"><thead><tr><th>Measure</th><th>${escape(earlier.batch.label)}</th><th>${escape(batch.label)}</th></tr></thead><tbody>${rows.map(([label, a, b]) => `<tr><th scope="row">${escape(label)}</th><td>${escape(a)}</td><td>${escape(b)}</td></tr>`).join('')}</tbody></table></div><p class="muted">Inert harness replies with real Git, commands, writes and SIGKILLs. Call counts are fixture observations, not cost or quality.</p></div></div>`;
+  const head = before
+    ? `<th>${escape(earlier.batch.label)}</th><th>${escape(batch.label)}</th>`
+    : `<th>${escape(batch.label)}</th>`;
+  const note = before
+    ? ''
+    : ` No earlier port of this workflow was measured: ${escape(baselineOf(batch)?.label ?? 'the baseline')} never ported it and ${escape(earlier?.batch.label ?? 'the direct port')} records fixture outcomes, not these measures.`;
+  return `<div class="note-block"><h2>Measured on the fixture path</h2><div><div class="table-wrap"><table class="measured"><thead><tr><th>Measure</th>${head}</tr></thead><tbody>${rows.map(([label, a, b]) => `<tr><th scope="row">${escape(label)}</th>${before ? `<td>${escape(a)}</td>` : ''}<td>${escape(b)}</td></tr>`).join('')}</tbody></table></div><p class="muted">Inert harness replies with real Git, commands, writes and SIGKILLs. Call counts are fixture observations, not cost or quality.${note}</p></div></div>`;
 }
 function notesView() {
   const n = workflow.notes ?? {};
