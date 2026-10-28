@@ -87,7 +87,7 @@ export default defineWorkflow({
   name: 'merge-down-pr',
   version: '1',
   description:
-    'Land one PR: rebase onto main, review against its issue with a local Codex review, triage threads, fix, gate on CI + Codex, squash-merge, report',
+    'Land one PR: rebase onto main, review against its issue with a local Codex review, triage threads, fix, gate on CI + Codex, merge (squash by default), report',
   whenToUse:
     'Merging down a stack of agent-authored PRs (or Dependabot PRs) one PR per run, in stack order.',
   input: MergeDownInput,
@@ -1225,6 +1225,7 @@ export default defineWorkflow({
       base: DEF,
       viewer: info.viewer,
       requiredChecks: A.requiredChecks,
+      ...(A.mergeMethod === 'squash' ? {} : { method: A.mergeMethod }),
     });
     if (!landed.merged) return blocked('land', landed.reason);
     const mergeCommit = landed.mergeCommit ?? 'unknown';
@@ -1324,6 +1325,7 @@ export default defineWorkflow({
           title: PR.title,
           base: DEF,
           mergeCommit: mergeCommit.slice(0, 7),
+          method: A.mergeMethod,
           facts: std.exec.json(facts),
         }),
         schema: Report,

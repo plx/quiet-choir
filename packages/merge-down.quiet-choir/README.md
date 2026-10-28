@@ -14,8 +14,8 @@ documents the behavior this port keeps. The native script was removed in
 
 It rebases the PR onto the default branch in a dedicated worktree, reviews it against its issue
 (with a local `codex review`), triages its review threads, fixes what is in scope, files follow-ups
-for what is not, gates on CI and the reviewers, squash-merges at the gated head, and records what
-happened on the issue.
+for what is not, gates on CI and the reviewers, merges at the gated head (a squash unless
+`mergeMethod` says otherwise), and records what happened on the issue.
 
 ```
 merge-down.quiet-choir/
@@ -89,15 +89,15 @@ a failed step attempt (`<agent step>-owner`) in the run record. Restart a blocke
 
 ## How it works
 
-| Stage   | Who (model / effort)                                                                  | What                                                                                                                                                                                                                                                                |
-| ------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Prepare | no agent                                                                              | GitHub reads (PR, issue, parent, children, stack, threads, alerts) into `state/pr-N/`; the `sync` step checks out the PR and rebases it, recording fork points first.                                                                                               |
-| Rebase  | `Surgeon` opus / high (`Mechanic` sonnet / high for Dependabot)                       | Only on conflicts, through the `ResolveTeam.resolver` slot; the `snapshot` step then verifies that no rebase is in progress and that the PR's commits survived.                                                                                                     |
-| Review  | `Reviewer` opus / medium → `Judge` opus / xhigh                                       | In parallel: the `check-0` suite, the change review (or the dependency review, by `Reviewer` for a major bump, else `Mechanic`) and the first local Codex review, triaged by `Reviewer`. Escalation on the native reasons.                                          |
-| Fix     | `FixTeam.mechanic` sonnet / high or `.surgeon` opus / high ∥ `Scribe` sonnet / medium | The slot by complexity; the workflow verifies the reported commits and runs the suite at the new head, with one surgeon repair on failure. The scribe drafts follow-ups and the workflow files them.                                                                |
-| Gate    | no agent (`Reviewer` triages new threads)                                             | Retarget stacked PRs, push with lease, confirm GitHub sees the head, fix the closing keyword, reply to and resolve threads, dismiss settled alerts; then CI ∥ reviewers ∥ a local Codex review of the head; loop on findings or red CI.                             |
-| Land    | no agent                                                                              | CI re-read at landing (a fresh wait on the gated head); the `land/merge` step rereads the guards (open, head, base, CI, unanswered threads, open alerts) and squash-merges at the gated SHA; the issue closed or reopened, children read, the local branch deleted. |
-| Report  | `Scribe` sonnet / medium                                                              | Drafts the issue summary and headline; the workflow posts the comment.                                                                                                                                                                                              |
+| Stage   | Who (model / effort)                                                                  | What                                                                                                                                                                                                                                                                            |
+| ------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Prepare | no agent                                                                              | GitHub reads (PR, issue, parent, children, stack, threads, alerts) into `state/pr-N/`; the `sync` step checks out the PR and rebases it, recording fork points first.                                                                                                           |
+| Rebase  | `Surgeon` opus / high (`Mechanic` sonnet / high for Dependabot)                       | Only on conflicts, through the `ResolveTeam.resolver` slot; the `snapshot` step then verifies that no rebase is in progress and that the PR's commits survived.                                                                                                                 |
+| Review  | `Reviewer` opus / medium → `Judge` opus / xhigh                                       | In parallel: the `check-0` suite, the change review (or the dependency review, by `Reviewer` for a major bump, else `Mechanic`) and the first local Codex review, triaged by `Reviewer`. Escalation on the native reasons.                                                      |
+| Fix     | `FixTeam.mechanic` sonnet / high or `.surgeon` opus / high ∥ `Scribe` sonnet / medium | The slot by complexity; the workflow verifies the reported commits and runs the suite at the new head, with one surgeon repair on failure. The scribe drafts follow-ups and the workflow files them.                                                                            |
+| Gate    | no agent (`Reviewer` triages new threads)                                             | Retarget stacked PRs, push with lease, confirm GitHub sees the head, fix the closing keyword, reply to and resolve threads, dismiss settled alerts; then CI ∥ reviewers ∥ a local Codex review of the head; loop on findings or red CI.                                         |
+| Land    | no agent                                                                              | CI re-read at landing (a fresh wait on the gated head); the `land/merge` step rereads the guards (open, head, base, CI, unanswered threads, open alerts) and merges at the gated SHA with `mergeMethod`; the issue closed or reopened, children read, the local branch deleted. |
+| Report  | `Scribe` sonnet / medium                                                              | Drafts the issue summary and headline; the workflow posts the comment.                                                                                                                                                                                                          |
 
 Every mechanical step is a durable effect that costs no model call. There is no Clerk or Copyist and
 no verified relay: no nonces, FNV hashes or saved `last/` outputs. GitHub reads, waits and writes go
@@ -156,6 +156,7 @@ Tags are counted in pure code.
 | `standingNotes`      | `[]`                                 | Decisions every reviewer, resolver and fixer applies without re-litigating.                          |
 | `checkCommand`       | `npm run check`                      | The local check suite.                                                                               |
 | `requiredChecks`     | `[]`                                 | CI check names that must register before a green rollup counts; one that never does blocks the gate. |
+| `mergeMethod`        | `squash`                             | `squash`, `merge` (a merge commit, keeping the PR's commits) or `rebase`.                            |
 | `toolchain`          | none (npm)                           | The agents' toolchain: `read` and `edit` shell rules and `guidance`; see [Toolchain](#toolchain).    |
 
 ## Toolchain
@@ -191,7 +192,7 @@ when they apply. `agents.clerkRuns` is gone with the relay.
 
 | Status     | When                                                                                                               |
 | ---------- | ------------------------------------------------------------------------------------------------------------------ |
-| `merged`   | Squash-merged at the gated head.                                                                                   |
+| `merged`   | Merged at the gated head with `mergeMethod`.                                                                       |
 | `closed`   | A Dependabot PR closed with an `@dependabot ignore` comment.                                                       |
 | `deferred` | A Dependabot PR that needs a real migration.                                                                       |
 | `blocked`  | `blocked: { stage, reason }`; the PR is left open.                                                                 |

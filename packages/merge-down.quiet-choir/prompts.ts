@@ -152,6 +152,8 @@ export const prompts = definePrompts(import.meta.dirname + '/prompts', {
       title: z.string(),
       base: z.string(),
       mergeCommit: z.string(),
+      /** How it landed (#737): `squash`, `merge` or `rebase`. */
+      method: z.string(),
       facts: z.string(),
     }),
   },

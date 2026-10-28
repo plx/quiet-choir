@@ -58,6 +58,7 @@ const { landMerge } = await lib<{
       base: string;
       viewer: string;
       requiredChecks: readonly string[];
+      method?: 'merge' | 'rebase';
     },
   ) => Promise<unknown>;
 }>('land');
@@ -372,7 +373,7 @@ describe('landMerge', () => {
       [
         '#!/bin/sh',
         `case "$*" in`,
-        `  *"-X PUT"*) echo put >> '${puts}'; echo '{"merged":true,"sha":"mmm"}';;`,
+        `  *"-X PUT"*) echo put >> '${puts}'; echo "$*" >> '${puts}.args'; echo '{"merged":true,"sha":"mmm"}';;`,
         `  *"commits(last: 1)"*) echo '${rollupBody}';;`,
         `  *reviewThreads*) echo '${threads}';;`,
         `  *code-scanning*) echo '[]';;`,
@@ -398,6 +399,20 @@ describe('landMerge', () => {
     const file = await fakeGh({ oid: head, checks: ['Quality', 'test (22)'] });
     expect(await land(['test (22)'])).toMatchObject({ merged: true, mergeCommit: 'mmm' });
     expect(await puts(file)).toBe('put\n');
+  });
+
+  it('squash-merges by default and merges with the requested method (#737)', async () => {
+    const file = await fakeGh({ oid: head, checks: [] });
+    expect(await land([])).toMatchObject({ merged: true });
+    expect(await puts(`${file}.args`)).toContain('merge_method=squash');
+    await rm(file);
+    await rm(`${file}.args`);
+    const merged = await runWorkflow(
+      definition((ctx) => landMerge(ctx, 'land-merge', { ...input, method: 'merge' })),
+      { ...setup(), runId: 'test-merge' },
+    );
+    expect(merged.output).toMatchObject({ merged: true, mergeCommit: 'mmm' });
+    expect(await puts(`${file}.args`)).toContain('merge_method=merge');
   });
 
   it('refuses a required check that is absent at landing, without merging', async () => {

@@ -67,6 +67,10 @@ export const MergeDownInput = z.object({
   standingNotes: z.array(z.string()).default([]),
   checkCommand: z.string().min(1).default('npm run check'),
   requiredChecks: z.array(z.string().min(1)).default([]),
+  mergeMethod: z
+    .enum(['squash', 'merge', 'rebase'])
+    .default('squash')
+    .describe('How GitHub lands the PR: squash, a merge commit, or rebased commits.'),
   toolchain: Toolchain.optional(),
 });
 /** Parsed input. */
