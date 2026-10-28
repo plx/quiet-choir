@@ -1325,6 +1325,7 @@ export default defineWorkflow({
           title: PR.title,
           base: DEF,
           mergeCommit: mergeCommit.slice(0, 7),
+          method: A.mergeMethod,
           facts: std.exec.json(facts),
         }),
         schema: Report,

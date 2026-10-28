@@ -1,5 +1,5 @@
 Write the closing summary for issue #{{ issue }} in {{ repo }}. PR #{{ pr }} "{{ title }}" has just
-been squash-merged into {{ base }} as {{ mergeCommit }}.
+been {% if method == "squash" %}squash-merged{% else %}merged{% endif %} into {{ base }} as {{ mergeCommit }}.
 
 Facts from the merge-down workflow (the source of truth; don't re-investigate the code):
 {{ facts }}
