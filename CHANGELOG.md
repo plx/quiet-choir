@@ -2,6 +2,9 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- A new `epic-burndown.quiet-choir` package runs execute-epic-ticket once per ticket, as a typed
+  inline child, until the epic is done or a run returns a status a person must act on, passing the
+  follow-up epic along.
 - execute-epic-ticket takes `branchPrefix` and `holdLabels` (#739): an epic whose PRs are named
   `<prefix><N>-…` (say `plx/issue-5-slug`) is surveyed with them in flight, new ticket branches
   follow the prefix, and a repository's own hold labels replace `blocked`, `needs-decision` and
