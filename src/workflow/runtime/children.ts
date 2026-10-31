@@ -252,7 +252,7 @@ export class RunChildren {
           );
         } catch (cause) {
           throw new Error(
-            `Child ${id} (${definition.name}) input validation failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+            `Child ${id} (${definition.name}) input validation failed: ${errorMessage(cause)}`,
             { cause },
           );
         }
@@ -410,7 +410,7 @@ export class RunChildren {
           // Match the root: a callback's own AbortError fails the frame; only scope cancellation cancels it.
           frame.status = cause instanceof CancelledError ? 'cancelled' : 'failed';
           frame.finishedAt = new Date().toISOString();
-          frame.error = cause instanceof Error ? cause.message : String(cause);
+          frame.error = errorMessage(cause);
           // A nested map's failure resolves to its leaf, which may be a cancellation even when the
           // fan-out is not; that leaf must fail the frame rather than become settled data.
           const origin = d.origins.find(cause);

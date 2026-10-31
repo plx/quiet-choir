@@ -213,12 +213,14 @@ it('validates child input before effects and output before returning, with ordin
     ...base,
     children: [child],
     async run(ctx) {
+      // One path: message line per issue, as for a step, never the ZodError's JSON dump.
       // @ts-expect-error -- the declared child's input type requires value; the runtime checks it too.
       await expect(ctx.workflow('invalid-input', 'required', {})).rejects.toThrow(
-        'invalid-input (required) input validation',
+        new Error(
+          'Child invalid-input (required) input validation failed: value: Invalid input: expected string, received undefined',
+        ),
       );
       expect(calls).toBe(0);
-      // One path: message line per issue, as for a step, never the ZodError's JSON dump.
       await expect(ctx.workflow('invalid-output', child, { value: 'x' })).rejects.toThrow(
         'Child invalid-output (required) output validation failed: Invalid input: expected number, received string',
       );
@@ -234,6 +236,33 @@ it('validates child input before effects and output before returning, with ordin
   expect(run.children?.['invalid-output']?.status).toBe('failed');
   expect(run.children?.['invalid-input']).toBeUndefined();
   expect(calls).toBe(1);
+});
+
+it('saves a child frame schema failure as one path: message line per issue', async () => {
+  const stateDir = await directory();
+  const child = defineWorkflow({
+    name: 'kid',
+    ...base,
+    async run(ctx) {
+      await ctx.step('s', {
+        input: null,
+        schema: z.object({ n: z.number() }),
+        run: () => ({ n: 'x' }) as unknown as { n: number },
+      });
+      return null;
+    },
+  });
+  const root = defineWorkflow({
+    name: 'parent',
+    ...base,
+    children: [child],
+    async run(ctx) {
+      await ctx.workflow('c', child, null, { onError: 'return' });
+      return null;
+    },
+  });
+  const run = await runWorkflow(root, { stateDir, runId: 'frame-error', input: null });
+  expect(run.children?.['c']?.error).toBe('n: Invalid input: expected number, received string');
 });
 
 it('supports the configured deep chain with compact IDs and stops recursion with a frame chain', async () => {

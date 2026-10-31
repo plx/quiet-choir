@@ -213,22 +213,23 @@ const draft = primary.ok
 
 Every effect that can fail takes `onError: 'return'`. `value`, `text`, `object`, `ctx.step`,
 `ctx.readFile`, `ctx.writeFile` and `ctx.merge` return `Settled<T>` in this mode:
-`{ ok: true, value }` or `{ ok: false, error: { message, kind, attempts } }`. A `schema` failure's
-`message` is one `path: message` line per Zod issue (`tickets[0].id: T9 should be numbered T1`), and
-an agent call keeps the raw issues in `attemptHistory[].validationIssues`. `ctx.exec` and
-`ctx.exec.json` return `Settled<T, ExecStepError>`, whose error adds the exit `code`, `signal`,
-output tails and, for `exec.json`, the bounded `parsed` stdout (see
-[commands and files](commands-files.md)). `ctx.workflow` returns `Settled<O, MapStepError>` and
-saves the child frame's outcome, so resume skips the child body (see
-[child workflows](child-workflows.md)). The success value retains its normal type; `text`/`object`
-values include `output`, `sessionId`, and `usage`, while `value` returns only output. The final
-failure, after applicable retries, is saved as `settled-failed`. Replay returns that exact failure
-without another callback, harness, command or file call. `onError: 'return'` is semantic identity:
-adding or dropping it on a terminal step requires a new run/fork. Cancellation always rejects and
-stays retryable, except a `cancelSiblings` map's own cancellation inside an `onError: 'return'` map,
-which is journaled as described below; authoring errors, configuration errors (a missing harness or
-process adapter, or an adapter's pre-launch `ConfigurationError` such as a Claude schema without an
-object root), and checkpoint failures also reject instead of becoming fallback data.
+`{ ok: true, value }` or `{ ok: false, error: { message, kind, attempts } }`. A Zod validation
+failure's `message` is one `path: message` line per issue
+(`tickets[0].id: T9 should be numbered T1`; a root issue is its bare message), and an agent call
+keeps the raw issues in `attemptHistory[].validationIssues`. `ctx.exec` and `ctx.exec.json` return
+`Settled<T, ExecStepError>`, whose error adds the exit `code`, `signal`, output tails and, for
+`exec.json`, the bounded `parsed` stdout (see [commands and files](commands-files.md)).
+`ctx.workflow` returns `Settled<O, MapStepError>` and saves the child frame's outcome, so resume
+skips the child body (see [child workflows](child-workflows.md)). The success value retains its
+normal type; `text`/`object` values include `output`, `sessionId`, and `usage`, while `value`
+returns only output. The final failure, after applicable retries, is saved as `settled-failed`.
+Replay returns that exact failure without another callback, harness, command or file call.
+`onError: 'return'` is semantic identity: adding or dropping it on a terminal step requires a new
+run/fork. Cancellation always rejects and stays retryable, except a `cancelSiblings` map's own
+cancellation inside an `onError: 'return'` map, which is journaled as described below; authoring
+errors, configuration errors (a missing harness or process adapter, or an adapter's pre-launch
+`ConfigurationError` such as a Claude schema without an object root), and checkpoint failures also
+reject instead of becoming fallback data.
 
 For best-effort fan-out, use a named map with `onError: 'return'`:
 
