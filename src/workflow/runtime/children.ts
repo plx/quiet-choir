@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { ChildOptions, ChildRecord, WorkflowDeclaration } from './child-model.js';
 import { ContextSlot } from './context-slot.js';
+import { thenableInputError, thenablePath } from './thenable-input.js';
 import { checkedDefinition, describeWorkflow } from './definition.js';
 import { delegateCapabilities, type ChildCapabilities } from './child-profiles.js';
 import { digest, jsonValue } from './json.js';
@@ -245,6 +246,8 @@ export class RunChildren {
         const mode = options.onError ?? 'throw';
         let parsed: JsonValue;
         try {
+          const thenable = thenablePath(input);
+          if (thenable !== undefined) throw thenableInputError(thenable);
           parsed = jsonValue(
             definition.input.parse(input),
             `Child ${id} (${definition.name}) input`,

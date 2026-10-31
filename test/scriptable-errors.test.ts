@@ -105,6 +105,75 @@ it('wraps saved workflow failures while retaining original error identity and ro
   expect(bodyError.stepId).toBeNull();
 });
 
+it('refuses a Promise as input instead of reading it as an object with no fields', async () => {
+  const optional = defineWorkflow({
+    name: 'optional-input',
+    version: '1',
+    input: z.object({ topic: z.string().optional() }),
+    output: z.string(),
+    run: (_ctx, input) => Promise.resolve(input.topic ?? 'none'),
+  });
+  const error: unknown = await runWorkflow(optional, {
+    ...options(),
+    input: Promise.resolve({ topic: 'late' }),
+  }).catch((cause: unknown) => cause);
+  expect(error).toBeInstanceOf(WorkflowInputError);
+  if (!(error instanceof WorkflowInputError)) throw error;
+  expect(error.message).toMatch(/Promise or other thenable; await it/u);
+  expect(error.cause).toBeInstanceOf(z.ZodError);
+  expect(error.details).toMatchObject([{ code: 'custom', path: [] }]);
+  await expect(readRun(options())).rejects.toHaveProperty('code', 'ENOENT');
+  const nested: unknown = await runWorkflow(
+    defineWorkflow({
+      name: 'nested-input',
+      version: '1',
+      input: z.object({ config: z.object({ effort: z.string().default('low') }) }),
+      output: z.string(),
+      run: (_ctx, input) => Promise.resolve(input.config.effort),
+    }),
+    { ...options(), runId: 'nested', input: { config: Promise.resolve({ effort: 'high' }) } },
+  ).catch((cause: unknown) => cause);
+  expect(nested).toBeInstanceOf(WorkflowInputError);
+  if (!(nested instanceof WorkflowInputError)) throw nested;
+  expect(nested.details).toMatchObject([{ code: 'custom', path: ['config'] }]);
+  class Settings {
+    readonly list = [{}, { config: Promise.resolve({}) }];
+  }
+  const deep: unknown = await runWorkflow(
+    defineWorkflow({
+      name: 'class-input',
+      version: '1',
+      input: z.unknown(),
+      output: z.null(),
+      run: () => Promise.resolve(null),
+    }),
+    { ...options(), runId: 'class', input: new Settings() },
+  ).catch((cause: unknown) => cause);
+  expect(deep).toMatchObject({ details: [{ path: ['list', 1, 'config'] }] });
+  // The search only refuses: an input it cannot read is left to the schema.
+  const unreadable = await runWorkflow(optional, {
+    ...options(),
+    runId: 'getter',
+    input: {
+      topic: 'kept',
+      get extra(): never {
+        throw new Error('not loaded');
+      },
+    },
+  });
+  expect(unreadable.output).toBe('kept');
+  const parent = defineWorkflow({
+    name: 'parent',
+    version: '1',
+    input: z.null(),
+    output: z.string(),
+    run: (ctx) => ctx.workflow('kid', optional, Promise.resolve({ topic: 'late' }) as never),
+  });
+  await expect(runWorkflow(parent, { ...options(), runId: 'parent' })).rejects.toThrow(
+    /Child kid \(optional-input\) input validation failed: .*Promise or other thenable/su,
+  );
+});
+
 it('types input failures before a record exists and preserves the validator cause', async () => {
   const error: unknown = await runWorkflow(definition, { ...options(), input: 'wrong' }).catch(
     (cause: unknown) => cause,

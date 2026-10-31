@@ -168,6 +168,7 @@ import {
 } from './profiles.js';
 import type { ProfileOverride, ResolvedRole, RoleRequest } from './profiles-model.js';
 import { ContextSlot } from './context-slot.js';
+import { thenableInputError, thenablePath } from './thenable-input.js';
 import { resolve } from 'node:path';
 import {
   canonicalCwd,
@@ -538,7 +539,10 @@ export interface RunOptions extends WorkflowCodeOptions {
   readonly stateDir?: string;
   /** Workflow working directory; defaults to process.cwd(). */
   readonly cwd?: string;
-  /** Untrusted input, validated by the workflow schema. Resume uses saved input when omitted. */
+  /**
+   * Untrusted input, validated by the workflow schema. A Promise among its own enumerable values,
+   * however deep, is refused, so await it first. Resume uses saved input when omitted.
+   */
   readonly input?: unknown;
   /** Resume an existing run; new execution refuses to overwrite an existing run. */
   readonly resume?: boolean;
@@ -1079,6 +1083,8 @@ export async function runWorkflow<
       );
     function parseInput(raw: unknown): TInput {
       try {
+        const thenable = thenablePath(raw);
+        if (thenable !== undefined) throw thenableInputError(thenable);
         return definition.input.parse(raw);
       } catch (cause) {
         if (!(cause instanceof z.ZodError)) throw cause;
