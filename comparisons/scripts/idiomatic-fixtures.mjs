@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdir, readFile, readdir, writeFile, realpath } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
+import { join, dirname, isAbsolute } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { NodeProcessRunner, HarnessError, runWorkflow, writeAnswer } from 'quiet-choir';
 import { sample } from './fixture-sample.mjs';
@@ -61,9 +61,21 @@ export const bug = {
   evidence: 'Concurrent increments overwrite',
   failureScenario: 'Two writes read the same old value',
 };
+/** The variable naming another directory of Batch 03 packages, as check-packaged-port --root sets. */
+export const packageDirVariable = 'QUIET_CHOIR_LAB_PACKAGE_DIR';
+/**
+ * The directory holding the Batch 03 packages: `ported/`, or the absolute directory
+ * QUIET_CHOIR_LAB_PACKAGE_DIR names. It is read on each call, and the kill worker and the CLI
+ * inherit it, so every process of one check loads the same copy.
+ */
+export function packagesDir() {
+  const override = process.env[packageDirVariable];
+  if (!override) return join(project, 'comparisons/batches/03-packaged-ports/ported');
+  assert.ok(isAbsolute(override), `${packageDirVariable} must be an absolute path: ${override}`);
+  return override;
+}
 /** Batch 03 ports are packages: one `<name>.quiet-choir` directory per workflow. */
-export const packageRoot = (name) =>
-  join(project, 'comparisons/batches/03-packaged-ports/ported', `${name}.quiet-choir`);
+export const packageRoot = (name) => join(packagesDir(), `${name}.quiet-choir`);
 export const load = async (batch, name) =>
   (
     await import(

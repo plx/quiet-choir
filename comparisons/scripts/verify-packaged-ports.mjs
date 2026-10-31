@@ -19,6 +19,7 @@ import {
   inputFor,
   lifecycle,
   load,
+  packageDirVariable,
   packageRoot,
   packagedNames,
   project,
@@ -30,6 +31,10 @@ import { cliContracts, extraContracts } from './verify-idiomatic-faults.mjs';
 const args = process.argv.slice(2);
 if (args.some((arg) => arg !== '--check') || args.length > 1)
   throw new Error('Usage: verify-packaged-ports.mjs [--check]');
+// The reports describe the committed packages, so a staged copy (check-packaged-port --root) is
+// refused rather than measured.
+if (process.env[packageDirVariable])
+  throw new Error(`verify-packaged-ports.mjs checks ported/; unset ${packageDirVariable}`);
 const root = await mkdtemp(join(tmpdir(), 'choir-packaged-'));
 const batchDir = join(project, 'comparisons/batches/03-packaged-ports');
 const metrics = [],

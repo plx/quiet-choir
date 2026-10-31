@@ -275,13 +275,70 @@ async function replied(replyErrors, label, run) {
   }
 }
 
+const firstLine = (text) => String(text ?? '').split('\n', 1)[0];
+/**
+ * What failed in a saved run, for a check's error: the run's status and error, then one line per
+ * failed or settled-failed step (its ID, status, error kind and first message line) and per failed
+ * item of a settled map (the map ID, the item's index and the step it failed at).
+ */
+export function failureSummary(record) {
+  if (!record) return 'No run record: the run was refused before it saved one.';
+  const lines = [
+    `Run ${record.id} ${record.status}${record.error ? `: ${firstLine(record.error)}` : ''}`,
+  ];
+  for (const [id, step] of Object.entries(record.steps)) {
+    if (step.status !== 'failed' && step.status !== 'settled-failed') continue;
+    const kind = step.settledError?.kind ?? step.attemptHistory?.at(-1)?.errorKind ?? 'unknown';
+    const message = step.settledError?.message ?? step.error;
+    lines.push(`  ${id} (${step.status}, ${kind}): ${firstLine(message)}`);
+  }
+  for (const [id, map] of Object.entries(record.maps ?? {}))
+    for (const [index, item] of (map.items ?? []).entries()) {
+      if (item.outcome?.ok !== false) continue;
+      const { kind, message, stepId } = item.outcome.error;
+      const at = stepId ? ` at ${stepId}` : '';
+      lines.push(
+        `  ${id} item ${String(index)} (settled-failed${at}, ${kind}): ${firstLine(message)}`,
+      );
+    }
+  if (lines.length === 1) lines.push('  No failed or settled-failed step.');
+  return lines.join('\n');
+}
+/**
+ * Run a check of the run that `opts` names; when it throws, rethrow with the error as `cause` and
+ * the saved record's `failureSummary`, so a failed assertion names the steps that failed.
+ */
+async function explained(label, opts, check) {
+  try {
+    return await check();
+  } catch (error) {
+    let summary;
+    try {
+      summary = failureSummary(await readRun(opts));
+    } catch (unread) {
+      summary =
+        unread?.code === 'ENOENT'
+          ? failureSummary(null)
+          : `The run record could not be read: ${firstLine(unread?.message ?? unread)}`;
+    }
+    throw new Error(`${label}: ${firstLine(error?.message ?? error)}\n${summary}`, {
+      cause: error,
+    });
+  }
+}
+
 /** The success run with completed replay and its assertions, without the fault matrix. */
 export async function checkSuccess(name, { setup }) {
-  const module = packagedFixtures[name];
   const env = await prepare(3, name, await setup()),
     definition = await load(3, name);
   const { harness, calls, replyErrors } = harnessFor(3, name, env),
     opts = await options(env, 3, name, harness);
+  return explained(`${name} success`, opts, () =>
+    successRun(name, { env, definition, calls, replyErrors, opts }),
+  );
+}
+async function successRun(name, { env, definition, calls, replyErrors, opts }) {
+  const module = packagedFixtures[name];
   let approvedPlan;
   const { result, suspended, questions } = await replied(
     module && replyErrors,
@@ -477,16 +534,33 @@ async function repairAndResume(name, definition, opts, context) {
 }
 
 /**
+ * The modes of `name` that `only` names, in the module's order, or every mode without `only`; a
+ * name the module does not declare fails.
+ */
+export function selectModes(name, only) {
+  const modes = packagedFixtures[name]?.modes ?? [];
+  if (!only) return modes;
+  const known = modes.map((mode) => mode.mode);
+  const unknown = only.filter((wanted) => !known.includes(wanted));
+  if (unknown.length)
+    throw new Error(
+      `${name} has no mode ${unknown.join(', ')}; its modes: ${known.join(', ') || 'none'}`,
+    );
+  return modes.filter((mode) => only.includes(mode.mode));
+}
+
+/**
  * A fixture module's extra modes: each a fresh run under `harnessFor(..., { mode })` whose
  * outcome its `check` asserts, then a resume that must pay nothing again. The module's `setup`
  * gets the mode, and the mode's own `setup` runs after it, before `input`. A mode with `rejects`
  * expects the run to fail with that pattern; a refusal before the run starts leaves no record. A
  * rejects mode with `repair` then heals the cause and resumes (see `repairAndResume`). Every mode
- * fails when a reply threw, unless it sets `allowReplyErrors`.
+ * fails when a reply threw, unless it sets `allowReplyErrors`. `only` runs just the modes it names
+ * (see `selectModes`). A failed mode throws with its run's `failureSummary`.
  */
-export async function modeContracts(name, { setup }) {
+export async function modeContracts(name, { setup, only }) {
   const rows = [];
-  for (const mode of packagedFixtures[name]?.modes ?? []) {
+  for (const mode of selectModes(name, only)) {
     const env = await prepare(3, name, await setup(), mode.mode);
     await mode.setup?.(env);
     const definition = await load(3, name);
@@ -498,59 +572,65 @@ export async function modeContracts(name, { setup }) {
       mode.input ? await mode.input(env) : await inputFor(3, name, env),
     );
     const opts = mode.options ? mode.options(base, env) : base;
-    const checked = !mode.allowReplyErrors && replyErrors,
-      label = `${name} ${mode.mode}`;
-    // The questions answered, kept across a rejected run and its repaired resume.
-    const questions = [],
-      driven = { mode: mode.mode, env, questions };
-    if (mode.rejects) {
-      await replied(
-        checked,
-        label,
-        assert.rejects(drive(definition, opts, driven), mode.rejects, `${label}: no rejection`),
-      );
-      const record = await readRun(opts).catch((error) => {
-        if (error?.code === 'ENOENT') return null;
-        throw error;
-      });
-      await mode.check?.({ result: record, env, calls, record, questions });
-      const row = {
-        workflow: name,
-        fixture: mode.mode,
-        status: 'passed',
-        finalStatus: record?.status ?? 'refused',
-        agentCalls: calls.length,
-      };
-      if (mode.repair)
-        Object.assign(
-          row,
-          await repairAndResume(name, definition, opts, {
-            mode,
-            env,
-            calls,
-            record,
-            questions,
-            label,
-          }),
-        );
-      rows.push(row);
-      continue;
-    }
-    const { result, suspended } = await replied(checked, label, drive(definition, opts, driven));
-    const record = await readRun(opts);
-    await mode.check({ result, env, calls, record, suspended, questions });
-    const before = calls.length;
-    await replied(checked, label, drive(definition, { ...opts, resume: true }, driven));
-    assert.equal(calls.length, before, `${mode.mode}: resume must not call an agent again`);
-    rows.push({
+    const label = `${name} ${mode.mode}`;
+    rows.push(
+      await explained(label, opts, () =>
+        modeRun(name, mode, { env, definition, calls, replyErrors, opts, label }),
+      ),
+    );
+  }
+  return rows;
+}
+async function modeRun(name, mode, { env, definition, calls, replyErrors, opts, label }) {
+  const checked = !mode.allowReplyErrors && replyErrors;
+  // The questions answered, kept across a rejected run and its repaired resume.
+  const questions = [],
+    driven = { mode: mode.mode, env, questions };
+  if (mode.rejects) {
+    await replied(
+      checked,
+      label,
+      assert.rejects(drive(definition, opts, driven), mode.rejects, `${label}: no rejection`),
+    );
+    const record = await readRun(opts).catch((error) => {
+      if (error?.code === 'ENOENT') return null;
+      throw error;
+    });
+    await mode.check?.({ result: record, env, calls, record, questions });
+    const row = {
       workflow: name,
       fixture: mode.mode,
       status: 'passed',
-      finalStatus: result.status,
-      outputStatus: result.output?.status ?? null,
+      finalStatus: record?.status ?? 'refused',
       agentCalls: calls.length,
-      completedCallsPaidAgain: 0,
-    });
+    };
+    if (mode.repair)
+      Object.assign(
+        row,
+        await repairAndResume(name, definition, opts, {
+          mode,
+          env,
+          calls,
+          record,
+          questions,
+          label,
+        }),
+      );
+    return row;
   }
-  return rows;
+  const { result, suspended } = await replied(checked, label, drive(definition, opts, driven));
+  const record = await readRun(opts);
+  await mode.check({ result, env, calls, record, suspended, questions });
+  const before = calls.length;
+  await replied(checked, label, drive(definition, { ...opts, resume: true }, driven));
+  assert.equal(calls.length, before, `${mode.mode}: resume must not call an agent again`);
+  return {
+    workflow: name,
+    fixture: mode.mode,
+    status: 'passed',
+    finalStatus: result.status,
+    outputStatus: result.output?.status ?? null,
+    agentCalls: calls.length,
+    completedCallsPaidAgain: 0,
+  };
 }
