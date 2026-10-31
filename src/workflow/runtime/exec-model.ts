@@ -92,8 +92,9 @@ export interface ExecStepError extends StepError {
 }
 
 /**
- * Raw process result that a {@link ProcessRunner} returns and an `ExecError` carries: a signalled
- * process has a null code and its signal. A completed exec returns {@link CompletedExecResult}.
+ * Raw process result that a {@link ProcessRunner} returns and an `ExecError` is constructed from:
+ * a signalled process has a null code and its signal. A completed exec returns
+ * {@link CompletedExecResult}.
  */
 export interface ExecResult {
   /** Exit code, or null when terminated by a signal. */

@@ -18,13 +18,13 @@ arguments or shell source: command descriptions are recorded and visible in insp
 
 A completed command returns `CompletedExecResult`: `code` (a number), `signal` (null), `stdout`,
 `stderr`, `truncated`, and `durationMs`. `ExecResult` is the raw shape a `ProcessRunner` returns and
-an `ExecError` carries, with `code` null and `signal` set for a signalled process. By default, only
-exit 0 succeeds. Non-ok exits throw `ExecError`; attempt history preserves the exit code, signal,
-classification, and the last 1024 characters of each output stream. `ctx.exec.json` parses stdout
-with its required Zod schema and checkpoints that value instead of raw output. Truncated JSON output
-fails with kind `output-limit`. Stdout that is not JSON after an accepted nonzero exit (in
-`okExitCodes`, or `'any'`) fails with kind `process`, because the command failed without a body; any
-other invalid JSON or schema mismatch fails with kind `schema`.
+an `ExecError` is constructed from, with `code` null and `signal` set for a signalled process. By
+default, only exit 0 succeeds. Non-ok exits throw `ExecError`; attempt history preserves the exit
+code, signal, classification, and the last 1024 characters of each output stream. `ctx.exec.json`
+parses stdout with its required Zod schema and checkpoints that value instead of raw output.
+Truncated JSON output fails with kind `output-limit`. Stdout that is not JSON after an accepted
+nonzero exit (in `okExitCodes`, or `'any'`) fails with kind `process`, because the command failed
+without a body; any other invalid JSON or schema mismatch fails with kind `schema`.
 
 A `try/catch` around a command is not a durable decision: resume runs the command again and can take
 the other branch. To branch on a failure, pass `onError: 'return'`, as every effect that can fail
