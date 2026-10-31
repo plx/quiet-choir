@@ -203,6 +203,67 @@ describe.skipIf(process.platform === 'win32')('durable harness ownership', () =>
     expect(await fs.readdir(join(directory, 'run', 'lock'))).not.toContain('recovery');
   });
 
+  it('recovers past an empty record only when nothing its name gives is still running', async () => {
+    // A runner killed between creating a record and writing it leaves an empty file named for the
+    // process group it was recording.
+    await lockRun(directory, 'run');
+    const child = await childProcess();
+    const fixture = children.at(-1);
+    if (!fixture) throw new Error('Missing fixture child');
+    await abandon();
+    const processes = join(directory, 'run', 'lock', 'processes');
+    await fs.mkdir(processes, { recursive: true });
+    await fs.writeFile(join(processes, `${String(child.pid)}.json`), '');
+    const kill = vi.spyOn(process, 'kill');
+    await expect(
+      lockRun(directory, 'run', { killOrphans: true, killGraceMs: 10 }),
+    ).rejects.toBeInstanceOf(OrphanProcessesError);
+    expect(kill.mock.calls.every(([, signal]) => signal === 0)).toBe(true);
+    const [entry] = (await inspectRunOwnership({ stateDir: directory, runId: 'run' })).processes;
+    expect(entry).toMatchObject({ state: 'unknown', process: null });
+    expect(entry?.detail).toMatch(/^Empty process record/u);
+    const exited = once(fixture, 'exit');
+    process.kill(-child.pid, 'SIGKILL');
+    await exited;
+    expect(groupState(child)).toBe('dead');
+    const next = await lockRun(directory, 'run');
+    await next();
+  });
+
+  it('keeps an empty record unknown while its group outlives the leader', async () => {
+    await lockRun(directory, 'run');
+    await abandon();
+    // The leader exits at once; its sleep stays in the leader's group.
+    const leader = spawn('/bin/sh', ['-c', 'sleep 30 & exit 0'], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    await once(leader, 'exit');
+    const pgid = leader.pid;
+    if (!pgid) throw new Error('Missing fixture PID');
+    try {
+      const processes = join(directory, 'run', 'lock', 'processes');
+      await fs.mkdir(processes, { recursive: true });
+      await fs.writeFile(join(processes, `${String(pgid)}.json`), '');
+      const kill = vi.spyOn(process, 'kill');
+      await expect(
+        lockRun(directory, 'run', { killOrphans: true, killGraceMs: 10 }),
+      ).rejects.toBeInstanceOf(OrphanProcessesError);
+      expect(kill.mock.calls.every(([, signal]) => signal === 0)).toBe(true);
+      kill.mockRestore();
+    } finally {
+      process.kill(-pgid, 'SIGKILL');
+    }
+    // A killed member may stay a zombie until its new parent reaps it; that counts as gone.
+    await vi.waitFor(() => {
+      expect(groupState({ pid: pgid, pgid })).toBe('dead');
+    });
+    const [entry] = (await inspectRunOwnership({ stateDir: directory, runId: 'run' })).processes;
+    expect(entry).toMatchObject({ state: 'dead', process: null, detail: /^Empty record/u });
+    const next = await lockRun(directory, 'run');
+    await next();
+  });
+
   it('retains children on release and allows recovery while the original embedder is still alive', async () => {
     const lock = await lockRun(directory, 'run');
     const child = await childProcess();

@@ -30,7 +30,10 @@ export interface HarnessProcessInspection {
   readonly process: HarnessProcessRecord | null;
   /** Reused identifies a different OS birth identity; unknown never authorizes a signal. */
   readonly state: 'alive' | 'dead' | 'reused' | 'unknown';
-  /** Reason an observation cannot authorize recovery. */
+  /**
+   * Why the observation reads as it does: the reason it cannot authorize recovery, or, for an empty
+   * record judged dead, why nothing is left.
+   */
   readonly detail?: string;
 }
 
@@ -185,9 +188,26 @@ export async function inspectProcesses(
   return Promise.all(
     files.sort().map(async (file) => {
       try {
-        const record = processSchema.parse(
-          JSON.parse(await readFile(join(directory, file), 'utf8')),
-        );
+        const text = await readFile(join(directory, file), 'utf8');
+        // A runner stopped between creating a record and writing it leaves the file empty. Its name
+        // is still the process or group it was recording; with neither left, nothing is orphaned.
+        if (text === '') {
+          const id = Number(/^\d+(?=\.json$)/u.exec(file)?.[0]);
+          // The name is a group ID, or a PID on Windows. As for a full record, a zombie the parent
+          // has not reaped yet counts as gone.
+          const gone = (pgid: number | null) => groupState({ pid: id, pgid }) === 'dead';
+          if (id > 1 && gone(null) && (process.platform === 'win32' || gone(id)))
+            return {
+              file,
+              process: null,
+              state: 'dead' as const,
+              detail: 'Empty record: no process or group with this ID is left.',
+            };
+          throw new Error(
+            'Empty process record: its runner stopped before writing it, and the process or group its name gives may still be running.',
+          );
+        }
+        const record = processSchema.parse(JSON.parse(text));
         if (
           (ownerToken !== null && record.ownerToken !== ownerToken) ||
           record.runId !== runId ||

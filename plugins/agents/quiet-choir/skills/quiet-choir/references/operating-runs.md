@@ -293,10 +293,11 @@ node "$QC_CHECKOUT/bin/run.js" workflow execute "$QC_WORKFLOW" \
 If inspection reports confirmed surviving children, explicitly recover with the same command plus
 `--kill-orphans`. This validates recorded host, PID, and OS birth identity, stops confirmed groups,
 and waits before replacement effects. PID reuse is not permission to kill. Unverified/malformed
-records refuse recovery and remain for investigation; compare recorded identity with OS process
-information on the owning host. A broad `pgrep` match alone cannot establish which run owns a
-process and must not drive automatic killing. Escaped/unregistered descendants may need manual
-investigation. External mutations remain in place after cancellation.
+records refuse recovery and remain for investigation, except an empty record (a runner stopped
+between creating and writing it) whose process and group are both gone, which reads as dead; compare
+recorded identity with OS process information on the owning host. A broad `pgrep` match alone cannot
+establish which run owns a process and must not drive automatic killing. Escaped/unregistered
+descendants may need manual investigation. External mutations remain in place after cancellation.
 
 To stop a run on purpose, do not `kill` the owner PID: since a first signal saves a resumable
 suspension, the next tick would resume it. Use cancel. A run that no process owns (parked

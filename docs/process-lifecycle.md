@@ -139,10 +139,14 @@ still completes this cleanup; a second signal reaches these recovery groups too.
 
 A different OS birth identity means the PID has been reused: the unrelated process is never
 signaled. Missing/unreadable identity, a surviving group whose original leader cannot be identified,
-and malformed records are reported and retained; `--kill-orphans` refuses to guess. Inspect those
-processes separately and wait for their exit, then clear the abandoned lock with `workflow unlock`
-(below). Do not delete records or lock directories by hand. To remove a whole run, records and lock
-included, use `workflow rm RUN`, which refuses while an owner or child is still live; see
+and malformed records are reported and retained; `--kill-orphans` refuses to guess. The one
+exception is an empty record, which a runner killed between creating and writing it leaves: when no
+process or group with the ID in its name is left (a zombie its parent has not reaped counts as gone,
+as for a full record), nothing can be orphaned, so it reads as dead and no longer blocks recovery;
+while one is left, it is unknown like any other malformed record. Inspect those processes separately
+and wait for their exit, then clear the abandoned lock with `workflow unlock` (below). Do not delete
+records or lock directories by hand. To remove a whole run, records and lock included, use
+`workflow rm RUN`, which refuses while an owner or child is still live; see
 [Removing runs](storage.md#removing-runs). Locks whose workflow finished but whose processes could
 not be reaped have an explicit `released` owner state, so a long-lived embedding process does not
 permanently obstruct recovery.
