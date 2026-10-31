@@ -147,15 +147,15 @@ handle publishes them. Keep such output out with ignore rules or
 [`captureExclude`](#what-capture-leaves-out). See [command effects](command-effects.md).
 
 Effects on one handle serialize through result validation, snapshot capture, and checkpoint save. An
-effect adds a snapshot pin when its captured tree differs from the handle's base, so once one effect
-has changed the tree, every later effect adds one, even a command that edits nothing. Before each
-live attempt the cache resets to its latest completed snapshot and cleans untracked files; ignored
-caches such as `node_modules` remain between the effects of one execution. Missing directories
-rebuild from the saved commit, without ignored files. A failed write cannot become the next effect's
-baseline. The checkout is still a cache: when an execution suspends, fails or is interrupted, the
-default `keep: 'failed'` (and `'none'`) removes each cache whose last effect completed. A resume
-then rebuilds the checkout from the saved snapshot while completed effects replay without running,
-so an earlier effect that installed ignored dependencies does not provision the rebuilt checkout;
+effect adds a snapshot pin when its captured tree differs from the handle's base, so while the tree
+differs from the base, every effect adds one, even a command that edits nothing. Before each live
+attempt the cache resets to its latest completed snapshot and cleans untracked files; ignored caches
+such as `node_modules` remain between the effects of one execution. Missing directories rebuild from
+the saved commit, without ignored files. A failed write cannot become the next effect's baseline.
+The checkout is still a cache: when an execution suspends, fails or is interrupted, the default
+`keep: 'failed'` (and `'none'`) removes each cache whose last effect completed. A resume then
+rebuilds the checkout from the saved snapshot while completed effects replay without running, so an
+earlier effect that installed ignored dependencies does not provision the rebuilt checkout;
 [provision in the effect that needs it](#provision-from-run-input). Local `StepContext.cwd` is the
 mapped execution directory; the handle's `path` is the repository root. Write through managed
 effects, not body code using `handle.path`: body code reruns and bypasses serialization.

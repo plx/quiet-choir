@@ -26,8 +26,8 @@ export interface WorktreeChange {
    */
   readonly base: string;
   /**
-   * Snapshot commit, or null when the tree equals base; on a handle that earlier effects changed, a
-   * call that changed nothing still gets a new snapshot.
+   * Snapshot commit, or null when the tree equals base; on a handle whose tree differs from its
+   * base, a call that changed nothing still gets a new snapshot.
    */
   readonly commit: string | null;
   /**
