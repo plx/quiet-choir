@@ -20,9 +20,9 @@ arguments or shell source: command descriptions are recorded and visible in insp
 default, only exit 0 succeeds. Non-ok exits throw `ExecError`; attempt history preserves the exit
 code, signal, classification, and the last 1024 characters of each output stream. `ctx.exec.json`
 parses stdout with its required Zod schema and checkpoints that value instead of raw output.
-Truncated output fails with kind `output-limit`. Stdout that is not JSON after an accepted nonzero
-exit (in `okExitCodes`, or `'any'`) fails with kind `process`, because the command failed without a
-body; any other invalid JSON or schema mismatch fails with kind `schema`.
+Truncated JSON output fails with kind `output-limit`. Stdout that is not JSON after an accepted
+nonzero exit (in `okExitCodes`, or `'any'`) fails with kind `process`, because the command failed
+without a body; any other invalid JSON or schema mismatch fails with kind `schema`.
 
 A `try/catch` around a command is not a durable decision: resume runs the command again and can take
 the other branch. To branch on a failure, pass `onError: 'return'`, as every effect that can fail
@@ -55,10 +55,12 @@ handle, an accepted exit advances the handle's snapshot with what the command wr
 
 Commands default to a five-minute deadline and 1 MiB **per stream**. Plain commands continue after
 output overflow, retaining the first and last half of each stream's byte cap. No separator is
-inserted; inspect `truncated`. JSON commands terminate on overflow. POSIX adapters own the process
-group, reap same-group descendants after exit, and bound inherited-pipe draining. A child that
-escapes into a separate session/group is outside that ownership, as with native agents. Windows
-process-tree semantics are weaker; filesystem durability uses the existing local POSIX contract.
+inserted; inspect `truncated`. Overflow alone never fails a plain command: it completes with its
+real exit status, so judge a check by `code` and report `truncated` separately. JSON commands
+terminate on overflow. POSIX adapters own the process group, reap same-group descendants after exit,
+and bound inherited-pipe draining. A child that escapes into a separate session/group is outside
+that ownership, as with native agents. Windows process-tree semantics are weaker; filesystem
+durability uses the existing local POSIX contract.
 
 Identity covers the command, canonical cwd, hash of the explicit environment overlay, stdin digest,
 `inheritEnv`, `scrubEnv` when it is enabled, accepted exit codes, output schema/mode, and `onError`
