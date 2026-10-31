@@ -24,4 +24,6 @@ Address every gap: with the new evidence where a hunt found some, and as an open
 did not.
 
 {% endif %}
+{% include "_fragments/Evidence.md" +%}
+
 {% include "_fragments/Sources.md" %}

@@ -1,13 +1,14 @@
 // refactor-campaign: control flow only. Survey and rank, then pin every chosen target with a
-// characterization net that code proves green on the current code (a settled map). Report-only
-// integrates the nets into a run-owned ref. With apply, a human approves the exact goal and plan,
-// refactors run one at a time behind every net, code discards any that touches a net, turns a net
-// or verify command red or that the reviewer judges behavioral, and publishes after a final
-// verification only onto the checkout the run started from.
+// characterization net that code proves green on the current code (a settled map), integrate the
+// nets into a run-owned commit and run the verify commands on it. Report-only stops there. With
+// apply, a human approves the exact goal and plan, refactors run one at a time behind every net,
+// each on the last kept result, and code discards any that touches a net, turns a net or verify
+// command red or that the reviewer judges behavioral. Code verifies the integration of the nets
+// and the kept refactors and publishes it only onto the checkout the run started from.
 import { defineWorkflow, type WorktreeChange } from 'quiet-choir';
 import * as std from 'quiet-choir/std';
 import { RankingFor, RefactorInput, RefactorOutput, Survey } from '../contracts.js';
-import { assertClean, baseCommit, netArgv, passed, stillAt, verify } from '../lib/checks.js';
+import { assertClean, baseCommit, netArgv, passed, stillAt, verifyAt } from '../lib/checks.js';
 import {
   choose,
   planDigest,
@@ -48,9 +49,11 @@ export default defineWorkflow({
       skipped: [],
       failedNets: 0,
       failedCalls: 0,
+      truncatedRepairFiles: 0,
       netsCommit: null,
       approvedDigest: null,
       commit: null,
+      baseline: [],
       verification: [],
     };
     if (!targets.length) return finish({ ...report, status: 'no-targets', deferred: [] });
@@ -65,7 +68,7 @@ export default defineWorkflow({
     const pinned = await ctx.map(
       'nets',
       chosen,
-      { concurrency: 3, onError: 'return', version: 'pin-net/2' },
+      { concurrency: 3, onError: 'return', version: 'pin-net/3' },
       (target) =>
         pinNet(ctx, {
           team: { writer: ctx.roster.NetWriter },
@@ -75,8 +78,8 @@ export default defineWorkflow({
           rounds: input.netRounds,
         }),
     );
-    const { green, skipped, failedNets } = settleNets(chosen, pinned);
-    const result = { ...report, deferred, skipped, failedNets };
+    const { green, skipped, ...counts } = settleNets(chosen, pinned);
+    const result = { ...report, deferred, skipped, ...counts };
     if (!green.length) return finish({ ...result, status: 'no-nets' });
     const nets = await ctx.merge(
       'integrate-nets',
@@ -85,7 +88,15 @@ export default defineWorkflow({
     );
     const plan = green.map(planned);
     const pinnedOnly = (why: string) => plan.map((entry) => ({ ...entry, why }));
-    const withNets = { ...result, netsCommit: nets.commit };
+    // The verify commands must pass on the nets alone, so that a red one later is a refactor's.
+    const baseline = await verifyAt(ctx, 'baseline', nets.commit, input.verifyCommands);
+    const withNets = { ...result, netsCommit: nets.commit, baseline };
+    if (!passed(baseline))
+      return finish({
+        ...withNets,
+        status: 'baseline-red',
+        netOnly: pinnedOnly('the verify commands fail on the nets commit'),
+      });
     if (!input.apply)
       return finish({
         ...withNets,
@@ -100,7 +111,7 @@ export default defineWorkflow({
       title: 'Refactors',
       prompt:
         'Refactor these targets behind their green nets, publishing only if every check passes?',
-      subject: { ...approved, digest: approvedDigest, nets: nets.commit },
+      subject: { ...approved, digest: approvedDigest, nets: nets.commit, baseline },
       details: preview(text),
     });
     if (!approval.approved)
@@ -142,17 +153,21 @@ export default defineWorkflow({
         netOnly.push({ ...planned(net), why: outcome.why });
       }
     }
-    const tree = await ctx.worktree('verification-tree', { base: { commit: current } });
-    const verification = await verify(ctx, tree, [
+    // The gate runs on exactly what the checkout would receive: the nets and the kept refactors.
+    // ctx.merge integrates onto the checkout's HEAD of the moment, so after a concurrent commit
+    // this integration holds that commit too, and stillAt below refuses to publish it.
+    const changes = [...green.map((net) => net.change), ...kept];
+    const integrated = await ctx.merge('integrate', changes, { onConflict: 'fail' });
+    const verification = await verifyAt(ctx, 'verification', integrated.commit, [
       ...green.map((net) => netArgv(input.testCommand, net.netFile)),
       ...input.verifyCommands,
     ]);
     const done = { ...withNets, approvedDigest, refactored, netOnly, failedCalls, verification };
-    if (!passed(verification))
-      return finish({ ...done, status: 'verification-failed', commit: current });
+    const unpublished = { ...done, commit: integrated.commit };
+    if (!passed(verification)) return finish({ ...unpublished, status: 'verification-failed' });
     if (!(await stillAt(ctx, 'head', base)))
-      return finish({ ...done, status: 'checkout-moved', commit: current });
-    const published = await ctx.merge('publish', [...green.map((net) => net.change), ...kept], {
+      return finish({ ...unpublished, status: 'checkout-moved' });
+    const published = await ctx.merge('publish', changes, {
       target: 'checkout',
       onConflict: 'fail',
     });

@@ -65,7 +65,7 @@ A conditional-go needs a condition that each one is checked before shipping.
 {% if rule == 'hard-block' %}
 Make every condition specific and checkable. Return the decision, the conditions and the
 rationale.
-{% else %}
+{%- else %}
 Make every condition specific and checkable; a conditional-go needs at least one. Return the
 decision, the conditions and the rationale.
-{% endif %}
+{%- endif %}

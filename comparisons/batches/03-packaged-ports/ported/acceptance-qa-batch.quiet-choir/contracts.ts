@@ -11,6 +11,10 @@ export const Argv = z.tuple([z.string().min(1)]).rest(z.string());
  */
 export const FailExit = 3;
 
+/** The most criteria one ticket may have, and the most tickets one ingest transcribes. */
+export const MaxCriteria = 20;
+export const MaxTranscribed = 100;
+
 export const Ticket = z.object({
   id: z.string().min(1).max(80).describe('The backlog ID, or T1, T2 and so on when it has none'),
   title: z.string().min(1).max(200),
@@ -18,18 +22,18 @@ export const Ticket = z.object({
   acceptanceCriteria: z
     .array(z.string().min(1).max(1000))
     .min(1)
-    .max(20)
+    .max(MaxCriteria)
     .describe('Each criterion exactly as the backlog writes it'),
 });
 export type Ticket = z.infer<typeof Ticket>;
 export const Skipped = z.object({ id: z.string().min(1), reason: z.string().min(1) });
 export type Skipped = z.infer<typeof Skipped>;
 export const Backlog = z.object({
-  tickets: z.array(Ticket).max(100),
+  tickets: z.array(Ticket).max(MaxTranscribed),
   skipped: z
     .array(Skipped)
     .max(1000)
-    .describe('Tickets with no checkable criteria or past the hundredth, and why'),
+    .describe('Tickets with no checkable criteria, too many, or past the limit, and why'),
   runContext: z.string().min(1).describe('How a probe program can exercise this project'),
 });
 
@@ -72,18 +76,22 @@ export const AttacksFor = (max: number) =>
 export type Attacks = z.infer<ReturnType<typeof AttacksFor>>;
 export type Attack = Attacks['attacks'][number];
 
-/** What code observed when it ran one probe in its own pinned checkout. */
+/** What code observed when it prepared one pinned checkout and ran one probe in it. */
 export const Run = z.object({
-  code: z.number().int().nullable(),
+  code: z.number().int().nullable().describe("The probe's exit code; null when it gave none"),
   signal: z.string().nullable(),
   failure: z
-    .object({ kind: z.string(), message: z.string() })
+    .object({
+      stage: z.enum(['prepare', 'probe']),
+      kind: z.string(),
+      message: z.string(),
+    })
     .nullable()
     .describe(
-      'Set when the probe gave no exit code: the settled error kind (timeout, or process for a signal or a command that could not start) and its message',
+      'Set when a prepare command failed (the probe then never ran) or the probe gave no exit code: the settled error kind (timeout, or process for a nonzero prepare exit, a signal or a command that could not start) and its message',
     ),
-  stdout: z.string().describe('The last 1000 characters'),
-  stderr: z.string().describe('The last 1000 characters'),
+  stdout: z.string().describe("The last 1000 characters of the probe's, or the failed prepare's"),
+  stderr: z.string().describe("The last 1000 characters of the probe's, or the failed prepare's"),
 });
 export type Run = z.infer<typeof Run>;
 export const CriterionStatus = z.enum([
@@ -122,19 +130,46 @@ export const Graded = z.object({
 });
 export type Graded = z.infer<typeof Graded>;
 
+/** An environment variable name a probe may receive; the QUIET_CHOIR_ prefix is the runtime's. */
+const EnvName = z.string().regex(/^(?!QUIET_CHOIR_)[A-Za-z_][A-Za-z0-9_]*$/u);
+
 export const AcceptanceInput = z.object({
   tickets: z
     .string()
     .min(1)
-    .describe('A backlog file path under the workflow directory, or the ticket text itself'),
+    .describe(
+      'The backlog text itself (any text with a line break, or JSON starting with { or [), else a backlog file path under the workflow directory',
+    ),
   scope: z.string().min(1).default('.').describe('Where the implementation lives'),
   probeCommand: Argv.describe(
     'Operator-selected argv that runs one probe program from stdin, e.g. ["node", "--input-type=module"]',
   ),
+  prepare: z
+    .array(Argv)
+    .max(8)
+    .default([])
+    .describe(
+      "Operator-selected argvs run in order in every probe's fresh checkout before its probe, with your full environment, e.g. [['npm', 'ci']]",
+    ),
+  probeEnv: z
+    .array(EnvName)
+    .max(64)
+    .default(['PATH', 'HOME', 'LANG', 'TMPDIR'])
+    .describe(
+      'The only variables a probe receives from your environment (by name; their values never enter step identity)',
+    ),
   maxTickets: z.number().int().min(1).max(30).default(8),
   maxAttacks: z.number().int().min(1).max(8).default(4).describe('Attack probes per ticket'),
   probeTimeoutMs: z.number().int().min(1000).max(600_000).default(60_000),
+  prepareTimeoutMs: z
+    .number()
+    .int()
+    .min(1000)
+    .max(1_800_000)
+    .default(300_000)
+    .describe('Per prepare command'),
 });
+export type AcceptanceInput = z.infer<typeof AcceptanceInput>;
 
 export const AcceptanceOutput = z.object({
   status: z.enum(['refused', 'empty', 'declined', 'degraded', 'limited', 'complete']),
@@ -150,10 +185,14 @@ export const AcceptanceOutput = z.object({
     .int()
     .nonnegative()
     .describe(
-      `Criterion and attack runs that gave no verdict: an exit other than 0 or ${FailExit}, a timeout, a signal, or a command that could not start`,
+      `Criterion and attack runs that gave no verdict: a failed prepare command, an exit other than 0 or ${FailExit}, a timeout, a signal, or a command that could not start`,
     ),
   deferred: z.array(z.object({ id: z.string(), title: z.string() })),
-  skipped: z.array(Skipped).describe('Tickets the ingester found no checkable criteria for'),
+  skipped: z
+    .array(Skipped)
+    .describe(
+      'Tickets the ingester skipped, with its reason; unclaimed lists any backlog items under them',
+    ),
   rejected: z
     .array(Skipped)
     .describe(
@@ -162,7 +201,7 @@ export const AcceptanceOutput = z.object({
   unclaimed: z
     .array(z.object({ ticket: z.string().nullable(), item: z.string() }))
     .describe(
-      'Backlog list items no transcribed criterion copied: under a checked ticket, or under no ticket the ingester named',
+      'Backlog list items no transcribed criterion copied: under a checked or skipped ticket, or under no ticket the ingester named',
     ),
   probeDigest: Digest.nullable(),
   attackDigest: Digest.nullable(),

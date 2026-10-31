@@ -1,7 +1,8 @@
-// release-gate: control flow only. Code pins the range on a checkout that is exactly HEAD and runs
-// the operator's tests (the tests verdict) and evidence commands there; settled maps assess five
-// dimensions and confirm each reported blocker, each reader in its own unchanged checkout of the
-// pinned commit, and the code-owned gate rule bounds what the gatekeeper may decide.
+// release-gate: control flow only. Code pins the range on a checkout that is exactly HEAD, runs
+// the operator's tests (the tests verdict) and evidence commands there, and refuses if they moved
+// HEAD or rewrote a tracked file; settled maps assess five dimensions and confirm each reported
+// blocker, each reader in its own unchanged checkout of the pinned commit, and the code-owned gate
+// rule bounds what the gatekeeper may decide.
 import { defineWorkflow } from 'quiet-choir';
 import {
   Assessed,
@@ -12,15 +13,16 @@ import {
   ReleaseGateOutput,
 } from '../contracts.js';
 import { forDimension, gatherEvidence, runTests } from '../lib/checks.js';
-import { dirt, gitWindow, rangeLog, rangePatch } from '../lib/git.js';
+import { dirt, gitWindow, headOf, rangeLog, rangePatch } from '../lib/git.js';
 import {
   assessedRow,
   changedByCommands,
   confirm,
+  excerpts,
   fallback,
   gate,
   groups,
-  head,
+  movedByCommands,
   notHead,
   ran,
   refused,
@@ -64,23 +66,36 @@ export default defineWorkflow({
     const span = `${window.since}..HEAD`;
     if (!manifest.length) return refused(`Nothing ships: ${span} has no commits.`, blockOn, window);
     ctx.phase('Assess');
-    const log = head(await rangeLog(ctx, start, end), input.maxPatchChars);
-    const patch = head(await rangePatch(ctx, start, end), input.maxPatchChars);
-    const range = { span, count: manifest.length, log, patch };
+    const { log, patch } = excerpts(
+      await rangeLog(ctx, start, end),
+      await rangePatch(ctx, start, end),
+      input.maxRangeChars,
+    );
     const tests = await runTests(ctx, input.testCommands, input.commandTimeoutMs);
+    const tested = tests.some((check) => check.verdict !== 'not-run');
+    const range = { span, count: manifest.length, log, patch, tested };
     const evidence = await gatherEvidence(ctx, input.evidenceCommands, input.commandTimeoutMs);
-    // A tracked file a command rewrote means later commands did not run on the gated tree.
-    // Untracked artifacts (coverage, caches) are allowed; the pinned readers never see them.
+    // A command that moved HEAD or rewrote a tracked file means later commands, and the verdicts,
+    // may not describe the gated tree. Untracked artifacts (coverage, caches) are allowed; the
+    // pinned readers never see them.
+    const commands = ran(tests, evidence);
+    const moved = await headOf(ctx, 'head-after-commands');
+    if (moved.commit !== end || moved.ref !== window.ref)
+      return refused(
+        movedByCommands({ commit: end, ref: window.ref }, moved),
+        blockOn,
+        window,
+        commands,
+      );
     const after = await dirt(ctx, 'clean-after-commands', false);
-    if (after.length)
-      return refused(changedByCommands(after), blockOn, window, ran(tests, evidence));
+    if (after.length) return refused(changedByCommands(after), blockOn, window, commands);
     // Items carry each dimension's command output, so the settled fingerprint covers it;
     // `version` names the prompt and schema, which the fingerprint does not show.
     const items = Assessed.options.map((dimension) => forDimension(evidence, dimension));
     const assessed = await ctx.map(
       'dimensions',
       items,
-      { concurrency: 3, onError: 'return', key: (item) => item.dimension, version: 'assess/3' },
+      { concurrency: 3, onError: 'return', key: (item) => item.dimension, version: 'assess/4' },
       async (item) =>
         unchanged(
           await ctx.roster.Assessor.object('assess', {
@@ -107,7 +122,7 @@ export default defineWorkflow({
         evidence: why,
         findings,
       })),
-      { concurrency: 3, onError: 'return', key: (item) => item.dimension, version: 'confirm/3' },
+      { concurrency: 3, onError: 'return', key: (item) => item.dimension, version: 'confirm/4' },
       async (item) =>
         unchanged(
           await ctx.roster.Confirmer.object('confirm', {

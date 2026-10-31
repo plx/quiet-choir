@@ -1,5 +1,5 @@
-// Pure rules: prompt excerpts, the refusal reasons, the read-only receipt check, how a command
-// ended, the dimension rows, the code-owned gate rule (which decisions the evidence allows), the
+// Pure rules: the prompt excerpts and their budget, the refusal reasons, the read-only receipt
+// check, how a command ended, the dimension rows, the code-owned gate rule (which decisions the evidence allows), the
 // fallback when the gatekeeper fails, and the status.
 import type { MapStepError, Settled, WorktreeChange, z } from 'quiet-choir';
 import type {
@@ -23,6 +23,15 @@ export function head(text: string, max: number): Excerpt {
   return { text: whole.slice(0, max), chars: whole.length, clipped: whole.length > max };
 }
 
+/**
+ * The range's log and patch excerpts within one budget of `max` characters: the log takes at most
+ * a quarter of it and the patch the rest, so no reader prompt carries more than `max` of them.
+ */
+export function excerpts(log: string, patch: string, max: number) {
+  const logged = head(log, Math.floor(max / 4));
+  return { log: logged, patch: head(patch, max - logged.text.length) };
+}
+
 /** The last `max` characters: a command's verdict and its failures are at the end. */
 export function tail(text: string, max: number): Excerpt {
   const whole = text.trimEnd();
@@ -41,7 +50,17 @@ const listed = (lines: readonly string[]) =>
 export const notHead = (lines: readonly string[]) =>
   `The checkout differs from HEAD (${listed(lines)}); the gate runs the operator's commands on HEAD's tree only, so commit, stash or ignore these first.`;
 
-/** Why the gate stops after the operator's commands. */
+/** Where HEAD is: its commit and the ref it is on (`HEAD` when detached). */
+interface Head {
+  readonly commit: string;
+  readonly ref: string;
+}
+
+/** Why the gate stops when a command moved HEAD: its verdict may describe another commit. */
+export const movedByCommands = (before: Head, after: Head) =>
+  `A test or evidence command moved HEAD from ${before.ref} at ${before.commit} to ${after.ref} at ${after.commit}; the gate runs the operator's commands on the gated commit only.`;
+
+/** Why the gate stops when a command rewrote a tracked file. */
 export const changedByCommands = (lines: readonly string[]) =>
   `A test or evidence command changed tracked files (${listed(lines)}).`;
 
@@ -172,7 +191,8 @@ export const assessedRow = (
 
 /**
  * Apply the confirmers' verdicts to the flagged rows. A downgrade becomes a concern or a pass; a
- * confirmer that failed leaves its blocker standing, unconfirmed: a gate fails closed.
+ * confirmer that failed leaves its blocker standing, unconfirmed, with the cause as its reasoning:
+ * a gate fails closed.
  */
 export function confirm(
   rows: readonly Row[],
@@ -183,7 +203,12 @@ export function confirm(
     const index = flagged.indexOf(current);
     if (index === -1) return current;
     const result = results[index];
-    if (!result?.ok) return { ...current, confirmation: 'unconfirmed' };
+    if (!result?.ok)
+      return {
+        ...current,
+        confirmation: 'unconfirmed',
+        reasoning: `The confirmer failed (${result ? cause(result.error) : 'missing'}), so the blocker stands.`,
+      };
     const { verdict, reasoning } = result.value;
     const status = verdict === 'confirmed' ? 'blocker' : verdict === 'concern' ? 'concern' : 'pass';
     return { ...current, status, confirmation: verdict, reasoning };

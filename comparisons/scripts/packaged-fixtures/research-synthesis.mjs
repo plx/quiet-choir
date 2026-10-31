@@ -4,9 +4,10 @@
 // web reading is not useful. The draft cites a key no source has, which the critic's prompt
 // reports; the critic returns four gaps. Two web hunts find a new source and reread a known one,
 // a local hunt in the snapshot comes back empty, and the fourth gap is reported unhunted. The
-// revision cites every source.
+// revision cites every source. The modes fail one member at a time, run the other two depths,
+// change a snapshot, and run with a context outside any Git repository.
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { git, leaf, writeFiles } from './_support.mjs';
 
@@ -54,6 +55,12 @@ const ranked = {
     lead('https://GitHub.com/xlib/xlib/issues/42/', 'issue-thread', 'primary', 'Same'),
   ],
 };
+/** The depth case: sixteen distinct leads, the even ones primary and the odd ones secondary. */
+const many = Array.from({ length: 16 }, (_, n) =>
+  lead(`https://many.example/${String(n)}`, 'writeup', n % 2 ? 'secondary' : 'primary', 'More'),
+);
+const spread = { web: many.slice(0, 6), source: many.slice(6, 11), practitioners: many.slice(11) };
+const refs = (numbers) => numbers.map((n) => `https://many.example/${String(n)}`);
 const finding = (claim) => ({ claim, support: 'Section 1', caveat: null });
 const readings = {
   'https://xlib.dev/docs': [finding('Xlib parses JSON5'), finding('Xlib needs Node 20')],
@@ -95,6 +102,13 @@ const revisions = {
     'Adopt Xlib [S1][S2]: it is faster [S4], and our parser is small [S3]. Its call sites are unknown.',
   'failed-hunt': 'Adopt Xlib [S1][S2]; our parser is small [S3]. Node 18 is unsupported [S1].',
 };
+/** The sweep leads each mode's scouts return. */
+const leadsFor = (mode) =>
+  mode === 'no-context' || mode === 'critic-fails'
+    ? ranked
+    : mode === 'standard-depth' || mode === 'deep-depth'
+      ? spread
+      : sweeps;
 const modalityOf = (prompt) =>
   prompt.includes('Your modality is web search')
     ? 'web'
@@ -106,58 +120,78 @@ const modalityOf = (prompt) =>
 const refOf = (prompt) => prompt.match(/^Source: (\S+) \(/mu)[1];
 const gapOf = (prompt) => prompt.match(/^Gap: (.+)$/mu)[1];
 const normalize = (ref) => ref.toLowerCase().replace(/\/$/u, '');
+const sweep = (id) => /^sweeps\/[a-z]+\/sweep$/u.test(id);
+const read = (id) => /^reads\/\d+\/read$/u.test(id);
+const hunt = (id) => /^hunts\/\d+\/hunt$/u.test(id);
 
 export const input = () => ({ question, context, depth: 'quick' });
 
 export function reply(request, env, mode) {
   const id = request.call.stepId;
   const prompt = request.options.prompt;
-  if (/^sweeps\/\d+\/sweep$/u.test(id))
-    return {
-      leads:
-        mode === 'no-leads' ? [] : (mode === 'no-context' ? ranked : sweeps)[modalityOf(prompt)],
-    };
-  if (/^reads\/\d+\/read$/u.test(id)) {
+  if (sweep(id)) {
+    // The sweeps map is keyed by modality, and each scout gets its own modality's charter.
+    assert.equal(modalityOf(prompt), id.split('/')[1]);
+    return { leads: mode === 'no-leads' ? [] : leadsFor(mode)[modalityOf(prompt)] };
+  }
+  if (read(id)) {
     const ref = refOf(prompt);
     // The local reader reports what its snapshot holds, so a read of the dirty checkout shows.
+    if (ref === 'target.mjs' && mode === 'snapshot-changed')
+      writeFileSync(join(request.cwd, 'notes.md'), 'A reader should not write\n');
     const findings =
       mode === 'no-findings'
         ? []
         : ref === 'target.mjs'
           ? [finding(`Our parser is ${readFileSync(join(request.cwd, ref), 'utf8').trim()}`)]
-          : mode === 'no-context' && ref.endsWith('/42')
-            ? [finding('Large files crash Xlib 2')]
-            : readings[normalize(ref)];
+          : ref.startsWith('https://many.example/')
+            ? [finding(`${ref} agrees`)]
+            : leadsFor(mode) === ranked && ref.endsWith('/42')
+              ? [finding('Large files crash Xlib 2')]
+              : readings[normalize(ref)];
     return { useful: findings.length > 0, findings, contradicts: null };
   }
   if (id === 'synthesize') return drafts[mode] ?? 'Adopt Xlib cautiously [S1][S2].';
-  if (id === 'critic') return { gaps: mode === 'normal' || mode === 'failed-hunt' ? gaps : [] };
-  if (/^hunts\/\d+\/hunt$/u.test(id)) return hunted[gapOf(prompt)];
+  if (id === 'critic')
+    return {
+      gaps:
+        mode === 'normal' || mode === 'failed-hunt'
+          ? gaps
+          : mode === 'no-repository'
+            ? [gap('Call sites unknown', 'Find a migration guide', 'local')]
+            : [],
+    };
+  if (hunt(id)) return hunted[gapOf(prompt)];
   if (id === 'resynthesize') return revisions[mode];
   throw new Error(`Unhandled research-synthesis step ${id} (${mode})`);
 }
 
+/** Each failure mode fails one kind of member, so each status and confidence rule is seen alone. */
 export function fail(request, mode) {
   const id = request.call.stepId;
   const prompt = request.options.prompt;
-  if (mode === 'failed-hunt')
-    return /^hunts\/\d+\/hunt$/u.test(id) && gapOf(prompt) === 'No benchmark';
-  if (mode !== 'failures') return false;
-  return (
-    id === 'critic' ||
-    (/^sweeps\/\d+\/sweep$/u.test(id) && modalityOf(prompt) === 'web') ||
-    (/^reads\/\d+\/read$/u.test(id) && refOf(prompt).endsWith('/releases'))
-  );
+  if (mode === 'failed-hunt') return hunt(id) && gapOf(prompt) === 'No benchmark';
+  if (mode === 'all-sweeps-fail') return sweep(id);
+  if (mode === 'all-reads-fail') return read(id);
+  if (mode === 'sweep-fails') return id === 'sweeps/web/sweep';
+  if (mode === 'read-fails') return read(id) && refOf(prompt).endsWith('/releases');
+  if (mode === 'critic-fails') return id === 'critic';
+  return false;
 }
 
 const fileTools = ['Read', 'Grep', 'Glob'];
 const webTools = ['WebSearch', 'WebFetch'];
+/** The run's Git pins: each snapshot call's base at HEAD, and the capture of one that changed. */
+const pins = (env) =>
+  git(env.cwd, 'for-each-ref', '--format=%(objectname)', 'refs/quiet-choir')
+    .split('\n')
+    .filter(Boolean);
 /**
  * The checkout keeps its uncommitted edit and its HEAD. Every call is a web role (web tools only,
  * in the checkout), a local role (file tools only, in a snapshot whose pin is the head), the
  * tool-less synthesizer, or the Codex critic; no call holds both file and web tools.
  */
-function readOnlyRun(env, calls) {
+function readOnlyRun(env, calls, { changed = 0, cwd = env.cwd } = {}) {
   assert.equal(git(env.cwd, 'status', '--porcelain', '--untracked-files=all'), 'M target.mjs');
   assert.equal(git(env.cwd, 'rev-parse', 'HEAD'), env.head);
   let snapshots = 0;
@@ -167,21 +201,23 @@ function readOnlyRun(env, calls) {
       assert.equal(call.harness, 'codex');
       assert.equal(call.options.sandbox, 'read-only');
       assert.equal(call.options.effort, 'high');
-      assert.equal(call.cwd, env.cwd);
+      assert.equal(call.cwd, cwd);
     } else if (id === 'synthesize' || id === 'resynthesize') {
       assert.deepEqual(call.options.tools, []);
-      assert.equal(call.cwd, env.cwd);
+      assert.equal(call.cwd, cwd);
     } else if (call.options.tools.includes('Read')) {
       assert.deepEqual(call.options.tools, fileTools);
       assert.ok(call.cwd.startsWith(env.worktrees.root), `${id} ran outside a snapshot`);
       snapshots += 1;
     } else {
       assert.deepEqual(call.options.tools, webTools, id);
-      assert.equal(call.cwd, env.cwd);
+      assert.equal(call.cwd, cwd);
     }
   }
-  const pins = git(env.cwd, 'for-each-ref', '--format=%(objectname)', 'refs/quiet-choir');
-  assert.deepEqual(pins.split('\n').filter(Boolean), Array(snapshots).fill(env.head));
+  if (cwd === env.cwd) {
+    assert.equal(pins(env).filter((pin) => pin === env.head).length, snapshots);
+    assert.equal(pins(env).filter((pin) => pin !== env.head).length, changed);
+  }
   return snapshots;
 }
 const steps = (calls) => calls.map((call) => call.call.stepId).sort();
@@ -189,8 +225,26 @@ const steps = (calls) => calls.map((call) => call.call.stepId).sort();
 const index = (call) => Number(call.call.stepId.split('/')[1]);
 const ordered = (calls, name) =>
   calls.filter((call) => leaf(call.call.stepId) === name).sort((a, b) => index(a) - index(b));
+/** The sweeps map is keyed by modality, so its calls are listed in modality order. */
+const modalities = ['web', 'source', 'practitioners', 'local'];
+const sweepsOf = (calls) =>
+  calls
+    .filter((call) => sweep(call.call.stepId))
+    .sort(
+      (a, b) =>
+        modalities.indexOf(a.call.stepId.split('/')[1]) -
+        modalities.indexOf(b.call.stepId.split('/')[1]),
+    );
 /** A local role's call: it alone has the file tools. */
 const local = (call) => call.options.tools?.includes('Read') === true;
+const prompt = (calls, id) => calls.find((call) => call.call.stepId === id).options.prompt;
+/** The rendered list of known refs a hunt prompt gives, or [] when it gives none. */
+const knownOf = (text) =>
+  [
+    ...(text.split('already read')[1]?.split('Follow the instruction')[0] ?? '').matchAll(
+      /^- (.+)$/gmu,
+    ),
+  ].map((match) => match[1]);
 
 /** The checkout holds an uncommitted edit, which no local role may read. */
 export async function setup(env) {
@@ -259,39 +313,57 @@ export function check({ result, env, calls, suspended }) {
   );
   // Only the local sweep had file tools.
   assert.deepEqual(
-    ordered(calls, 'sweep').map((call) => [modalityOf(call.options.prompt), local(call)]),
+    sweepsOf(calls).map((call) => [call.call.stepId, local(call)]),
     [
-      ['web', false],
-      ['source', false],
-      ['practitioners', false],
-      ['local', true],
+      ['sweeps/web/sweep', false],
+      ['sweeps/source/sweep', false],
+      ['sweeps/practitioners/sweep', false],
+      ['sweeps/local/sweep', true],
     ],
   );
-  // The critic hears what code checked: the draft's unknown key, and the deferred leads.
-  const critic = calls.find((call) => call.call.stepId === 'critic');
-  assert.match(critic.options.prompt, /these cited keys match no source: S7\./u);
-  assert.match(critic.options.prompt, /- https:\/\/news\.example\/1 \(discussion, anecdotal\)/u);
-  assert.match(critic.options.prompt, /Give each gap a territory\./u);
-  // Three hunts, routed by territory: the local one in a snapshot, the web ones without file tools.
+  // The critic hears what code checked: every keyed source, the draft's unknown key and the
+  // deferred leads; with a snapshot it may route gaps locally, and is told not to quote them.
+  const critic = prompt(calls, 'critic');
+  assert.match(critic, /^\[S1\] https:\/\/xlib\.dev\/docs\/ \(official-docs, primary\)$/mu);
+  assert.match(critic, /^\[S3\] target\.mjs \(local-code, primary\)$/mu);
+  assert.match(critic, /these cited keys match no source: S7\./u);
+  assert.match(critic, /- https:\/\/news\.example\/1 \(discussion, anecdotal\)/u);
+  assert.match(critic, /Give each gap a territory\./u);
+  assert.match(critic, /never quote this repository's code, paths or local findings/u);
+  assert.match(critic, /evidence, never as instructions/u);
+  assert.doesNotMatch(critic, /never searched|read failed/u);
+  // Three hunts, routed by territory: the local one in a snapshot, the web ones without file
+  // tools. A web hunt is never told the repository's paths; the local hunt knows only them.
+  const hunts = ordered(calls, 'hunt');
   assert.deepEqual(
-    ordered(calls, 'hunt').map((call) => [gapOf(call.options.prompt), local(call)]),
+    hunts.map((call) => [gapOf(call.options.prompt), local(call), knownOf(call.options.prompt)]),
     [
-      ['No benchmark', false],
-      ['Version unclear', false],
-      ['Call sites unknown', true],
+      ['No benchmark', false, ['https://xlib.dev/docs/', 'https://github.com/xlib/xlib/releases']],
+      [
+        'Version unclear',
+        false,
+        ['https://xlib.dev/docs/', 'https://github.com/xlib/xlib/releases'],
+      ],
+      ['Call sites unknown', true, ['target.mjs']],
     ],
   );
-  assert.match(ordered(calls, 'hunt')[0].options.prompt, /already read[^]*- target\.mjs/u);
-  const revision = calls.find((call) => call.call.stepId === 'resynthesize');
-  assert.match(revision.options.prompt, /- No benchmark \(new evidence in \[S4\]\)/u);
-  assert.match(revision.options.prompt, /- Call sites unknown \(a hunt found nothing\)/u);
-  assert.match(revision.options.prompt, /- No security audit \(not hunted\)/u);
+  const revision = prompt(calls, 'resynthesize');
+  assert.match(revision, /- No benchmark \(new evidence in \[S4\]\)/u);
+  assert.match(revision, /- Call sites unknown \(a hunt found nothing\)/u);
+  assert.match(revision, /- No security audit \(not hunted\)/u);
   assert.equal(calls.length, 14);
   // The local sweep, the local read and the local hunt each ran in their own snapshot.
   assert.equal(readOnlyRun(env, calls), 3);
 }
 
 export const readOnly = 'Read-only: every role reads and the workflow writes nothing';
+
+/** A clean, adequately critiqued run but for the one failure a mode injects. */
+function cleanBut(output) {
+  assert.equal(output.answer.split('\n')[0], 'Adopt Xlib cautiously [S1][S2].');
+  assert.deepEqual(output.gaps, []);
+  assert.deepEqual(output.unknownCitations, []);
+}
 
 export const modes = [
   {
@@ -306,6 +378,7 @@ export const modes = [
       assert.equal(output.critic, 'adequate');
       assert.equal(output.confidence, 'high');
       assert.deepEqual(output.swept, ['web', 'source', 'practitioners']);
+      assert.deepEqual(output.unswept, []);
       assert.equal(output.localCommit, null);
       assert.equal(record.steps.head, undefined);
       assert.equal(output.leadsFound, 7);
@@ -327,19 +400,55 @@ export const modes = [
         output.sources.map((source) => source.credibility),
         ['primary', 'primary', 'primary', 'primary'],
       );
-      assert.deepEqual(output.gaps, []);
+      cleanBut(output);
       assert.ok(!steps(calls).some((id) => id === 'resynthesize' || id.startsWith('hunts/')));
-      assert.ok(output.answer.startsWith('Adopt Xlib cautiously [S1][S2].\n\nSources:\n'));
       // Uncited sources are reported but do not degrade an answer whose citations all resolve.
       assert.deepEqual(output.uncitedSources, ['S3', 'S4']);
-      assert.match(
-        calls.find((call) => call.call.stepId === 'critic').options.prompt,
-        /every hunt searches the web/u,
-      );
+      assert.match(prompt(calls, 'critic'), /every hunt searches the web/u);
       assert.equal(readOnlyRun(env, calls), 0);
     },
   },
   {
+    // The default depth reads eight: the eight primary leads, deferring the eight secondary ones.
+    mode: 'standard-depth',
+    input: () => ({ question }),
+    check({ result, env, calls }) {
+      const { output } = result;
+      assert.equal(output.status, 'answered');
+      assert.equal(output.leadsFound, 16);
+      assert.deepEqual(
+        ordered(calls, 'read').map((call) => refOf(call.options.prompt)),
+        refs([0, 2, 4, 6, 8, 10, 12, 14]),
+      );
+      assert.deepEqual(
+        output.deferred.map((deferred) => deferred.ref),
+        refs([1, 3, 5, 7, 9, 11, 13, 15]),
+      );
+      assert.equal(output.sources.length, 8);
+      assert.equal(readOnlyRun(env, calls), 0);
+    },
+  },
+  {
+    // Deep reads fourteen: the eight primary leads and the first six secondary ones.
+    mode: 'deep-depth',
+    input: () => ({ question, depth: 'deep' }),
+    check({ result, env, calls }) {
+      const { output } = result;
+      assert.equal(output.status, 'answered');
+      assert.deepEqual(
+        ordered(calls, 'read').map((call) => refOf(call.options.prompt)),
+        refs([0, 2, 4, 6, 8, 10, 12, 14, 1, 3, 5, 7, 9, 11]),
+      );
+      assert.deepEqual(
+        output.deferred.map((deferred) => deferred.ref),
+        refs([13, 15]),
+      );
+      assert.equal(output.sources.length, 14);
+      assert.equal(readOnlyRun(env, calls), 0);
+    },
+  },
+  {
+    // Every sweep answered with nothing: a clean empty result.
     mode: 'no-leads',
     check({ result, env, calls }) {
       const { output } = result;
@@ -348,16 +457,32 @@ export const modes = [
       assert.equal(output.confidence, 'none');
       assert.equal(output.critic, 'not-run');
       assert.equal(output.leadsFound, 0);
+      assert.deepEqual(output.unswept, []);
       assert.deepEqual(steps(calls), [
-        'sweeps/0/sweep',
-        'sweeps/1/sweep',
-        'sweeps/2/sweep',
-        'sweeps/3/sweep',
+        'sweeps/local/sweep',
+        'sweeps/practitioners/sweep',
+        'sweeps/source/sweep',
+        'sweeps/web/sweep',
       ]);
       assert.equal(readOnlyRun(env, calls), 1);
     },
   },
   {
+    // Every sweep failed: the run could not search, which is not the same as finding nothing.
+    mode: 'all-sweeps-fail',
+    check({ result, env, calls }) {
+      const { output } = result;
+      assert.equal(output.status, 'degraded');
+      assert.deepEqual(output.unswept, ['web', 'source', 'practitioners', 'local']);
+      assert.equal(output.answer, null);
+      assert.equal(output.confidence, 'none');
+      assert.equal(output.leadsFound, 0);
+      assert.equal(steps(calls).length, 4);
+      assert.equal(readOnlyRun(env, calls), 1);
+    },
+  },
+  {
+    // Every reading was not useful: a clean result with nothing to cite.
     mode: 'no-findings',
     check({ result, env, calls }) {
       const { output } = result;
@@ -374,26 +499,141 @@ export const modes = [
     },
   },
   {
-    // The web sweep, one reader and the critic fail; each is kept beside its item and counted.
-    mode: 'failures',
+    // Every read failed: nothing was read, which is not the same as reading nothing useful.
+    mode: 'all-reads-fail',
+    check({ result, env, calls }) {
+      const { output } = result;
+      assert.equal(output.status, 'degraded');
+      assert.equal(output.answer, null);
+      assert.equal(output.confidence, 'none');
+      assert.deepEqual(
+        output.unread.map((unread) => unread.outcome),
+        ['failed', 'failed', 'failed', 'failed'],
+      );
+      assert.ok(!steps(calls).includes('synthesize'));
+      assert.equal(readOnlyRun(env, calls), 2);
+    },
+  },
+  {
+    // Only the web sweep fails: its territory is reported to the critic and degrades the status,
+    // although every other member answered and the evidence alone would be high confidence.
+    mode: 'sweep-fails',
     check({ result, env, calls }) {
       const { output } = result;
       assert.equal(output.status, 'degraded');
       assert.deepEqual(output.unswept, ['web']);
-      assert.equal(output.critic, 'failed');
+      assert.deepEqual(output.unread, [
+        { ref: 'https://github.com/xlib/xlib/issues/42', outcome: 'not-useful' },
+      ]);
+      assert.equal(output.critic, 'adequate');
+      assert.equal(output.confidence, 'high');
+      cleanBut(output);
+      assert.match(
+        prompt(calls, 'critic'),
+        /never searched, because their sweep failed or could not run:\nweb\./u,
+      );
+      assert.equal(readOnlyRun(env, calls), 2);
+    },
+  },
+  {
+    // Only one read fails: it is reported to the critic and degrades the status.
+    mode: 'read-fails',
+    check({ result, env, calls }) {
+      const { output } = result;
+      assert.equal(output.status, 'degraded');
+      assert.deepEqual(output.unswept, []);
       assert.deepEqual(output.unread, [
         { ref: 'https://github.com/xlib/xlib/releases', outcome: 'failed' },
         { ref: 'https://github.com/xlib/xlib/issues/42', outcome: 'not-useful' },
       ]);
       assert.deepEqual(
         output.sources.map((source) => source.ref),
-        ['https://XLIB.dev/docs', 'target.mjs'],
+        ['https://xlib.dev/docs/', 'target.mjs'],
       );
-      assert.deepEqual(output.gaps, []);
+      assert.equal(output.critic, 'adequate');
       assert.equal(output.confidence, 'low');
-      assert.ok(output.answer.startsWith('Adopt Xlib cautiously [S1][S2].'));
-      assert.ok(!steps(calls).some((id) => id === 'resynthesize' || id.startsWith('hunts/')));
+      cleanBut(output);
+      assert.match(
+        prompt(calls, 'critic'),
+        /their read failed[^]*\n- https:\/\/github\.com\/xlib\/xlib\/releases \(source-code, primary\): Cadence\n/u,
+      );
       assert.equal(readOnlyRun(env, calls), 2);
+    },
+  },
+  {
+    // Only the critic fails, as on a machine without the Codex CLI: the draft stands, the status
+    // is degraded, and four primary sources are moderate, not high, confidence.
+    mode: 'critic-fails',
+    input: () => ({ question, depth: 'quick' }),
+    check({ result, env, calls }) {
+      const { output } = result;
+      assert.equal(output.status, 'degraded');
+      assert.equal(output.critic, 'failed');
+      assert.equal(output.confidence, 'moderate');
+      assert.deepEqual(output.unswept, []);
+      assert.ok(output.unread.every((unread) => unread.outcome !== 'failed'));
+      assert.deepEqual(
+        output.sources.map((source) => source.credibility),
+        ['primary', 'primary', 'primary', 'primary'],
+      );
+      cleanBut(output);
+      assert.ok(!steps(calls).some((id) => id === 'resynthesize' || id.startsWith('hunts/')));
+      assert.equal(readOnlyRun(env, calls), 0);
+    },
+  },
+  {
+    // The local reader writes a file in its snapshot: code refuses the reading, so the lead is
+    // recorded as a failed read, and the write stays in its pinned snapshot, out of the checkout.
+    mode: 'snapshot-changed',
+    check({ result, env, calls }) {
+      const { output } = result;
+      assert.equal(output.status, 'degraded');
+      assert.deepEqual(output.unread, [
+        { ref: 'https://github.com/xlib/xlib/issues/42', outcome: 'not-useful' },
+        { ref: 'target.mjs', outcome: 'failed' },
+      ]);
+      assert.deepEqual(
+        output.sources.map((source) => source.ref),
+        ['https://xlib.dev/docs/', 'https://github.com/xlib/xlib/releases'],
+      );
+      assert.equal(output.critic, 'adequate');
+      assert.match(prompt(calls, 'critic'), /their read failed[^]*\n- target\.mjs \(local-code/u);
+      const changed = pins(env).filter((pin) => pin !== env.head);
+      assert.equal(changed.length, 1);
+      assert.equal(git(env.cwd, 'show', `${changed[0]}:notes.md`), 'A reader should not write');
+      assert.equal(readOnlyRun(env, calls, { changed: 1 }), 2);
+    },
+  },
+  {
+    // A context outside any Git repository still grounds every prompt, but there is no commit to
+    // pin, so the local territory goes unsearched and the result says so.
+    mode: 'no-repository',
+    options(opts, env) {
+      env.plain = join(env.root, 'plain');
+      mkdirSync(env.plain);
+      return { ...opts, cwd: env.plain };
+    },
+    check({ result, env, calls, record }) {
+      const { output } = result;
+      assert.equal(output.status, 'degraded');
+      assert.deepEqual(output.swept, ['web', 'source', 'practitioners']);
+      assert.deepEqual(output.unswept, ['local']);
+      assert.equal(output.localCommit, null);
+      assert.equal(record.steps.head.status, 'settled-failed');
+      assert.ok(sweepsOf(calls).every((call) => call.options.prompt.includes(context)));
+      const critic = prompt(calls, 'critic');
+      assert.match(critic, /could not run:\nlocal\./u);
+      assert.match(critic, /No local hunt can run/u);
+      // The critic asked for a local hunt anyway: with nothing pinned it is a web hunt.
+      assert.equal(output.critic, 'gaps');
+      assert.deepEqual(
+        output.gaps.map((tracked) => [tracked.territory, tracked.hunt]),
+        [['web', 'empty']],
+      );
+      assert.deepEqual(ordered(calls, 'hunt')[0].options.tools, webTools);
+      assert.ok(!steps(calls).includes('resynthesize'));
+      assert.deepEqual(readdirSync(env.plain), []);
+      assert.equal(readOnlyRun(env, calls, { cwd: env.plain }), 0);
     },
   },
   {
@@ -418,8 +658,7 @@ export const modes = [
       assert.deepEqual(output.unknownCitations, []);
       assert.deepEqual(output.uncitedSources, []);
       assert.equal(output.confidence, 'low');
-      const revision = calls.find((call) => call.call.stepId === 'resynthesize');
-      assert.match(revision.options.prompt, /- No benchmark \(its hunt failed\)/u);
+      assert.match(prompt(calls, 'resynthesize'), /- No benchmark \(its hunt failed\)/u);
       assert.equal(readOnlyRun(env, calls), 3);
     },
   },
@@ -457,7 +696,4 @@ export const modes = [
 
 /** Deferred leads and unhunted gaps are caps the answered status does not show. */
 export const degraded = (output) =>
-  output.deferred.length > 0 ||
-  output.gaps.some((tracked) => tracked.hunt === 'unhunted') ||
-  output.unswept.length > 0 ||
-  output.unread.some((unread) => unread.outcome === 'failed');
+  output.deferred.length > 0 || output.gaps.some((tracked) => tracked.hunt === 'unhunted');

@@ -1,7 +1,7 @@
 // Data only. Every role reads; none edits or runs commands, so under --require-grants no grant
 // beyond read access is needed. Probes are code effects outside roster grants: they run with the
-// operator's privileges and environment, and the human approval of each agent-written list is the
-// only gate. The upstream's low-effort ingest is the Copyist tier, since it copies criteria
+// operator's privileges and the probeEnv variables, and the human approval of each agent-written
+// list is the only gate. The upstream's low-effort ingest is the Copyist tier, since it copies criteria
 // verbatim; its high-effort demonstrator and breaker are the Skeptic tier at high effort.
 import { defineRoster } from 'quiet-choir';
 import * as std from 'quiet-choir/std';

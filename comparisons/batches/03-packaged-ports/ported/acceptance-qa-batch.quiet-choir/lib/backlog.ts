@@ -1,8 +1,9 @@
 // Pure admission: which transcribed tickets are faithful to the backlog. Code splits the backlog
 // into whole units (Markdown list items without their marker or checkbox, other lines, JSON
 // strings), each owned by the ticket whose heading, title line or JSON object it sits under. A
-// criterion must equal a unit of its own ticket, and a list item that no criterion copied is
-// reported as unclaimed rather than silently left unchecked.
+// criterion must equal a unit of its own ticket (or, for a ticket that owns no text, a unit no
+// ticket owns), and a list item that no criterion copied, under a checked or skipped ticket or
+// under none, is reported as unclaimed rather than silently left unchecked.
 import type { Skipped, Ticket } from '../contracts.js';
 
 type Unit = { text: string; owner: string | null; item: boolean };
@@ -26,14 +27,26 @@ const shape = (id: string) =>
     'u',
   );
 
+/** What may follow the ID of a list item that titles a ticket: emphasis, a bracket, a dash. */
+const SEPARATOR = /^(?:[*_]+|\s*[\]):|\u2013\u2014-]|\s*$)/u;
+
 /**
  * The ticket a heading names (the first ID in it) or a title line starts with: a reported ID, null
- * for an ID of a reported ID's shape that nobody transcribed, undefined when there is none.
+ * for an ID of a reported ID's shape that nobody transcribed, undefined when there is none. A list
+ * item titles a ticket only when a separator follows the ID ("- QA-2: Export"), so a criterion that
+ * starts with another ticket's ID ("- QA-2 imports still work") stays a criterion.
  */
-function ticketIn(text: string, ids: string[], atStart: boolean): string | null | undefined {
+function ticketIn(
+  text: string,
+  ids: string[],
+  where: 'heading' | 'line' | 'item',
+): string | null | undefined {
   const at = (pattern: RegExp) => {
-    const index = pattern.exec(text)?.index;
-    return index === undefined || (atStart && index !== 0) ? undefined : index;
+    const match = pattern.exec(text);
+    if (!match) return undefined;
+    if (where === 'heading') return match.index;
+    if (match.index !== 0) return undefined;
+    return where === 'line' || SEPARATOR.test(text.slice(match[0].length)) ? 0 : undefined;
   };
   let first: { id: string; index: number } | undefined;
   for (const id of ids) {
@@ -64,7 +77,9 @@ function parseText(text: string, ids: string[], start: string | null, items: boo
   for (const line of text.split(/\r?\n/u)) {
     const heading = HEADING.exec(line);
     const marker = ITEM.exec(line);
-    const ticket = heading ? ticketIn(line, ids, false) : ticketIn(lead(line), ids, true);
+    const ticket = heading
+      ? ticketIn(line, ids, 'heading')
+      : ticketIn(lead(line), ids, marker ? 'item' : 'line');
     if (!line.trim() || heading || ticket !== undefined || marker) close();
     if (heading) {
       const level = heading[1]?.length ?? 1;
@@ -107,9 +122,10 @@ function parse(content: string, ids: string[]): Unit[] {
 
 /**
  * Admit, first ID wins, the tickets whose ID the backlog names (unless the ingester numbered it)
- * and whose every criterion is a whole unit under that ticket. Then list the items under an
- * admitted ticket that it did not copy, and the items under no named ticket that nothing copied;
- * items under a rejected or skipped ticket are already reported.
+ * and whose every criterion is a whole unit under that ticket, or under no ticket when the
+ * backlog ties no text to it. Then list the items under an admitted or skipped ticket that it did
+ * not copy, and the items under no named ticket that nothing copied; the items under a rejected
+ * ticket are reported by its rejection.
  */
 export function admit(tickets: Ticket[], skipped: Skipped[], content: string) {
   const named = [...tickets, ...skipped].map((ticket) => ticket.id);
@@ -118,11 +134,14 @@ export function admit(tickets: Ticket[], skipped: Skipped[], content: string) {
   const owners = new Set(units.map((unit) => unit.owner));
   const unfaithful = (ticket: Ticket): string | null => {
     if (!synthetic(ticket.id) && !ids.includes(ticket.id)) return 'Ticket ID not in the backlog';
+    const owner = owners.has(ticket.id) ? ticket.id : null;
     for (const criterion of ticket.acceptanceCriteria) {
       const matches = units.filter((unit) => unit.text === normalize(criterion));
       if (!matches.length) return `Criterion is not a whole backlog item or line: ${criterion}`;
-      if (owners.has(ticket.id) && !matches.some((unit) => unit.owner === ticket.id))
-        return `Criterion is not under ${ticket.id} in the backlog: ${criterion}`;
+      if (!matches.some((unit) => unit.owner === owner))
+        return owner === null
+          ? `Criterion belongs to another ticket in the backlog: ${criterion}`
+          : `Criterion is not under ${ticket.id} in the backlog: ${criterion}`;
     }
     return null;
   };
@@ -140,10 +159,13 @@ export function admit(tickets: Ticket[], skipped: Skipped[], content: string) {
   const copied = (list: Ticket[]) =>
     new Set(list.flatMap((ticket) => ticket.acceptanceCriteria.map(normalize)));
   const anywhere = copied(tickets);
+  // A skipped ticket copied nothing, so code cannot check the ingester's reason for skipping it.
+  const passed = new Set(skipped.map((ticket) => ticket.id).filter((id) => !seen.has(id)));
   const unclaimed = units.flatMap((unit): Unclaimed[] => {
     if (!unit.item) return [];
     if (unit.owner === null)
       return anywhere.has(unit.text) ? [] : [{ ticket: null, item: unit.text }];
+    if (passed.has(unit.owner)) return [{ ticket: unit.owner, item: unit.text }];
     const own = admitted.find((ticket) => ticket.id === unit.owner);
     return own && !copied([own]).has(unit.text) ? [{ ticket: own.id, item: unit.text }] : [];
   });

@@ -10,6 +10,16 @@ messages, a different evaluation order or side-effect order, changed defaults, e
 differently, altered exports or signatures, and floating-point or ordering differences. Answer
 structural false if any change could alter observable behavior, and name it in your reasoning.
 
+The refactor changed these files; the workflow checked that no net file is among them:
+{%- for file in files %}
+
+- {{ file }}
+{%- endfor +%}
+
+A weakened test hides a behavior change from the verification commands. Treat a change to an
+existing test, test fixture or test configuration as behavioral unless it is a mechanical follow-up
+of this refactoring, such as an updated import path or a renamed symbol.
+
 The net {{ netFile }} pins:
 {%- for behavior in behaviors %}
 

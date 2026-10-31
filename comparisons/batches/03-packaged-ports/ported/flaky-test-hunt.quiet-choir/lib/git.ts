@@ -1,19 +1,20 @@
 // Git facts as durable effects: the clean baseline, the history and CI-artifact evidence the
 // sweepers cannot gather without a shell, the tracked test-file screen and the stress residue.
-import type { WorkflowContext } from 'quiet-choir';
+import { z, type StepContext, type WorkflowContext } from 'quiet-choir';
 import * as std from 'quiet-choir/std';
-import { History, Sha } from '../contracts.js';
+import { Clean, History } from '../contracts.js';
 import { historyFacts, historyLimits, logFormat, withPatches } from './policy.js';
 
 /**
- * Require a clean checkout, at `expected` unless it is null, and return its HEAD. This is a local
- * step that throws, not a completed `git status` read: a completed read would replay its dirty
- * output on every resume, so cleaning the checkout and resuming could never pass.
+ * Require a clean checkout, at `expected` unless it is null, and return its HEAD with the working
+ * directory's prefix in the repository (worktree receipts are repository-relative). This is a
+ * local step that throws, not a completed `git status` read: a completed read would replay its
+ * dirty output on every resume, so cleaning the checkout and resuming could never pass.
  */
 export const cleanAt = (ctx: WorkflowContext, id: string, expected: string | null) =>
   ctx.step(id, {
     input: { expected },
-    schema: Sha,
+    schema: Clean,
     async run({ exec }) {
       const status = await exec(['git', 'status', '--porcelain=v1', '--untracked-files=all']);
       if (status.stdout !== '' || status.truncated)
@@ -23,13 +24,22 @@ export const cleanAt = (ctx: WorkflowContext, id: string, expected: string | nul
       const head = (await exec(['git', 'rev-parse', 'HEAD'])).stdout.trim();
       if (expected !== null && head !== expected)
         throw new Error(`The checkout moved from ${expected} to ${head} (${id})`);
-      return head;
+      return { head, prefix: (await exec(['git', 'rev-parse', '--show-prefix'])).stdout.trim() };
     },
   });
 
-/** Inner Git reads of the history step may be long; only its reduced facts are checkpointed. */
+/** Inner Git reads of local steps may be long; only their reduced facts are checkpointed. */
 const longRead = 64 * 1024 * 1024;
 const globs = (testFiles: readonly string[]) => testFiles.map((glob) => `:(glob)${glob}`);
+/** A complete `git` read inside a local step; truncated output fails the step. */
+const reader =
+  (exec: StepContext['exec']) =>
+  async (args: [string, ...string[]]): Promise<string> => {
+    const result = await exec(['git', ...args], { maxOutputBytes: longRead });
+    if (result.truncated) throw new Error(`Incomplete Git output: git ${args[0]}`);
+    return result.stdout;
+  };
+const entries = (text: string) => text.split('\0').filter(Boolean);
 
 /**
  * The last `depth` commits' messages and files, reduced to flake mentions (with the test-file
@@ -46,11 +56,7 @@ export const history = (
     input: { base, depth, testFiles: [...testFiles] },
     schema: History,
     async run({ exec }) {
-      const read = async (args: [string, ...string[]]) => {
-        const result = await exec(['git', ...args], { maxOutputBytes: longRead });
-        if (result.truncated) throw new Error(`Incomplete Git output: git ${args[0]}`);
-        return result.stdout;
-      };
+      const read = reader(exec);
       const log = await read([
         'log',
         logFormat,
@@ -62,7 +68,7 @@ export const history = (
         '--',
       ]);
       const listed = await read(['ls-files', '-z', '--', ...globs(testFiles)]);
-      const facts = historyFacts(log, new Set(listed.split('\0').filter(Boolean)));
+      const facts = historyFacts(log, new Set(entries(listed)));
       const shas = facts.mentions.slice(0, historyLimits.patched).map((commit) => commit.sha);
       const shown = shas.length
         ? await read([
@@ -111,25 +117,31 @@ export async function artifacts(ctx: WorkflowContext, limit = 60) {
   return { paths: paths.slice(0, limit), unlisted: Math.max(0, paths.length - limit) };
 }
 
+const Screened = z.object({ tracked: z.array(z.string()), tests: z.array(z.string()) });
+
 /**
- * Which of `files` Git tracks, matched literally, and which of those match the operator's test
- * globs: the second listing excludes the globs, leaving the tracked files that are not tests.
+ * Which of `files` Git tracks, matched literally, and which of those the operator's test globs
+ * list. Both listings use positive pathspecs only: `git ls-files` ignores an `:(exclude)` pathspec
+ * when every positive pathspec shares a directory prefix (Git 2.43). It is one local step, so the
+ * checkpoint keeps the screened files rather than every test file the globs list.
  */
 export async function classify(ctx: WorkflowContext, files: string[], testFiles: string[]) {
-  if (!files.length) return { tracked: new Set<string>(), tests: new Set<string>() };
-  const literal = [...new Set(files)].map((file) => `:(literal)${file}`);
-  const list = async (id: string, pathspecs: string[]) =>
-    new Set(
-      (await std.exec.git(ctx, id, ['ls-files', '-z', '--', ...pathspecs]))
-        .split('\0')
-        .filter(Boolean),
-    );
-  const tracked = await list('tracked', literal);
-  const other = await list('not-tests', [
-    ...literal,
-    ...testFiles.map((glob) => `:(exclude,glob)${glob}`),
-  ]);
-  return { tracked, tests: new Set([...tracked].filter((file) => !other.has(file))) };
+  const unique = [...new Set(files)];
+  const screened = unique.length
+    ? await ctx.step('screen', {
+        input: { files: unique, testFiles },
+        schema: Screened,
+        async run({ exec }) {
+          const read = reader(exec);
+          const literal = unique.map((file) => `:(literal)${file}`);
+          const tracked = new Set(entries(await read(['ls-files', '-z', '--', ...literal])));
+          const tests = new Set(entries(await read(['ls-files', '-z', '--', ...globs(testFiles)])));
+          const named = unique.filter((file) => tracked.has(file));
+          return { tracked: named, tests: named.filter((file) => tests.has(file)) };
+        },
+      })
+    : { tracked: [], tests: [] };
+  return { tracked: new Set(screened.tracked), tests: new Set(screened.tests) };
 }
 
 /** What the stress runs left in the checkout: a flake fact, and a publication blocker. */

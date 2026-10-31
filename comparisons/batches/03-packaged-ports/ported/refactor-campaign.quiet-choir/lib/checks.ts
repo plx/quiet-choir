@@ -1,5 +1,7 @@
-// Git and command mechanics as durable effects. Every test command settles with onError: 'return',
-// so a nonzero exit, timeout or signal is a recorded result, not a crash.
+// Git and command mechanics as durable effects. Every test and verify command runs with
+// okExitCodes 'any' and onError 'return': a nonzero exit completes with its output, which a repair
+// round needs (a settled failure keeps only 1024 characters per stream), and a timeout or signal
+// is a recorded result, not a crash. Code judges the exit status.
 import type { WorkflowContext, WorktreeHandle } from 'quiet-choir';
 import * as std from 'quiet-choir/std';
 import { Sha, type Check } from '../contracts.js';
@@ -25,23 +27,39 @@ export const stillAt = async (ctx: WorkflowContext, id: string, base: string) =>
 export const show = (ctx: WorkflowContext, id: string, commit: string, path: string) =>
   std.exec.git(ctx, id, ['show', `${commit}:${path}`], { maxOutputBytes: 8 * 1024 * 1024 });
 
-/** Run one argv in `tree` as command `id`, returning its row and the tail of its output. */
+/** The characters of each stream's tail a repair round sees. */
+const TAIL = 4096;
+
+/** A command's row and the tail of each output stream. */
+export interface Ran {
+  readonly check: Check;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+/** Run one argv in `tree` as command `id`. */
 export async function run(
   ctx: WorkflowContext,
   id: string,
   tree: WorktreeHandle,
   argv: Check['argv'],
-): Promise<{ check: Check; output: string }> {
-  const result = await ctx.exec(id, argv, { worktree: tree, onError: 'return' });
+): Promise<Ran> {
+  const result = await ctx.exec(id, argv, {
+    worktree: tree,
+    okExitCodes: 'any',
+    onError: 'return',
+  });
   if (result.ok)
     return {
       check: { argv, code: result.value.code, truncated: result.value.truncated, failure: null },
-      output: (result.value.stdout + result.value.stderr).slice(-4096),
+      stdout: result.value.stdout.slice(-TAIL),
+      stderr: result.value.stderr.slice(-TAIL),
     };
-  // A settled failure carries no truncation flag, so `truncated: null` means unknown.
+  // A timeout or signal; a settled failure carries no truncation flag, so `null` means unknown.
   return {
     check: { argv, code: result.error.code ?? null, truncated: null, failure: result.error.kind },
-    output: `${result.error.stdoutTail ?? ''}${result.error.stderrTail ?? ''}`,
+    stdout: result.error.stdoutTail ?? '',
+    stderr: result.error.stderrTail ?? '',
   };
 }
 
@@ -52,16 +70,35 @@ export async function run(
 export const green = (check: Check) => check.failure === null && check.code === 0;
 export const passed = (checks: Check[]) => checks.every(green);
 
-/** Run every command in `tree`, in order, as `verify/<n>`, recording each outcome. */
+/** How a red command ended, for a reason line: its exit code, or the failure kind. */
+export const ended = (check: Check) => check.failure ?? `exit ${String(check.code)}`;
+
+/** Run every command in `tree`, in order, as `<id>/<n>`, recording each outcome. */
 export async function verify(
   ctx: WorkflowContext,
+  id: string,
   tree: WorktreeHandle,
   commands: Check['argv'][],
 ): Promise<Check[]> {
   const checks: Check[] = [];
   for (const [index, argv] of commands.entries())
-    checks.push((await run(ctx, ctx.id('verify', index), tree, argv)).check);
+    checks.push((await run(ctx, ctx.id(id, index), tree, argv)).check);
   return checks;
+}
+
+/**
+ * Run every command, as `<id>/<n>`, in a fresh shared checkout of `commit` (the handle
+ * `<id>/tree`); an empty list needs no checkout.
+ */
+export async function verifyAt(
+  ctx: WorkflowContext,
+  id: string,
+  commit: string,
+  commands: Check['argv'][],
+): Promise<Check[]> {
+  if (!commands.length) return [];
+  const tree = await ctx.worktree(ctx.id(id, 'tree'), { base: { commit } });
+  return verify(ctx, id, tree, commands);
 }
 
 /** The argv that runs one net: the operator's test command with the net's path appended. */

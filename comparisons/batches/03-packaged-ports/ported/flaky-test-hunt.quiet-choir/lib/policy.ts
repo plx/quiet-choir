@@ -14,6 +14,7 @@ import type {
   Run,
   Stress,
   Suspect,
+  Unplanned,
 } from '../contracts.js';
 
 /**
@@ -145,6 +146,18 @@ export const cap = (suspects: Suspect[], max: number) => ({
   skipped: suspects.slice(max),
 });
 
+/**
+ * The operator's pass pattern for one test, its {test} replaced by the escaped name, or null when
+ * the operator set none.
+ */
+export const passFor = (pattern: string | null, test: string): RegExp | null =>
+  pattern === null
+    ? null
+    : new RegExp(
+        pattern.replaceAll('{test}', () => test.replace(/[\\^$.*+?()[\]{}|/]/gu, '\\$&')),
+        'u',
+      );
+
 /** The operator's argv with {file} and {test} replaced literally (no `$` patterns). */
 export const argvFor = (
   template: readonly [string, ...string[]],
@@ -165,11 +178,16 @@ const median = (values: number[]) => {
 };
 
 /**
- * The verdict is arithmetic over what code observed: a command that could not start is
- * could-not-run, no failure is stable, every run failing is always-fails, and anything between is
- * flaky. Timeouts and signals count as failures; a stress timeout is a timing symptom.
+ * The verdict is arithmetic over what code observed: a command that could not start, or a passing
+ * exit without the operator's passPattern, is could-not-run; no failure is stable, every run
+ * failing is always-fails, and anything between is flaky. Timeouts and signals count as failures;
+ * a stress timeout is a timing symptom.
  */
-export function summarize(argv: Stress['argv'], outcomes: Run[], sample: string | null): Stress {
+export function summarize(
+  argv: Stress['argv'],
+  outcomes: Run[],
+  samples: { sample: string | null; passSample: string | null },
+): Stress {
   const failures = outcomes.filter((run) => run.outcome !== 'pass').length;
   const durations = (passed: boolean) =>
     outcomes.flatMap((run) =>
@@ -179,7 +197,7 @@ export function summarize(argv: Stress['argv'], outcomes: Run[], sample: string 
     argv,
     runs: outcomes.length,
     failures,
-    verdict: outcomes.some((run) => run.outcome === 'error')
+    verdict: outcomes.some((run) => run.outcome === 'error' || run.outcome === 'unmatched')
       ? 'could-not-run'
       : failures === 0
         ? 'stable'
@@ -187,22 +205,32 @@ export function summarize(argv: Stress['argv'], outcomes: Run[], sample: string 
           ? 'always-fails'
           : 'flaky',
     outcomes,
-    sample,
+    ...samples,
     medianPassMs: median(durations(true)),
     medianFailMs: median(durations(false)),
   };
 }
 
-/** The last characters of a failing run's output, the diagnostician's failure evidence. */
+/** The last characters of a run's output: a failure's evidence, or what a pass ran. */
 export const tail = (text: string, max = 1_500) => (text.length > max ? text.slice(-max) : text);
 
 /**
  * Diagnosed flakes with a named mechanism. A fix without a mechanism is a retry in disguise, so an
- * `unknown` diagnosis is reported but never planned.
+ * `unknown` diagnosis is reported, and listed by `unplanned`, but never planned. (The upstream
+ * applied every proposed fix whatever its mechanism.)
  */
 export const fixPlan = (confirmed: Flake[]): PlanItem[] =>
   confirmed.flatMap(({ test, file, diagnosis }) =>
     diagnosis && diagnosis.mechanism !== 'unknown' ? [planItem(test, file, diagnosis)] : [],
+  );
+/** The confirmed flakes `fixPlan` leaves out, with the reason. */
+export const unplanned = (confirmed: Flake[]): Unplanned[] =>
+  confirmed.flatMap(({ test, file, diagnosis }): Unplanned[] =>
+    !diagnosis
+      ? [{ test, file, reason: 'undiagnosed' }]
+      : diagnosis.mechanism === 'unknown'
+        ? [{ test, file, reason: 'unknown-mechanism' }]
+        : [],
   );
 const planItem = (test: string, file: string, diagnosis: Diagnosis): PlanItem => ({
   test,
@@ -217,17 +245,20 @@ export const planDigest = (plan: string): string => createHash('sha256').update(
 
 /**
  * The fixer's change, with the files it touched outside the approved plan (renames included) and
- * the approved fixes it left untouched: an unchanged tree can pass a re-stress by chance.
+ * the approved fixes it left untouched: an unchanged tree can pass a re-stress by chance. Plan
+ * paths are relative to the working directory, while receipt paths are repository-relative, so
+ * `prefix` (the working directory's `git rev-parse --show-prefix`) joins the two.
  */
-export function owned(change: WorktreeChange | undefined, plan: PlanItem[]) {
+export function owned(change: WorktreeChange | undefined, plan: PlanItem[], prefix: string) {
   if (!change) throw new Error('Fixer did not produce an isolated receipt');
-  const approved = new Set(plan.flatMap((item) => item.files));
+  const inRepo = (path: string) => `${prefix}${path}`;
+  const approved = new Set(plan.flatMap((item) => item.files.map(inRepo)));
   const touched = new Set(change.files.map((file) => file.path));
   const refusedFiles = change.files
     .filter((file) => !approved.has(file.path) || file.status === 'renamed')
     .map((file) => file.path);
   const untouched = plan
-    .filter((item) => !item.files.some((file) => touched.has(file)))
+    .filter((item) => !item.files.some((file) => touched.has(inRepo(file))))
     .map(({ test, file }) => ({ test, file }));
   return { change, refusedFiles, untouched };
 }

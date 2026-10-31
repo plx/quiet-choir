@@ -8,17 +8,15 @@ import { Sha } from '../contracts.js';
 /** Release ranges outgrow the default 1 MiB capture; std.exec.git throws rather than truncate. */
 const maxOutputBytes = 16 * 1024 * 1024;
 
-const commit = async (ctx: WorkflowContext, id: string, revision: string) =>
-  Sha.parse(
-    (
-      await std.exec.git(ctx, id, [
-        'rev-parse',
-        '--verify',
-        '--end-of-options',
-        `${revision}^{commit}`,
-      ])
-    ).trim(),
-  );
+/** The checkout's HEAD: its commit, and the ref it is on (`HEAD` when detached). */
+export async function headOf(ctx: WorkflowContext, id: string) {
+  const [commit = '', ref = ''] = (
+    await std.exec.git(ctx, id, ['rev-parse', 'HEAD^{commit}', '--symbolic-full-name', 'HEAD'])
+  )
+    .trim()
+    .split('\n');
+  return { commit: Sha.parse(commit), ref };
+}
 
 /** The last line Git wrote to stderr for a settled probe, or its failure kind. */
 const why = (error: { readonly kind: string; readonly stderrTail?: string }) =>
@@ -73,8 +71,11 @@ async function previousTag(ctx: WorkflowContext, pattern: string) {
 }
 
 /**
- * Pin `since..HEAD` and list it oldest first. Without `since`, the start is {@link previousTag};
- * when there is none, or `since` names no commit, the window is refused with a reason.
+ * Pin `since..HEAD` and list it oldest first, with the ref HEAD is on, so code can tell when a
+ * command moved it. Without `since`, the start is {@link previousTag}; when there is none, `since`
+ * names no commit, or it is not an ancestor of HEAD, the window is refused with a reason. A start
+ * off HEAD's history would make the log (`start..end`) and the patch (the two trees) disagree: the
+ * patch would also undo every change only the start has.
  */
 export async function gitWindow(ctx: WorkflowContext, since: string | undefined, pattern: string) {
   let from = since ?? null;
@@ -94,7 +95,16 @@ export async function gitWindow(ctx: WorkflowContext, since: string | undefined,
       reason: `since ${from} does not name a commit (${why(resolved.error)}).`,
     };
   const start = Sha.parse(resolved.value.stdout.trim());
-  const end = await commit(ctx, 'head', 'HEAD');
+  const { commit: end, ref } = await headOf(ctx, 'head');
+  // Exit 1 is the answer "not an ancestor"; any other failure is a real error and fails the run.
+  const ancestor = await ctx.exec('ancestor', ['git', 'merge-base', '--is-ancestor', start, end], {
+    okExitCodes: [0, 1],
+  });
+  if (ancestor.code !== 0)
+    return {
+      ok: false as const,
+      reason: `since ${from} (${start}) is not an ancestor of HEAD, so its log and its patch would disagree; pass since=$(git merge-base ${from} HEAD) to gate from where they diverged.`,
+    };
   const listed = await std.exec.git(ctx, 'manifest', [
     'rev-list',
     '--reverse',
@@ -102,7 +112,7 @@ export async function gitWindow(ctx: WorkflowContext, since: string | undefined,
     '--',
   ]);
   const manifest = z.array(Sha).parse(listed.trim().split('\n').filter(Boolean));
-  return { ok: true as const, since: from, start, end, manifest };
+  return { ok: true as const, since: from, start, end, ref, manifest };
 }
 
 /** The range's commits, oldest first, with their file stats. */

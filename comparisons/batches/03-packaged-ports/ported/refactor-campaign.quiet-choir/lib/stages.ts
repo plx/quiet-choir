@@ -3,17 +3,11 @@
 // command, review the diff). Agents propose; code runs every command and decides every verdict.
 // Call each stage under a scope (a map item or ctx.scope), so the team's agents and the stage's
 // commands share its prefix.
-import {
-  defineTeam,
-  type AgentResult,
-  type TeamOf,
-  type WorkflowContext,
-  type WorktreeChange,
-} from 'quiet-choir';
+import { defineTeam, type TeamOf, type WorkflowContext, type WorktreeChange } from 'quiet-choir';
 import * as std from 'quiet-choir/std';
-import { Net, Refactored, Review, type Check, type Chosen, type NetClaim } from '../contracts.js';
+import { Net, Refactored, Review, type Check, type Chosen } from '../contracts.js';
 import { prompts } from '../prompts.js';
-import { green, netArgv, passed, run, show, verify } from './checks.js';
+import { ended, green, netArgv, run, show, verify } from './checks.js';
 import { acceptNet, bounded, netsTouched, type NetOutcome } from './policy.js';
 
 /** The slot {@link pinNet} needs. */
@@ -27,16 +21,21 @@ interface RedNet {
   netFile: string;
   code: number | null;
   failure: string | null;
-  output: string;
+  stdout: string;
+  stderr: string;
   files: { path: string; source: string; shownBytes: number | null }[];
 }
+
+/** The bytes of each previous net file a repair round is shown. */
+const SHOWN = 20_000;
 
 /**
  * Pin `target` on `base` in up to `rounds` writes. Each write starts from a fresh checkout of
  * `base`, so its receipt holds only that round's files and a superseded file is never published;
  * code runs the net in a probe checkout of the writer's snapshot, so test artifacts stay out of
- * the change. A red run hands its output and the net's files to the next write. Step IDs per
- * round: `write/<r>`, `probe/<r>`, `check/<r>` and, when red, `source/<r>/<k>`.
+ * the change. A red run hands its exit status, its output tails and the net's files to the next
+ * write; `partial` counts the files it could show only in part. Step IDs per round: `write/<r>`,
+ * `probe/<r>`, `check/<r>` and, when red with a round left, `source/<r>/<k>`.
  */
 export async function pinNet(
   ctx: WorkflowContext,
@@ -50,30 +49,35 @@ export async function pinNet(
 ): Promise<NetOutcome> {
   const { team, target, testCommand } = options;
   let previous: RedNet | null = null;
+  let partial = 0;
   for (let round = 0; round < options.rounds; round++) {
-    // Annotated: the loop's narrowing of `previous` otherwise makes the inference circular.
-    const written: AgentResult<NetClaim> = await team.writer.object(ctx.id('write', round), {
+    const written = await team.writer.object(ctx.id('write', round), {
       worktree: { base: { commit: options.base } },
       schema: Net,
       prompt: prompts.PinNet({ target, command: std.exec.json(testCommand), previous }),
     });
     const net = acceptNet(written.output, written.worktree);
-    if ('why' in net) return { status: 'skipped', why: net.why };
+    if ('why' in net) return { status: 'skipped', why: net.why, partial };
     const { commit } = net.change;
     const probe = await ctx.worktree(ctx.id('probe', round), { base: { commit } });
     const result = await run(ctx, ctx.id('check', round), probe, netArgv(testCommand, net.netFile));
-    if (green(result.check)) return { status: 'green', ...net, rounds: round + 1 };
+    if (green(result.check)) return { status: 'green', ...net, rounds: round + 1, partial };
+    if (round + 1 === options.rounds) break;
     const files: RedNet['files'] = [];
     for (const [index, path] of net.files.entries()) {
-      const text = bounded(await show(ctx, ctx.id('source', round, index), commit, path), 20_000);
+      const text = bounded(await show(ctx, ctx.id('source', round, index), commit, path), SHOWN);
+      if (text.shownBytes !== null) partial++;
       files.push({ path, source: text.text, shownBytes: text.shownBytes });
     }
     const { code, failure } = result.check;
-    previous = { netFile: net.netFile, code, failure, output: result.output, files };
+    const stdout = result.stdout.trimEnd();
+    const stderr = result.stderr.trimEnd();
+    previous = { netFile: net.netFile, code, failure, stdout, stderr, files };
   }
   return {
     status: 'skipped',
     why: `net red on the current code after ${String(options.rounds)} rounds`,
+    partial,
   };
 }
 
@@ -95,11 +99,11 @@ export type RefactorOutcome =
   | { readonly kept: false; readonly why: string; readonly failed: boolean };
 
 /**
- * Refactor `target` on a checkout of `from`, which holds every net. Code refuses a change that
- * touches any net's files, runs every net and then every verify command on the result, and asks
- * the reviewer only when all pass; a failed call, a red command or a behavioral verdict discards
- * the change. Step IDs: `write`, `touched`, `tree`, `net/<k>`, `verify/<n>`, `diff`, `net-source`
- * and `review`.
+ * Refactor `target` on a checkout of `from`, which holds every net and every refactor kept so
+ * far. Code refuses a change that touches any net's files, runs every net and then every verify
+ * command on the result, and asks the reviewer only when all pass; a failed call, a red command or
+ * a behavioral verdict discards the change. Step IDs: `write`, `touched`, `tree`, `net/<k>`,
+ * `verify/<n>`, `diff`, `net-source` and `review`.
  */
 export async function refactorTarget(
   ctx: WorkflowContext,
@@ -164,21 +168,20 @@ export async function refactorTarget(
     if (!green(result.check))
       return {
         kept: false,
-        why: `net ${file} went red after the refactor (exit ${String(result.check.code)}); discarded`,
+        why: `net ${file} went red after the refactor (${ended(result.check)}); discarded`,
         failed: false,
       };
   }
-  // A refactor that keeps every net green but breaks the build or the wider suite is discarded on
-  // its own, so it cannot sink the refactors kept before it at the final verification.
-  const checks = await verify(ctx, tree, options.verifyCommands);
-  if (!passed(checks)) {
-    const red = checks.find((check) => !green(check));
+  // The verify commands passed on the nets commit before any refactor, so a red one here is this
+  // refactor's doing; it is discarded on its own, and the refactors kept before it stay.
+  const checks = await verify(ctx, 'verify', tree, options.verifyCommands);
+  const red = checks.find((check) => !green(check));
+  if (red)
     return {
       kept: false,
-      why: `verify command ${JSON.stringify(red?.argv)} failed after the refactor (exit ${String(red?.code)}); discarded`,
+      why: `verify command ${JSON.stringify(red.argv)} failed after the refactor (${ended(red)}); discarded`,
       failed: false,
     };
-  }
   const diff = bounded(
     await std.exec.git(ctx, 'diff', ['diff', '--unified=8', from, change.commit], {
       maxOutputBytes: 8 * 1024 * 1024,
@@ -196,6 +199,7 @@ export async function refactorTarget(
       behaviors,
       netSource: source.text,
       netShownBytes: source.shownBytes,
+      files: touched,
       diff: diff.text,
       shownBytes: diff.shownBytes,
     }),

@@ -28,7 +28,7 @@ defeating a criterion, and cosmetic is only visible. Coming back with no attack 
 The probe for criterion {{ loop.index }}, which shows how the feature can be called:
 
 <probe>
-{{ result.probe }}
+{{ result.probe | trim }}
 </probe>
 {%- endif %}
 {%- endfor %}

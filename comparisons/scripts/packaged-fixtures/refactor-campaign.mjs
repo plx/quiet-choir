@@ -1,10 +1,11 @@
 // refactor-campaign: pricing.mjs computes the same price-times-quantity loop twice and
 // clock.mjs reads the wall clock. The survey finds both and target.mjs, the ranker defers
 // target.mjs, the net writer pins pricing.mjs in its worktree with a test file and a cases file
-// (code runs the net green on the current code) and cannot pin the clock, a human approves the
-// goal and plan, the refactorer extracts a subtotal helper behind the net, code runs the net and
-// the verify command again, the reviewer judges the diff structural, and code publishes the net
-// and the refactor after final verification onto the unmoved checkout.
+// (code runs the net green on the current code) and cannot pin the clock, code runs the verify
+// command on the nets commit, a human approves the goal and plan, the refactorer extracts a
+// subtotal helper behind the net, code runs the net and the verify command again, the reviewer
+// judges the diff structural, and code verifies the integration and publishes it onto the
+// unmoved checkout. The two-targets and chain-break modes also pin and refactor the clock.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -81,6 +82,19 @@ const targets = [
     testability: 'well-tested',
   },
 ];
+/** net-refusals: two more targets, whose writers refuse in other ways. */
+const extra = [
+  ['README.md', 'Pins nothing'],
+  ['notes.mjs', 'Declares a file it never adds'],
+].map(([location, refactoring]) => ({
+  target: {
+    location,
+    pressure: 'long-method',
+    evidence: 'One long block',
+    testability: 'untested',
+  },
+  rank: { location, refactoring, payoff: 'low', risk: 'low' },
+}));
 const ranked = [
   {
     location: 'pricing.mjs:totalWithTax',
@@ -100,6 +114,19 @@ const exists = (file) => `require('node:fs').accessSync(${JSON.stringify(file)})
 /** A verify command that fails only on a tree holding the subtotal refactor. */
 const noSubtotal =
   "if (require('node:fs').readFileSync('pricing.mjs', 'utf8').includes('subtotal')) process.exit(3)";
+/** A verify command that fails only at the final gate, as a flaky one might. */
+const redAtGate =
+  "if ((process.env.QUIET_CHOIR_STEP_ID ?? '').startsWith('verification/')) process.exit(3)";
+const clock = 'export const stamp = () => new Date().toISOString();\n';
+const injected = 'export const stamp = (now = () => new Date()) => now().toISOString();\n';
+const clockNet = [
+  "import assert from 'node:assert/strict';",
+  "import { stamp } from './clock.mjs';",
+  'assert.match(stamp(), /^\\d{4}-\\d{2}-\\d{2}T/u);',
+  '',
+].join('\n');
+/** Modes in which the clock writer pins a deterministic net, so two targets reach refactoring. */
+const clockPinned = ['two-targets', 'chain-break', 'net-refusals'];
 const writer = /^(?:nets\/\d+\/write\/\d+|refactor\/\d+\/write)$/u;
 const netWrite = /^nets\/\d+\/write\/\d+$/u;
 const refactorWrite = /^refactor\/\d+\/write$/u;
@@ -107,7 +134,7 @@ const refactorWrite = /^refactor\/\d+\/write$/u;
 export async function setup(env) {
   await writeFiles(env.cwd, {
     'pricing.mjs': pricing,
-    'clock.mjs': 'export const stamp = () => new Date().toISOString();\n',
+    'clock.mjs': clock,
   });
   env.base = commitAll(env.cwd, 'add pricing and clock');
 }
@@ -129,7 +156,26 @@ const pinned = (file, supportFiles = []) => ({
 async function writeNet(request, env, mode) {
   const { cwd, options } = request;
   const round = Number(leaf(request.call.stepId));
+  if (options.prompt.includes('of README.md with')) {
+    // net-refusals: a green net that names no behavior.
+    await writeFile(join(cwd, 'readme.net.test.mjs'), '\n');
+    return { ...pinned('readme.net.test.mjs'), behaviorsPinned: [] };
+  }
+  if (options.prompt.includes('of notes.mjs with')) {
+    // net-refusals: a net that declares a support file it never adds.
+    await writeFile(join(cwd, 'notes.net.test.mjs'), '\n');
+    return pinned('notes.net.test.mjs', ['notes.cases.json']);
+  }
   if (options.prompt.includes('of target.mjs with')) {
+    if (mode === 'net-refusals') {
+      // A green net that also edits an existing file, declared as a support file.
+      await writeFiles(cwd, {
+        'target.net.test.mjs':
+          "import assert from 'node:assert/strict';\nimport { value } from './target.mjs';\nassert.equal(value, 1);\n",
+        'clock.mjs': injected,
+      });
+      return pinned('target.net.test.mjs', ['clock.mjs']);
+    }
     // no-nets: a net that pins the wrong value in every round.
     await writeFile(
       join(cwd, 'target.net.test.mjs'),
@@ -138,6 +184,15 @@ async function writeNet(request, env, mode) {
     return pinned('target.net.test.mjs');
   }
   if (options.prompt.includes('of clock.mjs:stamp with')) {
+    if (clockPinned.includes(mode)) {
+      // net-refusals: the clock net also claims the pricing net's cases file.
+      const collide = mode === 'net-refusals';
+      await writeFiles(cwd, {
+        'clock.net.test.mjs': clockNet,
+        ...(collide ? { [casesFile]: cases(0) } : {}),
+      });
+      return pinned('clock.net.test.mjs', collide ? [casesFile] : []);
+    }
     if (mode !== 'no-nets')
       return {
         status: 'cannot-pin',
@@ -170,6 +225,14 @@ async function writeNet(request, env, mode) {
 
 async function refactor(request, env, mode) {
   const { cwd } = request;
+  if (request.options.prompt.startsWith('Apply this approved refactoring to clock.mjs:stamp')) {
+    // Serial: this checkout starts from the last kept refactor, so it holds the subtotal helper.
+    env.clockSawSubtotal = readFileSync(join(cwd, 'pricing.mjs'), 'utf8').includes('subtotal');
+    await writeFile(join(cwd, 'clock.mjs'), injected);
+    // chain-break: a pricing change only the earlier target's net pins.
+    if (mode === 'chain-break') await writeFile(join(cwd, 'pricing.mjs'), refactored(behavioral));
+    return { status: 'refactored', summary: 'Injected the clock' };
+  }
   await writeFile(
     join(cwd, 'pricing.mjs'),
     refactored(['behavior-change', 'net-support-file'].includes(mode) ? behavioral : structural),
@@ -187,8 +250,17 @@ async function refactor(request, env, mode) {
 
 export async function reply(request, env, mode) {
   const id = request.call.stepId;
-  if (id === 'survey') return { targets: mode === 'no-targets' ? [] : targets };
-  if (id === 'rank') return { ranked: ranked.slice(0, mode === 'no-nets' ? 3 : 2) };
+  if (id === 'survey') {
+    if (mode === 'no-targets') return { targets: [] };
+    if (mode === 'net-refusals')
+      return { targets: [...targets, ...extra.map((entry) => entry.target)] };
+    return { targets };
+  }
+  if (id === 'rank') {
+    if (mode === 'net-refusals')
+      return { ranked: [...ranked, ...extra.map((entry) => entry.rank)] };
+    return { ranked: ranked.slice(0, mode === 'no-nets' ? 3 : 2) };
+  }
   if (netWrite.test(id)) return writeNet(request, env, mode);
   if (refactorWrite.test(id)) return refactor(request, env, mode);
   if (/^refactor\/\d+\/review$/u.test(id))
@@ -205,6 +277,7 @@ export function fail(request, mode) {
   const id = request.call.stepId;
   return (
     (mode === 'refactor-fails' && refactorWrite.test(id)) ||
+    (mode === 'review-fails' && id === 'refactor/0/review') ||
     (mode === 'no-nets' && id === 'nets/0/write/0')
   );
 }
@@ -244,11 +317,43 @@ function netsCommitHoldsNet(env, output) {
 }
 const stepIds = (calls) => calls.map((call) => call.call.stepId);
 const noReview = (calls) => assert.ok(!stepIds(calls).includes('refactor/0/review'));
+const promptOf = (calls, id) => calls.find((call) => call.call.stepId === id).options.prompt;
+const rows = (checks) => checks.map((row) => [row.argv.at(-1), row.code]);
+const treeOf = (env, commit) => git(env.cwd, 'rev-parse', `${commit}^{tree}`);
+/** The commit the final verification ran on. */
+const gated = (record) => record.steps['verification/0'].worktree.base;
+/** The checkout holds both nets, the pricing refactor and `clockText`, clean, as `output.commit`. */
+function bothNetsPublished(env, output, record, clockText) {
+  assert.equal(git(env.cwd, 'rev-parse', 'HEAD'), output.commit);
+  assert.equal(treeOf(env, gated(record)), treeOf(env, 'HEAD'));
+  assert.equal(
+    git(env.cwd, 'diff', '--name-only', env.base, 'HEAD'),
+    [
+      ...(clockText === clock ? [] : ['clock.mjs']),
+      'clock.net.test.mjs',
+      casesFile,
+      'pricing.mjs',
+      netFile,
+    ].join('\n'),
+  );
+  assert.equal(readFileSync(join(env.cwd, 'pricing.mjs'), 'utf8'), refactored(structural));
+  assert.equal(readFileSync(join(env.cwd, 'clock.mjs'), 'utf8'), clockText);
+  assert.equal(readFileSync(join(env.cwd, 'clock.net.test.mjs'), 'utf8'), clockNet);
+  assert.equal(git(env.cwd, 'status', '--porcelain'), '');
+  for (const file of [netFile, 'clock.net.test.mjs'])
+    assert.equal(spawnSync(process.execPath, [file], { cwd: env.cwd }).status, 0, file);
+}
 
-export function check({ result, env, calls, suspended }) {
+export function check({ result, env, calls, record, suspended }) {
   const { output } = result;
   assert.equal(output.status, 'applied');
   assert.equal(suspended, 1);
+  assert.equal(output.truncatedRepairFiles, 0);
+  // The verify command passed on the nets commit before the approval, which shows the rows.
+  assert.deepEqual(rows(output.baseline), [[exists(netFile), 0]]);
+  const { subject } = record.steps['approve-refactors'].question.request;
+  assert.deepEqual(subject.baseline, output.baseline);
+  assert.equal(subject.digest, output.approvedDigest);
   assert.deepEqual(
     output.deferred.map((target) => target.location),
     ['target.mjs'],
@@ -293,20 +398,19 @@ export function check({ result, env, calls, suspended }) {
     /any of them:\n- pricing\.net\.test\.mjs\n- pricing\.cases\.json\n/u,
   );
   // Code ran the net and the verify command on the refactored tree before the reviewer saw it.
-  const review = calls.find((call) => call.call.stepId === 'refactor/0/review');
-  assert.match(
-    review.options.prompt,
-    /<diff>\n[^]*\+const subtotal = \(items\) => \{[^]*<\/diff>/u,
-  );
-  assert.deepEqual(
-    output.verification.map((row) => [row.argv.at(-1), row.code]),
-    [
-      [netFile, 0],
-      [exists(netFile), 0],
-    ],
-  );
-  // Published: the net and the refactor, as one fast-forward of the clean, unmoved checkout.
+  const review = promptOf(calls, 'refactor/0/review');
+  assert.match(review, /<diff>\n[^]*\+const subtotal = \(items\) => \{[^]*<\/diff>/u);
+  // The reviewer sees every touched path, and is told how to treat a changed test.
+  assert.match(review, /no net file is among them:\n- pricing\.mjs\n\n/u);
+  assert.match(review, /Treat a change to an\nexisting test/u);
+  assert.deepEqual(rows(output.verification), [
+    [netFile, 0],
+    [exists(netFile), 0],
+  ]);
+  // Published: the net and the refactor, as one fast-forward of the clean, unmoved checkout, with
+  // exactly the tree the final verification ran on.
   assert.equal(git(env.cwd, 'rev-parse', 'HEAD'), output.commit);
+  assert.equal(treeOf(env, gated(record)), treeOf(env, 'HEAD'));
   assert.equal(git(env.cwd, 'merge-base', env.base, 'HEAD'), env.base);
   assert.equal(
     git(env.cwd, 'diff', '--name-only', env.base, 'HEAD'),
@@ -352,13 +456,13 @@ export const modes = [
     mode: 'net-repair',
     check({ result, env, calls }) {
       assert.equal(result.output.status, 'applied');
-      const repair = calls.find((call) => call.call.stepId === 'nets/0/write/1');
-      assert.match(repair.options.prompt, /Your previous net, pricing\.first\.test\.mjs, failed/u);
-      assert.match(repair.options.prompt, /<output>\n[^]*16[^]*<\/output>/u);
-      assert.match(
-        repair.options.prompt,
-        /<file path="pricing\.first\.test\.mjs">\n[^]*, 16\);\n<\/file>/u,
-      );
+      const repair = promptOf(calls, 'nets/0/write/1');
+      assert.match(repair, /Your previous net, pricing\.first\.test\.mjs, failed/u);
+      // The whole assertion error, from a completed nonzero exit rather than a 1 KiB failure tail.
+      assert.match(repair, /The command exited with code 1\./u);
+      assert.match(repair, /<stderr>\n[^]*AssertionError[^]*16[^]*<\/stderr>/u);
+      assert.match(repair, /<file path="pricing\.first\.test\.mjs">\n[^]*, 16\);\n<\/file>/u);
+      assert.equal(result.output.truncatedRepairFiles, 0);
       // The superseded red file never reaches the nets commit or the checkout.
       netsCommitHoldsNet(env, result.output);
       assert.equal(existsSync(join(env.cwd, 'pricing.first.test.mjs')), false);
@@ -417,6 +521,17 @@ export const modes = [
     },
   },
   {
+    mode: 'review-fails',
+    check({ result, env }) {
+      const { output } = result;
+      // A failed review call keeps only the net, and is counted, so the output admits degradation.
+      assert.equal(output.failedCalls, 1);
+      assert.match(output.netOnly[0].why, /^review failed/u);
+      assert.equal(degraded(output), true);
+      netsOnlyPublished(env, output);
+    },
+  },
+  {
     mode: 'declined',
     input: () => ({ ...input(), goal: 'fixture: decline this plan' }),
     check({ result, env, calls, suspended }) {
@@ -449,28 +564,155 @@ export const modes = [
   },
   {
     mode: 'red-final',
-    input: () => ({ ...input(), verifyCommands: [[process.execPath, '-e', 'process.exit(3)']] }),
-    check({ result, env }) {
+    input: () => ({ ...input(), verifyCommands: [[process.execPath, '-e', redAtGate]] }),
+    check({ result, env, record }) {
       const { output } = result;
+      // Green on the nets commit and on the refactor, red only at the gate: nothing is published.
       assert.equal(output.status, 'verification-failed');
-      assert.deepEqual(output.refactored, []);
-      assert.match(output.netOnly[0].why, /^verify command /u);
-      assert.equal(output.verification.at(-1).code, 3);
-      assert.equal(output.commit, output.netsCommit);
+      assert.deepEqual(rows(output.baseline), [[redAtGate, 0]]);
+      assert.equal(output.refactored.length, 1);
+      assert.deepEqual(rows(output.verification), [
+        [netFile, 0],
+        [redAtGate, 3],
+      ]);
+      // The unpublished commit is the integration of the net and the kept refactor, as verified.
+      assert.equal(gated(record), output.commit);
+      assert.equal(treeOf(env, output.commit), treeOf(env, output.refactored[0].commit));
+      assert.ok(output.summary.includes(output.commit), output.summary);
+      untouched(env);
+    },
+  },
+  {
+    mode: 'baseline-red',
+    input: () => ({ ...input(), verifyCommands: [[process.execPath, '-e', 'process.exit(4)']] }),
+    check({ result, env, calls, suspended }) {
+      const { output } = result;
+      // Red before any refactor: no approval is asked and no refactor is paid for.
+      assert.equal(output.status, 'baseline-red');
+      assert.equal(suspended, 0);
+      assert.deepEqual(rows(output.baseline), [['process.exit(4)', 4]]);
+      assert.deepEqual(
+        output.netOnly.map((entry) => entry.why),
+        ['the verify commands fail on the nets commit'],
+      );
+      assert.equal(output.approvedDigest, null);
+      assert.deepEqual(output.verification, []);
+      assert.ok(stepIds(calls).every((id) => !id.startsWith('refactor/')));
+      netsCommitHoldsNet(env, output);
+      assert.ok(output.summary.includes(output.netsCommit), output.summary);
       untouched(env);
     },
   },
   {
     mode: 'checkout-moved',
-    check({ result, env }) {
+    check({ result, env, record }) {
       const { output } = result;
       assert.equal(output.status, 'checkout-moved');
       assert.equal(output.refactored.length, 1);
-      assert.equal(output.commit, output.refactored[0].commit);
       assert.ok(output.verification.every((row) => row.code === 0));
+      // ctx.merge integrates onto the checkout's HEAD of the moment, so the verified, unpublished
+      // integration sits on the user's commit and the summary says how to keep it.
+      assert.equal(
+        git(env.cwd, 'diff', '--name-only', env.userCommit, output.commit),
+        `${casesFile}\npricing.mjs\n${netFile}`,
+      );
+      assert.equal(git(env.cwd, 'merge-base', env.userCommit, output.commit), env.userCommit);
+      assert.equal(gated(record), output.commit);
+      assert.ok(output.summary.includes(`${output.commit}`), output.summary);
+      assert.ok(output.summary.includes('git merge that commit'), output.summary);
       // The user's commit stays HEAD; the verified tree was not rebased onto it.
       assert.equal(git(env.cwd, 'rev-parse', 'HEAD'), env.userCommit);
       untouched(env);
+    },
+  },
+  {
+    mode: 'two-targets',
+    check({ result, env, calls, record }) {
+      const { output } = result;
+      assert.equal(output.status, 'applied');
+      assert.deepEqual(
+        output.refactored.map((entry) => [entry.location, entry.files]),
+        [
+          ['pricing.mjs:totalWithTax', ['pricing.mjs']],
+          ['clock.mjs:stamp', ['clock.mjs']],
+        ],
+      );
+      // The second refactor started from the first one's result, behind both nets.
+      assert.equal(env.clockSawSubtotal, true);
+      assert.equal(record.steps['refactor/1/write'].worktree.base, output.refactored[0].commit);
+      assert.match(
+        promptOf(calls, 'refactor/1/write'),
+        /any of them:\n- pricing\.net\.test\.mjs\n- pricing\.cases\.json\n- clock\.net\.test\.mjs\n/u,
+      );
+      assert.doesNotMatch(promptOf(calls, 'refactor/1/review'), /subtotal/u);
+      assert.deepEqual(rows(output.verification), [
+        [netFile, 0],
+        ['clock.net.test.mjs', 0],
+        [exists(netFile), 0],
+      ]);
+      bothNetsPublished(env, output, record, injected);
+    },
+  },
+  {
+    mode: 'chain-break',
+    check({ result, env, record }) {
+      const { output } = result;
+      // The clock refactor also changed pricing; only the earlier target's net catches it.
+      assert.equal(output.status, 'applied');
+      assert.equal(env.clockSawSubtotal, true);
+      assert.deepEqual(
+        output.refactored.map((entry) => entry.location),
+        ['pricing.mjs:totalWithTax'],
+      );
+      assert.deepEqual(
+        output.netOnly.map((entry) => [entry.location, entry.why]),
+        [['clock.mjs:stamp', `net ${netFile} went red after the refactor (exit 1); discarded`]],
+      );
+      assert.equal(record.steps['refactor/1/net/0'].exec.command.at(-1), netFile);
+      bothNetsPublished(env, output, record, clock);
+    },
+  },
+  {
+    mode: 'net-refusals',
+    input: () => ({ ...input(), maxTargets: 5 }),
+    check({ result, env }) {
+      const { output } = result;
+      // Refused: a net claiming another net's file, one that edits existing code, one that pins
+      // no behavior and one missing a declared file. The pricing net still goes ahead.
+      assert.equal(output.status, 'applied');
+      assert.deepEqual(output.skipped, [
+        {
+          location: 'clock.mjs:stamp',
+          refactoring: 'Inject the clock',
+          why: `net file ${casesFile} collides with the net of pricing.mjs:totalWithTax`,
+          failed: false,
+        },
+        {
+          location: 'target.mjs',
+          refactoring: 'Introduce a named constant',
+          why: 'net writer changed existing files: [{"path":"clock.mjs","status":"modified"}]',
+          failed: false,
+        },
+        {
+          location: 'README.md',
+          refactoring: 'Pins nothing',
+          why: 'pinned net names no behavior',
+          failed: false,
+        },
+        {
+          location: 'notes.mjs',
+          refactoring: 'Declares a file it never adds',
+          why: 'declared net files were not added: notes.cases.json',
+          failed: false,
+        },
+      ]);
+      assert.equal(output.refactored.length, 1);
+      assert.equal(
+        git(env.cwd, 'diff', '--name-only', env.base, 'HEAD'),
+        `${casesFile}\npricing.mjs\n${netFile}`,
+      );
+      assert.equal(readFileSync(join(env.cwd, casesFile), 'utf8'), cases(15));
+      assert.equal(readFileSync(join(env.cwd, 'clock.mjs'), 'utf8'), clock);
     },
   },
   {

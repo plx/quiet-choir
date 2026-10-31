@@ -10,13 +10,24 @@ The answer cites sources by key. These are the sources it had, with their findin
 
 {% include "_fragments/Sources.md" +%}
 
+{% include "_fragments/Evidence.md" +%}
+
 {% if unknown %}
 The workflow checked the citations, and these cited keys match no source: {{ unknown | join(', ') }}.
 Every claim that cites one is unsupported.
 
 {% endif %}
 {% if unswept %}
-These sweeps failed, so their territory was never searched: {{ unswept | join(', ') }}.
+These territories were never searched, because their sweep failed or could not run:
+{{ unswept | join(', ') }}.
+
+{% endif %}
+{% if failed %}
+These leads were ranked for reading, but their read failed, so nothing from them is in the sources:
+{%- for lead in failed %}
+
+- {{ lead.ref }} ({{ lead.kind }}, {{ lead.credibility }}): {{ lead.promise }}
+{%- endfor +%}
 
 {% endif %}
 {% if deferred %}
@@ -34,12 +45,15 @@ each gap, write a targeted hunt instruction: a specific search or a specific doc
 "do more research". Return at most {{ maxGaps }} gaps. Only the first {{ huntCap }} are hunted, so
 put the most important first.
 
-{% if context %}
+{% if local %}
 Give each gap a territory. A web hunt searches and fetches pages but cannot read this repository; a
 local hunt reads this repository at the pinned commit but has no web access. Choose local only when
 the gap is about this repository's own code or configuration.
+
+A web hunt's instruction becomes a public search or fetch, so describe what to look for in general
+terms, and never quote this repository's code, paths or local findings in it.
 {% else %}
-There is no local context, so every hunt searches the web: give each gap the territory web.
+No local hunt can run, so every hunt searches the web: give each gap the territory web.
 {% endif %}
 
 Return an empty list when no gap is worth a hunt: that is the verdict that the answer is adequate.

@@ -3,8 +3,17 @@
 import { definePrompts, z } from 'quiet-choir';
 import { Assessed, Dimension, Excerpt, Row, Rule } from './contracts.js';
 
-/** The pinned range every assessor and confirmer reads: its span, log and patch excerpts. */
-const range = { span: z.string(), count: z.int().min(1), log: Excerpt, patch: Excerpt };
+/**
+ * What every assessor and confirmer receives: the pinned range's span, log and patch excerpts,
+ * and whether code ran any test command (Evidence.md then says not to rerun them).
+ */
+const range = {
+  span: z.string(),
+  count: z.int().min(1),
+  log: Excerpt,
+  patch: Excerpt,
+  tested: z.boolean(),
+};
 const policy = z.string();
 /** One command run for a dimension: how it ended and the end of each output stream. */
 const Command = z.object({

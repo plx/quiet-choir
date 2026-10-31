@@ -12,7 +12,7 @@ export default definePackage({
   description:
     "Gather flaky-test suspects from git history, test-code smells and CI artifacts, stress-run each suspect in a tracked test file with the operator's single-test command for a measured flake rate, diagnose a mechanism for each confirmed flake, and publish approved fixes only after code re-stresses them",
   whenToUse:
-    'Unexplained CI red streaks, or auditing a test suite with a reputation for randomness; report-only unless fix is set. Input: {testCommand, scope?, testFiles?, runs?, maxSuspects?, fix?, fixRuns?, verifyCommands?, runTimeoutMs?, historyDepth?}.',
+    'Unexplained CI red streaks, or auditing a test suite with a reputation for randomness; report-only unless fix is set. Input: {testCommand, scope?, testFiles?, passPattern?, runs?, maxSuspects?, fix?, fixRuns?, verifyCommands?, runTimeoutMs?, historyDepth?}.',
   workflows: [flakyTestHunt],
   entry: flakyTestHunt,
   prompts: [prompts],

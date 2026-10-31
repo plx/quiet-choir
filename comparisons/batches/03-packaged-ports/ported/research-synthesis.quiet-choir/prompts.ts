@@ -1,5 +1,6 @@
 // The prompt index: every agent prompt as a markdown template with typed parameters. Question.md,
-// Credibility.md, Findings.md, Sources.md and Untrusted.md are fragments under prompts/_fragments/.
+// Credibility.md, Findings.md, Sources.md, Untrusted.md and Evidence.md are fragments under
+// prompts/_fragments/.
 import { definePrompts, z } from 'quiet-choir';
 import { Gap, Modality, Ranked, Source, TrackedGap } from './contracts.js';
 
@@ -37,7 +38,11 @@ export const prompts = definePrompts(import.meta.dirname + '/prompts', {
       sources,
       unknown: z.array(z.string()),
       unswept: z.array(Modality),
+      /** Ranked leads whose read failed. */
+      failed: z.array(Ranked),
       deferred: z.array(Ranked),
+      /** Whether a local hunt can run: the repository was pinned. */
+      local: z.boolean(),
       huntCap: cap,
       maxGaps: cap,
     }),

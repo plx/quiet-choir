@@ -40,7 +40,7 @@ export function choose(
 export function acceptNet(
   net: NetClaim,
   change: WorktreeChange | undefined,
-): Omit<GreenNet, 'status' | 'rounds'> | { why: string } {
+): Omit<GreenNet, 'status' | 'rounds' | 'partial'> | { why: string } {
   if (net.status === 'cannot-pin') return { why: `cannot pin: ${net.notes || 'no reason given'}` };
   if (net.netFile === null) return { why: 'pinned without a net file' };
   if (!net.behaviorsPinned.length) return { why: 'pinned net names no behavior' };
@@ -65,7 +65,10 @@ export function acceptNet(
   };
 }
 
-/** A pinned net: the files it added (its test file first) and what it pins. */
+/**
+ * A pinned net: the files it added (its test file first) and what it pins. `partial` counts the
+ * previous net files its repair rounds were shown only in part.
+ */
 export interface GreenNet {
   readonly status: 'green';
   readonly netFile: string;
@@ -73,9 +76,11 @@ export interface GreenNet {
   readonly files: string[];
   readonly behaviorsPinned: string[];
   readonly rounds: number;
+  readonly partial: number;
   readonly change: WorktreeChange & { commit: string };
 }
-export type NetOutcome = GreenNet | { readonly status: 'skipped'; readonly why: string };
+export type NetOutcome =
+  GreenNet | { readonly status: 'skipped'; readonly why: string; readonly partial: number };
 
 /**
  * Split the settled nets into green nets and skipped targets, in rank order. A failed writer is
@@ -107,7 +112,15 @@ export function settleNets(chosen: Chosen[], results: Settled<NetOutcome, MapSte
     for (const file of outcome.files) claimed.set(file, target.location);
     green.push({ ...outcome, target });
   }
-  return { green, skipped, failedNets: results.filter((result) => !result.ok).length };
+  return {
+    green,
+    skipped,
+    failedNets: results.filter((result) => !result.ok).length,
+    truncatedRepairFiles: results.reduce(
+      (sum, result) => sum + (result.ok ? result.value.partial : 0),
+      0,
+    ),
+  };
 }
 
 /** The plan entry a human approves and every refactorer receives. */
@@ -151,14 +164,16 @@ export function summarize(output: Omit<RefactorOutput, 'summary'>): string {
       return `No measurable refactoring targets were chosen; ${String(deferred.length)} deferred.`;
     case 'no-nets':
       return `No target got a green characterization net, so nothing was refactored. ${tail}`;
+    case 'baseline-red':
+      return `The verify commands already fail on run-owned nets commit ${netsCommit ?? 'none'}, before any refactor, so nothing was refactored or published; fix the baseline (or the nets, if they broke it) and run again. ${tail}`;
     case 'report':
       return `${String(netOnly.length)} targets pinned by green nets and planned; apply was false, so the checkout is untouched and a run with apply pins them again. ${keep} ${tail}`;
     case 'declined':
       return `The refactoring plan for ${String(netOnly.length)} pinned targets was declined; nothing was published. ${keep} ${tail}`;
     case 'verification-failed':
-      return `The final verification failed on run-owned commit ${commit ?? 'none'} (${String(refactored.length)} refactors kept), so nothing was published. ${keep} ${tail}`;
+      return `The final verification failed on run-owned integration ${commit ?? 'none'} (${String(refactored.length)} refactors kept), so nothing was published. ${keep} ${tail}`;
     case 'checkout-moved':
-      return `The checkout moved during the run, so the verified tree (run-owned commit ${commit ?? 'none'}, ${String(refactored.length)} refactors) was not published onto it. ${tail}`;
+      return `The checkout moved during the run, so the verified integration (run-owned commit ${commit ?? 'none'}, ${String(refactored.length)} refactors) was not published onto it; git merge that commit to keep it. ${tail}`;
     default:
       return `${String(refactored.length)} refactored behind green nets, ${String(netOnly.length)} kept only their nets; the nets were published and left in place. ${tail}`;
   }

@@ -68,13 +68,14 @@ export type Hunted = z.infer<typeof Hunted>;
 
 /** A local hunt reads the pinned repository and nothing else; a web hunt cannot read it at all. */
 export const Territory = z.enum(['web', 'local']);
+export type Territory = z.infer<typeof Territory>;
 export const Gap = z.object({
   gap: z.string().min(1).describe('What the answer is missing or asserts without evidence'),
   huntInstruction: z
     .string()
     .min(1)
     .describe('A targeted search or a specific document to read, not "search more"'),
-  territory: Territory.describe('local only for this repository, when there is a local context'),
+  territory: Territory.describe("local only for this repository's own code, when it is pinned"),
 });
 export type Gap = z.infer<typeof Gap>;
 /** No gaps means adequate: code derives the verdict, so the two cannot disagree. */
@@ -115,20 +116,29 @@ export const ResearchInput = z.object({
   depth: Depth.default('standard').describe('Leads deep-read: quick 4, standard 8, deep 14'),
 });
 
+export const Status = z
+  .enum(['answered', 'degraded', 'no-leads', 'no-findings'])
+  .describe(
+    'Degraded when a member failed, a territory went unsearched, or the answer cites nothing or an unknown key; no-leads and no-findings mean a clean run found nothing',
+  );
+export type Status = z.infer<typeof Status>;
+
 export const ResearchOutput = z.object({
-  status: z.enum(['answered', 'degraded', 'no-leads', 'no-findings']),
+  status: Status,
   answer: z.string().nullable().describe('Cited markdown with the source list appended'),
   confidence: Confidence,
   sources: z.array(Source),
   gaps: z.array(TrackedGap),
   critic: CriticOutcome,
-  swept: z.array(Modality),
-  unswept: z.array(Modality).describe('Sweeps that failed, so their territory went unsearched'),
+  swept: z.array(Modality).describe('The modalities the run asked to sweep'),
+  unswept: z
+    .array(Modality)
+    .describe('Territories never searched: a failed sweep, or local with no Git commit to pin'),
   leadsFound: z.number().int().nonnegative(),
   deferred: z.array(Ranked).describe('Ranked past the depth cap and never read'),
   unread: z.array(Unread),
   unknownCitations: z.array(z.string()).describe('Keys the answer cites that no source has'),
   uncitedSources: z.array(z.string()),
-  localCommit: Sha.nullable().describe('The commit the local roles read, pinned at the start'),
+  localCommit: Sha.nullable().describe('The commit the local roles read; null with no local sweep'),
 });
 export type ResearchOutput = z.infer<typeof ResearchOutput>;

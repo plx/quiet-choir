@@ -2,7 +2,7 @@
 // maps, so each failure is kept beside its modality, lead or gap. Each call goes to a web role or,
 // for the repository, to a local role on a snapshot of the commit pinned first; code deduplicates
 // and ranks the leads, keys the sources, checks the answer's citations and derives confidence and
-// status.
+// status on every return path.
 import { defineWorkflow } from 'quiet-choir';
 import {
   Critique,
@@ -17,18 +17,18 @@ import {
 } from '../contracts.js';
 import {
   citations,
-  confidence,
+  conclude,
   fold,
+  gather,
   huntCap,
-  merge,
+  knownFor,
   modalitiesFor,
   rank,
   routed,
   sources,
-  verdict,
   withSources,
 } from '../lib/policy.js';
-import { headCommit, unchanged } from '../lib/snapshot.js';
+import { pinHead, unchanged } from '../lib/snapshot.js';
 import { prompts } from '../prompts.js';
 import { roster } from '../roster.js';
 
@@ -43,13 +43,14 @@ export default defineWorkflow({
   output: ResearchOutput,
   async run(ctx, input) {
     const { question, context } = input;
-    const commit = context === null ? null : await headCommit(ctx);
+    const commit = context === null ? null : await pinHead(ctx);
     const snapshot = commit === null ? null : { base: { commit } };
-    const swept = modalitiesFor(context);
+    const local = snapshot !== null;
+    const swept = modalitiesFor(commit);
     const sweeps = await ctx.map(
       'sweeps',
       swept,
-      { concurrency: 4, onError: 'return' },
+      { concurrency: 4, key: (modality) => modality, onError: 'return', version: 'sweep/1' },
       async (modality) => {
         const prompt = prompts.Sweep({ question, context, modality, commit, maxLeads });
         if (snapshot && modality === 'local')
@@ -63,22 +64,22 @@ export default defineWorkflow({
         return ctx.roster.Scout.value('sweep', { schema: Leads, prompt });
       },
     );
-    const unswept = swept.filter((_, index) => !sweeps[index]?.ok);
-    const leads = merge(
-      swept.flatMap((modality, index) => {
-        const result = sweeps[index];
-        return result?.ok ? [{ modality, leads: result.value.leads }] : [];
-      }),
-    );
+    const { leads, unswept } = gather(swept, sweeps, context !== null && !local);
     const { toRead, deferred } = rank(leads, input.depth);
     const base = { swept, unswept, leadsFound: leads.length, deferred, localCommit: commit };
-    const empty = { answer: null, confidence: 'none' as const, sources: [], gaps: [] };
-    const unchecked = { critic: 'not-run' as const, unknownCitations: [], uncitedSources: [] };
-    if (!toRead.length) return { ...base, ...empty, ...unchecked, status: 'no-leads', unread: [] };
+    const empty = {
+      answer: null,
+      sources: [],
+      gaps: [],
+      critic: 'not-run' as const,
+      unknownCitations: [],
+      uncitedSources: [],
+    };
+    if (!toRead.length) return conclude({ ...base, ...empty, unread: [] });
     const readings = await ctx.map(
       'reads',
       toRead,
-      { concurrency: 4, onError: 'return' },
+      { concurrency: 4, onError: 'return', version: 'read/1' },
       async (lead) => {
         if (snapshot && lead.kind === 'local-code')
           return unchanged(
@@ -94,9 +95,9 @@ export default defineWorkflow({
         });
       },
     );
-    const { found, unread } = sources(toRead, readings);
+    const { found, unread, failed } = sources(toRead, readings);
     const read = { ...base, unread };
-    if (!found.length) return { ...read, ...empty, ...unchecked, status: 'no-findings' };
+    if (!found.length) return conclude({ ...read, ...empty });
     const draft = await ctx.roster.Synthesizer.value('synthesize', {
       prompt: prompts.Synthesize({ question, context, sources: found, gaps: null }),
     });
@@ -110,19 +111,21 @@ export default defineWorkflow({
         sources: found,
         unknown: citations(draft, found).unknownCitations,
         unswept,
+        failed,
         deferred,
+        local,
         huntCap,
         maxGaps,
       }),
     });
-    const critiqued = critique.ok ? routed(critique.value.gaps, context) : [];
-    const known = found.map((source) => source.ref);
+    const critiqued = critique.ok ? routed(critique.value.gaps, commit) : [];
     // One supplementary round by design: critics always find more, and a third round rarely pays.
     const hunts = await ctx.map(
       'hunts',
       critiqued.slice(0, huntCap),
-      { concurrency: 3, onError: 'return' },
+      { concurrency: 3, onError: 'return', version: 'hunt/1' },
       async (gap) => {
+        const known = knownFor(found, gap.territory);
         if (snapshot && gap.territory === 'local')
           return unchanged(
             await ctx.roster.LocalHunter.object('hunt', {
@@ -143,17 +146,12 @@ export default defineWorkflow({
           prompt: prompts.Synthesize({ question, context, ...folded }),
         })
       : draft;
-    const critic = !critique.ok ? 'failed' : critiqued.length ? 'gaps' : 'adequate';
-    const check = citations(answer, folded.sources);
-    return {
+    return conclude({
       ...read,
       ...folded,
-      status: verdict({ unswept, unread, critic, gaps: folded.gaps }, check),
+      critic: !critique.ok ? 'failed' : critiqued.length ? 'gaps' : 'adequate',
       answer: withSources(answer, folded.sources),
-      confidence: confidence(folded.sources, critic, folded.gaps, check),
-      critic,
-      unknownCitations: check.unknownCitations,
-      uncitedSources: check.uncitedSources,
-    };
+      ...citations(answer, folded.sources),
+    });
   },
 });

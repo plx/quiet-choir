@@ -96,7 +96,7 @@ export const Row = z.object({
   confirmation: z.enum(['confirmed', 'concern', 'not-a-problem', 'unconfirmed']).nullable(),
   evidence: z.string(),
   findings: z.array(z.string()),
-  reasoning: z.string().nullable().describe("The confirmer's reasoning"),
+  reasoning: z.string().nullable().describe("The confirmer's reasoning, or why it failed"),
 });
 export type Row = z.infer<typeof Row>;
 export const Excerpt = z.object({
@@ -117,7 +117,7 @@ export const ReleaseGateInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "Exclusive starting revision; omitted, the nearest tag matching tagPattern that is not HEAD's own",
+      "Exclusive starting revision, an ancestor of HEAD (otherwise the gate refuses); omitted, the nearest tag matching tagPattern that is not HEAD's own",
     ),
   tagPattern: z.string().min(1).default('*').describe('git describe --match glob for release tags'),
   policy: z.string().min(1).default(defaultPolicy).describe('House rules every role applies'),
@@ -138,7 +138,7 @@ export const ReleaseGateInput = z.object({
     .max(12)
     .default([])
     .describe(
-      "Operator-selected argv commands whose output code hands to that dimension's assessor",
+      "Operator-selected argv commands; the last 16,000 characters of each output stream reach that dimension's assessor and the confirmer of its blocker",
     ),
   commandTimeoutMs: z
     .number()
@@ -147,13 +147,15 @@ export const ReleaseGateInput = z.object({
     .max(3_600_000)
     .default(900_000)
     .describe('Deadline of each test or evidence command; a timeout is a recorded failure'),
-  maxPatchChars: z
+  maxRangeChars: z
     .number()
     .int()
     .min(1000)
-    .max(400_000)
+    .max(300_000)
     .default(100_000)
-    .describe('Characters of the range log and of its patch each assessor and confirmer receives'),
+    .describe(
+      "Characters of the range's log and patch excerpts together in every assessor and confirmer prompt; the log takes at most a quarter",
+    ),
 });
 export type ReleaseGateInput = z.infer<typeof ReleaseGateInput>;
 

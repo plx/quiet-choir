@@ -3,7 +3,7 @@
 // stress-runs the operator's single-test command and computes every verdict, settled
 // diagnosticians see only measured flakes, and a fix runs only after a human approves the exact
 // plan; code checks the isolated change covers the plan and re-stresses it before publishing it.
-import { defineWorkflow } from 'quiet-choir';
+import { defineWorkflow, type WorktreeHandle } from 'quiet-choir';
 import * as std from 'quiet-choir/std';
 import {
   Diagnosis,
@@ -16,7 +16,18 @@ import {
   type Stress,
 } from '../contracts.js';
 import { artifacts, classify, cleanAt, history, residue } from '../lib/git.js';
-import { argvFor, cap, fixPlan, merge, owned, planDigest, preview, screen } from '../lib/policy.js';
+import {
+  argvFor,
+  cap,
+  fixPlan,
+  merge,
+  owned,
+  passFor,
+  planDigest,
+  preview,
+  screen,
+  unplanned,
+} from '../lib/policy.js';
 import { held, stress, verify } from '../lib/stress.js';
 import { prompts } from '../prompts.js';
 import { roster } from '../roster.js';
@@ -31,7 +42,7 @@ export default defineWorkflow({
   input: FlakyInput,
   output: FlakyOutput,
   async run(ctx, input) {
-    const commit = await cleanAt(ctx, 'clean', null);
+    const { head: commit, prefix } = await cleanAt(ctx, 'clean', null);
     const facts = {
       history: await history(ctx, commit, input.historyDepth, input.testFiles),
       artifacts: await artifacts(ctx),
@@ -85,22 +96,35 @@ export default defineWorkflow({
     if (!chosen.length)
       return {
         ...report,
-        // No sweep answered, so "no suspects" would claim a fact nobody established.
-        status: failedSweeps.length === swept.length ? 'sweeps-failed' : 'no-suspects',
+        // "No suspects" only when a sweep answered and nothing it named was turned away.
+        status:
+          failedSweeps.length === swept.length
+            ? 'sweeps-failed'
+            : merged.length
+              ? 'all-rejected'
+              : 'no-suspects',
         confirmed: [],
         cleared: [],
         broken: [],
         unrunnable: [],
         undiagnosed: 0,
+        unplanned: [],
         residue: [],
       };
+    const measure = (target: { file: string; test: string }, tree: WorktreeHandle | null) => ({
+      timeoutMs: input.runTimeoutMs,
+      passPattern: passFor(input.passPattern, target.test),
+      tree,
+    });
     // One suspect at a time: concurrent runs in one checkout would manufacture flakes.
     const stressed = await ctx.map('stress', chosen, { concurrency: 1 }, async (suspect) => ({
       ...suspect,
-      stress: await stress(ctx, argvFor(input.testCommand, suspect), input.runs, {
-        timeoutMs: input.runTimeoutMs,
-        tree: null,
-      }),
+      stress: await stress(
+        ctx,
+        argvFor(input.testCommand, suspect),
+        input.runs,
+        measure(suspect, null),
+      ),
     }));
     const left = await residue(ctx);
     const by = (verdict: Stress['verdict']) =>
@@ -110,7 +134,7 @@ export default defineWorkflow({
     const diagnoses = await ctx.map(
       'diagnose',
       flaky,
-      { concurrency: 3, onError: 'return' },
+      { concurrency: 3, onError: 'return', version: 'diagnose/1' },
       ({ stress, ...suspect }) =>
         ctx.roster.Diagnostician.value('diagnosis', {
           schema: Diagnosis,
@@ -128,11 +152,18 @@ export default defineWorkflow({
       broken: by('always-fails'),
       unrunnable: by('could-not-run'),
       undiagnosed: confirmed.filter((flake) => !flake.diagnosis).length,
+      unplanned: unplanned(confirmed),
       residue: left,
     };
-    if (!confirmed.length) return { ...result, status: 'no-flakes' };
+    // "No flakes" only when at least one suspect was measured.
+    if (!confirmed.length)
+      return {
+        ...result,
+        status: result.unrunnable.length === stressed.length ? 'unmeasured' : 'no-flakes',
+      };
+    if (!input.fix) return { ...result, status: 'report' };
     const plan = fixPlan(confirmed);
-    if (!input.fix || !plan.length) return { ...result, status: 'report' };
+    if (!plan.length) return { ...result, status: 'no-plan' };
     // Publication needs the measured checkout, so test residue stops here, before any approval.
     await cleanAt(ctx, 'clean-for-fix', commit);
     const list = std.exec.json(plan);
@@ -155,7 +186,7 @@ export default defineWorkflow({
         verifying: input.verifyCommands.length > 0,
       }),
     });
-    const { change, refusedFiles, untouched } = owned(fixed.worktree, plan);
+    const { change, refusedFiles, untouched } = owned(fixed.worktree, plan, prefix);
     const gated = { ...result, approvedDigest, refusedFiles, untouched };
     if (refusedFiles.length) return { ...gated, status: 'refused' };
     // An unchanged test can pass a few re-stress runs by chance, so every fix must touch its files.
@@ -166,10 +197,12 @@ export default defineWorkflow({
     const restress = await ctx.map('restress', plan, { concurrency: 1 }, async (item) => ({
       test: item.test,
       file: item.file,
-      stress: await stress(ctx, argvFor(input.testCommand, item), input.fixRuns, {
-        timeoutMs: input.runTimeoutMs,
-        tree: stressTree,
-      }),
+      stress: await stress(
+        ctx,
+        argvFor(input.testCommand, item),
+        input.fixRuns,
+        measure(item, stressTree),
+      ),
     }));
     // A fresh tree, so what the re-stress runs wrote cannot decide the verification commands.
     const verification = input.verifyCommands.length

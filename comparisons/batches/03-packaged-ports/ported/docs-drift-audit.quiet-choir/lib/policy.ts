@@ -1,7 +1,8 @@
-// Pure rules: ranking and capping the listed docs, anchoring claims in the doc text, pairing the
-// checker's results, judging a fixer's receipt and text, the run status and the patch digest.
+// Pure rules: ranking and capping the listed docs, anchoring claims in the doc text, fencing
+// evidence for prompts, pairing the checker's results, judging receipts and a fixer's text,
+// collating the settled pipelines, the run and fix statuses, and the patch digest and its preview.
 import { createHash } from 'node:crypto';
-import type { WorktreeChange } from 'quiet-choir';
+import type { MapStepError, Settled, WorktreeChange } from 'quiet-choir';
 import type {
   Audited,
   Checked,
@@ -11,6 +12,9 @@ import type {
   DocFix,
   DriftOutput,
   Failed,
+  FixStatus,
+  Omitted,
+  Pipeline,
   Result,
   Skipped,
 } from '../contracts.js';
@@ -81,9 +85,20 @@ export function rank(
   };
 }
 
-/** Whitespace-insensitive text, so a quote that wraps differently still anchors. */
-const flat = (text: string) => text.replace(/\s+/gu, ' ').trim();
-export const quotedIn = (text: string, quote: string) => flat(text).includes(flat(quote));
+/**
+ * Text without Markdown code and emphasis marks and with whitespace collapsed, so a quote that
+ * wraps differently or drops the backticks around a command still anchors.
+ */
+const flat = (text: string) => text.replace(/[`*]/gu, '').replace(/\s+/gu, ' ').trim();
+/** Whether `quote` is in `text`; a quote of nothing but marks and spaces anchors nowhere. */
+export const quotedIn = (text: string, quote: string) =>
+  flat(quote) !== '' && flat(text).includes(flat(quote));
+
+/**
+ * Text for a `<tag>...</tag>` block in a prompt, with any closing tag inside it neutralized so the
+ * block ends only where the template closes it.
+ */
+export const fenced = (text: string, tag: string) => text.replaceAll(`</${tag}`, `<\\/${tag}`);
 
 /** Keep the claims whose quote is in the doc, once each; report the rest by their claim text. */
 export function anchor(text: string, claims: Claim[]) {
@@ -107,6 +122,16 @@ export const pair = (claims: Claim[], results: Result[]): Checked[] =>
     if (!result) throw new Error(`Checker answered ${results.length} of ${claims.length} claims`);
     return { ...claim, ...result };
   });
+
+/** A read-only call's output; a checker that changed its snapshot fails its doc's pipeline. */
+export function readOnly<T>(result: { output: T; worktree?: WorktreeChange }): T {
+  if (!result.worktree) throw new Error('A snapshot call returned no receipt');
+  if (result.worktree.files.length)
+    throw new Error(
+      `A read-only role changed its snapshot: ${JSON.stringify(result.worktree.files)}`,
+    );
+  return result.output;
+}
 
 /**
  * Judge a fixer's receipt. Only an in-place modification of its own doc is accepted; anything
@@ -180,24 +205,80 @@ export const approvalList = (docs: Audited[]) =>
       : [],
   );
 
-/** Degraded beats limited: a failure loses evidence, a cap only defers it. */
+/**
+ * Pair every chosen doc with its settled pipeline: an audited doc keeps its accepted change for
+ * integration, and a failed pipeline is reported with the step that failed.
+ */
+export function collect(
+  chosen: (Chosen & { bytes: number })[],
+  settled: Settled<Pipeline, MapStepError>[],
+) {
+  const docs: Audited[] = [];
+  const failed: Failed[] = [];
+  const changes: WorktreeChange[] = [];
+  for (const [index, doc] of chosen.entries()) {
+    const outcome = settled[index];
+    if (outcome?.ok) {
+      const { change, ...audited } = outcome.value;
+      docs.push({ ...doc, ...audited });
+      if (change) changes.push(change);
+    } else
+      failed.push({
+        doc: doc.path,
+        step: outcome?.error.stepId ?? null,
+        error: outcome?.error.message ?? 'No outcome was recorded',
+      });
+  }
+  return { docs, failed, changes };
+}
+
+/**
+ * Degraded beats limited: a failure loses evidence, claims or a fix, a cap only defers a doc. A
+ * dropped claim may be one the doc really makes, and a drifted doc whose fix is not in the patch
+ * stays wrong, so both degrade.
+ */
 export function statusOf(report: {
   docs: Audited[];
   skipped: Skipped[];
   failed: Failed[];
   unclassified: string[];
-  evidence: { failure: string | null }[];
+  evidence: { ok: boolean }[];
 }): DriftOutput['status'] {
   if (
     report.failed.length ||
     report.unclassified.length ||
-    report.evidence.some((check) => check.failure !== null) ||
-    report.docs.some((doc) => doc.capped)
+    report.evidence.some((check) => !check.ok) ||
+    report.docs.some(
+      (doc) =>
+        doc.capped ||
+        doc.unanchored.length > 0 ||
+        (doc.fix !== null && doc.fix.status !== 'changed'),
+    )
   )
     return 'degraded';
-  if (report.skipped.some((entry) => entry.reason !== 'classified-skip')) return 'limited';
-  return 'complete';
+  return capped(report.skipped) ? 'limited' : 'complete';
 }
+
+/** A doc left out for any reason but the librarian's skip may hold drift the audit never read. */
+const capped = (skipped: Skipped[]) => skipped.some((entry) => entry.reason !== 'classified-skip');
+
+/** Nothing reached the pipelines: limited when a cap or a path rule left docs out. */
+export const emptyStatus = (skipped: Skipped[]): DriftOutput['status'] =>
+  capped(skipped) ? 'limited' : 'no-docs';
+
+/** The drifted docs whose fixer ran but whose change the patch leaves out. */
+export const omittedOf = (docs: Audited[]): Omitted[] =>
+  docs.flatMap(({ path, fix }) =>
+    fix && fix.status !== 'changed' ? [{ doc: path, status: fix.status }] : [],
+  );
+
+/** No change was accepted: say whether a fixer failed or overreached, not just that none changed. */
+export const unfixedStatus = (omitted: Omitted[]): FixStatus =>
+  omitted.some((entry) => entry.status === 'failed')
+    ? 'failed'
+    : omitted.some((entry) => entry.status === 'refused')
+      ? 'refused'
+      : 'no-change';
 
 export function totals(docs: Audited[], published: boolean) {
   const count = (status: Checked['status']) =>
@@ -216,6 +297,23 @@ export function totals(docs: Audited[], published: boolean) {
 /** The SHA-256 of the approved patch, exactly as `git diff` printed it. */
 export const digest = (text: string): string => createHash('sha256').update(text).digest('hex');
 
-/** A bounded preview for the approval question; the subject carries the digest. */
-export const preview = (text: string): string =>
-  Buffer.from(text).subarray(0, 15_000).toString('utf8');
+/** Room for the patch in the approval's details, which hold at most 16 KiB of UTF-8. */
+const PREVIEW_BYTES = 15_000;
+
+/**
+ * The approval's details: the whole patch when it fits, else its head cut on a character boundary
+ * with an explicit marker. The subject carries the digest, the size and whether it was cut.
+ */
+export function preview(text: string) {
+  const bytes = Buffer.from(text);
+  if (bytes.length <= PREVIEW_BYTES)
+    return { details: text, bytes: bytes.length, truncated: false };
+  let cut = PREVIEW_BYTES;
+  while (cut > 0 && ((bytes[cut] ?? 0) & 0xc0) === 0x80) cut -= 1;
+  const rest = bytes.length - cut;
+  return {
+    details: `${bytes.subarray(0, cut).toString('utf8')}\n[... ${String(rest)} more bytes; the digest covers the whole patch]`,
+    bytes: bytes.length,
+    truncated: true,
+  };
+}

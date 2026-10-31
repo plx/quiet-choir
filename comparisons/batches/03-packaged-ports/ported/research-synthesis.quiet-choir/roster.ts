@@ -1,9 +1,13 @@
-// Data only. Nothing edits, and no role holds both the repository's file tools and a web channel.
-// The web roles (Scout, Reader, Hunter) replace std.claude.ReadOnly's tools with WebSearch and
-// WebFetch, keeping its limits, so a fetched page that tells its reader to send a local file
+// Data only. Nothing edits, and no Claude role holds both the repository's file tools and a web
+// channel. The web roles (Scout, Reader, Hunter) replace std.claude.ReadOnly's tools with WebSearch
+// and WebFetch, keeping its limits, so a fetched page that tells its reader to send a local file
 // somewhere has no file to send. The local roles keep the file tools, have no web tools, and run in
-// a snapshot of the pinned commit. The upstream's low-effort sweeps and reads are the Copyist tier,
-// its unspecified-effort hunts the Scribe tier, its high-effort synthesis the Planner tier, and its
+// a snapshot of the pinned commit. The split is per call: the Synthesizer and the Critic see every
+// source's findings, local ones included, and the Critic's hunt instructions reach the web Hunter,
+// so the Critique prompt forbids quoting local findings in a web hunt. std.codex.Text is not
+// tool-less: the Critic's read-only sandbox can read files, with whatever web search the installed
+// Codex enables by default. The upstream's low-effort sweeps and reads are the Copyist tier, its
+// unspecified-effort hunts the Scribe tier, its high-effort synthesis the Planner tier, and its
 // high-effort critic runs on Codex so it does not share the synthesizer's harness.
 import { defineRoster } from 'quiet-choir';
 import * as std from 'quiet-choir/std';

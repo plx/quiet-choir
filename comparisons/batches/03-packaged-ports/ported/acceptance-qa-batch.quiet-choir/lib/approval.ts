@@ -43,6 +43,21 @@ export function approvalOf<T>(list: readonly T[], header: string, render: (entry
   return { digest, details };
 }
 
+/** How every approved probe runs, for the head of the details. */
+export function conditions(run: {
+  base: string;
+  argv: string[];
+  prepare: string[][];
+  probeEnv: string[];
+  timeoutMs: number;
+}) {
+  const prepared = run.prepare.length
+    ? `after ${run.prepare.map((command) => JSON.stringify(command)).join(', then ')} ran there with your full environment`
+    : 'with nothing installed or built beyond that commit';
+  const variables = run.probeEnv.length ? run.probeEnv.join(', ') : 'none';
+  return `Each probe runs as ${JSON.stringify(run.argv)} with the program on stdin, alone in a fresh checkout at ${run.base}, ${prepared}. It runs with your privileges for at most ${run.timeoutMs} ms, and receives only these variables from your environment: ${variables}.`;
+}
+
 export const renderProbe = (entry: CriterionProbe) =>
   [
     `${entry.ticket}, criterion ${entry.position + 1}: ${entry.criterion}`,

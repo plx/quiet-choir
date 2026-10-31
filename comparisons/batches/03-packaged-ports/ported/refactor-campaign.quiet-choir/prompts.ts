@@ -26,8 +26,9 @@ export const prompts = definePrompts(import.meta.dirname + '/prompts', {
         .object({
           netFile: z.string(),
           code: z.int().nullable(),
-          failure: z.string().nullable(),
-          output: z.string(),
+          failure: z.string().nullable().describe('How the run failed when it did not exit'),
+          stdout: z.string().describe('The tail of standard output'),
+          stderr: z.string().describe('The tail of standard error'),
           files: z.array(
             z.object({ path: z.string(), source: z.string(), shownBytes: z.int().nullable() }),
           ),
@@ -63,6 +64,9 @@ export const prompts = definePrompts(import.meta.dirname + '/prompts', {
         .int()
         .nullable()
         .describe('The bytes of a truncated net shown; null if whole'),
+      files: z
+        .array(z.string())
+        .describe('Every path the refactor touched, both sides of a rename'),
       diff: z.string(),
       shownBytes: z.int().nullable().describe('The bytes of a truncated diff shown; null if whole'),
     }),

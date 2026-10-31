@@ -1,6 +1,17 @@
 You cannot run anything yourself: read the code, then write probes, which the workflow runs after a
 human approves them. Each probe runs alone as {{ argv | tojson }} with the program on standard input,
-from the repository root of a fresh checkout pinned at commit {{ base }}, under a time limit.
+from the repository root of a fresh checkout pinned at commit {{ base }}.
+{% if prepare %}
+Before each probe the workflow runs these commands in its checkout: {{ prepare | tojson }}.
+{% else %}
+Nothing is installed or built in the checkout beyond what that commit holds.
+{% endif %}
+A probe has at most {{ seconds }} seconds; one that runs longer reads as broken.
+{% if variables %}
+It sees only these environment variables: {{ variables | join(", ") }}.
+{% else %}
+It sees no environment variables beyond the workflow's own.
+{% endif %}
 
 Its exit code is the verdict, and only two codes count: 0 for the passing outcome and {{ failCode }}
 for the failing one. Any other exit, an uncaught exception, a failed import, a timeout or a signal

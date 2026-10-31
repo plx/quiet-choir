@@ -20,9 +20,11 @@ Never edit, move or delete a net's files; the workflow discards a change that to
 - {{ file }}
 {%- endfor +%}
 
-Change only what this refactoring needs. You have no shell, so do not try to run the tests; the
-workflow runs them, and an independent reviewer then reads your diff and rejects changes that are
-behavioral rather than structural.
+Change only what this refactoring needs. Leave existing tests and test configuration alone, apart
+from the mechanical follow-ups the refactoring forces (an import path, a renamed symbol). You have
+no shell, so do not try to run the tests; the workflow runs them, and an independent reviewer then
+reads your diff and rejects changes that are behavioral rather than structural, including any other
+change to a test.
 
 Approved digest: {{ digest }}
 Approved goal and plan:

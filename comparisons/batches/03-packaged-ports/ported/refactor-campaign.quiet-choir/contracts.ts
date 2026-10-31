@@ -135,7 +135,7 @@ export const RefactorInput = z
       .max(8)
       .default([])
       .describe(
-        'Operator-selected argv commands that must pass after each refactor and on the final tree; at least one with apply',
+        'Operator-selected argv commands that must pass on the nets commit before any refactor, after each refactor and on the integrated tree; at least one with apply',
       ),
   })
   .refine(
@@ -155,6 +155,7 @@ export const RefactorOutput = z.object({
   status: z.enum([
     'no-targets',
     'no-nets',
+    'baseline-red',
     'report',
     'declined',
     'verification-failed',
@@ -184,12 +185,20 @@ export const RefactorOutput = z.object({
   deferred: z.array(Target).describe('Surveyed targets the ranker did not choose'),
   failedNets: z.number().int().nonnegative(),
   failedCalls: z.number().int().nonnegative().describe('Refactor or review calls that failed'),
+  truncatedRepairFiles: z
+    .number()
+    .int()
+    .nonnegative()
+    .describe('Previous net files a repair round was shown only in part'),
   netsCommit: Sha.nullable().describe('A run-owned commit holding every green net'),
   approvedDigest: Digest.nullable(),
   commit: Sha.nullable().describe(
-    'The published HEAD; for verification-failed or checkout-moved, the unpublished run-owned tree',
+    'The published HEAD; for verification-failed or checkout-moved, the unpublished run-owned integration',
   ),
-  verification: z.array(Check).describe('The publish gate: every net and verify command'),
+  baseline: z.array(Check).describe('Every verify command on the nets commit, before any refactor'),
+  verification: z
+    .array(Check)
+    .describe('The publish gate: every net and verify command on the integrated tree'),
   summary: z.string(),
 });
 export type RefactorOutput = z.infer<typeof RefactorOutput>;

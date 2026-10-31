@@ -5,21 +5,42 @@ import * as std from 'quiet-choir/std';
 import { Path, Sha, type Listed } from '../contracts.js';
 
 /** History does not drift: changelogs are never listed, whatever the pathspecs. */
-const HISTORY = [':(exclude,glob,icase)**/changelog*', ':(exclude,glob,icase)**/changes.md'];
+const HISTORY = [
+  ':(top,exclude,glob,icase)**/changelog*',
+  ':(top,exclude,glob,icase)**/changes.md',
+];
 /** Listings are complete or the step fails; 16 MiB holds any listing a doc set produces. */
 const listing = { maxOutputBytes: 16 * 1024 * 1024 };
 
-/** The commit the audit reads: HEAD, refused while tracked files have uncommitted changes. */
-export async function pinBase(ctx: WorkflowContext) {
-  const status = await std.exec.git(ctx, 'clean', [
-    'status',
-    '--porcelain=v1',
-    '--untracked-files=no',
-  ]);
-  if (status !== '')
-    throw new Error(`Commit or stash tracked changes before auditing the docs: ${status}`);
+/**
+ * The commit the audit reads: HEAD. Every reader works in its own checkout of it, so a report-only
+ * run ignores the state of the source checkout. A fix run publishes to that checkout, so it is
+ * refused before any agent call by the rule `ctx.merge` applies to a checkout target: no tracked
+ * change and no untracked, non-ignored path.
+ */
+export async function pinBase(ctx: WorkflowContext, fix: boolean) {
+  if (fix) {
+    const dirt = await std.exec.git(ctx, 'clean', [
+      'status',
+      '--porcelain',
+      '--untracked-files=normal',
+      '--no-renames',
+    ]);
+    if (dirt !== '')
+      throw new Error(
+        `Commit, stash or remove these paths before a fix run, which publishes to the checkout:\n${dirt.trimEnd()}`,
+      );
+  }
   return Sha.parse((await std.exec.git(ctx, 'base', ['rev-parse', 'HEAD'])).trim());
 }
+
+/**
+ * The way up from the run's directory to the repository root ('' at the root). An isolated call
+ * keeps the run's position in the repository, so the checker and the fixer get it as `cwd` to
+ * start at the root that the root-relative doc paths in their prompts assume.
+ */
+export const toRoot = async (ctx: WorkflowContext) =>
+  (await std.exec.git(ctx, 'root', ['rev-parse', '--show-cdup'])).trim().replace(/\/$/u, '');
 
 /**
  * The text files at `base` that match `paths`, in path order, with their sizes. `git grep -I`
@@ -74,7 +95,8 @@ export async function outline(
       '^#{1,3} ',
       base,
       '--',
-      ...docs.map((path) => `:(literal)${path}`),
+      // Listed paths are root-relative, so they are `top` pathspecs in a subdirectory run too.
+      ...docs.map((path) => `:(top,literal)${path}`),
     ],
     { ...listing, okExitCodes: [0, 1] },
   );

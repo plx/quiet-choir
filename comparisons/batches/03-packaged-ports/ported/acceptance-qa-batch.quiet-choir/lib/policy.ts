@@ -1,6 +1,6 @@
 // Pure rules: what a probe's exit means, when a ticket is worth attacking, its verdict and what a
 // human still has to check, the run status, and the counts.
-import { FailExit } from '../contracts.js';
+import { FailExit, MaxTranscribed } from '../contracts.js';
 import type {
   AcceptanceOutput,
   AttackResult,
@@ -32,11 +32,12 @@ export const criterionStatus = (run: Run): CriterionStatus =>
 export const attackOutcome = (run: Run): AttackResult['outcome'] =>
   (({ zero: 'held', fail: 'broke', none: 'inconclusive' }) as const)[verdictOf(run) ?? 'none'];
 
-/** Why a run gave no verdict, for the manual list. */
+/** Why a run gave no verdict, for the manual list; a failed prepare means the probe never ran. */
 const noVerdict = (run: Run | null) =>
   run?.failure
-    ? `${run.failure.kind}: ${run.failure.message}`
+    ? `${run.failure.stage === 'prepare' ? 'prepare ' : ''}${run.failure.kind}: ${run.failure.message}`
     : `exit ${run?.code ?? 'none'}, not 0 or ${FailExit}`;
+const unprepared = (run: Run | null) => run?.failure?.stage === 'prepare';
 
 /** Upstream attacks only a ticket that earned defending: something shown, nothing failed. */
 export const attackable = (criteria: CriterionResult[]) =>
@@ -56,7 +57,9 @@ function manualChecks(
     const name = `Criterion ${index + 1}`;
     if (result.status === 'undemonstrable') checks.push(`${name}: ${result.claim ?? ''}`);
     if (result.status === 'inconclusive')
-      checks.push(`${name}: the probe gave no verdict (${noVerdict(result.run)})`);
+      checks.push(
+        `${name}: the probe ${unprepared(result.run) ? 'did not run' : 'gave no verdict'} (${noVerdict(result.run)})`,
+      );
     if (result.status === 'unrun' && demonstrator === 'answered')
       checks.push(`${name}: its probe was not approved`);
   }
@@ -106,22 +109,30 @@ export const inconclusiveRuns = (tickets: Graded[]) =>
   );
 
 /**
- * A human decline outranks degradation (a failed agent, a rejected or unclaimed transcription, a
- * probe that gave no verdict), which outranks the ticket cap.
+ * A human decline outranks degradation (a failed agent, a rejected transcription, a backlog item
+ * nothing copied, including one under a skipped ticket, a probe that gave no verdict), which
+ * outranks a cap (deferred tickets, or a transcription that reached its limit). Empty means the
+ * backlog held nothing to check and nothing was left unreported.
  */
 export function runStatus(
   declined: boolean,
   tickets: Graded[],
-  transcription: { rejected: Skipped[]; unclaimed: Unclaimed[]; deferred: unknown[] },
+  transcription: {
+    rejected: Skipped[];
+    unclaimed: Unclaimed[];
+    deferred: unknown[];
+    transcribed: number;
+  },
 ): AcceptanceOutput['status'] {
   if (declined) return 'declined';
   const failed = tickets.some(
     (ticket) => ticket.demonstrator === 'failed' || ticket.breaker === 'failed',
   );
-  const { rejected, unclaimed, deferred } = transcription;
+  const { rejected, unclaimed, deferred, transcribed } = transcription;
   if (failed || rejected.length || unclaimed.length || inconclusiveRuns(tickets) > 0)
     return 'degraded';
-  return deferred.length ? 'limited' : 'complete';
+  if (deferred.length || transcribed >= MaxTranscribed) return 'limited';
+  return tickets.length ? 'complete' : 'empty';
 }
 
 /** The counts of the upstream output, which counted pass-pending-manual as passed. */

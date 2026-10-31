@@ -4,11 +4,15 @@ import { definePrompts, z } from 'quiet-choir';
 import { CriterionResult, Ticket } from './contracts.js';
 
 const argv = z.array(z.string());
+/** How each probe runs: the argv, the prepare commands before it, and its checkout. */
+const how = { argv, prepare: z.array(argv) };
 const brief = {
+  ...how,
   ticket: Ticket,
   scope: z.string(),
   runContext: z.string(),
-  argv,
+  variables: z.array(z.string()).describe('The only environment variables a probe receives'),
+  seconds: z.number().positive().describe("A probe's time limit"),
   base: z.string(),
   failCode: z.int().min(2).max(125),
 };
@@ -17,7 +21,13 @@ export const prompts = definePrompts(import.meta.dirname + '/prompts', {
   Ingest: {
     file: 'Ingest.md',
     description: 'Copy the tickets and criteria verbatim and describe how probes can run.',
-    params: z.object({ backlog: z.string(), scope: z.string(), argv }),
+    params: z.object({
+      ...how,
+      backlog: z.string(),
+      scope: z.string(),
+      maxCriteria: z.int().min(1),
+      maxTranscribed: z.int().min(1),
+    }),
   },
   Demonstrate: {
     file: 'Demonstrate.md',

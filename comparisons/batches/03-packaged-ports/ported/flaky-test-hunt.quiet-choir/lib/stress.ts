@@ -1,6 +1,7 @@
 // Stress and verification mechanics as durable commands. Every run settles: okExitCodes 'any'
 // keeps a failing test's exit code and duration as data, and onError: 'return' records a timeout,
-// a signal or a command that could not start, so resume replays the same verdict.
+// a signal or a command that could not start, so resume replays the same verdict. The pass
+// pattern is applied in code to the recorded output, so it is not part of a run's identity.
 import type {
   ExecResult,
   ExecStepError,
@@ -11,14 +12,20 @@ import type {
 import type { Check, Restressed, Run, Stress } from '../contracts.js';
 import { summarize, tail } from './policy.js';
 
-/** What one run's settled outcome says about the test. */
-function observe(result: Settled<ExecResult, ExecStepError>): Run {
-  if (result.ok)
+/**
+ * What one run's settled outcome says about the test. Some runners exit 0 when no test matches
+ * the name, so with a pass pattern an exit 0 counts as a pass only when its output matches.
+ */
+function observe(result: Settled<ExecResult, ExecStepError>, passPattern: RegExp | null): Run {
+  if (result.ok) {
+    const { code, stdout, stderr } = result.value;
+    const matched = passPattern === null || passPattern.test(`${stdout}\n${stderr}`);
     return {
-      outcome: result.value.code === 0 ? 'pass' : 'fail',
-      code: result.value.code,
+      outcome: code !== 0 ? 'fail' : matched ? 'pass' : 'unmatched',
+      code,
       durationMs: Math.round(result.value.durationMs),
     };
+  }
   const { kind, code = null, signal = null } = result.error;
   // A settled failure carries no duration (see the findings); only an exit is timed.
   if (kind === 'timeout') return { outcome: 'timeout', code: null, durationMs: null };
@@ -37,16 +44,16 @@ const output = (result: Settled<ExecResult, ExecStepError>) =>
 
 /**
  * Run `argv` up to `runs` times in order, as steps `run/<n>` in the caller's scope. A command that
- * cannot start stops the loop: repeating it measures nothing.
+ * cannot start, or a pass that ran no matching test, stops the loop: repeating it measures nothing.
  */
 export async function stress(
   ctx: WorkflowContext,
   argv: Stress['argv'],
   runs: number,
-  options: { timeoutMs: number; tree: WorktreeHandle | null },
+  options: { timeoutMs: number; tree: WorktreeHandle | null; passPattern: RegExp | null },
 ): Promise<Stress> {
   const outcomes: Run[] = [];
-  let sample: string | null = null;
+  const samples = { sample: null as string | null, passSample: null as string | null };
   for (let n = 0; n < runs; n++) {
     const result = await ctx.exec(ctx.id('run', n), argv, {
       ...(options.tree ? { worktree: options.tree } : {}),
@@ -55,12 +62,13 @@ export async function stress(
       maxOutputBytes: 65_536,
       onError: 'return',
     });
-    const run = observe(result);
+    const run = observe(result, options.passPattern);
     outcomes.push(run);
-    if (run.outcome !== 'pass') sample ??= output(result);
-    if (run.outcome === 'error') break;
+    if (run.outcome === 'pass') samples.passSample ??= output(result);
+    else samples.sample ??= output(result);
+    if (run.outcome === 'error' || run.outcome === 'unmatched') break;
   }
-  return summarize(argv, outcomes, sample);
+  return summarize(argv, outcomes, samples);
 }
 
 /** Run every verification command in the integrated tree, in order, recording each outcome. */

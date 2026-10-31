@@ -111,12 +111,25 @@ export const Fixed = z.object({
   edits: z.array(z.string().min(1).max(300)).max(40).describe('A one-line summary per edit'),
 });
 
+/**
+ * An evidence command: a bare argv passes on exit 0; the object form names the exits that count as
+ * a successful run, for a tool whose help or dump exits nonzero.
+ */
+export const EvidenceCommand = z.union([
+  Argv,
+  z.object({
+    argv: Argv,
+    okExitCodes: z.array(z.int().min(0).max(255)).min(1).max(16),
+  }),
+]);
+export type EvidenceCommand = z.infer<typeof EvidenceCommand>;
 /** A command's outcome; `failure` names a spawn failure, timeout or signal. */
 export const Check = z.object({
   argv: Argv,
   code: z.number().int().nullable(),
   truncated: z.boolean().nullable(),
   failure: z.string().nullable(),
+  ok: z.boolean().describe('The command ran and exited with an accepted code'),
 });
 export type Check = z.infer<typeof Check>;
 /** An evidence command's result as the checkers see it, its retained output included. */
@@ -142,6 +155,9 @@ export const DocFix = z.object({
   failure: z.string().nullable(),
 });
 export type DocFix = z.infer<typeof DocFix>;
+/** A drifted doc whose fixer ran but whose change is not in the patch. */
+export const Omitted = z.object({ doc: Path, status: z.enum(['unchanged', 'refused', 'failed']) });
+export type Omitted = z.infer<typeof Omitted>;
 /** One doc's pipeline result; `change` is an accepted fixer receipt, kept for integration. */
 export type Pipeline = Pick<Audited, 'results' | 'unanchored' | 'capped' | 'fix'> & {
   change: WorktreeChange | null;
@@ -183,9 +199,12 @@ export const FixStatus = z.enum([
   'not-requested',
   'no-drift',
   'no-change',
+  'refused',
+  'failed',
   'verification-failed',
   'declined',
   'moved',
+  'publish-failed',
   'applied',
 ]);
 export type FixStatus = z.infer<typeof FixStatus>;
@@ -203,7 +222,7 @@ export const DriftInput = z.object({
     .boolean()
     .default(false)
     .describe(
-      'Patch drifted docs in isolated checkouts and publish after a human approves the patch; report only otherwise',
+      'Patch drifted docs in isolated checkouts and publish to a clean checkout after a human approves the patch; report only otherwise',
     ),
   maxDocs: z
     .number()
@@ -228,15 +247,19 @@ export const DriftInput = z.object({
     .default(100_000)
     .describe('A larger doc is skipped as too-large'),
   evidenceCommands: z
-    .array(Argv)
+    .array(EvidenceCommand)
     .max(8)
     .default([])
-    .describe('Operator-selected argv commands (a CLI --help, a config dump) every checker sees'),
+    .describe(
+      'Operator-selected argv commands (a CLI --help, a config dump), run once in a fresh checkout of the base, which holds committed files only; every checker sees their output. An argv passes on exit 0, {argv, okExitCodes} names other accepted exits, and any other outcome degrades the run',
+    ),
   verifyCommands: z
     .array(Argv)
     .max(8)
     .default([])
-    .describe('Operator-selected argv commands that must pass on the fixed docs before approval'),
+    .describe(
+      'Operator-selected argv commands that must exit 0 in a checkout of the fixed docs before approval; with none, the patch is approved unverified',
+    ),
 });
 export type DriftInput = z.infer<typeof DriftInput>;
 
@@ -244,9 +267,9 @@ export const DriftOutput = z.object({
   status: z
     .enum(['no-docs', 'complete', 'limited', 'degraded'])
     .describe(
-      'limited: a cap skipped docs; degraded: a doc pipeline, an evidence command or the classification failed, or a claim list was capped',
+      "no-docs: nothing matched or the librarian skipped every doc; limited: a cap or an unsupported path skipped docs; degraded: a doc pipeline, the classification or an evidence command failed, a claim list was capped, a claim's quote was not found in its doc, or a drifted doc's fix is missing from the patch (failed, refused or unchanged)",
     ),
-  base: Sha.describe('The commit every doc and checker read'),
+  base: Sha.describe('The commit every doc, checker and evidence command read'),
   listed: z.number().int().nonnegative().describe('Docs the pathspecs matched at the base'),
   docs: z.array(Audited),
   skipped: z.array(Skipped),
@@ -256,11 +279,15 @@ export const DriftOutput = z.object({
   totals: Totals,
   fix: z.object({
     status: FixStatus.describe(
-      'moved: the checkout left the base before publication, so the verified patch was not published',
+      'no-change, refused, failed: no fixer change was accepted (refused or failed when one was); moved: the checkout left the base before publication; publish-failed: the checkout merge failed, see failure; applied: published, though omitted may name drifted docs it leaves out',
     ),
-    digest: Digest.nullable().describe('SHA-256 of the approved patch'),
-    commit: Sha.nullable(),
-    verification: z.array(Check),
+    digest: Digest.nullable().describe('SHA-256 of the patch the human was asked to approve'),
+    commit: Sha.nullable().describe('The integrated fix: published when applied, else run-owned'),
+    verification: z.array(Check).describe('Empty when no verifyCommands were given'),
+    omitted: z
+      .array(Omitted)
+      .describe('Drifted docs sent to a fixer whose change is not in the patch'),
+    failure: z.string().nullable(),
   }),
 });
 export type DriftOutput = z.infer<typeof DriftOutput>;

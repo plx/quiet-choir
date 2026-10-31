@@ -4,6 +4,7 @@ about this repository.
 {% else %}
 Read {{ path }} below and decompose it into atomic, checkable claims about this repository.
 {% endif %}
+
 A claim is checkable if a person with the repository could verify it true or false: commands and
 flags that should exist, file paths, API names and signatures, configuration keys and defaults,
 described behaviors, code examples that should run, and version statements. Skip pure opinion and

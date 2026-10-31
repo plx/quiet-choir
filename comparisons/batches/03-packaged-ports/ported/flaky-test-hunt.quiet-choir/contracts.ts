@@ -76,13 +76,24 @@ export const Rejected = Suspect.extend({
 });
 export type Rejected = z.infer<typeof Rejected>;
 
-/** One stress run as code observed it: the exit code, or the settled failure's kind. */
+/** The run's HEAD, and the working directory's place in the repository ('' at its root). */
+export const Clean = z.object({ head: Sha, prefix: z.string() });
+
+/**
+ * One stress run as code observed it: the exit code, or the settled failure's kind. `unmatched`
+ * is an exit 0 whose output lacks the operator's passPattern, so no test is known to have run.
+ */
 export const Run = z.object({
-  outcome: z.enum(['pass', 'fail', 'timeout', 'signal', 'error']),
+  outcome: z.enum(['pass', 'fail', 'timeout', 'signal', 'error', 'unmatched']),
   code: z.number().int().nullable(),
   durationMs: z.number().int().nonnegative().nullable(),
 });
 export type Run = z.infer<typeof Run>;
+/**
+ * Arithmetic over the runs. `stable` means every run exited 0 (and matched passPattern when one is
+ * set), not that the named test ran: some runners exit 0 when no test matches the name.
+ * `could-not-run` means the command did not start, or a passing exit lacked passPattern.
+ */
 export const Verdict = z.enum(['flaky', 'stable', 'always-fails', 'could-not-run']);
 export const Stress = z.object({
   argv: Argv,
@@ -90,7 +101,11 @@ export const Stress = z.object({
   failures: z.number().int().nonnegative(),
   verdict: Verdict,
   outcomes: z.array(Run),
-  sample: z.string().nullable().describe('Output tail of the first failing run'),
+  sample: z.string().nullable().describe('Output tail of the first run that did not pass'),
+  passSample: z
+    .string()
+    .nullable()
+    .describe('Output tail of the first passing run: what a pass actually ran'),
   medianPassMs: z.number().int().nullable(),
   medianFailMs: z.number().int().nullable(),
 });
@@ -134,6 +149,9 @@ export const PlanItem = z.object({
 export type PlanItem = z.infer<typeof PlanItem>;
 export const Fixed = z.object({ summary: z.string() });
 export const Untouched = z.object({ test: z.string(), file: z.string() });
+/** A confirmed flake that no fix plan includes, and why. */
+export const Unplanned = Untouched.extend({ reason: z.enum(['undiagnosed', 'unknown-mechanism']) });
+export type Unplanned = z.infer<typeof Unplanned>;
 export const Restressed = z.object({ test: z.string(), file: z.string(), stress: Stress });
 export type Restressed = z.infer<typeof Restressed>;
 
@@ -144,6 +162,15 @@ export const Check = z.object({
   failure: z.string().nullable(),
 });
 export type Check = z.infer<typeof Check>;
+
+const compiles = (pattern: string) => {
+  try {
+    new RegExp(pattern, 'u');
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 /** Test files by the common naming conventions; an operator narrows them with testFiles. */
 export const defaultTestFiles = [
@@ -214,6 +241,19 @@ export const FlakyInput = z
       .max(2_000)
       .default(300)
       .describe('Commits of history scanned for flake mentions and test churn'),
+    passPattern: z
+      .string()
+      .min(1)
+      .max(200)
+      .refine(
+        (pattern) => compiles(pattern.replaceAll('{test}', 'x')),
+        'passPattern must be a valid regular expression once {test} is replaced',
+      )
+      .nullable()
+      .default(null)
+      .describe(
+        "A regular expression (u flag) a passing run's output must match, for runners that exit 0 when no test matches the name; {test} stands for the test name, escaped (node --test: 'ok \\d+ - {test}')",
+      ),
   })
   .refine(
     (input) => input.testCommand.some((arg) => arg.includes('{file}') || arg.includes('{test}')),
@@ -224,8 +264,11 @@ export const FlakyOutput = z.object({
   status: z.enum([
     'sweeps-failed',
     'no-suspects',
+    'all-rejected',
+    'unmeasured',
     'no-flakes',
     'report',
+    'no-plan',
     'declined',
     'refused',
     'incomplete',
@@ -240,14 +283,25 @@ export const FlakyOutput = z.object({
   rejected: z.array(Rejected),
   skipped: z.array(Suspect).describe('Suspects past maxSuspects, never stress-run'),
   confirmed: z.array(Flake),
-  cleared: z.array(Stressed),
+  cleared: z
+    .array(Stressed)
+    .describe(
+      'Suspects every run of which exited 0 (and matched passPattern when set); see passSample for what ran',
+    ),
   broken: z.array(Stressed),
   unrunnable: z.array(Stressed),
   undiagnosed: z.number().int().nonnegative(),
+  unplanned: z
+    .array(Unplanned)
+    .describe('Confirmed flakes no fix plan includes: undiagnosed, or no mechanism named'),
   residue: z.array(z.string()).describe('git status lines the stress runs left behind'),
   approvedDigest: Digest.nullable(),
-  fixCommit: Sha.nullable(),
-  refusedFiles: z.array(z.string()),
+  fixCommit: Sha.nullable().describe(
+    "The published commit on 'fixed'; on 'fix-failed', the unpublished integration commit on a run ref",
+  ),
+  refusedFiles: z
+    .array(z.string())
+    .describe('Repository-relative paths the fixer changed outside the approved plan'),
   untouched: z.array(Untouched).describe('Approved fixes whose files the fixer did not change'),
   restress: z.array(Restressed),
   verification: z.array(Check),

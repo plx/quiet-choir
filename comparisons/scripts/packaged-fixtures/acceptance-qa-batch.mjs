@@ -3,10 +3,11 @@
 // null attack reproduces (exit 3, degrades) and the empty-title attack holds, so QA-1 passes.
 // QA-2's punctuation probe exits 3 and its browser criterion is undemonstrable, so it fails
 // unattacked. QA-3 has no criteria. Every probe runs alone in a checkout pinned at HEAD, after a
-// human approves its list; exit 0 and exit 3 are the only verdicts.
+// human approves its list, with only the probeEnv variables; exit 0 and exit 3 are the only
+// verdicts.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { commitAll, git, leaf, writeFiles } from './_support.mjs';
 
@@ -31,8 +32,10 @@ Nobody wrote criteria for this one.
 `;
 const slug =
   "export function slugify(text) {\n  return text.trim().toLowerCase().split(/\\s+/u).join('-');\n}\n";
-// Every probe prints its working directory first, so check can see where it ran.
-const where = 'console.log(process.cwd());\n';
+// Every probe prints its working directory and its environment's names first, so check can see
+// where it ran and what it received.
+const where =
+  "console.log(process.cwd());\nconsole.log(Object.keys(process.env).sort().join(','));\n";
 const call = (input, expected, from = './slug.mjs') =>
   `import { slugify } from '${from}';\n${where}const slug = slugify(${JSON.stringify(input)});\nconsole.log(JSON.stringify(slug));\nprocess.exit(slug === ${JSON.stringify(expected)} ? 0 : 3);\n`;
 const probes = {
@@ -95,12 +98,32 @@ const claims = {
   punctuation: 'slugify("Hello, world!") is "hello-world"',
   browser: 'Paste a slug into a browser address bar and load it',
 };
-/** The same tickets as a JSON backlog, for the inline mode. */
-const backlogJson = JSON.stringify(
-  { tickets: [qa1, qa2, { id: 'QA-3', title: 'Dark mode', acceptanceCriteria: [] }] },
-  null,
-  2,
-);
+/** The same tickets as one line of JSON, for the inline mode. */
+const backlogJson = JSON.stringify({
+  tickets: [qa1, qa2, { id: 'QA-3', title: 'Dark mode', acceptanceCriteria: [] }],
+});
+/**
+ * The tickets as a nested list, with titles as list items. QA-3's one item starts with another
+ * ticket's ID but is QA-3's criterion, not a QA-1 title line.
+ */
+const backlogList = `- QA-1: Slugify titles
+  - [x] slugify lowercases its input
+  - [x] slugify joins words with single hyphens
+- QA-2: Strip punctuation
+  - [x] slugify removes punctuation
+  - [x] the slug renders in the browser address bar
+- QA-3: Dark mode
+  - [ ] QA-1 slugs stay readable in dark mode
+`;
+const probeEnv = ['PATH', 'HOME', 'LANG', 'TMPDIR'];
+/** Writes an ignored node_modules/probe-kit into the checkout it runs in. */
+const kit = `const fs = require('node:fs');
+fs.mkdirSync('node_modules/probe-kit', { recursive: true });
+fs.writeFileSync('node_modules/probe-kit/package.json', JSON.stringify({ name: 'probe-kit', type: 'module', exports: './index.js' }));
+fs.writeFileSync('node_modules/probe-kit/index.js', 'export const verdict = (ok) => process.exit(ok ? 0 : 3);\\n');`;
+/** A probe that reports through probe-kit, which only the prepare command installs. */
+const kitCall = (input, expected) =>
+  `import { verdict } from 'probe-kit';\nimport { slugify } from './slug.mjs';\n${where}verdict(slugify(${JSON.stringify(input)}) === ${JSON.stringify(expected)});\n`;
 
 export async function setup(env) {
   await writeFiles(env.cwd, { 'slug.mjs': slug, 'backlog.md': backlog });
@@ -117,6 +140,16 @@ export const input = () => ({
 function ingest(mode) {
   if (mode === 'nothing-transcribed' || mode === 'empty')
     return { tickets: [], skipped, runContext };
+  // Skips two tickets that do have items under them; code reports the items.
+  if (mode === 'skipped-items')
+    return {
+      tickets: [qa1],
+      skipped: [
+        { id: 'QA-2', reason: 'More than twenty criteria' },
+        { id: 'QA-3', reason: 'Needs a browser to check' },
+      ],
+      runContext,
+    };
   // Drops QA-1's second criterion: admitted, and the dropped item is reported.
   const dropped = { ...qa1, acceptanceCriteria: [qa1.acceptanceCriteria[0]] };
   if (mode === 'dropped-criterion') return { tickets: [dropped, qa2], skipped, runContext };
@@ -124,7 +157,8 @@ function ingest(mode) {
     return {
       tickets: [
         qa1,
-        // A duplicate, a truncated criterion, an invented ticket, and another ticket's criterion.
+        // A duplicate, a truncated criterion, an invented ticket, and another ticket's criterion
+        // under a ticket the backlog names and under one the ingester numbered.
         { ...qa1, title: 'Slugify again' },
         { ...qa2, acceptanceCriteria: ['slugify removes', qa2.acceptanceCriteria[1]] },
         { id: 'QA-9', title: 'Invented', description: null, acceptanceCriteria: ['slugify'] },
@@ -133,6 +167,12 @@ function ingest(mode) {
           title: 'Dark mode',
           description: null,
           acceptanceCriteria: [qa2.acceptanceCriteria[0]],
+        },
+        {
+          id: 'T1',
+          title: 'Unnumbered',
+          description: null,
+          acceptanceCriteria: [qa1.acceptanceCriteria[0]],
         },
       ],
       skipped: [],
@@ -152,6 +192,11 @@ function plan(id, mode) {
     ];
   const first = { claim: claims.lowercases, probe: probes.lowercases };
   if (mode === 'dropped-criterion') return [first];
+  if (mode === 'prepared')
+    return [
+      { claim: claims.lowercases, probe: kitCall('Hello', 'hello') },
+      { claim: claims.joins, probe: kitCall('a  b', 'a-b') },
+    ];
   if (mode === 'probe-crash')
     return [
       { ...first, probe: probes.crashes },
@@ -254,6 +299,14 @@ export async function check({ result, env, calls, record, suspended }) {
     .map((run) => run.stdout.split('\n')[0]);
   assert.equal(new Set(dirs).size, 5);
   for (const dir of dirs) assert.ok(dir.startsWith(env.worktrees.root), dir);
+  // A probe receives only the probeEnv variables (and the runtime's own), although this process
+  // has others.
+  const allowed = (name) => probeEnv.includes(name) || name.startsWith('QUIET_CHOIR_');
+  assert.ok(Object.keys(process.env).some((name) => !allowed(name)));
+  for (const run of runs(output).filter(Boolean)) {
+    const names = run.stdout.split('\n')[1].split(',');
+    assert.ok(names.includes('PATH') && names.every(allowed), names.join(','));
+  }
   // The approved digests are the SHA-256 of exactly the lists code then ran, and the probe list a
   // human reads names each criterion and the claim its probe makes.
   assert.equal(suspended, 2);
@@ -293,7 +346,15 @@ export async function check({ result, env, calls, record, suspended }) {
   assert.ok(
     shown.includes(`QA-1, criterion 2: ${qa1.acceptanceCriteria[1]}\nClaim: ${claims.joins}`),
   );
-  assert.match(shown, /inherited environment/u);
+  assert.ok(
+    shown.includes(`receives only these variables from your environment: ${probeEnv.join(', ')}.`),
+  );
+  assert.match(shown, /with nothing installed or built beyond that commit/u);
+  const { subject } = record.steps['approve-probes'].question.request;
+  assert.deepEqual(
+    [subject.prepare, subject.probeEnv, subject.digest],
+    [[], probeEnv, output.probeDigest],
+  );
   assert.ok(shown.includes(output.probeDigest) && !shown.includes('Truncated'));
   assert.deepEqual(ran(record, 'criteria/'), [
     'criteria/QA-1/0/probe',
@@ -372,6 +433,49 @@ export const modes = [
     },
   },
   {
+    // An uncommitted edit to the backlog file itself does not refuse the run, and code hands the
+    // ingester the edited text while every agent and probe still sees the committed tree.
+    mode: 'uncommitted-backlog',
+    options(opts, env) {
+      writeFileSync(join(env.cwd, 'backlog.md'), backlog.replace('this one.', 'this one yet.'));
+      return opts;
+    },
+    check({ result, calls, env }) {
+      const { output } = result;
+      assert.equal(output.status, 'complete');
+      assert.deepEqual(output.dirty, []);
+      assert.deepEqual(verdicts(output), [
+        ['QA-1', 'pass'],
+        ['QA-2', 'fail'],
+      ]);
+      const ingester = calls.find((request) => request.call.stepId === 'ingest');
+      assert.ok(ingester.options.prompt.includes('Nobody wrote criteria for this one yet.'));
+      assert.equal(git(env.cwd, 'status', '--porcelain'), 'M backlog.md');
+    },
+  },
+  {
+    // A nested-list backlog: the ingester skips two tickets that have items, so code lists every
+    // item under them, including QA-3's, which starts with QA-1's ID.
+    mode: 'skipped-items',
+    input: () => ({ ...input(), tickets: backlogList }),
+    check({ result, calls }) {
+      const { output } = result;
+      assert.equal(output.status, 'degraded');
+      assert.deepEqual(output.rejected, []);
+      assert.deepEqual(
+        output.skipped.map((entry) => entry.id),
+        ['QA-2', 'QA-3'],
+      );
+      assert.deepEqual(output.unclaimed, [
+        ...qa2.acceptanceCriteria.map((item) => ({ ticket: 'QA-2', item })),
+        { ticket: 'QA-3', item: 'QA-1 slugs stay readable in dark mode' },
+      ]);
+      assert.deepEqual(verdicts(output), [['QA-1', 'pass']]);
+      assert.deepEqual(output.tickets[0].manual, []);
+      assert.deepEqual(stepIds(calls), ['break/QA-1/attacks', 'demonstrate/QA-1/plan', 'ingest']);
+    },
+  },
+  {
     mode: 'dropped-criterion',
     check({ result }) {
       const { output } = result;
@@ -399,6 +503,10 @@ export const modes = [
           ['QA-2', 'Criterion is not a whole backlog item or line: slugify removes'],
           ['QA-9', 'Ticket ID not in the backlog'],
           ['QA-3', `Criterion is not under QA-3 in the backlog: ${qa2.acceptanceCriteria[0]}`],
+          [
+            'T1',
+            `Criterion belongs to another ticket in the backlog: ${qa1.acceptanceCriteria[0]}`,
+          ],
         ],
       );
       // QA-2's items are under a rejected ticket, which the rejection already reports.
@@ -514,13 +622,72 @@ export const modes = [
       const [first] = output.tickets;
       assert.deepEqual(statuses(first), ['demonstrated', 'inconclusive']);
       const { failure } = first.criteria[1].run;
-      assert.equal(failure.kind, 'timeout');
+      assert.deepEqual([failure.stage, failure.kind], ['probe', 'timeout']);
       assert.match(failure.message, /1000ms deadline/u);
       assert.deepEqual([first.verdict, first.breaker], ['pass-pending-manual', 'answered']);
       assert.deepEqual(first.manual, [
         `Criterion 2: the probe gave no verdict (timeout: ${failure.message})`,
       ]);
       assert.equal(output.inconclusive, 1);
+    },
+  },
+  {
+    // The operator's prepare command installs the probe-kit package that QA-1's probes import,
+    // in each probe's own checkout, ignored there and absent from the source checkout.
+    mode: 'prepared',
+    input: () => ({ ...input(), prepare: [[process.execPath, '-e', kit]] }),
+    check({ result, env, record }) {
+      const { output } = result;
+      assert.equal(output.status, 'complete');
+      const [first] = output.tickets;
+      assert.deepEqual(statuses(first), ['demonstrated', 'demonstrated']);
+      assert.deepEqual(verdicts(output), [
+        ['QA-1', 'pass'],
+        ['QA-2', 'fail'],
+      ]);
+      // Without the prepared package, the probes would die on their import (no verdict).
+      assert.deepEqual(
+        first.criteria.map((criterion) => criterion.run.code),
+        [0, 0],
+      );
+      assert.ok(!existsSync(join(env.cwd, 'node_modules')));
+      const { subject, details: shown } = record.steps['approve-probes'].question.request;
+      assert.deepEqual(subject.prepare, [[process.execPath, '-e', kit]]);
+      assert.ok(shown.includes('ran there with your full environment'));
+      assert.equal(git(env.cwd, 'status', '--porcelain'), '');
+    },
+  },
+  {
+    // A prepare command that fails leaves every probe unrun: no verdict, never a failure.
+    mode: 'prepare-fails',
+    input: () => ({
+      ...input(),
+      prepare: [[process.execPath, '-e', 'console.error("no lockfile"); process.exit(2)']],
+    }),
+    check({ result, calls, suspended }) {
+      const { output } = result;
+      assert.equal(output.status, 'degraded');
+      assert.deepEqual(verdicts(output), [
+        ['QA-1', 'unverified'],
+        ['QA-2', 'unverified'],
+      ]);
+      const failures = runs(output).filter(Boolean);
+      assert.equal(failures.length, 3);
+      for (const run of failures) {
+        assert.deepEqual(
+          [run.code, run.failure.stage, run.failure.kind],
+          [null, 'prepare', 'process'],
+        );
+        assert.match(run.failure.message, /process\.exit\(2\)"\]: Command exited with 2\./u);
+        assert.match(run.stderr, /no lockfile/u);
+      }
+      assert.match(
+        output.tickets[0].manual[0],
+        /^Criterion 1: the probe did not run \(prepare process: /u,
+      );
+      assert.deepEqual(tallies(output), [0, 0, 2, 3]);
+      assert.ok(!stepIds(calls).includes('break/QA-1/attacks'));
+      assert.equal(suspended, 1);
     },
   },
   {
@@ -535,8 +702,8 @@ export const modes = [
       ]);
       const failures = runs(output)
         .filter(Boolean)
-        .map((run) => [run.code, run.signal, run.failure.kind]);
-      assert.deepEqual(failures, Array(3).fill([null, null, 'process']));
+        .map((run) => [run.code, run.signal, run.failure.stage, run.failure.kind]);
+      assert.deepEqual(failures, Array(3).fill([null, null, 'probe', 'process']));
       assert.match(output.tickets[0].manual[0], /Cannot start \/nonexistent\/probe-runner/u);
       assert.deepEqual(tallies(output), [0, 0, 2, 3]);
       assert.ok(!stepIds(calls).includes('break/QA-1/attacks'));

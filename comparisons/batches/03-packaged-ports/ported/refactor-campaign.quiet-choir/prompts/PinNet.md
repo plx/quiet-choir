@@ -21,21 +21,32 @@ must pass against the current, unrefactored code:
 Your previous net, {{ previous.netFile }}, failed against the current code. The code is the
 specification here, so fix the net, never the code under test: correct the expectations to what the
 code actually does, or remove a test you cannot make deterministic and say so in the notes.
-{% if previous.code is not none %}
-The command exited with code {{ previous.code }}.
+{% if previous.failure %}
+The command did not finish normally ({{ previous.failure }}).
 {% else %}
-The command did not exit normally ({{ previous.failure }}).
+The command exited with code {{ previous.code }}.
 {% endif %}
-{% if previous.output %}
+{% if previous.stdout %}
 
-<output>
-{{ previous.output }}
-</output>
+The end of its standard output:
+
+<stdout>
+{{ previous.stdout }}
+</stdout>
+{% endif %}
+{% if previous.stderr %}
+
+The end of its standard error:
+
+<stderr>
+{{ previous.stderr }}
+</stderr>
 {% endif %}
 
 This checkout starts fresh from the current code, so the previous net's files are not in it. Write
 the corrected net in full; a file you leave out is gone, and a file you rename leaves no copy
-behind. The previous files were:
+behind. Rewrite a file shown only in part from the code under test rather than copying the part you
+see. The previous files were:
 {%- for file in previous.files %}
 
 
@@ -43,6 +54,7 @@ behind. The previous files were:
 {{ file.source }}
 </file>
 {%- if file.shownBytes %}
+
 
 (Only the first {{ file.shownBytes }} bytes of {{ file.path }} are shown.)
 {%- endif %}
