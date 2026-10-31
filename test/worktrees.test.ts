@@ -1747,9 +1747,10 @@ it('pins the base of unchanged and failed isolated calls until clean deletes ref
       .join('\n'),
   );
   const executor = new WorkflowExecutor({ logger: new ThresholdLogger('silent', () => undefined) });
+  // Clean deletes refs in the saved record's key order, which is sorted, not the run's capture order.
   expect(
     await executor.execute({ kind: 'workflow.clean', runId: 'base-pins', stateDir, refs: true }),
-  ).toMatchObject({ ok: true, refs, warnings: [] });
+  ).toMatchObject({ ok: true, refs: [...refs].sort(), warnings: [] });
   expect(await command('for-each-ref', '--format=%(refname)', 'refs/quiet-choir')).toBe('');
 });
 
