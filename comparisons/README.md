@@ -7,19 +7,20 @@ Versioned comparisons of the same pinned Claude Code JavaScript workflows and Qu
 ports. Batch 01 contains all 26 workflows from
 [ultracode-workflows at 9b5404d](https://github.com/hesreallyhim/ultracode-workflows/tree/9b5404d11b885b28380d3eb17471ef7b17601b5e/plugins/ultracode-workflows/workflows).
 Batch 02 rewrites six of them around code-owned effects, named roster entries, isolated writers,
-settled panels and inline children. Batch 03 restructures those six as workflow packages
-(`<name>.quiet-choir`), with typed prompt templates, `quiet-choir/std` roster tiers and patterns,
-teams, packages composed as inline children, and a decision-provider screen. Every batch preserves
-the original source bytes and license.
+settled panels and inline children. Batch 03 makes all 26 workflow packages (`<name>.quiet-choir`):
+it restructures those six and ports the other twenty straight from Batch 01, with typed prompt
+templates, `quiet-choir/std` roster tiers and patterns, teams, packages composed as inline children,
+and a decision-provider screen. Every batch preserves the original source bytes and license.
 
 **Batch 03 is the active primitive regression suite and the reader default.** Batch 02 is retained
 as its comparison baseline, and Batch 01 as the historical baseline before it; both stay compiled
 and checked. Batch 03 declares Batch 02 as its `baseline`, so the reader compares the upstream
-original, the earlier ports and the package side by side. The Batch 02 transition also made all 26
-Batch 01 ports compile under the root settings: all seven former compiler relaxations are gone. Its
-shared `callOptions` helper omits undefined option fields, and typed composition/indexing fixes
-replace local casts. The initial audit counted 273 errors; the pre-#65 audit against the expanded
-API counted 396; there are now zero. Those historical counts describe different snapshots.
+original, the earlier ports and the package side by side; for the twenty workflows Batch 02 never
+ported, the earlier port is Batch 01's. The Batch 02 transition also made all 26 Batch 01 ports
+compile under the root settings: all seven former compiler relaxations are gone. Its shared
+`callOptions` helper omits undefined option fields, and typed composition/indexing fixes replace
+local casts. The initial audit counted 273 errors; the pre-#65 audit against the expanded API
+counted 396; there are now zero. Those historical counts describe different snapshots.
 
 Batch 01 retains its loose final JSON schemas and source-style orchestration. It has 70 fixtures: 61
 differential cases, six durable-question contracts, two intentional inherited-crash corrections, and
@@ -31,14 +32,19 @@ enforces that. Its shared helpers forward to `ctx.phase` and `ctx.log`, and its 
 forwards `worktree`/`merge` alongside durable commands, files, waits, `ask`/`approve` and `value`
 overloads; the recovery verifier inspects saved runs through `readRun({ runId, stateDir })`.
 
-Batch 03 keeps Batch 02's fixture intents, inputs and most step IDs, so its
-[verification](batches/03-packaged-ports/verification.json) and
-[metrics](batches/03-packaged-ports/metrics.json) pair with Batch 02's row for row. Each package
-holds `package.ts`, control flow in `workflows/`, Zod `contracts.ts`, `roster.ts`, `prompts.ts` with
-markdown templates in `prompts/`, mechanics in `lib/` and, for test-gap-filler, the mutation worker
-in `resources/`. Its verifier also validates every package through the CLI (recording the package
-sections in [packages.json](batches/03-packaged-ports/packages.json), which the reader shows),
-asserts that every agent call renders a template, enforces the package hygiene of
+For the six, Batch 03 keeps Batch 02's fixture intents, inputs and most step IDs, so their rows in
+its [verification](batches/03-packaged-ports/verification.json) and
+[metrics](batches/03-packaged-ports/metrics.json) pair with Batch 02's row for row. Each of the
+other twenty has a fixture module in
+[`scripts/packaged-fixtures/`](scripts/packaged-fixtures/README.md) with its replies, success check,
+fault targets and extra modes, and
+`node --import tsx comparisons/scripts/check-packaged-port.mjs <name>` checks one package while you
+author it. Each package holds `package.ts`, control flow in `workflows/`, Zod `contracts.ts`,
+`roster.ts`, `prompts.ts` with markdown templates in `prompts/`, mechanics in `lib/` and, for
+test-gap-filler, the mutation worker in `resources/`. Its verifier also validates every package
+through the CLI (recording the package sections in
+[packages.json](batches/03-packaged-ports/packages.json), which the reader shows), asserts that
+every agent call renders a template, enforces the package hygiene of
 `scripts/rehearse-packages.mjs`, runs the SDLC lifecycle under `requireGrants` through its
 delegation ceilings, and runs `autoApprove` through the CLI fixture harness with decision answers.
 The [notes](batches/03-packaged-ports/notes.json) say which upstream inputs and outputs return, and
@@ -70,6 +76,8 @@ explicit in the notes and limit direct comparisons of call counts.
 | `scripts/verify-ports.mjs`           | Batch 01 differential baseline plus the strict/question checks      |
 | `scripts/verify-idiomatic-ports.mjs` | Batch 02 paired fixtures and the F1–F5 matrix                       |
 | `scripts/verify-packaged-ports.mjs`  | Batch 03 fixtures, F1–F5 matrix and package/decider/grant contracts |
+| `scripts/check-packaged-port.mjs`    | One Batch 03 package's checks, with mode selection and mutants      |
+| `scripts/packaged-fixtures/`         | Fixture modules of the twenty packages without a Batch 02 port      |
 | `scripts/check-api-snapshot.mjs`     | Fails when a batch's `apiSnapshot.sha256` is not the API file's     |
 | `scripts/api-snapshot.mjs`           | Snapshot check and derivation of the API revision (with a test)     |
 | `scripts/check-source-hashes.mjs`    | Fails when an original or LICENSE differs from `source-hashes.json` |
@@ -82,7 +90,7 @@ The strict/question checks live in `verify-strict-ports.mjs` and `verify-questio
 the shared reply generator in `fixture-sample.mjs`. The Batch 02 and Batch 03 verifiers share
 `fault-matrix.mjs` (F1, F2, F4), `verify-idiomatic-faults.mjs` (F3 and the extra and CLI contracts),
 `idiomatic-fixtures.mjs` (fixtures and inert replies for both batches) and
-`idiomatic-kill-worker.mjs`.
+`idiomatic-kill-worker.mjs`; Batch 03's per-package checks are in `packaged-checks.mjs`.
 
 ## Build and verify locally
 
@@ -119,17 +127,20 @@ node --import tsx comparisons/scripts/verify-packaged-ports.mjs
 A PR changing a primitive exercised by Batch 03 must update the matching package, port notes and
 fault row in the **same PR**, even when the API still compiles. The mapping is:
 
-| Primitive                                                           | Acceptance package             |
-| ------------------------------------------------------------------- | ------------------------------ |
-| Commands/files, schema-first values (#58, #52)                      | release-notes, test-gap-filler |
-| Questions, isolated integration, roles (#55, #59, #45)              | project-bootstrap              |
-| Codex structured output and restricted reads (#35, #60)             | incident-investigation         |
-| Inline children, scoped IDs and stage decisions (#63, #44, #55)     | sdlc-orchestrator              |
-| Settled maps, admission limits and usage gates (#42, #47, #62)      | bug-hunt                       |
-| Accepted-code replay (#41)                                          | Every F4 row                   |
-| Packages, prompt templates, rosters (ADRs 0063–0065)                | Every package                  |
-| std tiers and patterns, teams (ADR 0067)                            | release-notes, bug-hunt        |
-| Decision providers and roster deciders, child delegation (ADR 0066) | sdlc-orchestrator              |
+| Primitive                                                           | Acceptance package                  |
+| ------------------------------------------------------------------- | ----------------------------------- |
+| Commands/files, schema-first values (#58, #52)                      | release-notes, test-gap-filler      |
+| Questions, isolated integration, roles (#55, #59, #45)              | project-bootstrap                   |
+| Codex structured output and restricted reads (#35, #60)             | incident-investigation              |
+| Inline children, scoped IDs and stage decisions (#63, #44, #55)     | sdlc-orchestrator, prd-to-spec      |
+| Settled maps, admission limits and usage gates (#42, #47, #62)      | bug-hunt                            |
+| Accepted-code replay (#41)                                          | Every F4 row                        |
+| Packages, prompt templates, rosters (ADRs 0063–0065)                | Every package                       |
+| std tiers and patterns, teams (ADR 0067)                            | release-notes, bug-hunt             |
+| Decision providers and roster deciders, child delegation (ADR 0066) | sdlc-orchestrator                   |
+| Worktree handles, base pins, receipts and merges                    | docs-drift-audit, refactor-campaign |
+| Guarded file writes (`ifMatch`)                                     | requirements-to-prd, roadmap-plan   |
+| Approvals of exact plans and their digests                          | api-migration, flaky-test-hunt      |
 
 Batch 02 still compiles and runs in `--check` mode, so a primitive change that breaks it must keep
 it passing too; it no longer has to adopt new idioms.

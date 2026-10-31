@@ -299,10 +299,10 @@ request by running merge-down's workflow as a typed inline child (`ctx.workflow`
 `children`), which `workflow inspect` shows in its workflow tree. It imports merge-down's generic
 helpers rather than copying them; they are compiler dependencies, so they join its fingerprint.
 
-The Workflow Lab's [Batch 03](../comparisons/batches/03-packaged-ports) holds six smaller packages,
+The Workflow Lab's [Batch 03](../comparisons/batches/03-packaged-ports) holds 26 smaller packages,
 one per ported upstream workflow, with markdown prompt templates, `quiet-choir/std` roster tiers and
-patterns, a decider entry, and a package (sdlc-orchestrator) that runs two sibling packages'
-workflows as inline children; `npm run comparisons:check` verifies them.
+patterns, a decider entry, and three packages (sdlc-orchestrator, feature-factory and prd-to-spec)
+that run sibling packages' workflows as inline children; `npm run comparisons:check` verifies them.
 
 `npm run packages:rehearse` (after `npm run build`) validates every package in the table of
 `scripts/rehearse-packages.mjs` and rehearses each one's cases in `packages/rehearsals/<name>/`,
