@@ -153,10 +153,10 @@ Text entry is `read` (see [access classes](#access-classes)). It reads, and can 
 commands over, its working directory: the live checkout, uncommitted edits included, unless the call
 runs in an isolated worktree, which starts from committed files (`worktree: true`, or a pinned
 snapshot with `worktree: { base: { commit } }`; see [worktrees](worktrees.md#attempt-lifecycle)), or
-in a scratch `cwd`. Those choose the tree the agent starts in, not a read boundary: the read-only
-sandbox does not confine reads to that directory, so other paths, the source checkout included, can
-still be read. quiet-choir sets no Codex web-search control, so the installed Codex's default
-applies (#ISSUE-C25-3).
+in a scratch `cwd` (with `skipGitRepoCheck: true` when it is outside Git). Those choose the tree the
+agent starts in, not a read boundary: the read-only sandbox does not confine reads to that
+directory, so other paths, the source checkout included, can still be read. quiet-choir sets no
+Codex web-search control, so the installed Codex's default applies (#ISSUE-C25-3).
 
 `std.tiers` holds the model tiers of the native epic scripts. Each fixes only a Claude model and
 effort: `Clerk` (haiku, low), `Copyist` (sonnet, low), `Scribe` (sonnet, medium), `Mechanic`
