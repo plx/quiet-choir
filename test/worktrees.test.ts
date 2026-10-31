@@ -1383,6 +1383,61 @@ it('inspects and cleans only owned caches, retaining pins unless refs is explici
   ).toMatchObject({ ok: true, directories: [], refs: [] });
 });
 
+it('pins the base of unchanged and failed isolated calls until clean deletes refs', async () => {
+  const base = await command('rev-parse', 'HEAD');
+  const invoke = vi.fn<Harness['invoke']>((request) =>
+    request.call.stepId === 'broken'
+      ? Promise.reject(new Error('reader failed'))
+      : Promise.resolve({ ...response, text: JSON.stringify({ ok: true }) }),
+  );
+  const workflow = defineWorkflow({
+    name: 'base-pins',
+    version: '1',
+    input: z.null(),
+    output: z.null(),
+    async run(ctx) {
+      const read = await ctx.codex.object('read', {
+        prompt: 'review',
+        worktree: { base: { commit: base } },
+        schema: z.object({ ok: z.boolean() }),
+      });
+      expect(read.worktree).toEqual({ base, commit: null, ref: null, files: [] });
+      const broken = await ctx.codex.object('broken', {
+        prompt: 'review',
+        worktree: { base: { commit: base } },
+        schema: z.object({ ok: z.boolean() }),
+        retry: { maxAttempts: 2, delayMs: 0 },
+        onError: 'return',
+      });
+      expect(broken.ok).toBe(false);
+      return null;
+    },
+  });
+  const run = await runWorkflow(workflow, {
+    ...options('base-pins'),
+    input: null,
+    harness: { invoke },
+  });
+  expect(run.status).toBe('completed');
+  expect(invoke).toHaveBeenCalledTimes(3);
+  // One base pin per step, shared by its retries; the unchanged read adds no snapshot pin.
+  const refs = Object.keys(run.worktrees?.refs ?? {});
+  expect(refs).toHaveLength(2);
+  expect(
+    await command('for-each-ref', '--format=%(refname) %(objectname)', 'refs/quiet-choir'),
+  ).toBe(
+    refs
+      .map((ref) => `${ref} ${base}`)
+      .sort()
+      .join('\n'),
+  );
+  const executor = new WorkflowExecutor({ logger: new ThresholdLogger('silent', () => undefined) });
+  expect(
+    await executor.execute({ kind: 'workflow.clean', runId: 'base-pins', stateDir, refs: true }),
+  ).toMatchObject({ ok: true, refs, warnings: [] });
+  expect(await command('for-each-ref', '--format=%(refname)', 'refs/quiet-choir')).toBe('');
+});
+
 it('clean refuses a live writer and refuses refs whose values have changed', async () => {
   const workflow = defineWorkflow({
     name: 'clean-guard',

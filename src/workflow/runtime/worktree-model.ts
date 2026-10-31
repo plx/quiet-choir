@@ -24,7 +24,10 @@ export interface WorktreeChange {
   readonly base: string;
   /** Snapshot commit, or null when the tree is unchanged. */
   readonly commit: string | null;
-  /** Run-owned ref keeping the snapshot reachable, or null for an unchanged tree. */
+  /**
+   * Run-owned ref keeping the snapshot reachable, or null for an unchanged tree; the base pin of
+   * the step or handle is separate.
+   */
   readonly ref: string | null;
   /** Changes relative to base; renamed entries name the destination. */
   readonly files: readonly {
@@ -40,7 +43,10 @@ export interface WorktreeChange {
  * checkout (`worktree: { base }`).
  */
 export interface WorktreeCreateOptions {
-  /** Ref or commit, resolved once and pinned before the checkout is first used; default HEAD. */
+  /**
+   * Ref or commit, resolved once and pinned under a run-owned ref before the checkout is first
+   * used; default HEAD.
+   */
   readonly base?: WorktreeBase;
 }
 

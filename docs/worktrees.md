@@ -64,9 +64,11 @@ role.
 
 Use `worktree: { base: 'branch-name' }` or `worktree: { base: { commit: 'full-object-id' } }` to
 select a base. The default is `HEAD`. The runtime resolves and saves the base before invocation;
-resume does not follow a moved ref. Logical options enter the effect identity. Disposable attempt
-paths do not. Relative `cwd` retains its position within the source repository, including when the
-run starts in a monorepo subdirectory.
+resume does not follow a moved ref. For a per-call checkout it also pins the resolved base under a
+run-owned ref in `refs/quiet-choir/<run>/<namespace>/`: one base pin per step, shared by its
+retries, created before invocation and kept when the call fails or leaves the tree unchanged.
+Logical options enter the effect identity. Disposable attempt paths do not. Relative `cwd` retains
+its position within the source repository, including when the run starts in a monorepo subdirectory.
 
 Every attempt receives a fresh directory. Failed, timed-out, and cancelled attempts are retained
 according to policy, never reused for a later per-call attempt. Only a validated successful result
@@ -77,10 +79,18 @@ pins it under `refs/quiet-choir/<run>/<namespace>/…`. Hooks and commit signing
 these internal Git operations. The agent need not run Git commits.
 
 An isolated `object()` or `text()` result includes `worktree: { base, commit, ref, files }`.
-`commit` and `ref` are null when unchanged from the base. File statuses are added, modified,
-deleted, or renamed; rename paths name the destination. Ordinary and legacy results omit `worktree`,
-keeping their existing schema and replay identities. `value()` returns only the output; use a result
-method or a shared handle when later integration needs the captured change.
+`commit` and `ref` are null when unchanged from the base; the base pin is separate and is not
+reported in the receipt. File statuses are added, modified, deleted, or renamed; rename paths name
+the destination. Ordinary and legacy results omit `worktree`, keeping their existing schema and
+replay identities. `value()` returns only the output; use a result method or a shared handle when
+later integration needs the captured change.
+
+Concurrent readers that must judge one exact commit take `worktree: { base: { commit } }` per call,
+because effects on one handle serialize. Each call costs a checkout and a base pin. No option
+declares a call read-only: a reader that edits its checkout is captured like a writer and still
+succeeds. To catch that, call through `object()` or `text()`, since `value()` drops the receipt, and
+check that `result.worktree.files` is empty. The check runs in the workflow body after the call has
+completed, so a violation is not retried and `onError` does not see it.
 
 The directory is a cache. Pinned commits are the durable record. Completed replay runs neither Git
 nor the harness. Effects remain at least once: a crash before checkpoint completion may repeat an
@@ -88,8 +98,8 @@ agent call, and external writes outside the isolated tree are not rolled back.
 
 ## Shared write, test, fix sequences
 
-`ctx.worktree(id, { base? })` returns a JSON `{ id, path, base }` handle owned by the creating run.
-Use it as the `worktree` of an agent call, a local step, or an exec:
+`ctx.worktree(id, { base? })` pins its base once and returns a JSON `{ id, path, base }` handle
+owned by the creating run. Use it as the `worktree` of an agent call, a local step, or an exec:
 
 ```ts
 const tree = await ctx.worktree('workspace');
@@ -116,12 +126,14 @@ caches, and the writes of a command whose nonzero exit `okExitCodes` accepted, s
 handle publishes them. Keep such output out with ignore rules or
 [`captureExclude`](#what-capture-leaves-out). See [command effects](command-effects.md).
 
-Effects on one handle serialize through result validation, snapshot capture, and checkpoint save.
-Before each live attempt the cache resets to its latest completed snapshot and cleans untracked
-files; ignored caches such as `node_modules` remain. Missing directories rebuild from the saved
-commit. A failed write cannot become the next effect's baseline. Local `StepContext.cwd` is the
-mapped execution directory; the handle's `path` is the repository root. Write through managed
-effects, not body code using `handle.path`: body code reruns and bypasses serialization.
+Effects on one handle serialize through result validation, snapshot capture, and checkpoint save. An
+effect adds a snapshot pin when its captured tree differs from the handle's base, so once one effect
+has changed the tree, every later effect adds one, even a command that edits nothing. Before each
+live attempt the cache resets to its latest completed snapshot and cleans untracked files; ignored
+caches such as `node_modules` remain. Missing directories rebuild from the saved commit. A failed
+write cannot become the next effect's baseline. Local `StepContext.cwd` is the mapped execution
+directory; the handle's `path` is the repository root. Write through managed effects, not body code
+using `handle.path`: body code reruns and bypasses serialization.
 
 Handles belong to one run. Forks create new handles; immutable `WorktreeChange` results can be
 reused from the source run. Cleaning a fork never removes source-owned caches or pins.
@@ -330,8 +342,12 @@ different state containers.
 
 `keep: 'failed'` is the default: remove completed caches after draining, retain failed attempts for
 inspection until the whole run completes, then remove all caches. `'all'` keeps every cache;
-`'none'` removes all caches after draining even on failure. Pins remain in all three cases. Cleanup
-failures are warnings and do not repeat validated agent work.
+`'none'` removes all caches after draining even on failure. Pins remain in all three cases: one base
+pin per handle and per isolated step outside a handle, one snapshot pin per capture that differs
+from its base, and for each merge a pin of its starting commit and of its result, plus the published
+ref of a `target: 'ref'` merge. N isolated calls on one base therefore leave N pins at that commit
+until `workflow clean --refs` or `workflow rm --refs` deletes them. Cleanup failures are warnings
+and do not repeat validated agent work.
 
 `setup(context)` provisions dependencies after creation/reset, for per-call attempts and for shared
 handles (at `ctx.worktree` and before each effect on the handle). Its context includes `path`,
