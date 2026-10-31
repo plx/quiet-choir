@@ -99,7 +99,7 @@ it('parses rename/copy/type-change paths without splitting whitespace', () => {
     { path: 'new name', status: 'added' },
     { path: 'changed', status: 'modified' },
     { path: 'gone', status: 'deleted' },
-    { path: 'line\nname', status: 'renamed' },
+    { path: 'line\nname', status: 'renamed', from: 'old' },
     { path: 'copy', status: 'added' },
     { path: 'link', status: 'modified' },
   ]);

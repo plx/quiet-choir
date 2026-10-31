@@ -12,6 +12,7 @@ import {
   readFile,
   readdir,
   realpath,
+  rename,
   rm,
   symlink,
   utimes,
@@ -206,6 +207,85 @@ it('maps monorepo cwd, warns about dirty source files, and snapshots only commit
   });
   expect(replayed.warnings).toEqual(run.warnings);
   expect(run.steps['edit']?.worktree?.files).toEqual([{ path: 'packages/a/new', status: 'added' }]);
+});
+
+it('names the source of a renamed entry, merges it, and replays a receipt recorded without it', async () => {
+  const invoke = vi.fn<Harness['invoke']>(async (request) => {
+    await mkdir(join(request.cwd, 'moved'));
+    await rename(join(request.cwd, 'file.txt'), join(request.cwd, 'moved', 'file.txt'));
+    return response;
+  });
+  let files: WorktreeChange['files'] | undefined;
+  let tail = true;
+  const definition = defineWorkflow({
+    version: '1',
+    name: 'rename',
+    input: z.null(),
+    output: z.string(),
+    async run(ctx) {
+      const result = await ctx.codex.text('move', { prompt: 'move', worktree: true });
+      assert(result.worktree);
+      files = result.worktree.files;
+      const merged = await ctx.merge('integrate', [result.worktree]);
+      if (tail) throw new Error('stop after the merge');
+      return merged.commit;
+    },
+  });
+  await expect(
+    runWorkflow(definition, { ...options('rename'), input: null, harness: { invoke } }),
+  ).rejects.toThrow('stop after the merge');
+  const renamed = [{ path: 'moved/file.txt', status: 'renamed', from: 'file.txt' }];
+  expect(files).toEqual(renamed);
+  const recorded = await readRun({ stateDir, runId: 'rename' });
+  expect(recorded.steps['move']?.worktree?.files).toEqual(renamed);
+  expect(recorded.steps['integrate']?.merge?.changes[0]?.files).toEqual(renamed);
+  expect(formatRunSummary((await inspectRun(options('rename'))).summary)).toContain(
+    '  renamed "file.txt" -> "moved/file.txt"',
+  );
+  const commit = recorded.steps['integrate']?.merge?.result?.commit;
+  assert(commit);
+  expect(await command('show', `${commit}:moved/file.txt`)).toBe('base');
+  await expect(command('cat-file', '-e', `${commit}:file.txt`)).rejects.toThrow();
+  const noGit: ProcessRunner = {
+    run: () => {
+      throw new Error('unexpected Git');
+    },
+  };
+  // Replay returns the recorded receipt, `from` included.
+  files = undefined;
+  await expect(
+    runWorkflow(definition, {
+      ...options('rename'),
+      processRunner: noGit,
+      harness: { invoke },
+      resume: true,
+    }),
+  ).rejects.toThrow('stop after the merge');
+  expect(files).toEqual(renamed);
+  // A renamed entry as a build before `from` recorded it, in the step and its agent result.
+  const owned = await new FileRunStore(stateDir).open('rename');
+  try {
+    const record = await owned.read();
+    const move = record?.steps['move'];
+    assert(record && move?.worktree);
+    move.worktree = { ...move.worktree, files: [{ path: 'moved/file.txt', status: 'renamed' }] };
+    (move.output as { worktree: { files: unknown[] } }).worktree.files = [
+      { path: 'moved/file.txt', status: 'renamed' },
+    ];
+    await owned.append(record);
+  } finally {
+    await owned.release();
+  }
+  tail = false;
+  const replay = await runWorkflow(definition, {
+    ...options('rename'),
+    processRunner: noGit,
+    harness: { invoke },
+    resume: true,
+  });
+  expect(replay.output).toBe(commit);
+  expect(files).toEqual([{ path: 'moved/file.txt', status: 'renamed' }]);
+  expect(invoke).toHaveBeenCalledTimes(1);
 });
 
 // Three isolated calls and a merge serialize every worktree add/list/remove behind the admin lock,

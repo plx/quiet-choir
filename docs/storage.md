@@ -524,7 +524,14 @@ nested-only: `launch` gains the optional `package`, `{root, name, version}` with
 the `*.quiet-choir` directory a run was launched from ([packages](packages.md#records-and-resume));
 `launch.entrypoint` stays the selected workflow's module. Revision-20 records read and resume
 unchanged without it. A revision-20 build reads a revision-21 record and drops `package` from its
-view (its launch parse strips unknown keys), and refuses to rewrite it.
+view (its launch parse strips unknown keys), and refuses to rewrite it. Revision 22 is nested-only:
+a renamed entry in a step's `worktree.files` (the step's and each attempt's) and in its
+`merge.changes` gains the optional `from`, the source path the rename removed
+([worktrees](worktrees.md#attempt-lifecycle)). Isolated agent identity is unchanged, since the
+receipt shape it hashes is frozen. Revision-21 records read and resume unchanged, and their renamed
+entries keep no `from`. A revision-21 build cannot parse a record whose renamed entry holds `from`
+(its strict file entry rejects the key), so every read of that record is the `run.incompatible`
+upgrade refusal described below; it refuses to rewrite any other revision-22 record.
 
 **Refusals.** A build must not rewrite a record it cannot fully read: its parse strips unknown
 top-level fields, and the next compaction would write the record back without them. When a record

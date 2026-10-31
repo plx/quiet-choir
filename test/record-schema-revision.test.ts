@@ -94,6 +94,8 @@ const revisionDigests: Readonly<Record<string, string>> = {
   '20': '76e465c736a943b3ea1b9383259e31640509d566ce15046a1a9387fdd579846c',
   // Revision 21 (#584) changed only the nested launch shape (package), so it repeats 20.
   '21': '76e465c736a943b3ea1b9383259e31640509d566ce15046a1a9387fdd579846c',
+  // Revision 22 changed only nested step shapes (a renamed worktree entry's from), so it repeats 21.
+  '22': '76e465c736a943b3ea1b9383259e31640509d566ce15046a1a9387fdd579846c',
 };
 // digest(readRun(...)) of the installed pre-revision fixture, computed on unmodified main 91a6d2f.
 const preRevisionReadDigest = '714b6cb068de5c933b7ba04a26d1f931f589f7c9910f76f0e5c8cc493eb13016';
@@ -144,6 +146,9 @@ const revisionNineteenReadDigest =
   '3ab6aab1a745e9812f9959ab091ddc77ad06df748ff5b9245da03990de25fa30';
 // digest(readRun(...)) of the installed revision-twenty fixture, computed on unmodified main a3a9d6b.
 const revisionTwentyReadDigest = '5bab275ae089d60b51d48e2dda40fce519589c8c94ab479ff51d10125dc6efa3';
+// digest(readRun(...)) of the installed revision-twenty-one fixture, computed on unmodified main a31f2ae.
+const revisionTwentyOneReadDigest =
+  'ab9d61ac73d3db5a77e8c79940dcbff7b4141888a3ba7b1a8bf92f60670340a9';
 
 // Digests of the run-level (without steps) and step JSON Schemas (recordShapeSchemas) per revision,
 // with the zod version that produced them. They start at revision 17: older revisions cannot be
@@ -174,6 +179,11 @@ const shapeDigests: Readonly<Record<string, { zod: string; run: string; steps: s
     zod: '4.5.4',
     run: 'fa3e766e6462e7e909803a11dade69afc3f72408cc7178e8cfa986244a4929f2',
     steps: '37b78a978b4ed153dc6e76715de70e397b4db12812e6e7f794ff8b5ce5ff17cb',
+  },
+  '22': {
+    zod: '4.5.4',
+    run: 'fa3e766e6462e7e909803a11dade69afc3f72408cc7178e8cfa986244a4929f2',
+    steps: '0f997d0faef64a4e506f666decd5e97c652a91d6431fa69ca44ccdef5432d88f',
   },
 };
 const FIRST_SHAPE_PIN = 17;
@@ -1842,7 +1852,7 @@ describe('revision-nine records (a grant failure before recoveryCause, #284)', (
     expect(saved.recoveryCause).toBeUndefined();
     expect(recordSchemaDrift(saved)).toBeUndefined();
     expect((await rawSnapshot(runId))['schemaRevision']).toBe(SUPPORTED_SCHEMA_REVISION);
-    expect(SUPPORTED_SCHEMA_REVISION).toBe(21);
+    expect(SUPPORTED_SCHEMA_REVISION).toBe(22);
   });
 
   it('round-trip every recovery cause through the record parser', async () => {
@@ -2818,6 +2828,73 @@ describe('revision-twenty records (a launch before launch.package, #584)', () =>
       raw['schemaRevision'] = 21;
       (raw['launch'] as Record<string, unknown>)['package'] = value;
     });
+    await expect(readRun({ stateDir, runId })).rejects.toThrow();
+  });
+});
+
+describe('revision-twenty-one records (a renamed worktree entry before from)', () => {
+  const runId = 'revision-twenty-one';
+  async function install(): Promise<void> {
+    const fixture = await readFile(
+      new URL('./fixtures/schema-revision/revision-twenty-one-checkpoint.json', import.meta.url),
+      'utf8',
+    );
+    await mkdir(join(stateDir, runId));
+    await writeFile(paths(runId).snapshot, fixture);
+    await writeFile(paths(runId).journal, '');
+  }
+  const renamed = [{ path: 'moved/file.txt', status: 'renamed' }];
+  interface Files {
+    files: Record<string, unknown>[];
+  }
+  /** Every persisted copy of the receipt's entries that the record parser checks. */
+  const receipts = (raw: Record<string, unknown>) => {
+    const steps = raw['steps'] as {
+      move: { worktree: Files; attemptHistory: { worktree: Files }[] };
+      integrate: { merge: { changes: Files[] } };
+    };
+    return [
+      steps.move.worktree.files,
+      steps.move.attemptHistory[0]?.worktree.files,
+      steps.integrate.merge.changes[0]?.files,
+    ];
+  };
+
+  // The isolated step's identity hashes the generating checkout's path, so the fixture is only
+  // read here; test/worktrees.test.ts replays a receipt without from.
+  it('read exactly as on main, with renamed entries and no from', async () => {
+    await install();
+    const record = await readRun({ stateDir, runId });
+    expect(record.schemaRevision).toBe(21);
+    expect(recordSchemaDrift(record)).toBeUndefined();
+    expect(digest(record)).toBe(revisionTwentyOneReadDigest);
+    const move = record.steps['move'];
+    expect(move?.worktree?.files).toEqual(renamed);
+    expect(move?.attemptHistory?.[0]?.worktree?.files).toEqual(renamed);
+    expect(move?.output).toHaveProperty('worktree.files', renamed);
+    expect(record.steps['integrate']?.merge?.changes[0]?.files).toEqual(renamed);
+    expect(record.status).toBe('failed');
+  });
+
+  it('round-trip a renamed entry with from through the record parser, and refuse an empty one', async () => {
+    await install();
+    const withFrom = (from: string) =>
+      editSnapshot(runId, (raw) => {
+        raw['schemaRevision'] = 22;
+        for (const files of receipts(raw)) {
+          const entry = files?.[0];
+          if (entry === undefined) throw new Error('fixture has no renamed entry');
+          entry['from'] = from;
+        }
+      });
+    await withFrom('file.txt');
+    const record = await readRun({ stateDir, runId });
+    const expected = [{ ...renamed[0], from: 'file.txt' }];
+    expect(record.steps['move']?.worktree?.files).toEqual(expected);
+    expect(record.steps['move']?.attemptHistory?.[0]?.worktree?.files).toEqual(expected);
+    expect(record.steps['integrate']?.merge?.changes[0]?.files).toEqual(expected);
+    expect(recordSchemaDrift(record)).toBeUndefined();
+    await withFrom('');
     await expect(readRun({ stateDir, runId })).rejects.toThrow();
   });
 });

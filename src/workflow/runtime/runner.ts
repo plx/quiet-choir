@@ -33,7 +33,11 @@ import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { deriveAgentSessionId } from './agent-session.js';
 import { agentDiagnosticsSchema } from './agent-stream-schema.js';
-import { agentResultIdentitySchema, legacyAgentResultSchema } from './agent-result-schema.js';
+import {
+  agentResultIdentitySchema,
+  agentResultValidationSchema,
+  legacyAgentResultSchema,
+} from './agent-result-schema.js';
 import type {
   AgentDiagnostics,
   AgentProgress,
@@ -3122,7 +3126,9 @@ export async function runWorkflow<
               : resolveWorktree(request.options.worktree);
           const identitySchema = agentResultIdentitySchema(schema, isolation !== undefined);
           const identity = agentIdentity(request, schemaJson(identitySchema), registration);
-          const resultSchema = identitySchema.extend({ usage: agentUsageSchema });
+          const resultSchema = agentResultValidationSchema(schema, isolation !== undefined).extend({
+            usage: agentUsageSchema,
+          });
           const onPermissionDenied =
             harness === 'claude'
               ? ((request.options as ClaudeOptions).onPermissionDenied ??

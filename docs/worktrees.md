@@ -80,10 +80,11 @@ these internal Git operations. The agent need not run Git commits.
 
 An isolated `object()` or `text()` result includes `worktree: { base, commit, ref, files }`.
 `commit` and `ref` are null when unchanged from the base; the base pin is separate and is not
-reported in the receipt. File statuses are added, modified, deleted, or renamed; rename paths name
-the destination. Ordinary and legacy results omit `worktree`, keeping their existing schema and
-replay identities. `value()` returns only the output; use a result method or a shared handle when
-later integration needs the captured change.
+reported in the receipt. File statuses are added, modified, deleted, or renamed; a renamed entry's
+`path` is the destination and `from` the source it removed, so an ownership check must test both; a
+renamed entry recorded before `from` existed has none and should be refused. Ordinary and legacy
+results omit `worktree`, keeping their existing schema and replay identities. `value()` returns only
+the output; use a result method or a shared handle when later integration needs the captured change.
 
 Concurrent readers that must judge one exact commit take `worktree: { base: { commit } }` per call,
 because effects on one handle serialize. Each call costs a checkout and a base pin. No option

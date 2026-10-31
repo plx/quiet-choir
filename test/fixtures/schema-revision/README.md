@@ -583,6 +583,38 @@ paths are scrubbed to `/fixture/...` and the file was formatted with Prettier; i
 in `test/record-schema-revision.test.ts` was computed on the same unmodified main from this file. No
 harness was invoked.
 
+`revision-twenty-one-checkpoint.json` was generated the same way with the runtime source of
+origin/main `a31f2ae`, before revision 22 added the optional nested `from` to a renamed entry in
+`steps[].worktree.files`, attempt history entries and `steps[].merge.changes`. Its run ID is
+`revision-twenty-one`, and it ran this definition once in a fresh Git repository whose one commit
+holds `file.txt`, with `worktrees: { root, keep: 'none' }`, a `NodeProcessRunner`, and a custom
+harness whose `invoke` moves `file.txt` to `moved/file.txt` in its checkout and resolves
+`{ text: 'ok', sessionId: null }`:
+
+```ts
+defineWorkflow({
+  name: 'schema-revision',
+  version: '1',
+  input: z.null(),
+  output: z.null(),
+  async run(ctx) {
+    const moved = await ctx.codex.text('move', { prompt: 'Move the file.', worktree: true });
+    await ctx.merge('integrate', [moved.worktree]);
+    throw new Error('fixture tail');
+  },
+});
+```
+
+It carries `schemaRevision: 21`, the completed isolated agent step `move` whose receipt lists
+`{ path: 'moved/file.txt', status: 'renamed' }` with no source path, the completed merge `integrate`
+holding that receipt in `merge.changes`, the run's worktree ledger, and a workflow-body failure
+after them. The agent step's identity digests the generating repository's path, so the test only
+reads this fixture; `test/worktrees.test.ts` replays a receipt without `from`. The journal was empty
+and the empty attempt transcript is not checked in, so only `run.json` is. Repository, cache, run
+and stack paths are scrubbed to `/fixture/...` and the file was formatted with Prettier; its
+read-view digest in `test/record-schema-revision.test.ts` was computed on the same source from this
+file. No inference was used.
+
 `record-keys.json` lists the top-level run-record keys of each schema revision. Adding or changing a
 persisted run-level field adds a revision there and bumps `SUPPORTED_SCHEMA_REVISION`; a revision
 that only changes a nested shape repeats the previous key list. See `docs/storage.md`.

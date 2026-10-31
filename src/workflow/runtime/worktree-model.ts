@@ -29,12 +29,17 @@ export interface WorktreeChange {
    * the step or handle is separate.
    */
   readonly ref: string | null;
-  /** Changes relative to base; renamed entries name the destination. */
+  /** Changes relative to base; a renamed entry's `path` is the destination and `from` the source. */
   readonly files: readonly {
     /** Repository-relative path. */
     readonly path: string;
     /** Git change category. */
     readonly status: 'added' | 'modified' | 'deleted' | 'renamed';
+    /**
+     * Source path a renamed entry removed; absent for other statuses and on renames recorded before
+     * this field existed.
+     */
+    readonly from?: string;
   }[];
 }
 

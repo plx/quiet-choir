@@ -44,13 +44,27 @@ export function resolveWorktree(value: unknown): ResolvedWorktree {
   if ('id' in selection) return selection;
   return selection.base === undefined ? {} : { base: selection.base };
 }
-/** @internal */
-export const worktreeChangeSchema = z.strictObject({
+/**
+ * The change receipt as `agentResultIdentitySchema` hashes it into isolated agent identity. Frozen:
+ * never edit it, since a change strands completed isolated agent steps (ADR 0005, ADR 0006); extend
+ * `worktreeChangeSchema` instead. @internal
+ */
+export const worktreeChangeIdentitySchema = z.strictObject({
   base: oid,
   commit: oid.nullable(),
   ref: text.nullable(),
   files: z.array(
     z.strictObject({ path: text, status: z.enum(['added', 'modified', 'deleted', 'renamed']) }),
+  ),
+});
+/** Every accepted change receipt, including a renamed entry's `from`. @internal */
+export const worktreeChangeSchema = worktreeChangeIdentitySchema.extend({
+  files: z.array(
+    z.strictObject({
+      path: text,
+      status: z.enum(['added', 'modified', 'deleted', 'renamed']),
+      from: text.exactOptional(),
+    }),
   ),
 });
 /** @internal */

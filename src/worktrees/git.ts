@@ -236,10 +236,13 @@ export function mergeTreeOutput(result: ExecResult): { tree: string; conflicts: 
   };
 }
 
-/** Parse git diff --name-status -z, retaining raw UTF-8 path boundaries. @internal */
+/**
+ * Parse git diff --name-status -z, retaining raw UTF-8 path boundaries. A rename keeps its source
+ * in `from`; a copy is an addition, since its source is unchanged. @internal
+ */
 export function changedFiles(
   output: string,
-): { path: string; status: 'added' | 'modified' | 'deleted' | 'renamed' }[] {
+): { path: string; status: 'added' | 'modified' | 'deleted' | 'renamed'; from?: string }[] {
   const fields = output.split('\0');
   if (fields.at(-1) === '') fields.pop();
   const files: ReturnType<typeof changedFiles> = [];
@@ -259,7 +262,7 @@ export function changedFiles(
             ? 'modified'
             : undefined;
     if (status === undefined) throw new Error(`Unsupported Git change status: ${code}`);
-    files.push({ path: destination, status });
+    files.push({ path: destination, status, ...(status === 'renamed' ? { from: source } : {}) });
   }
   return files;
 }

@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { agentDiagnosticsSchema } from './agent-stream-schema.js';
 import { usageIdentitySchema } from './usage.js';
-import { worktreeChangeSchema } from './worktree-schema.js';
+import { worktreeChangeIdentitySchema, worktreeChangeSchema } from './worktree-schema.js';
 
 /** Declared once so the exported return type is the shape zod infers, not a hand copy. */
 const resultSchema = <T extends z.ZodType>(output: T) =>
@@ -14,7 +14,7 @@ const resultSchema = <T extends z.ZodType>(output: T) =>
   });
 type Result<T extends z.ZodType> = ReturnType<typeof resultSchema<T>>;
 const isolatedSchema = <T extends z.ZodType>(output: T) =>
-  resultSchema(output).extend({ worktree: worktreeChangeSchema });
+  resultSchema(output).extend({ worktree: worktreeChangeIdentitySchema });
 type Isolated<T extends z.ZodType> = ReturnType<typeof isolatedSchema<T>>;
 
 /**
@@ -27,6 +27,22 @@ export function agentResultIdentitySchema<T extends z.ZodType>(
   isolated: boolean,
 ): Result<T> | Isolated<T> {
   return isolated ? isolatedSchema(output) : resultSchema(output);
+}
+
+const validationSchema = <T extends z.ZodType>(output: T) =>
+  resultSchema(output).extend({ worktree: worktreeChangeSchema });
+type Validated<T extends z.ZodType> = ReturnType<typeof validationSchema<T>>;
+
+/**
+ * The agent result wrapper a result is validated against, live and on replay. It differs from
+ * {@link agentResultIdentitySchema} only in the change receipt, which accepts fields added after
+ * that identity was frozen, such as a renamed entry's `from`; it never enters identity. @internal
+ */
+export function agentResultValidationSchema<T extends z.ZodType>(
+  output: T,
+  isolated: boolean,
+): Result<T> | Validated<T> {
+  return isolated ? validationSchema(output) : resultSchema(output);
 }
 
 const legacyResultSchema = <T extends z.ZodType>(output: T) =>

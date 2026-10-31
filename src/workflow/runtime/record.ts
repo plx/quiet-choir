@@ -1377,9 +1377,11 @@ export function withProjectInstructions(
  * Revision 20 (#582) changed only a nested shape: the optional `promptTemplate` of a request
  * summary in `steps` (step and attempt `request`).
  * Revision 21 (#584) changed only a nested shape: the optional `package` of `launch`.
+ * Revision 22 changed only nested shapes: the optional `from` of a renamed entry in a step's
+ * `worktree.files` (step and attempt) and in `merge.changes`.
  * @internal
  */
-export const SUPPORTED_SCHEMA_REVISION = 21;
+export const SUPPORTED_SCHEMA_REVISION = 22;
 
 /**
  * The identity a run's answer deliveries and `workflow rm` bind to: its random `generation`, or

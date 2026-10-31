@@ -280,7 +280,10 @@ export function formatRunSummary(
       lines.push(
         `Worktree ${step.id}: base ${w.base}, commit ${w.commit ?? 'unchanged'}; ${w.directoryState} ${w.path}`,
       );
-      for (const file of w.files) lines.push(`  ${file.status} ${JSON.stringify(file.path)}`);
+      for (const file of w.files)
+        lines.push(
+          `  ${file.status} ${file.from === undefined ? '' : `${JSON.stringify(file.from)} -> `}${JSON.stringify(file.path)}`,
+        );
     }
     if (step.merge)
       lines.push(
