@@ -172,7 +172,7 @@ Each merge starts from its target's value when the merge is first prepared: the 
 `{ branch }` (`HEAD` when the branch does not exist yet), and the source checkout's `HEAD` for
 `'checkout'` and for the default `'ref'`, whose run-owned ref does not exist yet. That starting
 commit is never taken from the inputs' bases, even for a handle created with `base: { commit }`:
-inputs captured at an older commit are rebased onto it. The moved-target refusal covers only
+inputs captured at an older commit are integrated onto it. The moved-target refusal covers only
 movement after that preparation, and no option pins an earlier starting commit (#ISSUE-C06-1). So a
 later checkout merge of inputs that an earlier integration verified integrates them onto whatever
 `HEAD` is then: if someone committed in between, it publishes a tree no check ran on, without an
