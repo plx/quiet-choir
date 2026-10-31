@@ -124,19 +124,19 @@ reused from the source run. Cleaning a fork never removes source-owned caches or
 `ctx.merge(id, changes, options?)` integrates changes or shared handles in input order. Shared
 handles are resolved to saved snapshots under their locks before integration starts. Options are:
 
-| Option                 | Behavior                                                                                                          |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `strategy: 'rebase'`   | Default: apply each snapshot's net change onto the preceding clean result                                         |
-| `strategy: 'merge'`    | Preserve source commits as merge parents                                                                          |
-| `strategy: 'squash'`   | Publish one final commit parented on the starting commit                                                          |
-| `onConflict: 'report'` | Default: record conflicting inputs, skip them, and continue with other inputs                                     |
-| `onConflict: 'fail'`   | Reject without publishing the integration target                                                                  |
-| `target: 'ref'`        | Default: publish a run-owned ref; leave the source checkout unchanged                                             |
-| `target: { branch }`   | Create/update an unoccupied local branch; refuse a branch checked out anywhere                                    |
-| `target: 'checkout'`   | Explicitly fast-forward the source checkout; refuse dirty state, or a HEAD that moves after the merge is prepared |
-| `commit: { message }`  | Message of the final commit; intermediate commits keep generated messages                                         |
-| `commit.author`        | `'quiet-choir'` (default), `'git-config'` or `{ name, email }` for every created commit                           |
-| `onError: 'return'`    | Save a merge failure and return `Settled<MergeResult>`; resume replays it without Git                             |
+| Option                 | Behavior                                                                                                      |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `strategy: 'rebase'`   | Default: apply each snapshot's net change onto the preceding clean result                                     |
+| `strategy: 'merge'`    | Preserve source commits as merge parents                                                                      |
+| `strategy: 'squash'`   | Publish one final commit parented on the starting commit                                                      |
+| `onConflict: 'report'` | Default: record conflicting inputs, skip them, and continue with other inputs                                 |
+| `onConflict: 'fail'`   | Reject without publishing the integration target                                                              |
+| `target: 'ref'`        | Default: publish a run-owned ref; leave the source checkout unchanged                                         |
+| `target: { branch }`   | Create/update an unoccupied local branch; refuse a branch checked out anywhere                                |
+| `target: 'checkout'`   | Explicitly fast-forward a clean source checkout (below); refuse a HEAD that moves after the merge is prepared |
+| `commit: { message }`  | Message of the final commit; intermediate commits keep generated messages                                     |
+| `commit.author`        | `'quiet-choir'` (default), `'git-config'` or `{ name, email }` for every created commit                       |
+| `onError: 'return'`    | Save a merge failure and return `Settled<MergeResult>`; resume replays it without Git                         |
 
 `onError: 'return'` makes a failed merge a durable branch decision: an `onConflict: 'fail'`
 conflict, a dirty checkout target or a target that moved is saved as a settled failure and returned
@@ -145,6 +145,20 @@ failures (including a rehearsal Git refusal) and checkpoint failures still rejec
 options reject before the step is recorded. `'return'` changes the merge's identity; omitting it or
 passing `'throw'` does not. The default `onConflict: 'report'` already returns conflicts as data, so
 with `'return'` it yields `{ ok: true, value }` holding the same conflicts.
+
+A `checkout` target is clean when `git status --porcelain --untracked-files=normal` prints nothing.
+That means no staged or unstaged change to a tracked file and no untracked path Git does not ignore
+(an untracked directory counts as one path). Ignored files do not count. The merge checks when it
+prepares the integration and again just before it fast-forwards, so the refusal comes only when the
+body reaches `ctx.merge`, after the effects before it have run. The same rule gives the dirty-source
+warning in `worktreeWarnings`, which only warns. No built-in check refuses earlier (#ISSUE-C07-1).
+To refuse before paying for agent calls, check up front with a command that itself fails when the
+checkout is dirty, such as
+`ctx.exec('clean', ['sh', '-c', 'test -z "$(git status --porcelain --untracked-files=normal --no-renames)"'])`.
+A failed command runs again on resume, so cleaning the checkout and resuming continues the run. A
+status read that completed (a `std.exec.git` status followed by a throw on its output) replays its
+saved output, so the run keeps refusing after the checkout is cleaned. `--untracked-files=no` misses
+untracked paths the merge refuses.
 
 The result is `{ commit, merged, conflicts: [{ commit, files }] }`. `commit` always names the last
 clean integrated tree, never a tree containing conflict markers. Conflict path lists can be empty

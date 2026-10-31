@@ -97,8 +97,9 @@ function checkPath(path: string): void {
  * @returns A receipt: the absolute target under `ctx.cwd`, the content's SHA-256 and byte length,
  * and `previousSha256: null`, since the file did not exist.
  * @throws Error - Before any effect, when `path` is absolute or starts with a drive letter, or has a
- * `.`, `..`, empty or `.git` segment, a backslash or a NUL; from the step, when a parent escapes the checkout or the file
- * exists; and from the merge, when it conflicts.
+ * `.`, `..`, empty or `.git` segment, a backslash or a NUL; from the step, when a parent escapes the
+ * checkout or the file exists; and from the merge, when the checkout has a tracked change or an
+ * untracked, non-ignored path (an untracked file already at `path` included), or when it conflicts.
  */
 export async function committedArtifact(
   ctx: WorkflowContext,

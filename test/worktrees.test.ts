@@ -900,6 +900,79 @@ it('refuses dirty checkout targets, then fast-forwards the explicit checkout on 
   expect(await readFile(join(repo, 'file.txt'), 'utf8')).toBe('integrated\n');
 });
 
+/** Edits file.txt in an isolated handle, then merges it into the checkout. */
+function checkoutEdit(name: string, before?: (ctx: WorkflowContext) => Promise<unknown>) {
+  const edits = { count: 0 };
+  const workflow = defineWorkflow({
+    name,
+    version: '1',
+    input: z.null(),
+    output: z.string(),
+    async run(ctx) {
+      await before?.(ctx);
+      const handle = await ctx.worktree('cache');
+      await ctx.step('edit', {
+        worktree: handle,
+        input: null,
+        schema: z.null(),
+        async run({ cwd }) {
+          edits.count++;
+          await writeFile(join(cwd, 'file.txt'), 'integrated\n');
+          return null;
+        },
+      });
+      return (await ctx.merge('publish', [handle], { target: 'checkout' })).commit;
+    },
+  });
+  return { workflow, edits };
+}
+
+it.each([
+  { name: 'an untracked file', path: 'notes.txt', refusal: 'Merge target checkout is dirty' },
+  { name: 'only an ignored file', path: 'node_modules/cache.txt', refusal: null },
+])(
+  'decides by Git status whether a checkout target holding $name is dirty',
+  async ({ path, refusal }) => {
+    const base = await command('rev-parse', 'HEAD');
+    await mkdir(dirname(join(repo, path)), { recursive: true });
+    await writeFile(join(repo, path), 'local\n');
+    const { workflow } = checkoutEdit('status');
+    // The merge does not touch the extra path: only its status decides.
+    const run = runWorkflow(workflow, { ...options('status'), input: null });
+    if (refusal) await expect(run).rejects.toThrow(refusal);
+    const head = refusal ? base : (await run).output;
+    expect(await command('rev-parse', 'HEAD')).toBe(head);
+    expect(await readFile(join(repo, 'file.txt'), 'utf8')).toBe(
+      refusal ? 'base\n' : 'integrated\n',
+    );
+    expect(await readFile(join(repo, path), 'utf8')).toBe('local\n');
+    // The dirty-source warning follows the same rule.
+    expect((await readRun({ stateDir, runId: 'status' })).worktreeWarnings ?? []).toEqual(
+      refusal ? [uncommittedSourceWarning] : [],
+    );
+  },
+);
+
+it('the clean-checkout preflight recipe refuses before any edit and reruns on resume', async () => {
+  const { workflow, edits } = checkoutEdit('preflight', (ctx) =>
+    ctx.exec('clean', [
+      'sh',
+      '-c',
+      'test -z "$(git status --porcelain --untracked-files=normal --no-renames)"',
+    ]),
+  );
+  await writeFile(join(repo, 'notes.txt'), 'local\n');
+  await expect(runWorkflow(workflow, { ...options('preflight'), input: null })).rejects.toThrow(
+    'Step clean (exec) failed: Command exited with 1.',
+  );
+  expect(edits.count).toBe(0);
+  // The failed command saved no output, so after cleaning, resume runs it again and passes.
+  await rm(join(repo, 'notes.txt'));
+  const run = await runWorkflow(workflow, { ...options('preflight'), resume: true });
+  expect(edits.count).toBe(1);
+  expect(await command('rev-parse', 'HEAD')).toBe(run.output);
+});
+
 it('a checkout merge integrates onto the HEAD current when it is prepared', async () => {
   const workflow = defineWorkflow({
     name: 'moved-checkout',
