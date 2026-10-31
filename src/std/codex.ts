@@ -4,13 +4,21 @@
  * `Mechanic: { ...std.codex.Edit, description: 'Applies the fix.' }`. Each entry is frozen data
  * with a short `description` that a spread entry overrides.
  *
+ * Codex has no tool-less mode: every Codex call runs in a sandbox that reads, and can run read-only
+ * commands over, its working directory, so `Text` differs from `ReadOnly` only in its shorter time
+ * limit.
+ *
  * The entries carry no `maxTurns` or `maxBudgetUsd`: those are Claude-only limits that Codex
  * options do not have, so a Codex roster entry cannot set them.
  *
  * @module
  */
 
-/** A Codex agent meant for text answers: a read-only sandbox and the `text` preset's time limit. */
+/**
+ * A Codex agent for text answers. It is not tool-less: it has the same read-only sandbox as
+ * `ReadOnly`, which reads, and runs read-only commands over, its working directory, with the `text`
+ * preset's time limit.
+ */
 export const Text: {
   /** Pinned to Codex. */
   readonly harness: 'codex';
@@ -22,7 +30,7 @@ export const Text: {
   readonly timeoutMs: 300_000;
 } = Object.freeze({
   harness: 'codex',
-  description: 'Answers from the prompt through a read-only sandbox.',
+  description: 'Answers in text; still reads its working directory through a read-only sandbox.',
   sandbox: 'read-only',
   timeoutMs: 300_000,
 });

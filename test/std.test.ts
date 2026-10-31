@@ -91,6 +91,26 @@ describe('std.codex', () => {
     expect(Object.keys(std.codex[name])).not.toContain('maxTurns');
     expect(Object.keys(std.codex[name])).not.toContain('maxBudgetUsd');
   });
+
+  it('Text is ReadOnly with the text time limit, so it still reads', () => {
+    // Codex has no tool-less mode: the two fragments differ only in timeoutMs and description.
+    expect({ ...std.codex.Text, timeoutMs: 0, description: '' }).toEqual({
+      ...std.codex.ReadOnly,
+      timeoutMs: 0,
+      description: '',
+    });
+    const text = entryRow(defineRoster({ Entry: { ...std.codex.Text } }));
+    const readOnly = entryRow(defineRoster({ Entry: { ...std.codex.ReadOnly } }));
+    expect({ access: text.access, sandbox: text.codex.sandbox }).toEqual({
+      access: 'read',
+      sandbox: 'read-only',
+    });
+    expect({ ...text, timeoutMs: 0, description: '' }).toEqual({
+      ...readOnly,
+      timeoutMs: 0,
+      description: '',
+    });
+  });
 });
 
 describe('std.tiers', () => {

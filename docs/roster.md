@@ -148,6 +148,14 @@ The Codex fragments carry no `maxTurns` or `maxBudgetUsd`: those are Claude-only
 `CodexOptions` does not have, so a Codex entry cannot set them (and a spread that adds one, or
 `tools`, fails typecheck like any other Claude key on a Codex entry).
 
+Codex has no tool-less mode: `std.codex.Text` is `std.codex.ReadOnly` with the text time limit, so a
+Text entry is `read` (see [access classes](#access-classes)). It reads, and can run read-only
+commands over, its working directory: the live checkout, uncommitted edits included, unless the call
+runs in an isolated worktree, which starts from committed files (`worktree: true`, or a pinned
+snapshot with `worktree: { base: { commit } }`; see [worktrees](worktrees.md#attempt-lifecycle)), or
+in a scratch `cwd`. quiet-choir sets no Codex web-search control, so the installed Codex's default
+applies (#ISSUE-C25-3).
+
 `std.tiers` holds the model tiers of the native epic scripts. Each fixes only a Claude model and
 effort: `Clerk` (haiku, low), `Copyist` (sonnet, low), `Scribe` (sonnet, medium), `Mechanic`
 (sonnet, high), `Planner` (opus, high), `Skeptic` (opus, medium) and `Surgeon` (opus, high).

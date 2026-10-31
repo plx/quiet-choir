@@ -186,9 +186,10 @@ export default defineWorkflow({
 ```
 
 Build entries from the `quiet-choir/std` fragments instead of retyping options: `std.claude.Text`,
-`ReadOnly` and `Edit` (and `std.codex`) carry the runtime's text, read-only and edit configurations,
-and `std.tiers` fixes a Claude model and effort (`Clerk`, `Copyist`, `Scribe`, `Mechanic`,
-`Planner`, `Skeptic`, `Surgeon`, ...). Compose by spread:
+`ReadOnly` and `Edit` (and `std.codex`) carry the runtime's text, read-only and edit configurations
+(Codex has no tool-less mode: `std.codex.Text` still reads its working directory), and `std.tiers`
+fixes a Claude model and effort (`Clerk`, `Copyist`, `Scribe`, `Mechanic`, `Planner`, `Skeptic`,
+`Surgeon`, ...). Compose by spread:
 `Mechanic: { ...std.claude.Edit, ...std.tiers.Mechanic, maxTurns: 200 }`. See
 [agent calls](agent-calls.md#roster) for the entry rules.
 
