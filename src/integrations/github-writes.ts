@@ -48,6 +48,10 @@ import {
   issueStateResponseSchema,
   issueStateResultSchema,
   mergeArgv,
+  mergeAsyncArgv,
+  mergeAsyncResultArgv,
+  asyncMergeResponseSchema,
+  stackedRefusal,
   mergeFailure,
   mergePrecheck,
   mergeResponseSchema,
@@ -248,6 +252,14 @@ export async function confirm<T>(
   }
   return { done: false, last };
 }
+
+/**
+ * Polls of an asynchronous merge (#747), the first at once: ten minutes at the default bounds'
+ * pace, since a stack's merge can take minutes. @internal
+ */
+export const ASYNC_MERGE_POLLS = 120;
+/** Milliseconds between polls of an asynchronous merge. @internal */
+export const ASYNC_MERGE_DELAY_MS = 5_000;
 
 /**
  * Version constants of the write steps. They are part of the replay contract: bump one only for a
@@ -830,6 +842,62 @@ export function githubWrites(
               mergeResponseSchema,
               [0, 1],
             );
+            if (!('merged' in response) && stackedRefusal(response)) {
+              // A pull request in a native stack merges only asynchronously (#747). The base check
+              // above keeps this to the lowest open pull request of the stack, so the merge takes no
+              // unchecked pull request below it along.
+              let result = await gh.json(
+                mergeAsyncArgv(repo, number, method, sha),
+                asyncMergeResponseSchema,
+                [0, 1],
+              );
+              const uuid = result.details?.uuid ?? null;
+              // 409: a request for this pull request is already pending (a retry's); poll it.
+              if (String(result.status ?? '') === '409' && uuid !== null)
+                result = { ...result, status: 'pending' };
+              if (result.status === 'pending' && uuid !== null)
+                result =
+                  (
+                    await confirm(
+                      () =>
+                        gh.read(mergeAsyncResultArgv(repo, number, uuid), asyncMergeResponseSchema),
+                      (polled) => polled.status !== 'pending',
+                      { ...gh.bounds, attempts: ASYNC_MERGE_POLLS, delayMs: ASYNC_MERGE_DELAY_MS },
+                    )
+                  ).last ?? result;
+              if (result.status === 'pending')
+                throw new Error(
+                  `github pr.merge ${id}: GitHub's asynchronous merge of #${String(number)} (${String(uuid)}) is still pending; a retry finds the merge.`,
+                );
+              if (result.status === 'merged') {
+                const seen = await confirm(read, (pull) => pull.merged, gh.bounds);
+                if (!seen.done || seen.last === undefined)
+                  throw new Error(
+                    `github pr.merge ${id}: GitHub merged #${String(number)} asynchronously but it did not report merged after ${String(gh.bounds.attempts)} reads; a retry finds the merge.`,
+                  );
+                if (seen.last.head.sha !== sha) return settled(seen.last, 'merged-elsewhere', null);
+                const mergeCommit = seen.last.merge_commit_sha;
+                return { merged: true, number, mergeCommit, head: sha, acted: true };
+              }
+              const reread = await read();
+              const outcome = mergePrecheck(reread, sha, base);
+              if (outcome !== 'put') return settled(reread, outcome, null);
+              const why =
+                `${String(result.status ?? 'no status')}: ${result.details?.message ?? result.message ?? ''}`.trim();
+              // Only GitHub's own verdicts settle the step; an HTTP error or an unknown answer
+              // throws, so the step's retry asks again instead of replaying a refusal.
+              if (result.status !== 'failed' && result.status !== 'enqueued')
+                throw new Error(
+                  `github pr.merge ${id}: GitHub did not accept the asynchronous merge of #${String(number)} (${why}); a retry asks again.`,
+                );
+              return {
+                merged: false,
+                number,
+                reason: 'not-mergeable',
+                head: reread.head.sha,
+                message: `GitHub's asynchronous merge ended ${why}`,
+              };
+            }
             if ('merged' in response) {
               // Merged now: wait until the pull request says so, as merge-down's land does, so a
               // following read never sees it open.

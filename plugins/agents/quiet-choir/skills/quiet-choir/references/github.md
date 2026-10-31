@@ -619,6 +619,19 @@ the pull request until it reports merged, at most 20 reads 3 seconds apart with 
 so a following read sees it merged; if it never does, the step throws, and the retry finds the
 merge.
 
+A pull request in a GitHub-native stack merges only through the asynchronous endpoint (#747): the
+synchronous `PUT` answers 403 ("Use the asynchronous merge endpoint instead"). On that answer the
+step requests `PUT repos/O/R/pulls/N/merge-async` (API version 2026-03-10) with the same method and
+`sha`, `merge_action=direct_merge`, polls `GET …/merge-async/<uuid>` (the first poll at once, then
+every 5 seconds, up to 120 polls) and confirms the merge with the reads above, so the result has the
+same shape. An asynchronous merge of a stacked pull request also merges the open pull requests below
+it: pass `base` (the default branch), and the step refuses any but the lowest open one, the only one
+that targets it. A `failed` or `enqueued` result is `merged: false` with `reason: 'not-mergeable'`
+and GitHub's message, unless the read finds the pull request merged, closed, moved or retargeted.
+Any other answer (an HTTP error, an unknown status) throws after that read, as does a request still
+pending after the polls, so the step's retry asks again; a 409 that names a pending request polls
+that request.
+
 Readiness is the caller's policy: check the base branch with `pr.view`, and the review threads, open
 alerts and checks with [`waitChecks` and `waitReview`](#waits) (or `pr.reviewThreads` and
 `codeScanning.alerts`) on the same `sha` before merging; see the [land example](#land-example).

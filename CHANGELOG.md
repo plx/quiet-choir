@@ -2,6 +2,11 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- `quiet-choir/github`'s `pr.merge` merges a pull request in a GitHub-native stack (#747): when the
+  synchronous merge answers GitHub's "use the asynchronous merge endpoint" 403, it requests an
+  asynchronous direct merge with the same method and pinned SHA, polls it, and confirms the merge,
+  returning the same result shape. Pass `base` so it refuses all but the lowest open pull request of
+  a stack.
 - merge-down lands the bottom PR of a GitHub-native stack (#747): when the synchronous merge answers
   GitHub's "use the asynchronous merge endpoint" 403, the land step requests an asynchronous direct
   merge pinned to the gated head and polls it, and it refuses a PR above the bottom of its stack,

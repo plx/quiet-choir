@@ -10,7 +10,10 @@
 // a pull request with `mergeable: false` answers 405, and `mergeLag` makes that many reads after a
 // merge still report the pull request unmerged. HTTP errors print GitHub's body on stdout and exit
 // 1, as gh does. A seeded `rerunConclusion` makes a rerun POST leave the run completed at the next
-// attempt with that conclusion (a rerun that failed again at once) instead of queued.
+// attempt with that conclusion (a rerun that failed again at once) instead of queued. A pull request
+// with `stacked: true` is in a native stack (#747): the synchronous merge PUT answers GitHub's 403,
+// the asynchronous PUT answers pending with a request ID, and the first poll of that request merges
+// (or fails when the head moved since the request).
 import { readFileSync, writeFileSync } from 'node:fs';
 
 // Writing and then calling process.exit can truncate stdout on a pipe, so every answer throws a
@@ -390,6 +393,41 @@ function main() {
       committed(`PATCH pulls/${match[1]}`, pullView(pull));
     }
   }
+  if ((match = /^pulls\/(\d+)\/merge-async$/.exec(path)) && method === 'PUT') {
+    const pull = state.pulls?.[match[1]];
+    if (!pull) httpError(404, 'Not Found');
+    const { merge_method: mergeMethod, merge_action: action, sha } = fields();
+    if (pull.state !== 'open') httpError(400, 'Pull request is closed');
+    if (state.asyncMergeError) {
+      const error = state.asyncMergeError;
+      state.asyncMergeError = null;
+      httpError(error.status, error.message, error);
+    }
+    const uuid = `async-${match[1]}`;
+    state.asyncMerges ??= {};
+    state.asyncMerges[uuid] = { pull: match[1], mergeMethod, action, sha: sha ?? pull.head_sha };
+    committed(`PUT pulls/${match[1]}/merge-async`, {
+      status: 'pending',
+      details: { uuid, merge_method: mergeMethod, merge_action: action, expected_head_sha: sha },
+    });
+  }
+  if ((match = /^pulls\/(\d+)\/merge-async\/([\w-]+)$/.exec(path)) && method === 'GET') {
+    const request = state.asyncMerges?.[match[2]];
+    if (!request) httpError(404, 'Not Found');
+    const pull = state.pulls[request.pull];
+    if (!pull.merged) {
+      if (request.sha !== pull.head_sha) {
+        save();
+        reply({ status: 'failed', details: { message: 'Head branch was modified' } });
+      }
+      pull.merged = true;
+      pull.state = 'closed';
+      pull.merge_method = request.mergeMethod;
+      pull.merge_commit_sha = 'c'.repeat(39) + String(pull.number % 10);
+    }
+    save();
+    reply({ status: 'merged', details: { message: 'Merged', sha: pull.merge_commit_sha } });
+  }
   if ((match = /^pulls\/(\d+)\/merge$/.exec(path)) && method === 'PUT') {
     const pull = state.pulls?.[match[1]];
     if (!pull) httpError(404, 'Not Found');
@@ -404,6 +442,11 @@ function main() {
       httpError(error.status ?? 'unknown', error.message, error);
     }
     if (pull.merged || pull.state !== 'open') httpError(405, 'Pull Request is not mergeable');
+    if (pull.stacked)
+      httpError(
+        403,
+        'Merging stacked PRs via this endpoint is not supported. Use the asynchronous merge endpoint instead.',
+      );
     if (sha !== undefined && sha !== pull.head_sha)
       httpError(409, 'Head branch was modified. Review and try the merge again.');
     if (pull.mergeable === false) httpError(405, 'Pull Request is not mergeable');

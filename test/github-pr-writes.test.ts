@@ -68,6 +68,7 @@ interface FakePull {
   readonly merge_commit_sha: string | null;
   readonly mergeable?: boolean;
   readonly merge_method?: string;
+  readonly stacked?: boolean;
 }
 interface FakeRun {
   readonly id: number;
@@ -85,6 +86,7 @@ interface FakeState {
   readonly pushBeforeMerge?: string | null;
   readonly mergeError?: { readonly message: string; readonly status?: string } | null;
   readonly mergeLag?: number;
+  readonly asyncMergeError?: { readonly message: string; readonly status: string } | null;
   readonly runsTotalCount?: number;
   readonly runsPages?: readonly (readonly number[])[];
   readonly branches?: Record<string, string>;
@@ -526,6 +528,49 @@ describe('pr.merge', { timeout: 30_000 }, () => {
       expect(putCalls(after.calls), runId).toHaveLength(1);
       expect(after.pulls['9']?.merged, runId).toBe(false);
     }
+  });
+
+  it('merges a pull request in a native stack through the asynchronous endpoint (#747)', async () => {
+    const { runner, state } = await fake({ pulls: pull(9, { stacked: true }) });
+    const result = await outcome(runner, 'stacked', (ctx) =>
+      client(ctx).pr.merge('merge', { number: 9, sha: HEAD, method: 'merge' }),
+    );
+    expect(result.output).toEqual({
+      merged: true,
+      number: 9,
+      mergeCommit: MERGE_COMMIT_9,
+      head: HEAD,
+      acted: true,
+    });
+    const after = await state();
+    expect(after.pulls['9']?.merge_method).toBe('merge');
+    const argvs = after.calls.map((call) => call.argv.join(' '));
+    expect(argvs.filter((argv) => argv.includes('merge-async'))).toEqual([
+      expect.stringMatching(
+        /-X PUT .*pulls\/9\/merge-async -f merge_method=merge -f merge_action=direct_merge -f sha=0123/,
+      ),
+      expect.stringMatching(/pulls\/9\/merge-async\/async-9$/),
+    ]);
+  });
+
+  it('throws on an HTTP error from the asynchronous request, and a retry merges (#747)', async () => {
+    const { runner, state } = await fake({
+      pulls: pull(9, { stacked: true }),
+      asyncMergeError: { message: 'Server Error', status: '502' },
+    });
+    const result = await outcome(runner, 'stacked-502', (ctx) =>
+      client(ctx).pr.merge(
+        'merge',
+        { number: 9, sha: HEAD, method: 'merge' },
+        { retry: { maxAttempts: 2 } },
+      ),
+    );
+    expect(result.output).toMatchObject({ merged: true, mergeCommit: MERGE_COMMIT_9, acted: true });
+    const asyncPuts = (await state()).calls.filter(
+      (call) =>
+        call.argv.join(' ').includes('-X PUT') && call.argv.join(' ').includes('merge-async'),
+    );
+    expect(asyncPuts).toHaveLength(2);
   });
 
   it('merges with the method given and confirms it with one read', async () => {
