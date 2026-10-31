@@ -218,8 +218,9 @@ it('validates child input before effects and output before returning, with ordin
         'invalid-input (required) input validation',
       );
       expect(calls).toBe(0);
+      // One path: message line per issue, as for a step, never the ZodError's JSON dump.
       await expect(ctx.workflow('invalid-output', child, { value: 'x' })).rejects.toThrow(
-        'invalid-output (required) output validation',
+        'Child invalid-output (required) output validation failed: Invalid input: expected number, received string',
       );
       // @ts-expect-error -- undeclared is not a declared child name; the runtime rejects it too.
       await expect(ctx.workflow('unknown', 'undeclared', null)).rejects.toThrow(

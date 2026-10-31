@@ -228,7 +228,7 @@ export class WorkflowRunError extends Error {
     super(
       stepId === null
         ? detail
-        : `Step ${stepId.length > 80 ? `${stepId.slice(0, 80)}…` : stepId} (${run.steps[stepId]?.harness ?? run.steps[stepId]?.kind ?? run.rootCause?.effect ?? 'unknown'}) failed: ${detail}`,
+        : `Step ${stepId.length > 80 ? `${stepId.slice(0, 80)}…` : stepId} (${run.rootCause?.effect ?? run.steps[stepId]?.harness ?? run.steps[stepId]?.kind ?? 'unknown'}) failed: ${detail}`,
       { cause },
     );
     this.name = 'WorkflowRunError';
@@ -479,9 +479,9 @@ export function findAcceptedReplayDivergence(
   return undefined;
 }
 
-/** Whether an identifier is safe for a checkpoint filename. */
-export function isValidRunId(id: string): boolean {
-  return /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/u.test(id);
+/** Whether an identifier is safe for a checkpoint filename. A value that is not a string is not. */
+export function isValidRunId(id: unknown): id is string {
+  return typeof id === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/u.test(id);
 }
 
 /** Shared validation text, also used before CLI module import. @internal */

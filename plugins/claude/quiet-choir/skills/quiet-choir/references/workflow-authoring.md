@@ -316,12 +316,12 @@ restate refinements in the prompt or a field's `.describe()` (see
 For a native Codex object schema, use a `z.object` root with required properties and `.nullable()`
 for missing values. The default compat mode can encode `.optional()` and other shapes as described
 below. Claude requires an object root but does not share Codex's required-property restriction.
-Undefined object members are omitted recursively at workflow input, step dependencies, agent
-requests, step output, and final output. Fresh bodies receive the checkpointed input; results on
-fresh execution and replay have the same omitted members. For example `{ note: input.note }` is safe
-when `note` is optional. `JsonInput` permits these dependency objects; saved `JsonValue` remains
-JSON. A project enabling `exactOptionalPropertyTypes` can still reject explicitly undefined agent
-options; omit those fields when using that project policy.
+Undefined object members are omitted recursively at workflow input, step `input`, agent requests,
+step output, and final output. Fresh bodies receive the checkpointed input; results on fresh
+execution and replay have the same omitted members. For example `{ note: input.note }` is safe when
+`note` is optional. `JsonInput` permits these dependency objects; saved `JsonValue` remains JSON. A
+project enabling `exactOptionalPropertyTypes` can still reject explicitly undefined agent options;
+omit those fields when using that project policy.
 
 Undefined array elements and holes remain errors, naming the boundary, step ID when applicable, and
 JSON path (for example `Step "triage/3" output is not JSON at $.findings[2]`). Use `null` with

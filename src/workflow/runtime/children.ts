@@ -11,7 +11,7 @@ import type { RunRecord, StepRecord } from './record.js';
 import type { ExecutionScopes } from './scopes.js';
 import type { NameScopes } from './names.js';
 import type { OperationTracker } from './tracking.js';
-import { CancelledError, type FailureOrigins, type MapStepError } from './fan-out.js';
+import { CancelledError, errorMessage, type FailureOrigins, type MapStepError } from './fan-out.js';
 import { ReplaySkippedError, RunRefusedError } from './run-errors.js';
 import { duplicateStepId } from './identity.js';
 import {
@@ -385,7 +385,7 @@ export class RunChildren {
                     );
                   } catch (cause) {
                     throw new Error(
-                      `Child ${id} (${definition.name}) output validation failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+                      `Child ${id} (${definition.name}) output validation failed: ${errorMessage(cause)}`,
                       { cause },
                     );
                   }

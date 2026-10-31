@@ -68,6 +68,7 @@ scripts, use stable CLI `error.code` and structured harness categories instead o
 | `Replay skipped recorded steps (<ids>); workflow control flow changed.` (or `settled maps`)                                                  | With unchanged source, the body computed a value outside a durable effect (time, randomness, environment or file contents)  | Compute it with `ctx.now` or inside `ctx.step`, fork with `--fork-from <run>`, and use `workflow resume <run> --strict-replay` to stop at the first divergence before live work.                |
 | `Replay divergence before live step <id>: …`                                                                                                 | The same divergence, stopped before live work by `--strict-replay`                                                          | As above: move the value into `ctx.now` or `ctx.step`, then fork with `--fork-from <run>`.                                                                                                      |
 | `Step <id> (<kind>) failed: …`                                                                                                               | The named effect failed; `<kind>` is the call-site effect (the harness for an agent call), even when the step has no record | Read `rootCause` (its `effect` names the kind) and the step's attempts; fix the cause and follow `recoveryHint`.                                                                                |
+| `Duplicate step ID: "<id>" (scope …, leaf …), already used by an earlier <kind> effect. …`                                                   | Two calls in one body execution share an effect ID; `<kind>` is the first call's effect                                     | Give each call its own ID (a distinct leaf, `ctx.id(...)` per item or a named map key, [QC005](patterns.md#qc005)), then follow `recoveryHint`, which advises a workflow fix.                   |
 | `Workflow <changes> changed; <unchanged> unchanged.`                                                                                         | Source/schema or name/version/cwd compatibility changed                                                                     | Read `check-resume --json` details; compare saved cwd/name/version. Accept eligible code edits or fork/start anew as directed.                                                                  |
 | `Checkpoint format version <n> cannot resume or fork with the current durable-outcome contract …`                                            | Older runtime record                                                                                                        | Inspect it; use its original runtime to resume or start a fresh ID.                                                                                                                             |
 | `Claude did not return structured_output for the requested schema.`                                                                          | Native protocol drift or missing structured result                                                                          | Inspect bounded stdout/stderr and the requested schema; verify the installed CLI contract.                                                                                                      |
@@ -360,18 +361,19 @@ it.
 A failed run can have completed sibling effects. Those effects replay on a compatible resume; an
 uncheckpointed external action may repeat. Failed agent attempts retain available
 session/usage/response/validation evidence and private transcript receipts. A capped transcript can
-be incomplete, and abandoned output is not guaranteed. Run-level failures (for example final schema
-validation) need not imply any step failed. Start from `rootCause: { stepId, error, errorKind }`,
-also shown by human inspection. `errorKind` is the root effect's classified kind (its last
-attempt's), null for a body or run-level failure and for an interruption, and absent in records
-written before the field: `inspect` and the compact result then fall back to the root step's last
-attempt. Failure documents add `errorKind` and `retryable` to every `failedSteps[]` entry, and
-`error.details` is `{ errorKind, retryable }` for `workflow.failed` (null kind and
-`retryable: false` for a body failure; `workflow.interrupted` keeps `details: null`). `retryable` is
-true exactly when the kind is transient: `rate-limit`, `overloaded`, `timeout` or `idle-timeout`,
-the set `retry.on: ['transient']` stands for. It is a classification, not a promise that a retry
-will succeed. `inspect --summary` step rows carry `errorKind` (the last attempt's kind, null for a
-step without a failed attempt), and the text view prints `[<kind>]` on the step line and
+be incomplete, and abandoned output is not guaranteed. Run-level failures (for example the final
+output check, `Workflow <name> output failed its output schema: …` with one `path: message` line per
+issue) need not imply any step failed. Start from `rootCause: { stepId, error, errorKind }`, also
+shown by human inspection. `errorKind` is the root effect's classified kind (its last attempt's),
+null for a body or run-level failure and for an interruption, and absent in records written before
+the field: `inspect` and the compact result then fall back to the root step's last attempt. Failure
+documents add `errorKind` and `retryable` to every `failedSteps[]` entry, and `error.details` is
+`{ errorKind, retryable }` for `workflow.failed` (null kind and `retryable: false` for a body
+failure; `workflow.interrupted` keeps `details: null`). `retryable` is true exactly when the kind is
+transient: `rate-limit`, `overloaded`, `timeout` or `idle-timeout`, the set
+`retry.on: ['transient']` stands for. It is a classification, not a promise that a retry will
+succeed. `inspect --summary` step rows carry `errorKind` (the last attempt's kind, null for a step
+without a failed attempt), and the text view prints `[<kind>]` on the step line and
 `Root cause (<step>, <kind>)`. Watch adds no field: `--summary` lines carry `rootCause.errorKind`,
 and live `retryable` comes from `--events`. Attribution uses error identity/cause chains, not
 message matching. `WorkflowRunError` names the root step/kind and exposes `runId`, `stepId`, saved

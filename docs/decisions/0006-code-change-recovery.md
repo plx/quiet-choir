@@ -575,3 +575,14 @@ do not change.
 Limits: a grant failure on the first effect records nothing, so it gets no hint and no entry,
 although `execute --resume --grant` would work; hint and entry stay consistent, and a later change
 can revisit both together. Cancelled runs still get no entries (their status is not `failed`).
+
+## Amendment: duplicate step IDs advise a workflow fix
+
+A duplicate step ID was classified by the record at its ID: when the first use was a failed step the
+body caught, the run got the `effect` cause and a plain resume hint, and that resume collides again.
+The runner now raises an internal `DuplicateStepIdError` and classifies it as `authoring` after the
+cancelled rule and before the recorded-effect rule, so the order is grant, divergence, settled map
+change, other configuration, budget, cancelled, duplicate step ID, effect, then authoring. A budget
+stop still outranks it, for the reasons above. The `Step <id> (<kind>)` label of `WorkflowRunError`
+now names the colliding call's effect (`rootCause.effect`) rather than the earlier record's kind,
+and the collision message names that earlier kind when its record exists.

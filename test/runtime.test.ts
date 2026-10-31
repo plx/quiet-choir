@@ -500,6 +500,57 @@ describe('durable TypeScript workflows', () => {
     );
   });
 
+  it('labels a duplicate ID with the colliding call and names the effect that used it first', async () => {
+    const options = await setup();
+    const harness: Harness = { invoke: vi.fn<Harness['invoke']>(() => Promise.resolve(response)) };
+    // The collision refuses the command before it would spawn.
+    const stepThenExec = workflow(async (ctx) => {
+      await ctx.step('s', { input: null, schema: z.number(), run: () => 1 });
+      await ctx.exec('s', [process.execPath, '-e', '']);
+      return 0;
+    });
+    const agentThenStep = workflow(async (ctx) => {
+      await ctx.claude.text('a', { prompt: 'p' });
+      return ctx.step('a', { input: null, schema: z.number(), run: () => 1 });
+    });
+    await expect(
+      runWorkflow(stepThenExec, { ...options, runId: 'step-then-exec' }),
+    ).rejects.toThrow(
+      'Step s (exec) failed: Duplicate step ID: "s" (scope "", leaf "s"), already used by an earlier step effect. Use explicit unique leaves',
+    );
+    await expect(
+      runWorkflow(agentThenStep, { ...options, runId: 'agent-then-step', harness }),
+    ).rejects.toThrow(
+      'Step a (step) failed: Duplicate step ID: "a" (scope "", leaf "a"), already used by an earlier claude effect.',
+    );
+  });
+
+  it('advises fixing the workflow when a duplicate ID reuses a caught failed step', async () => {
+    const options = await setup();
+    const definition = workflow(async (ctx) => {
+      await ctx
+        .step('x', {
+          input: null,
+          schema: z.null(),
+          run: () => {
+            throw new Error('boom');
+          },
+        })
+        .catch(() => null);
+      await ctx.exec('x', [process.execPath, '-e', '']);
+      return 0;
+    });
+    await expect(runWorkflow(definition, options)).rejects.toThrow(
+      'Step x (exec) failed: Duplicate step ID: "x"',
+    );
+    const saved = await readRun(options);
+    expect(saved.steps['x']?.status).toBe('failed');
+    expect(saved.rootCause).toMatchObject({ stepId: 'x', effect: 'exec' });
+    expect(saved.recoveryCause).toEqual({ kind: 'authoring' });
+    expect(saved.recoveryHint).toContain('Fix the workflow');
+    expect(saved.recoveryHint).not.toContain('the failed step runs again');
+  });
+
   it('retries only explicitly opted-in steps with stable idempotency keys', async () => {
     const options = await setup();
     const attempts: number[] = [];

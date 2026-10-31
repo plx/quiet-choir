@@ -186,6 +186,7 @@ import {
   stepIdentity,
   validateStepId,
   duplicateStepId,
+  DuplicateStepIdError,
   stepId,
   type StepIdentity,
 } from './identity.js';
@@ -701,6 +702,23 @@ function recordedMapItems(scopes: readonly MapItemScope[]): StepMapItem[] | unde
 
 function message(error: unknown): string {
   return errorMessage(error);
+}
+
+/**
+ * A workflow's output parsed by its output schema. A failure names the workflow, prints one
+ * `path: message` line per issue and keeps the ZodError as its cause.
+ */
+function parseOutput<T>(
+  definition: { readonly name: string; readonly output: z.ZodType<T> },
+  output: unknown,
+): T {
+  const parsed = definition.output.safeParse(output);
+  if (!parsed.success)
+    throw new Error(
+      `Workflow ${definition.name} output failed its output schema: ${message(parsed.error)}`,
+      { cause: parsed.error },
+    );
+  return parsed.data;
 }
 
 /** The refusal for a non-resume execution onto an ID that already has a run. */
@@ -1362,7 +1380,7 @@ export async function runWorkflow<
       !legacyReplay &&
       !Object.keys(existing.children ?? {}).length
     ) {
-      const output = jsonValue(definition.output.parse(existing.output), 'Workflow output', {
+      const output = jsonValue(parseOutput(definition, existing.output), 'Workflow output', {
         canonical: false,
       });
       // A grant refusal can save the flag without the manifest, so staleness is read off the
@@ -1605,6 +1623,11 @@ export async function runWorkflow<
     const operations = new OperationTracker();
     const scopes = new ExecutionScopes(signal);
     const names = new NameScopes();
+    // A collision names the earlier effect's recorded kind (its harness for an agent call).
+    const duplicate = (id: string): Error => {
+      const step = Object.hasOwn(record.steps, id) ? record.steps[id] : undefined;
+      return duplicateStepId(id, names.describe(id), step?.harness ?? step?.kind);
+    };
     const origins = new FailureOrigins((error) => errorKind(error) === 'cancelled');
     // A bound agent's bind and call validation errors are authoring errors, as a raw call's are,
     // and a call's fails in an operation launched on its harness, so the tracker owns it.
@@ -1954,7 +1977,7 @@ export async function runWorkflow<
       const wakeAt = spec.wakeAt === undefined ? null : spec.wakeAt;
       const observedRequest = spec.request === undefined ? null : spec.request;
       const observedPhase = spec.phase === undefined ? observations.phase : spec.phase;
-      // Key presence, not undefined: a plain-JS step without input must still fail jsonValue().
+      // Key presence, not undefined: a plain-JS step without input must still fail below.
       const dependencies = 'dependencies' in spec ? spec.dependencies : null;
       const signal = scopes.signal;
       const labels = spec.meta ?? local?.meta;
@@ -1979,7 +2002,7 @@ export async function runWorkflow<
         );
       signal.throwIfAborted();
       validateStepId(id, names.describe(id));
-      if (used.has(id)) throw duplicateStepId(id, names.describe(id));
+      if (used.has(id)) throw duplicate(id);
       if (record.children?.[id])
         throw new Error(`Step ${id} collides with a recorded child frame.`);
       used.add(id);
@@ -1988,7 +2011,15 @@ export async function runWorkflow<
       let identity: StepIdentity;
       let stepFingerprint: string;
       try {
-        const savedDependencies = jsonValue(dependencies, `Step "${id}" dependencies`);
+        // ctx.step names its public `input` field, which a plain-JS call can omit.
+        if (kind === 'step' && (dependencies as unknown) === undefined)
+          throw new Error(
+            `Step "${id}" input is required: pass the JSON values the step depends on, or null when it has none.`,
+          );
+        const savedDependencies = jsonValue(
+          dependencies,
+          `Step "${id}" ${kind === 'step' ? 'input' : 'dependencies'}`,
+        );
         if (onError !== undefined && onError !== 'throw' && onError !== 'return')
           throw new Error('onError must be throw or return.');
         if (
@@ -3707,7 +3738,7 @@ export async function runWorkflow<
             throw new Error(
               'This RunStore has no filesystem inbox. Durable questions require FileRunStore or a store implementing the same stateDir protocol.',
             );
-          if (used.has(id)) throw duplicateStepId(id, names.describe(id));
+          if (used.has(id)) throw duplicate(id);
           if (record.children?.[id])
             throw new Error(`Question ${id} collides with a recorded child frame.`);
           used.add(id);
@@ -3742,7 +3773,7 @@ export async function runWorkflow<
           validate?.();
           if (sources.signal && !supportsInbox)
             throw new Error('Signal waits require a RunStore with the filesystem inbox protocol.');
-          if (used.has(id)) throw duplicateStepId(id, names.describe(id));
+          if (used.has(id)) throw duplicate(id);
           if (record.children?.[id])
             throw new Error(`Wait ${id} collides with a recorded child frame.`);
           used.add(id);
@@ -4293,7 +4324,7 @@ export async function runWorkflow<
           ),
         );
       warnUnmatched();
-      record.output = jsonValue(definition.output.parse(output), 'Workflow output');
+      record.output = jsonValue(parseOutput(definition, output), 'Workflow output');
       if (!options.rehearsal) await worktrees.cleanup(true);
       // Last, after every check that can still fail the run: a failure must not claim retirements.
       // Unvisited steps are retired here too, and a failed completion save puts them back.
@@ -4502,10 +4533,12 @@ export async function runWorkflow<
  * Classify a failure for recovery advice from error classes and the saved record, never from
  * message text. It searches the given errors' cause chains and aggregate members, and the first
  * matching rule wins: grant, divergence, settled map change, other configuration, run-budget stop,
- * cancelled run, recorded effect failure, then authoring. A run-budget stop outranks the last
- * three because a plain resume or a fix to the workflow would hit the same cap again. The failure
- * path also passes the current execution's latched budget stop, so it counts even when it is not in
- * the thrown error's chain (a sibling failure rejected first and the cap refused a draining call).
+ * cancelled run, duplicate step ID (authoring), recorded effect failure, then authoring. A
+ * run-budget stop outranks the later rules because a plain resume or a fix to the workflow would
+ * hit the same cap again. A duplicate step ID outranks a recorded failure of the step that first
+ * used the ID, because a plain resume would collide again. The failure path also passes the current
+ * execution's latched budget stop, so it counts even when it is not in the thrown error's chain (a
+ * sibling failure rejected first and the cap refused a draining call).
  */
 function classifyRecoveryCause(errors: readonly unknown[], record: RunRecord): RecoveryCause {
   const seen = new Set<unknown>();
@@ -4542,6 +4575,7 @@ function classifyRecoveryCause(errors: readonly unknown[], record: RunRecord): R
   const budget = found.find((error) => error instanceof RunBudgetExceededError);
   if (budget) return { kind: 'budget', flag: runBudgetFlag(budget.stop.metric) };
   if (record.status === 'cancelled') return { kind: 'cancelled' };
+  if (found.some((error) => error instanceof DuplicateStepIdError)) return { kind: 'authoring' };
   const stepId = record.rootCause?.stepId;
   if (stepId != null && record.steps[stepId]?.status === 'failed') return { kind: 'effect' };
   return { kind: 'authoring' };

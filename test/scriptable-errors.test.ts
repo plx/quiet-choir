@@ -5,6 +5,7 @@ import {
   realpath,
   rename,
   rm,
+  stat,
   symlink,
   writeFile,
 } from 'node:fs/promises';
@@ -12,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { isCliErrorCode } from '../src/workflow/runtime/run-errors.js';
+import { isCliErrorCode, runIdMessage } from '../src/workflow/runtime/run-errors.js';
 import {
   defineWorkflow,
   isValidRunId,
@@ -192,6 +193,18 @@ it.each(['', '../run', 'a/b', 'bad id', '_run', 'é', 'a'.repeat(129)])(
 );
 it.each(['a', '0', 'a_b-c', 'a'.repeat(128)])('accepts safe identifier %j', (id) => {
   expect(isValidRunId(id)).toBe(true);
+});
+it.each([undefined, null, 42, ['run']])('rejects non-string identifier %j', (id) => {
+  expect(isValidRunId(id)).toBe(false);
+});
+
+it('refuses a missing or non-string run ID before touching the state directory', async () => {
+  const absent = join(stateDir, 'absent');
+  for (const runId of [{}, { runId: 42 }])
+    await expect(
+      runWorkflow(definition, { stateDir: absent, input: null, ...runId } as never),
+    ).rejects.toThrow(runIdMessage);
+  await expect(stat(absent)).rejects.toHaveProperty('code', 'ENOENT');
 });
 
 it('reads inline and file input and retains source/offset on failure', async () => {

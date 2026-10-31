@@ -6,6 +6,7 @@ import {
   defineWorkflow,
   readRun,
   runWorkflow,
+  WorkflowRunError,
   z,
   type AgentClient,
   type AgentOptions,
@@ -266,7 +267,7 @@ it('omits undefined at all five boundaries and passes only saved input/results o
   expect((await runWorkflow(definition, { ...options, harness, resume: true })).output).toEqual({});
 });
 
-it.each(['input', 'dependencies', 'request', 'step output', 'final output'] as const)(
+it.each(['input', 'step input', 'request', 'step output', 'final output'] as const)(
   'names the %s boundary and exact invalid array path',
   async (boundary) => {
     const options = await setup();
@@ -278,7 +279,7 @@ it.each(['input', 'dependencies', 'request', 'step output', 'final output'] as c
       input: schema,
       output: schema,
       async run(ctx) {
-        if (boundary === 'dependencies')
+        if (boundary === 'step input')
           await ctx.step('triage/3', { input: bad as never, schema: z.null(), run: () => null });
         if (boundary === 'request')
           // Strict profiles type settings as never; the cast probes the request JSON boundary.
@@ -293,11 +294,52 @@ it.each(['input', 'dependencies', 'request', 'step output', 'final output'] as c
         ? 'Workflow input'
         : boundary === 'final output'
           ? 'Workflow output'
-          : `Step "triage/3" ${boundary === 'request' ? 'agent request' : boundary === 'dependencies' ? 'dependencies' : 'output'}`;
+          : `Step "triage/3" ${boundary === 'request' ? 'agent request' : boundary === 'step input' ? 'input' : 'output'}`;
     const path = boundary === 'request' ? '$.options.settings.findings[2]' : '$.findings[2]';
     await expect(
       runWorkflow(definition, { ...options, input: boundary === 'input' ? bad : { findings: [] } }),
     ).rejects.toThrow(`${label} is not JSON at ${path}: undefined array element`);
+  },
+);
+
+it('names the workflow and its output schema when the returned value fails it', async () => {
+  const options = await setup();
+  const definition = defineWorkflow({
+    name: 'triage',
+    version: '1',
+    input: z.object({}),
+    output: z.object({ status: z.enum(['fixed']) }),
+    run: () => Promise.resolve({ status: 'bogus' as 'fixed' }),
+  });
+  const error: unknown = await runWorkflow(definition, options).catch((cause: unknown) => cause);
+  const message =
+    'Workflow triage output failed its output schema: status: Invalid input: expected "fixed"';
+  if (!(error instanceof WorkflowRunError)) throw error;
+  expect(error.message).toBe(message);
+  expect(error.stepId).toBeNull();
+  // The wrapper keeps the structured issues as its cause.
+  expect(error.cause).toBeInstanceOf(Error);
+  expect((error.cause as Error).cause).toBeInstanceOf(z.ZodError);
+  expect(await readRun(options)).toMatchObject({
+    status: 'failed',
+    error: message,
+    rootCause: { stepId: null, error: message, errorKind: null },
+  });
+});
+
+it.each(['omits', 'leaves undefined'] as const)(
+  'tells a ctx.step call that %s its input that input is required',
+  async (mode) => {
+    const options = await setup();
+    const step = { schema: z.null(), run: () => null };
+    const definition = workflow(async (ctx) => {
+      // The cast stands in for a plain-JS call; the type requires input.
+      await ctx.step('s', (mode === 'omits' ? step : { ...step, input: undefined }) as never);
+      return 'unreachable';
+    });
+    await expect(runWorkflow(definition, options)).rejects.toThrow(
+      'Step s (step) failed: Step s: Step "s" input is required: pass the JSON values the step depends on, or null when it has none.',
+    );
   },
 );
 

@@ -53,10 +53,28 @@ export function displayId(id: string): string {
   return JSON.stringify(id.length > 80 ? `${id.slice(0, 80)}…` : id);
 }
 
-/** A collision diagnostic shared by live effects and map replay. @internal */
-export function duplicateStepId(id: string, context = { scope: '', leaf: id }): Error {
-  return new Error(
-    `Duplicate step ID: ${displayId(id)} (scope ${displayId(context.scope)}, leaf ${displayId(context.leaf)}). Use explicit unique leaves or a named map key. Allowed pattern: ${pattern}.`,
+/**
+ * A step ID reused within one body execution. The runner reads the class to advise an authoring
+ * fix, since a plain resume would collide again. @internal
+ */
+export class DuplicateStepIdError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = 'DuplicateStepIdError';
+  }
+}
+
+/**
+ * A collision diagnostic shared by live effects and map replay. `existing` names the earlier
+ * effect's kind (the harness for an agent call) when its record is known. @internal
+ */
+export function duplicateStepId(
+  id: string,
+  context = { scope: '', leaf: id },
+  existing?: string,
+): DuplicateStepIdError {
+  return new DuplicateStepIdError(
+    `Duplicate step ID: ${displayId(id)} (scope ${displayId(context.scope)}, leaf ${displayId(context.leaf)})${existing === undefined ? '' : `, already used by an earlier ${existing} effect`}. Use explicit unique leaves or a named map key. Allowed pattern: ${pattern}.`,
   );
 }
 
