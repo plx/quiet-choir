@@ -1,6 +1,6 @@
-import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
 import type { ChildOptions, ChildRecord, WorkflowDeclaration } from './child-model.js';
+import { ContextSlot } from './context-slot.js';
 import { checkedDefinition, describeWorkflow } from './definition.js';
 import { delegateCapabilities, type ChildCapabilities } from './child-profiles.js';
 import { digest, jsonValue } from './json.js';
@@ -122,7 +122,7 @@ const optionsSchema = z.strictObject({
 /** Inline frame ownership shares the root run's effects, cancellation, admission and budget. @internal */
 export class RunChildren {
   readonly #deps: Dependencies;
-  readonly #storage = new AsyncLocalStorage<Frame>();
+  readonly #storage = new ContextSlot<Frame>();
   readonly #visited = new Set<string>();
   readonly #described = new WeakSet<WorkflowDeclaration>();
 

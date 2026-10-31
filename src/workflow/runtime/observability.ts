@@ -1,5 +1,5 @@
-import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
+import { ContextSlot } from './context-slot.js';
 import { digest, jsonValue } from './json.js';
 import { environmentSummary } from './agent-environment.js';
 import { resolveIsolation } from './agent-isolation.js';
@@ -82,7 +82,7 @@ export class RunObservations {
   readonly #record: RunRecord;
   readonly #save: () => Promise<void>;
   readonly #notify: (event: RunEvent, replayed: boolean) => void;
-  readonly #storage = new AsyncLocalStorage<PhaseFrame>();
+  readonly #storage = new ContextSlot<PhaseFrame>();
   readonly #root: PhaseFrame = { phase: null };
   readonly #active = new Set<PhaseFrame>();
   readonly #prior: Record<string, number>;

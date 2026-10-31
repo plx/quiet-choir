@@ -1,4 +1,4 @@
-import { AsyncLocalStorage } from 'node:async_hooks';
+import { ContextSlot } from './context-slot.js';
 import { validateStepId } from './identity.js';
 import { createHash } from 'node:crypto';
 import type { MapItemScope } from './replay-decision.js';
@@ -13,7 +13,7 @@ export interface NameFrame {
 
 /** Prefixes are captured at invocation; there are no call-order counters. @internal */
 export class NameScopes {
-  private readonly storage = new AsyncLocalStorage<NameFrame>();
+  private readonly storage = new ContextSlot<NameFrame>();
   public get path(): string {
     return this.storage.getStore()?.path ?? '';
   }

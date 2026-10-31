@@ -272,8 +272,8 @@ try {
   }
 } finally {
   console.error = stderr;
-  // Synchronous on purpose: every run leaves its AsyncLocalStorage instances registered with Node,
-  // so after the whole matrix each async request carries thousands of properties, and the
-  // promise-based recursive rm, which starts one request per entry at once, exhausts the heap.
+  // Synchronous on purpose: the promise-based recursive rm starts one async request per entry at
+  // once, and before the runtime shared one AsyncLocalStorage across runs, each request carried one
+  // property per finished run, which exhausted the heap after the whole matrix.
   rmSync(root, { recursive: true, force: true });
 }

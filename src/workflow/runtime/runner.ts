@@ -167,7 +167,7 @@ import {
   validateProfileOverrides,
 } from './profiles.js';
 import type { ProfileOverride, ResolvedRole, RoleRequest } from './profiles-model.js';
-import { AsyncLocalStorage } from 'node:async_hooks';
+import { ContextSlot } from './context-slot.js';
 import { resolve } from 'node:path';
 import {
   canonicalCwd,
@@ -1718,7 +1718,7 @@ export async function runWorkflow<
         waiting ? () => !questions.waiting(id) : undefined,
       );
     }
-    const inEffect = new AsyncLocalStorage<true | 'poll'>();
+    const inEffect = new ContextSlot<true | 'poll'>();
     let closed = false;
     let observationsClosed = false;
     const notify = (event: WorkflowEvent): void => {

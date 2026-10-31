@@ -1,4 +1,4 @@
-import { AsyncLocalStorage } from 'node:async_hooks';
+import { ContextSlot } from './context-slot.js';
 
 /** Ownership of effects launched by a mapper, including its nested scopes. @internal */
 export interface MapperScope {
@@ -12,7 +12,7 @@ export interface MapperScope {
 
 /** Capture cancellation and mapper ownership at operation launch. @internal */
 export class ExecutionScopes {
-  private readonly storage = new AsyncLocalStorage<MapperScope>();
+  private readonly storage = new ContextSlot<MapperScope>();
   public constructor(private readonly rootSignal: AbortSignal) {}
   public get signal(): AbortSignal {
     return this.storage.getStore()?.signal ?? this.rootSignal;
