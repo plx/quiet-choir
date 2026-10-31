@@ -296,6 +296,110 @@ describe('ownedAgent', () => {
   });
 });
 
+describe('landMerge on a GitHub stack (#747)', () => {
+  const head = '0a1b2c3d4e5f60718293a4b5c6d7e8f901234567';
+  const input = {
+    repo: 'acme/widgets',
+    pr: 42,
+    head,
+    base: 'main',
+    viewer: 'merge-bot',
+    requiredChecks: [] as readonly string[],
+    method: 'merge' as const,
+    ignoreCi: true as const,
+  };
+
+  /**
+   * A fake `gh` for a stacked PR: the synchronous PUT answers GitHub's 403, and the asynchronous
+   * request is pending until its first poll says merged. Every call is logged to `<real>/calls`.
+   */
+  async function fakeStackGh(
+    asyncAnswer = '{"status":"pending","details":{"uuid":"u1"}}',
+  ): Promise<string> {
+    const bin = join(real, 'bin');
+    await mkdir(bin);
+    const flag = join(real, 'merged');
+    const calls = join(real, 'calls');
+    const pull = (merged: boolean) =>
+      JSON.stringify({
+        state: merged ? 'closed' : 'open',
+        merged,
+        merge_commit_sha: merged ? 'mmm' : null,
+        head: { sha: head },
+        base: { ref: 'main' },
+      });
+    const threads = JSON.stringify([
+      {
+        data: {
+          repository: {
+            pullRequest: {
+              reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] },
+            },
+          },
+        },
+      },
+    ]);
+    const refused = JSON.stringify({
+      message:
+        'Merging stacked PRs via this endpoint is not supported. Use the asynchronous merge endpoint instead.',
+      status: '403',
+    });
+    await writeFile(
+      join(bin, 'gh'),
+      [
+        '#!/bin/sh',
+        `echo "$*" >> '${calls}'`,
+        `case "$*" in`,
+        `  *"merge-async/u1"*) touch '${flag}'; echo '{"status":"merged","details":{"sha":"mmm"}}';;`,
+        `  *"-X PUT"*merge-async*) echo '${asyncAnswer}'; case '${asyncAnswer}' in *'"status":"5'*) exit 1;; esac;;`,
+        `  *"-X PUT"*) echo '${refused}'; exit 1;;`,
+        `  *reviewThreads*) echo '${threads}';;`,
+        `  *code-scanning*) echo '[]';;`,
+        `  *) if [ -f '${flag}' ]; then echo '${pull(true)}'; else echo '${pull(false)}'; fi;;`,
+        'esac',
+        '',
+      ].join('\n'),
+    );
+    await chmod(join(bin, 'gh'), 0o755);
+    vi.stubEnv('PATH', `${bin}${delimiter}${process.env['PATH'] ?? ''}`);
+    return calls;
+  }
+
+  it('throws on an HTTP error from the asynchronous request instead of settling a refusal', async () => {
+    await fakeStackGh('{"message":"Server Error","status":"502"}');
+    await expect(
+      runWorkflow(
+        definition((ctx) => landMerge(ctx, 'land', input)),
+        setup(),
+      ),
+    ).rejects.toThrow('did not accept the asynchronous merge');
+  });
+
+  it('polls the pending request a 409 names', async () => {
+    const calls = await fakeStackGh('{"status":"409","message":"pending","details":{"uuid":"u1"}}');
+    const landed = await runWorkflow(
+      definition((ctx) => landMerge(ctx, 'land', input)),
+      setup(),
+    );
+    expect(landed.output).toEqual({ merged: true, mergeCommit: 'mmm', acted: true });
+    expect(await readFile(calls, 'utf8')).toContain('merge-async/u1');
+  });
+
+  it('merges a stacked PR asynchronously at the gated head with the merge method', async () => {
+    const calls = await fakeStackGh();
+    const landed = await runWorkflow(
+      definition((ctx) => landMerge(ctx, 'land', input)),
+      setup(),
+    );
+    expect(landed.output).toEqual({ merged: true, mergeCommit: 'mmm', acted: true });
+    const log = await readFile(calls, 'utf8');
+    expect(log).toContain('merge_method=merge');
+    expect(log).toContain('merge_action=direct_merge');
+    expect(log).toContain(`sha=${head}`);
+    expect(log).toContain('merge-async/u1');
+  });
+});
+
 describe('landMerge', () => {
   const head = '0a1b2c3d4e5f60718293a4b5c6d7e8f901234567';
   const input = {

@@ -86,6 +86,31 @@ const MergeResponse = z.union([
 const CONFIRM_READS = 10;
 const CONFIRM_DELAY_MS = 2_000;
 
+/**
+ * GitHub's native stacked pull requests merge only through the asynchronous merge endpoint
+ * (`PUT pulls/N/merge-async`, then a poll of its request); the synchronous PUT answers 403 with this
+ * message. The API version that documents the endpoint and the `stack` field of a pull request.
+ */
+const STACKED_REFUSAL = /asynchronous merge endpoint/iu;
+const ASYNC_API_VERSION = 'X-GitHub-Api-Version: 2026-03-10';
+/** Polls of an asynchronous merge, and the pause between them: ten minutes in all. */
+const ASYNC_POLLS = 120;
+const ASYNC_DELAY_MS = 5_000;
+
+/** An asynchronous merge request or its result; an error body when gh exits 1 on a 4xx. */
+const AsyncMerge = z.looseObject({
+  status: z.union([z.string(), z.int()]).optional(),
+  message: z.string().optional(),
+  details: z
+    .looseObject({
+      uuid: z.string().optional(),
+      message: z.string().optional(),
+      sha: z.string().optional(),
+    })
+    .nullable()
+    .optional(),
+});
+
 /** A thread's first and last comment authors, as `pr.reviewThreads` maps them. */
 function authors(thread: RawReviewThread): { first: string; last: string } {
   const logins = thread.comments.nodes.map((c) => c.author?.login ?? 'ghost');
@@ -236,6 +261,74 @@ export function landMerge(ctx: WorkflowContext, id: string, input: LandInput): P
         ),
         { schema: MergeResponse, okExitCodes: [0, 1] },
       );
+      // A stacked PR (#747): GitHub merges it only asynchronously. Merging one also merges the open
+      // PRs below it in its stack, but the base guard above already holds: only the lowest open PR
+      // of a stack targets the default branch (GitHub retargets and rebases the next one when a PR
+      // lands, and a landed PR keeps its position, so `position` itself says nothing).
+      if (
+        !('merged' in response) &&
+        String(response.status ?? '') === '403' &&
+        STACKED_REFUSAL.test(response.message)
+      ) {
+        const asyncPath = `${pullPath}/merge-async`;
+        let result = await context.exec.json(
+          api(
+            '-H',
+            ASYNC_API_VERSION,
+            '-X',
+            'PUT',
+            asyncPath,
+            '-f',
+            `merge_method=${input.method ?? 'squash'}`,
+            '-f',
+            'merge_action=direct_merge',
+            '-f',
+            `sha=${input.head}`,
+          ),
+          { schema: AsyncMerge, okExitCodes: [0, 1] },
+        );
+        const uuid = result.details?.uuid ?? null;
+        // 409: a request for this PR is already pending (a retry's, say); poll that one.
+        if (String(result.status ?? '') === '409' && uuid !== null)
+          result = { ...result, status: 'pending' };
+        for (let poll = 1; result.status === 'pending' && poll <= ASYNC_POLLS; poll++) {
+          if (uuid === null) break;
+          if (poll > 1) await delay(ASYNC_DELAY_MS, undefined, { signal: context.signal });
+          result = await context.exec.json(api('-H', ASYNC_API_VERSION, `${asyncPath}/${uuid}`), {
+            schema: AsyncMerge,
+          });
+        }
+        if (result.status === 'pending')
+          throw new Error(
+            `GitHub's asynchronous merge of #${String(input.pr)} (${String(uuid)}) is still pending after ${String((ASYNC_POLLS * ASYNC_DELAY_MS) / 60_000)} minutes; a resumed run finds the merge`,
+          );
+        if (result.status !== 'merged') {
+          const after = await readPull();
+          if (after.merged && after.head.sha === input.head)
+            return { merged: true, mergeCommit: after.merge_commit_sha, acted: false };
+          const why = `${String(result.status ?? 'no status')}: ${result.details?.message ?? result.message ?? ''}`;
+          // Only GitHub's own verdicts settle the step; an HTTP error (a 500, a 422) or an unknown
+          // answer throws, so a retry or a resume asks again instead of replaying a refusal.
+          if (result.status === 'failed' || result.status === 'enqueued')
+            return refuse(`GitHub's asynchronous merge ended ${why}`.trim());
+          if (after.state !== 'open') return refuse(`PR is ${after.state.toUpperCase()}`);
+          throw new Error(
+            `GitHub did not accept the asynchronous merge of #${String(input.pr)} (${why.trim()}); a retry asks again`,
+          );
+        }
+        for (let read = 1; read <= CONFIRM_READS; read++) {
+          const pull = await readPull();
+          if (pull.merged)
+            return pull.head.sha === input.head
+              ? { merged: true, mergeCommit: pull.merge_commit_sha, acted: true }
+              : refuse(`merged at ${pull.head.sha}, not at the gated head ${input.head}`);
+          if (read < CONFIRM_READS)
+            await delay(CONFIRM_DELAY_MS, undefined, { signal: context.signal });
+        }
+        throw new Error(
+          `GitHub's asynchronous merge of #${String(input.pr)} reported merged, but the PR did not after ${String(CONFIRM_READS)} reads; a resumed run finds the merge`,
+        );
+      }
       if ('merged' in response) {
         // Wait until the PR says so, so the issue and children reads that follow never see it open.
         for (let read = 1; read <= CONFIRM_READS; read++) {

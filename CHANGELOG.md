@@ -2,6 +2,11 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- merge-down lands the bottom PR of a GitHub-native stack (#747): when the synchronous merge answers
+  GitHub's "use the asynchronous merge endpoint" 403, the land step requests an asynchronous direct
+  merge pinned to the gated head and polls it, and it refuses a PR above the bottom of its stack,
+  whose merge would also merge the PRs below it. `quiet-choir/github`'s `pr.merge` still uses only
+  the synchronous endpoint.
 - A new `epic-burndown.quiet-choir` package runs execute-epic-ticket once per ticket, as a typed
   inline child, until the epic is done or a run returns a status a person must act on, passing the
   follow-up epic along.

@@ -66,6 +66,11 @@ node bin/run.js workflow execute packages/merge-down.quiet-choir \
   (its disposition, summary and closing keyword work as for a one-issue PR), every other issue of
   this repository is written into `issue.md` for the review, and land confirms each one closed,
   closing it with the merge note when GitHub did not. The ledger lists them in `alsoClosed`.
+- A PR in a GitHub-native stack (#747) lands through GitHub's asynchronous merge endpoint, which is
+  the only one that merges stacks: when the synchronous `PUT` answers its 403, the land step reads
+  the PR's `stack`, refuses a PR above position 1 (merging it would also merge the open PRs below
+  it), and otherwise requests a direct merge pinned to the gated head with `mergeMethod`, polls it
+  for up to ten minutes and confirms the merge as usual. Land a stack bottom-up.
 - Only same-repository PRs land: the gate pushes to `origin`, so a PR whose head is in a fork (or a
   deleted one) is `blocked` at `prepare` before the sync touches the worktree, and a sync that finds
   `origin/<head branch>` at another head than Prepare read blocks at `rebase`.
