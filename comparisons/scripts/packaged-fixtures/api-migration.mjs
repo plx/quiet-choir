@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
+import { rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { commitAll, git, leaf, writeFiles } from './_support.mjs';
 
@@ -214,6 +214,25 @@ export const kill = {
 };
 
 export const modes = [
+  {
+    mode: 'dirty',
+    setup: (env) => writeFile(join(env.cwd, 'stray.txt'), 'uncommitted\n'),
+    rejects: /Expected a clean repository \(clean\): \?\? stray\.txt/u,
+    check({ result, env, calls }) {
+      // Publication needs a clean checkout, so a dirty one stops the run before any agent call.
+      assert.equal(result.status, 'failed');
+      assert.equal(calls.length, 0);
+      assert.equal(git(env.cwd, 'rev-parse', 'HEAD'), env.base);
+    },
+    // Removing the stray file heals the precondition: the clean step reruns, and every agent call
+    // of the migration is paid, since none completed. The resumed run ends where the success run
+    // does.
+    repair: {
+      run: (env) => rm(join(env.cwd, 'stray.txt')),
+      paid: ['discover', 'wave/0/0/migrate', 'wave/0/1/migrate'],
+    },
+    resumeCheck: check,
+  },
   {
     mode: 'declined',
     check({ result, env, calls, suspended, questions }) {
