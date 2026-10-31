@@ -64,6 +64,16 @@ and bound inherited-pipe draining. A child that escapes into a separate session/
 that ownership, as with native agents. Windows process-tree semantics are weaker; filesystem
 durability uses the existing local POSIX contract.
 
+A completed plain command checkpoints its retained `stdout` and `stderr`, up to 2 MiB per command at
+the defaults. They are journaled and rewritten into `run.json` at every compaction. For a command
+repeated in a loop (a stress run, a benchmark) whose output the workflow reduces to a verdict, lower
+`maxOutputBytes`. The result keeps `code`, `signal`, `durationMs`, `truncated` and the first and
+last half of each stream, and the cap is policy, so changing it never refuses a resume. To scan the
+whole output and keep only the facts, have the command print them as JSON and read it with
+`ctx.exec.json`, which checkpoints only the parsed value. Running the command in a `ctx.step`
+through `context.exec` does not shrink the record: the step's `innerCommands` keeps up to 1 MiB of
+the raw output per attempt (#524).
+
 Identity covers the command, canonical cwd, hash of the explicit environment overlay, stdin digest,
 `inheritEnv`, `scrubEnv` when it is enabled, accepted exit codes, output schema/mode, and `onError`
 when it is `'return'` (omitting it and passing `'throw'` are the same identity). `timeoutMs`,

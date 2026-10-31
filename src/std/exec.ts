@@ -39,13 +39,18 @@ export function json(value: unknown): string {
  * truncated listing cannot prove coverage, so output past `maxOutputBytes` throws instead of
  * returning the retained head and tail.
  *
+ * The read is one plain `ctx.exec` effect, so a truncated read is saved as a completed command
+ * before this helper throws. A resume replays it and throws again, even with a larger
+ * `maxOutputBytes`, because the cap is policy. Size `maxOutputBytes` for the largest expected read
+ * before the first run; after a truncation, read under a new ID or in a new run (#ISSUE-C11-1).
+ *
  * @param ctx - The workflow context.
  * @param id - The command's step ID, scoped like any `ctx.exec` call.
  * @param args - The Git arguments, without `git`.
  * @param options - `ctx.exec` options; failures always throw, so `onError` is not accepted and a forwarded value is overridden.
  * @returns The command's stdout.
- * @throws Error - `Incomplete Git output: <id>` when stdout or stderr was truncated, and the
- * `ExecError` of a failed command.
+ * @throws Error - `Incomplete Git output: <id>` when stdout or stderr was truncated, again on every
+ * resume of the same ID, and the `ExecError` of a failed command.
  */
 export async function git(
   ctx: WorkflowContext,

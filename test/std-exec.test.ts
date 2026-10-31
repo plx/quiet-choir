@@ -107,6 +107,25 @@ it('git returns complete stdout and refuses truncated output', async () => {
   );
 });
 
+it('git saves a truncated read as a completed command, so a resume with a larger cap throws again', async () => {
+  let maxOutputBytes = 8;
+  const read = workflow(z.string(), (ctx) =>
+    std.exec.git(ctx, 'head', ['rev-parse', 'HEAD'], { maxOutputBytes }),
+  );
+  await expect(runWorkflow(read, options('git-sticky'))).rejects.toThrow(
+    'Incomplete Git output: head',
+  );
+  const run = await readRun({ stateDir: join(root, 'state'), runId: 'git-sticky' });
+  expect(run.steps['head']?.status).toBe('completed');
+  expect(run.steps['head']?.output).toMatchObject({ truncated: true });
+  // The cap is policy, so the resume replays the truncated read instead of running Git again.
+  // #ISSUE-C11-1 tracks a recoverable read; resolving it flips these assertions.
+  maxOutputBytes = 1_048_576;
+  await expect(runWorkflow(read, { ...options('git-sticky'), resume: true })).rejects.toThrow(
+    'Incomplete Git output: head',
+  );
+});
+
 it('git always throws a failure, even when the options were widened to onError return', async () => {
   const widened: ExecOptions = { onError: 'return' };
   const failing = workflow(z.string(), async (ctx) => {
