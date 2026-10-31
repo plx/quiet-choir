@@ -167,11 +167,11 @@ Both file effects accept `onError: 'return'` and then return `Settled<ReadFileRe
 `Settled<WriteFileResult>`. An oversized snapshot, an `ifMatch` conflict, or another final failure
 is saved with `message`, `kind`, and `attempts` and replays on resume even after the file changes. A
 settled file failure carries no file-specific reason yet (#ISSUE-C03-1): an `ifMatch` conflict or an
-oversized snapshot is `unknown`, and a missing file is `process` with Node's `ENOENT` message.
-Invalid options, paths outside cwd, and paths that cannot be resolved still reject before the effect
-starts, even with `onError: 'return'`, and fail the run without recording the step: a parent that is
-a regular file (`ENOTDIR`), another `realpath` error such as `EACCES` or `ELOOP`, or a dangling
-symlink (#ISSUE-C03-2). Like commands, only `onError: 'return'` enters identity.
+oversized snapshot is `unknown`, and a missing `readFile` target is `process` with Node's `ENOENT`
+message. Invalid options, paths outside cwd, and paths that cannot be resolved still reject before
+the effect starts, even with `onError: 'return'`, and fail the run without recording the step: a
+parent that is a regular file (`ENOTDIR`), another `realpath` error such as `EACCES` or `ELOOP`, or
+a dangling symlink (#ISSUE-C03-2). Like commands, only `onError: 'return'` enters identity.
 
 To learn only whether a file exists, or its baseline for `ifMatch`, probe it in a local `ctx.step`
 that returns `{ sha256, bytes } | null`, with the path in `input`. Resolve the path against
