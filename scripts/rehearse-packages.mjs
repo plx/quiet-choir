@@ -13,7 +13,7 @@
 //   node scripts/rehearse-packages.mjs [case | package/case ...]
 import { execFile } from 'node:child_process';
 import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { availableParallelism, tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -315,10 +315,21 @@ for (const pkg of PACKAGES) {
 }
 if (selected.length === 0) fail(`no rehearsal case matches ${wanted.join(', ')}`);
 for (const pkg of PACKAGES) await checkSources(pkg);
-await Promise.all([
-  ...PACKAGES.map(checkValidate),
-  ...selected.map(({ pkg, name }) => rehearse(pkg, name)),
-]);
+// Each case is a CLI process that type-checks its whole package (about 700 MB). Running all of them
+// at once can exhaust a container's memory, and type-checking is CPU-bound, so run one per CPU.
+const tasks = [
+  ...PACKAGES.map((pkg) => () => checkValidate(pkg)),
+  ...selected.map(
+    ({ pkg, name }) =>
+      () =>
+        rehearse(pkg, name),
+  ),
+];
+await Promise.all(
+  Array.from({ length: Math.min(tasks.length, availableParallelism()) }, async () => {
+    for (let task = tasks.shift(); task; task = tasks.shift()) await task();
+  }),
+);
 if (problems.length > 0) {
   for (const problem of problems) console.error(problem);
   console.error(`Package rehearsals failed: ${String(problems.length)} problem(s).`);
