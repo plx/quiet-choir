@@ -38,12 +38,20 @@ it still fails under `okExitCodes: 'any'`. For `ctx.exec.json`, `parsed` holds s
 the output was complete, valid JSON, and at most 16384 UTF-8 bytes; it is not checked against the
 success schema, so a failing tool's JSON report stays usable. The process fields are absent when the
 runner's error is not an `ExecError`, such as a custom `ProcessRunner`'s plain error. Cancellation
-and a missing process adapter still reject and leave the step unfinished. `okExitCodes: 'any'`
-instead records ordinary nonzero exits as completed results. Prefer it when the exit code and the
-output are the data: the completed `ExecResult` keeps both streams up to `maxOutputBytes` (head and
-tail), `truncated` and `durationMs`, while a settled `ExecStepError` keeps only the 1024-character
-tails and has no duration or truncation flag. Signals, timeouts and launch failures still fail under
-it, and `ctx.exec.json` keeps only the parsed value, not the exit code.
+and a missing process adapter still reject and leave the step unfinished.
+
+`okExitCodes: 'any'` instead records ordinary nonzero exits as completed results. Prefer it when the
+exit code and the output are the data: the completed `ExecResult` keeps both streams up to
+`maxOutputBytes` (head and tail), `truncated` and `durationMs`, while a settled `ExecStepError`
+keeps only the 1024-character tails and has no duration or truncation flag. Signals, timeouts and
+launch failures still fail under it, and `ctx.exec.json` keeps only the parsed value, not the exit
+code. Combine it with `onError: 'return'` when a red command's output is the evidence, such as a
+test run an agent repairs from or a report quotes. A nonzero exit then completes with its full
+capped output and the checkpoint keeps it, while a timeout, signal or launch failure still settles
+as `{ ok: false }` with tails. The body judges `result.value.code` itself: `ok` means only that the
+command exited. An accepted exit is not a failure, so `retry` does not repeat it. On a worktree
+handle, an accepted exit advances the handle's snapshot with what the command wrote (see
+[worktrees](worktrees.md#shared-write-test-fix-sequences)).
 
 Commands default to a five-minute deadline and 1 MiB **per stream**. Plain commands continue after
 output overflow, retaining the first and last half of each stream's byte cap. No separator is

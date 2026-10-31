@@ -842,9 +842,11 @@ question becomes `withdrawn` when the body completes; normal failures retain wai
 
 Run a trusted argv directly and branch on its actual exit code. With `onError: 'return'`, a failed
 exit, signal or timeout becomes a settled result that replays on resume and keeps the exit code and
-output tails; cancellation still rejects. Do not `try/catch` instead: resume reruns a caught
-command. These commands have operator privileges. Agent-proposed commands need approval bound to
-their saved plan before this call.
+the last 1024 characters of each output stream; cancellation still rejects. Do not `try/catch`
+instead: resume reruns a caught command. When an agent or a report needs the red output itself, add
+`okExitCodes: 'any'`: a nonzero exit then completes with its full capped output, the body branches
+on `result.value.code`, and timeouts and signals still settle. These commands have operator
+privileges. Agent-proposed commands need approval bound to their saved plan before this call.
 
 <!-- skills-check: example pattern-command-verdict -->
 

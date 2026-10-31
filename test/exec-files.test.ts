@@ -1492,6 +1492,57 @@ describe("settled commands and files (onError: 'return')", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
+  it("completes a red command with its full output under okExitCodes 'any', still settles a timeout, and replays both", async () => {
+    const stderr = 'FIRST FAILURE\n' + 'e'.repeat(3000) + 'END';
+    const red = { ...reply, code: 1, stdout: 'FAIL a.test.ts', stderr };
+    const run = vi.fn<ProcessRunner['run']>((_request, invocation) =>
+      invocation.stepId === 'red'
+        ? Promise.resolve(red)
+        : Promise.reject(
+            new ExecError('Command timed out.', 'timeout', {
+              ...reply,
+              code: null,
+              signal: 'SIGTERM',
+              stdout: '',
+              stderr,
+            }),
+          ),
+    );
+    const workflow = definition(async (ctx) => [
+      // An accepted exit is not a failure, so the retry never repeats it.
+      await ctx.exec('red', ['npm', 'test'], {
+        okExitCodes: 'any',
+        onError: 'return',
+        retry: { maxAttempts: 2, delayMs: 0 },
+      }),
+      await ctx.exec('slow', ['npm', 'test'], { okExitCodes: 'any', onError: 'return' }),
+    ]);
+    const expected = [
+      { ok: true, value: red },
+      {
+        ok: false,
+        error: {
+          message: 'Command timed out.',
+          kind: 'timeout',
+          attempts: 1,
+          code: null,
+          signal: 'SIGTERM',
+          stdoutTail: '',
+          stderrTail: 'e'.repeat(1021) + 'END',
+        },
+      },
+    ];
+    const first = await runWorkflow(workflow, { ...setup(), processRunner: { run } });
+    expect(first.output).toEqual(expected);
+    expect(run).toHaveBeenCalledTimes(2);
+    const steps = (await readRun(setup())).steps;
+    expect(steps['red']?.status).toBe('completed');
+    expect(steps['slow']?.status).toBe('settled-failed');
+    const resumed = await runWorkflow(workflow, { ...setup(), resume: true });
+    expect(resumed.output).toEqual(expected);
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
   it('rejects a missing process adapter without settling, then runs the command live on resume', async () => {
     const workflow = definition(async (ctx) => {
       const result = await ctx.exec('one', ['fake'], { onError: 'return' });

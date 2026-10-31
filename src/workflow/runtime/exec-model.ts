@@ -46,7 +46,10 @@ export interface ExecOptions {
   readonly scrubEnv?: boolean | readonly string[];
   /** UTF-8 stdin, delivered after durable process registration. Only its digest is recorded. */
   readonly input?: string;
-  /** Accepted exits, default [0]. 'any' treats nonzero exits as data, but still rejects signals. */
+  /**
+   * Accepted exits, default [0]. 'any' completes nonzero exits as data; signals, timeouts and launch
+   * failures still fail (settled under `onError: 'return'`).
+   */
   readonly okExitCodes?: readonly number[] | 'any';
   /** Deadline in milliseconds, default 300000. Policy, not replay identity. */
   readonly timeoutMs?: number;

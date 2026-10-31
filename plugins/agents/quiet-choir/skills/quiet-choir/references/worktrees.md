@@ -112,7 +112,11 @@ With `onError: 'return'` a failing test (a nonzero exit, a signal or a timeout) 
 `{ ok: false, error }` instead of rejecting. The error keeps the exit code and output tails and
 replays on resume without rerunning the command, so later steps can branch on `test.ok`; a caught
 throwing command would rerun on resume. A settled failure, like any failed effect, does not advance
-the handle's snapshot. See [command effects](commands-files.md).
+the handle's snapshot. A completed effect does, with everything it wrote that Git does not ignore
+and `captureExclude` does not list. That includes a test run's reports and caches, and the writes of
+a command whose nonzero exit `okExitCodes` accepted, so `ctx.merge` of the handle publishes them.
+Keep such output out with ignore rules or [`captureExclude`](#what-capture-leaves-out). See
+[command effects](commands-files.md).
 
 Effects on one handle serialize through result validation, snapshot capture, and checkpoint save.
 Before each live attempt the cache resets to its latest completed snapshot and cleans untracked
