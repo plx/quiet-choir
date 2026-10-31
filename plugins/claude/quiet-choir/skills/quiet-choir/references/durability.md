@@ -321,9 +321,11 @@ again. To make a helper or template edit change map identity, bump `version`; af
 means a fork. Inputs/results must be lossless JSON, and captured dependencies, including prompt
 templates and fragments the mapper renders, belong in items or the explicit version. Items are
 snapshotted when `ctx.map` is called; settled mappers receive JSON copies of the fingerprinted
-snapshot, so later caller edits cannot change the processed items. Full IDs stay run-unique; named
-maps prefix each item as `mapId/key/`. Forks start fresh map journals and apply their normal
-per-step reuse/invalidation rules, so mapper-body outcomes are re-evaluated in the new run.
+snapshot (not the caller's objects: use the mapper's index argument, not `items.indexOf(item)`), so
+later caller edits cannot change the processed items, and saved results come back as JSON copies
+with sorted object keys. Full IDs stay run-unique; named maps prefix each item as `mapId/key/`.
+Forks start fresh map journals and apply their normal per-step reuse/invalidation rules, so
+mapper-body outcomes are re-evaluated in the new run.
 
 ## At-least-once effects
 

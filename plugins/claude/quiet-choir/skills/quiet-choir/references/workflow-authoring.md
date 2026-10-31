@@ -253,17 +253,18 @@ fallback results. Incomplete items execute again. Do not use this to hide ignore
 failures: every launched child must still be awaited.
 
 Map inputs/results must be lossless JSON. Every map schedules the items present when it is called;
-settled mappers receive JSON copies of that snapshot. Identity hashes item inputs, resolved keys,
-original mapper source, optional `version`, and cwd; concurrency can change. Captured
-helpers/environment, including prompt templates and fragments the mapper renders, are invisible, so
-put dependencies in items or bump `version`. After an item committed, a refusal names the changed
-components, and only a `mapper` change can be accepted, with `--accept-code-change`: completed items
-keep their saved outcomes and unfinished items run the new mapper. A thin mapper such as
-`(item) => handle(ctx, item)` keeps edits to `handle` out of map identity; leaf step identity checks
-still apply to items that run again. Keep full IDs unique across the run; leaves can repeat under
-distinct scopes. Forks start fresh map journals and reuse eligible steps under the selected fork
-policy. A leaf-level `onError: 'return'` inside an ordinary map is also useful when only the
-individual call's fallback must be durable.
+settled mappers receive JSON copies of that snapshot (not the caller's objects: use the mapper's
+index argument, not `items.indexOf(item)`), and saved results come back as JSON copies with sorted
+object keys. Identity hashes item inputs, resolved keys, original mapper source, optional `version`,
+and cwd; concurrency can change. Captured helpers/environment, including prompt templates and
+fragments the mapper renders, are invisible, so put dependencies in items or bump `version`. After
+an item committed, a refusal names the changed components, and only a `mapper` change can be
+accepted, with `--accept-code-change`: completed items keep their saved outcomes and unfinished
+items run the new mapper. A thin mapper such as `(item) => handle(ctx, item)` keeps edits to
+`handle` out of map identity; leaf step identity checks still apply to items that run again. Keep
+full IDs unique across the run; leaves can repeat under distinct scopes. Forks start fresh map
+journals and reuse eligible steps under the selected fork policy. A leaf-level `onError: 'return'`
+inside an ordinary map is also useful when only the individual call's fallback must be durable.
 
 For transient retries, use one step ID with `retry` rather than a loop of throwing `ask/0`, `ask/1`
 calls. `retry.on` limits retries to listed error kinds; `'transient'` stands for `rate-limit`,

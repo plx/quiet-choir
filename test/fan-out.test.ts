@@ -680,6 +680,43 @@ it('processes the settled-map snapshot when the caller mutates items during the 
   expect(journal?.status).toBe('completed');
 });
 
+it('hands a settled mapper JSON copies of the items and returns sorted-key JSON copies', async () => {
+  const found: number[] = [];
+  const indexes: number[] = [];
+  const order: string[][] = [];
+  let tail = true;
+  const definition = workflow(async (ctx) => {
+    const items = [{ id: 'a' }, { id: 'b' }];
+    const results = await ctx.map(
+      'items',
+      items,
+      { concurrency: 1, onError: 'return' },
+      (item, index) => {
+        found.push(items.indexOf(item));
+        indexes.push(index);
+        return Promise.resolve({ s: index, p: 1, d: 2 });
+      },
+    );
+    for (const result of results) if (result.ok) order.push(Object.keys(result.value));
+    if (tail) throw new Error('tail');
+    return null;
+  });
+  await expect(runWorkflow(definition, options())).rejects.toThrow('tail');
+  expect(found).toEqual([-1, -1]);
+  expect(indexes).toEqual([0, 1]);
+  const sorted = ['d', 'p', 's'];
+  expect(order).toEqual([sorted, sorted]);
+  const journal = (await readRun(options())).maps?.['items'];
+  expect(
+    journal?.items.map((item) => (item.outcome?.ok ? Object.keys(item.outcome.value ?? {}) : null)),
+  ).toEqual([sorted, sorted]);
+  tail = false;
+  await runWorkflow(definition, { ...options(), resume: true });
+  // Replay serves the saved outcomes in the same key order without calling the mapper again.
+  expect(indexes).toEqual([0, 1]);
+  expect(order).toEqual([sorted, sorted, sorted, sorted]);
+});
+
 it('schedules only the elements present when an ordinary map starts', async () => {
   const seen: unknown[] = [];
   const first = { n: 0 };

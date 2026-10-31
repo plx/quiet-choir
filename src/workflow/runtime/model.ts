@@ -1047,10 +1047,13 @@ export interface WorkflowContext<
    *
    * `onError: 'return'` journals each whole item outcome under the map ID and returns
    * `Settled<U, MapStepError>[]`; replay skips committed mappers and their owned effects. Inputs and
-   * results must be lossless JSON, and `version` revises dependencies the items, keys and mapper
-   * source do not show. With `cancelSiblings: true` the first item failure cancels the rest, which
-   * are returned as `'cancelled'` failures. Run cancellation, infrastructure and authoring errors
-   * still reject.
+   * results must be lossless JSON: the mapper receives a detached JSON copy of each item, not the
+   * caller's object, so find an item by the `index` argument or its key rather than
+   * `items.indexOf(item)`, and each `ok` value is a JSON copy with sorted object keys, on the first
+   * run as on replay. A throwing map passes the caller's items and returns the mapper's own values.
+   * `version` revises dependencies the items, keys and mapper source do not show. With
+   * `cancelSiblings: true` the first item failure cancels the rest, which are returned as
+   * `'cancelled'` failures. Run cancellation, infrastructure and authoring errors still reject.
    */
   map<T, U, TMode extends 'throw' | 'return' = 'throw'>(
     id: string,
@@ -1299,8 +1302,9 @@ export interface MapOptions<T> {
   readonly key?: ((item: T, index: number) => string) | undefined;
   /**
    * `'throw'` (the default) rejects with FanOutError after a mapper failure; `'return'` journals
-   * every item outcome and returns `Settled<U, MapStepError>[]`. Scheduling policy, outside the map
-   * journal's fingerprint.
+   * every item outcome and returns `Settled<U, MapStepError>[]`; with `'return'` the mapper sees
+   * JSON copies of the items, and results are JSON copies with sorted object keys. Scheduling
+   * policy, outside the map journal's fingerprint.
    */
   readonly onError?: 'throw' | 'return' | undefined;
   /**
