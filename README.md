@@ -222,8 +222,9 @@ Choose `structuredOutput: 'strict'` to send a native Codex schema: use an object
 property required (use `.nullable()` for missing values), and avoid records, loose objects,
 discriminated unions, tuples, and untyped values (`z.unknown()`/`z.any()`).
 `checkCodexSchema(schema)` returns JSON paths and fixes before a workflow runs. `workflow validate`
-cannot inspect call-site schemas without running the body. Refinements are enforced locally, so
-repeat them in the prompt. Schema transforms and class-valued schemas cannot be converted to JSON
+cannot inspect call-site schemas without running the body. For both harnesses, refinements are
+enforced only locally and never reach the agent; restate them in the prompt or a field's
+`.describe()`, which is sent. Schema transforms and class-valued schemas cannot be converted to JSON
 Schema. `z.date()`, `z.void()`, `z.undefined()`, and `z.bigint()` also fail conversion when their
 operation runs; `validate` checks only workflow input/output. Use `z.null()` and return `null` for
 side-effect-only steps. Claude receives the original schema and also requires an object root; other

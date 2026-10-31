@@ -198,6 +198,56 @@ it('settles a refused reply with one line per issue and keeps the raw issues on 
   });
 });
 
+it('sends the agent no refinement and resends the same request on a schema retry', async () => {
+  const relative = (path: string) => !path.startsWith('./');
+  const paths = z.object({
+    file: z.string().min(1).refine(relative, 'No dot segment'),
+    other: z
+      .string()
+      .refine(relative, 'No dot segment')
+      .describe('Repository-relative path without a ./ prefix'),
+  });
+  const requests: HarnessRequest[] = [];
+  const harness: Harness = {
+    invoke(request) {
+      requests.push(request);
+      return Promise.resolve({ ...reply, text: '{"file":"./x","other":"./y"}' });
+    },
+  };
+  const definition = workflow(async (ctx) => {
+    const result = await ctx.claude.object('paths', {
+      prompt: 'Name the changed files.',
+      schema: paths,
+      retry: { maxAttempts: 2, on: ['schema'], delayMs: 0 },
+      onError: 'return',
+    });
+    return result.ok ? 'accepted' : result.error.kind;
+  });
+  const result = await runWorkflow(definition, { ...options(), harness });
+  expect(result.output).toBe('schema');
+  expect(requests.map((request) => request.call.attempt)).toEqual([1, 2]);
+  expect(requests[0]?.outputSchema).toEqual({
+    $schema: 'http://json-schema.org/draft-07/schema#',
+    type: 'object',
+    properties: {
+      file: { type: 'string', minLength: 1 },
+      other: { type: 'string', description: 'Repository-relative path without a ./ prefix' },
+    },
+    required: ['file', 'other'],
+    additionalProperties: false,
+  });
+  expect(requests[1]?.options.prompt).toBe(requests[0]?.options.prompt);
+  expect(requests[1]?.outputSchema).toEqual(requests[0]?.outputSchema);
+  const issues = [
+    { code: 'custom', message: 'No dot segment', path: ['file'] },
+    { code: 'custom', message: 'No dot segment', path: ['other'] },
+  ];
+  expect(result.steps['paths']?.attemptHistory).toMatchObject([
+    { attempt: 1, validationIssues: issues },
+    { attempt: 2, validationIssues: issues },
+  ]);
+});
+
 it('gives a settled map item the same one-line schema message', async () => {
   const harness = { invoke: vi.fn(() => Promise.resolve({ ...reply, text: '{"order":["C3"]}' })) };
   const order = z.object({ order: z.array(z.string()) }).refine((plan) => plan.order[0] === 'C1', {

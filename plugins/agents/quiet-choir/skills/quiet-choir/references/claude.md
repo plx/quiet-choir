@@ -62,9 +62,12 @@ const result = await ctx.roster.Scout.object('review', {
 Object calls require an object-root schema and pass its JSON Schema through `--json-schema`.
 Successful terminal `result` envelopes have `subtype: success` and no `is_error: true`. Text calls
 read `result`; object calls require `structured_output`. The runtime parses and validates output
-against the original Zod schema. Native events are consumed as they arrive, including events after
-`result`; `--progress` displays bounded activity before exit. `onPermissionDenied: 'fail'` rejects
-reported denials and lists the denied tools. The default warns and preserves the evidence.
+against the original Zod schema, whose refinements are not part of the `--json-schema` Claude
+checks; restate them in the prompt or a field's `.describe()` (see
+[what an agent receives](agent-calls.md#shared-options-and-enforcement)). Native events are consumed
+as they arrive, including events after `result`; `--progress` displays bounded activity before exit.
+`onPermissionDenied: 'fail'` rejects reported denials and lists the denied tools. The default warns
+and preserves the evidence.
 
 The adapter parses stdout on both zero and nonzero normal exits. Saved errors retain reported
 reasons, subtype, terminal reason, and API status when available, plus the exit code and bounded

@@ -33,6 +33,14 @@ must honor the resolved request itself. Native binaries/configuration still dete
 | `retry`                  | Safe-to-repeat calls only                | Same                             | One attempt; opted-in delay starts at 100 ms | Core owns retry, removes it from adapter request               |
 | `onError`                | throw/return                             | Same                             | throw                                        | Core journals final outcomes                                   |
 
+An agent receives only the call schema's draft-7 JSON Schema (re-encoded for Codex compat).
+Representable checks (lengths, `regex`, enums, literals, numeric bounds) and `.describe()` or
+`.meta({ description })` text are sent. Zod refinements (`refine`, `superRefine`, `check`) are not:
+they run only when the reply is validated locally, so even Claude's in-session `--json-schema` check
+accepts a reply that local validation refuses. State such a rule in the prompt or the field's
+`.describe()`. Where one bad item must not fail the whole step, keep the agent schema permissive and
+check the rule in code after the call.
+
 `prompt`, and Claude's `systemPrompt` and `appendSystemPrompt`, also accept a `Prompt` rendered by
 `definePrompts`; the runtime sends and fingerprints its text exactly as the equal string (see
 [prompt templates](prompts.md)). See [Claude controls/protocol](claude.md) and
@@ -261,12 +269,12 @@ retry is one attempt; an explicit `retry.on` filters error categories. Earlier a
 have mutated files. A saved `settled-failed` outcome replays without retrying.
 
 A retry resends the identical request; only the cumulative `attempt` (also in `call`) changes, so a
-`schema` retry does not tell the agent what was refused. Zod refinements (`refine`, `superRefine`)
-are absent from the JSON Schema the harness receives. Even Claude's in-session `--json-schema` check
-therefore accepts a reply that local validation refuses, so restate each refinement in the prompt.
-To tell the agent, settle the call with `onError: 'return'` and quote `error.message` (one
-`path: message` line per issue) in a follow-up call under its own ID. The settled first call is
-latched, so this is not the [incrementing-ID trap](patterns.md#traps).
+`schema` retry does not tell the agent what was refused. The refused issues are saved only in
+`attemptHistory[].validationIssues`, so retrying a [refinement](#shared-options-and-enforcement)
+failure draws a fresh sample, not a correction. To tell the agent, settle the call with
+`onError: 'return'` and quote `error.message` (one `path: message` line per issue) in a follow-up
+call under its own ID. The settled first call is latched, so this is not the
+[incrementing-ID trap](patterns.md#traps).
 
 Each native effect creates a fresh session. Its `sessionId` is diagnostic, not a workflow resume
 token. Pass earlier answers explicitly in later prompts. `HarnessRequest.call` supplies `runId`,

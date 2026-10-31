@@ -305,10 +305,13 @@ use it only with complete declared dependencies. See [durability](durability.md)
 
 ## Data constraints
 
-Use schemas that convert to JSON Schema draft-7. Transforms, `z.date()`, `z.void()`,
+Use schemas that convert to JSON Schema draft-7. Transforms, `z.custom()`, `z.date()`, `z.void()`,
 `z.undefined()`, and `z.bigint()` throw when their operation runs; `validate` checks only the
 workflow's input/output schemas. For side-effect-only steps, use `z.null()` and return `null`. The
-engine validates structured output locally even after the harness accepts its schema.
+engine validates structured output locally even after the harness accepts its schema. Only that JSON
+Schema reaches the agent: lengths, patterns, enums and `.describe()` text do, refinements do not, so
+restate refinements in the prompt or a field's `.describe()` (see
+[agent calls](agent-calls.md#shared-options-and-enforcement)).
 
 For a native Codex object schema, use a `z.object` root with required properties and `.nullable()`
 for missing values. The default compat mode can encode `.optional()` and other shapes as described
