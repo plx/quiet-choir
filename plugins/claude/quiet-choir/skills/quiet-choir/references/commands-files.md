@@ -104,6 +104,23 @@ reserved. Children receive `QUIET_CHOIR_IDEMPOTENCY_KEY` (`runId/stepId`), `QUIE
 `QUIET_CHOIR_STEP_ID`, and `QUIET_CHOIR_ATTEMPT`. Scripts must implement their own reconciliation;
 the runtime cannot make external writes exactly once.
 
+Overlay values enter identity through their hash, and exported
+[command fixture rules](rehearsal.md#command-fixtures) match on the same digest, so do not copy
+host-specific values such as `process.env.PATH` or `HOME` into `env`, for example to give an
+`inheritEnv: false` command a usable `PATH`. A resume from a shell where they differ refuses the
+completed step (`envSha256 changed on a completed step`), and the exported rule matches only on a
+host with the same values. No option passes named host variables through yet (#ISSUE-C31-1). To give
+a command only a few of them today, either run it from a `ctx.step` callback through `context.exec`
+with `inheritEnv: false`, reading the values from `process.env` inside the callback and putting only
+their names in the step's `input`, or keep the inherited environment and narrow it inside the
+command, such as `['sh', '-c', 'exec env -i PATH="$PATH" HOME="$HOME" "$@"', 'sh', ...argv]` on
+POSIX, forwarding any `QUIET_CHOIR_` variables the command reads. The callback's command options
+never enter the step's identity
+([commands inside a callback or observer](#commands-inside-a-callback-or-observer)), but the rules
+exported for its commands still carry the overlay digest. The wrapper keeps the overlay empty, so
+neither identity nor fixtures depend on the host. Deleting `envSha256` from an exported rule makes
+it match any environment.
+
 A command that launches `claude`, `codex` or a wrapper around them can opt in to the host
 agent-session scrub that agent children always get, with `scrubEnv`. `true` removes the names
 `childEnvironment` removes ([harness isolation](harness-isolation.md): `CLAUDECODE`,

@@ -69,11 +69,13 @@ pure: no context, no context operations, debounce state in the note. `commandOpt
 tolerate; `classify` can read `error.diagnostics.code`. Identity adds `poll.command` (the prepared
 command with canonical cwd, env and stdin digests, `scrubEnv` when enabled and exit codes, plus the
 `output` JSON Schema), and `poll.observe` digests `done`; `live`, `observeTimeoutMs`, `onError` and
-`maxOutputBytes` are policy. The command is validated when the wait opens. Under `--dry-run` each
-check is synthesized from `output` and listed in `commands` under the wait ID; `live: true` runs it
-for real. A dry run makes up to five checks per poll on a virtual clock; see
-[repeated poll checks](rehearsal.md#repeated-poll-checks). `workflow pending` shows the command. In
-`ctx.wait`, `done`'s output is `unknown`; `ctx.poll` infers it.
+`maxOutputBytes` are policy. As for `ctx.exec`, host values copied into `env`, such as
+`process.env.PATH`, then fail a resume from a shell where they differ; an observer's `context.exec`
+or the shell wrapper in [commands](commands-files.md) avoids that. The command is validated when the
+wait opens. Under `--dry-run` each check is synthesized from `output` and listed in `commands` under
+the wait ID; `live: true` runs it for real. A dry run makes up to five checks per poll on a virtual
+clock; see [repeated poll checks](rehearsal.md#repeated-poll-checks). `workflow pending` shows the
+command. In `ctx.wait`, `done`'s output is `unknown`; `ctx.poll` infers it.
 
 ```ts
 import { defineWorkflow, z } from 'quiet-choir';

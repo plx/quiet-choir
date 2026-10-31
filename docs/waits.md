@@ -289,9 +289,12 @@ canonical absolute working directory, SHA-256 digests of the `env` overlay and o
 sorted accepted exit codes and `structured: true`) and the JSON Schema of `output`. `poll.observe`
 holds the digest of `done`'s source. Changing the command, its `cwd`, `env`, `inheritEnv`,
 `scrubEnv`, `input` or `okExitCodes`, `output`, or `done` under the same ID fails with "wait
-changed; use a new ID"; `live`, `observeTimeoutMs`, `onError` and `maxOutputBytes` are policy. The
-working directory is absolute, so moving the checkout under a waiting command poll is an identity
-change, as for `ctx.exec`. As with an observer, `done`'s digest is its source text as loaded; see
+changed; use a new ID"; `live`, `observeTimeoutMs`, `onError` and `maxOutputBytes` are policy. As
+for `ctx.exec`, host values copied into `env`, such as `process.env.PATH`, then fail a resume from a
+shell where they differ, whether the wait is open or completed; an observer's `context.exec` or the
+shell wrapper in [commands](command-effects.md) avoids that. The working directory is absolute, so
+moving the checkout under a waiting command poll is an identity change, as for `ctx.exec`. As with
+an observer, `done`'s digest is its source text as loaded; see
 [callback source and loaders](#callback-source-and-loaders). The command and its options are
 validated and its working directory resolved when the wait opens, so an invalid command, an unknown
 option or a missing `cwd` fails the wait before its first check. Observer polls never record
