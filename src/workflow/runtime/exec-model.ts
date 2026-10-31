@@ -73,7 +73,7 @@ export interface ExecOptions {
  * `ProcessRunner`'s plain error, or a record saved before these fields existed).
  */
 export interface ExecStepError extends StepError {
-  /** Observed exit code, or null when the process did not exit normally. */
+  /** Observed exit code, or null when the process did not exit normally or could not start. */
   readonly code?: number | null;
   /** Termination signal, or null on ordinary exit. */
   readonly signal?: string | null;
@@ -257,7 +257,7 @@ export interface ExecSummary {
 
 /** Bounded failed-attempt diagnostics, separate from checkpointed output. */
 export interface ExecDiagnostics {
-  /** Observed exit code, if available. */
+  /** Observed exit code, or null when the process did not exit normally or could not start. */
   readonly code: number | null;
   /** Observed signal, if available. */
   readonly signal: string | null;

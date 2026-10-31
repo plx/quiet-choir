@@ -31,13 +31,19 @@ allows. `ctx.exec` then returns `Settled<ExecResult, ExecStepError>` and `ctx.ex
 replays on resume without running the command. `ExecStepError` adds the exit `code`, `signal`, and
 the last 1024 characters of stdout and stderr (`stdoutTail`, `stderrTail`) to `message`, `kind`, and
 `attempts`. A timeout settles with kind `timeout` and whatever partial output the runner reported.
-For `ctx.exec.json`, `parsed` holds stdout as JSON when the output was complete, valid JSON, and at
-most 16384 UTF-8 bytes; it is not checked against the success schema, so a failing tool's JSON
-report stays usable. The process fields are absent when the runner's error carried no process
-result. Cancellation and a missing process adapter still reject and leave the step unfinished.
-`okExitCodes: 'any'` is the older alternative: it records ordinary nonzero exits as completed
-results, but signals and timeouts still fail and `ctx.exec.json` keeps only the parsed value, not
-the exit code.
+With `NodeProcessRunner`, a command that cannot start (a missing executable, a `cwd` that does not
+exist, a permission error) settles with kind `process`, `code` and `signal` null, empty tails and
+its `Cannot start <binary>…` message. That is the same kind as a nonzero exit or a signal kill, and
+it still fails under `okExitCodes: 'any'`. For `ctx.exec.json`, `parsed` holds stdout as JSON when
+the output was complete, valid JSON, and at most 16384 UTF-8 bytes; it is not checked against the
+success schema, so a failing tool's JSON report stays usable. The process fields are absent when the
+runner's error is not an `ExecError`, such as a custom `ProcessRunner`'s plain error. Cancellation
+and a missing process adapter still reject and leave the step unfinished. `okExitCodes: 'any'`
+instead records ordinary nonzero exits as completed results. Prefer it when the exit code and the
+output are the data: the completed `ExecResult` keeps both streams up to `maxOutputBytes` (head and
+tail), `truncated` and `durationMs`, while a settled `ExecStepError` keeps only the 1024-character
+tails and has no duration or truncation flag. Signals, timeouts and launch failures still fail under
+it, and `ctx.exec.json` keeps only the parsed value, not the exit code.
 
 Commands default to a five-minute deadline and 1 MiB **per stream**. Plain commands continue after
 output overflow, retaining the first and last half of each stream's byte cap. No separator is

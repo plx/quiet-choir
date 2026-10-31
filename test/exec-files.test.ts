@@ -1458,6 +1458,40 @@ describe("settled commands and files (onError: 'return')", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
+  it("settles a command that cannot start as process, even under okExitCodes 'any', and replays it", async () => {
+    const workflow = definition(async (ctx) => {
+      const missing: Command = ['/nonexistent/quiet-choir-probe'];
+      return [
+        await ctx.exec('missing', missing, { onError: 'return' }),
+        await ctx.exec('any', missing, { okExitCodes: 'any', onError: 'return' }),
+      ];
+    });
+    const launch = {
+      ok: false,
+      error: {
+        message: expect.stringMatching(/^Cannot start /u) as unknown,
+        kind: 'process',
+        attempts: 1,
+        code: null,
+        signal: null,
+        stdoutTail: '',
+        stderrTail: '',
+      },
+    };
+    const first = await runWorkflow(workflow, { ...setup(), processRunner: native });
+    expect(first.output).toEqual([launch, launch]);
+    const steps = (await readRun(setup())).steps;
+    for (const id of ['missing', 'any']) expect(steps[id]?.status).toBe('settled-failed');
+    const run = vi.fn<ProcessRunner['run']>();
+    const resumed = await runWorkflow(workflow, {
+      ...setup(),
+      processRunner: { run },
+      resume: true,
+    });
+    expect(resumed.output).toEqual([launch, launch]);
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it('rejects a missing process adapter without settling, then runs the command live on resume', async () => {
     const workflow = definition(async (ctx) => {
       const result = await ctx.exec('one', ['fake'], { onError: 'return' });
