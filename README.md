@@ -643,8 +643,9 @@ entry can spread one of its per-harness entries, `{ ...std.claude.ReadOnly, desc
 `std.claude` and `std.codex` carry the runtime's text, read-only and edit configurations as `Text`,
 `ReadOnly` and `Edit`, and `std.tiers` adds model and effort tiers such as `Mechanic`. `std.exec`
 has `json`, `git` (complete stdout or throw) and `committedArtifact` (publish a new file through a
-managed worktree), and `std.patterns` has `reviewRevise` and `tolerantPanel`, which take the context
-and a typed team. It is a seed for the dog-food ports; see
+managed worktree; a file already at HEAD is refused and the checkout must be clean), and
+`std.patterns` has `reviewRevise` and `tolerantPanel`, which take the context and a typed team. It
+is a seed for the dog-food ports; see
 [standard library entries](docs/roster.md#standard-library-entries).
 
 ## Progress and monitoring

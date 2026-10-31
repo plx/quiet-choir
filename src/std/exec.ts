@@ -85,8 +85,18 @@ function checkPath(path: string): void {
  * local step `write` on that worktree, then merges it into the workflow checkout as `publish`
  * (`target: 'checkout'`, `onConflict: 'fail'`). The step creates missing parent directories one
  * level at a time, refuses a parent that resolves outside the checkout (through a symbolic link,
- * for example), and refuses a file that already exists. Its identity is a versioned constant with
- * the path and content, not the callback text.
+ * for example), and refuses a file that already exists in `document`, which starts from the
+ * checkout's `HEAD` and keeps that base on resume. Its identity is a versioned constant with the
+ * path and content, not the callback text.
+ *
+ * The checkout must be clean. An untracked file at `path`, or any other uncommitted change (an
+ * untracked file Git does not ignore included), gets past the write and fails at `publish` with
+ * `Merge target checkout is dirty; commit or stash changes before integration.` Cleaning the
+ * checkout and resuming then publishes. A refused write refuses again on resume, even once `HEAD`
+ * drops the file, so a workflow that pays for agent calls before publishing should check the path
+ * first with a command that fails, such as `ctx.exec('absent', ['test', '!', '-e', path])`. A
+ * failed command runs again on resume, while a completed `ctx.readFile` that found the file replays
+ * and keeps refusing.
  *
  * The IDs are fixed, so a second call in the same scope collides: wrap each call in `ctx.scope` or
  * call it on `ctx.within(prefix)`.
@@ -98,8 +108,9 @@ function checkPath(path: string): void {
  * and `previousSha256: null`, since the file did not exist.
  * @throws Error - Before any effect, when `path` is absolute or starts with a drive letter, or has a
  * `.`, `..`, empty or `.git` segment, a backslash or a NUL; from the step, when a parent escapes the
- * checkout or the file exists; and from the merge, when the checkout has a tracked change or an
- * untracked, non-ignored path (an untracked file already at `path` included), or when it conflicts.
+ * checkout or with `Artifact <path> already exists at HEAD` when the file exists there; and from the
+ * merge, when it conflicts or the checkout has uncommitted changes: a tracked change or an
+ * untracked, non-ignored path (an untracked file already at `path` included).
  */
 export async function committedArtifact(
   ctx: WorkflowContext,
@@ -128,7 +139,17 @@ export async function committedArtifact(
         const escaped = actual === '..' || actual.startsWith('..' + sep);
         if (escaped || isAbsolute(actual)) throw new Error('Artifact parent escapes checkout');
       }
-      await writeFile(resolve(root, path), content, { flag: 'wx' });
+      try {
+        await writeFile(resolve(root, path), content, { flag: 'wx' });
+      } catch (error) {
+        // Node's message names the private worktree path, so it stays only in the cause.
+        if (error instanceof Error && 'code' in error && error.code === 'EEXIST')
+          throw new Error(
+            `Artifact ${path} already exists at HEAD; committedArtifact only creates files`,
+            { cause: error },
+          );
+        throw error;
+      }
       return null;
     },
   });

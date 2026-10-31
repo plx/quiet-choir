@@ -187,7 +187,13 @@ it('committedArtifact refuses an existing file and a parent that escapes the che
     await std.exec.committedArtifact(ctx, 'exists.md', 'new\n');
     return null;
   });
-  await expect(runWorkflow(existing, options('existing'))).rejects.toThrow(/EEXIST/u);
+  const refusal: unknown = await runWorkflow(existing, options('existing')).catch(
+    (error: unknown) => error,
+  );
+  if (!(refusal instanceof Error)) throw new Error('Expected the existing file to be refused');
+  // The refusal names the repository path, not the run's private worktree directory.
+  expect(refusal.message).toContain('Artifact exists.md already exists at HEAD');
+  expect(refusal.message).not.toContain(join(root, 'worktrees'));
   expect(await readFile(join(repo, 'exists.md'), 'utf8')).toBe('old\n');
   const escaping = workflow(z.null(), async (ctx) => {
     await std.exec.committedArtifact(ctx, 'link/x.md', 'x');
@@ -196,6 +202,26 @@ it('committedArtifact refuses an existing file and a parent that escapes the che
   await expect(runWorkflow(escaping, options('escaping'))).rejects.toThrow(
     'Artifact parent escapes checkout',
   );
+});
+
+it('committedArtifact gets past an untracked file at the path and refuses the dirty checkout', async () => {
+  const head = await git('rev-parse', 'HEAD');
+  await writeFile(join(repo, 'fresh.md'), 'local\n');
+  const publish = workflow(z.null(), async (ctx) => {
+    await std.exec.committedArtifact(ctx, 'fresh.md', 'x');
+    return null;
+  });
+  // The write checks the `document` worktree, which starts from HEAD; only the merge sees the file.
+  await expect(runWorkflow(publish, options('untracked'))).rejects.toThrow(
+    'Merge target checkout is dirty',
+  );
+  expect(await readFile(join(repo, 'fresh.md'), 'utf8')).toBe('local\n');
+  expect(await git('rev-parse', 'HEAD')).toBe(head);
+  expect(await git('status', '--porcelain')).toBe('?? fresh.md\n');
+  // Cleaning the checkout and resuming publishes the completed write.
+  await rm(join(repo, 'fresh.md'));
+  await runWorkflow(publish, { ...options('untracked'), resume: true });
+  expect(await git('show', 'HEAD:fresh.md')).toBe('x');
 });
 
 it.each(['C:/outside/file', 'C:outside', 'c:\\x', '/abs/file', 'z:'])(
