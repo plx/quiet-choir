@@ -2,6 +2,19 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Fix three defects that running all 26 Batch 03 packages in one process exposed. Each run created
+  five `AsyncLocalStorage` instances and never disabled them; before AsyncContextFrame (the Node 22
+  default), every later async resource in the process copied one store per past run, so an embedder
+  that runs many workflows slowed and grew with each one (fifty runs took a timer resource from 5
+  stored contexts to 105) and the lab verifier ran out of heap. All per-run slots now share one
+  storage. An empty process record, which a runner killed between creating and writing it leaves,
+  blocked every resume, `--kill-orphans` included, even after its process had exited; it now reads
+  as dead, with a detail, once neither the process nor the group its name gives is left (a zombie
+  counts as gone, as for a full record), and stays unknown while either runs. A Promise passed as
+  `RunOptions.input`, which is typed `unknown`, or nested in it, was read by an object schema as an
+  object with no fields; `runWorkflow` now refuses a thenable among the input's own enumerable
+  values with a `WorkflowInputError` whose cause is a `ZodError` naming its path, and `ctx.workflow`
+  fails a child's input validation the same way.
 - Port the other twenty Workflow Lab workflows into Batch 03, so it holds all 26 as
   `<name>.quiet-choir` packages; the reader shows each of the twenty beside its Batch 01 port. Code
   owns the evidence and effects the upstream left to agents: commands run through `ctx.exec`,
