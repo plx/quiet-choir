@@ -670,6 +670,52 @@ it('reports shared-handle receipts cumulatively from the handle base', async () 
   expect(installed).not.toHaveProperty('worktree');
 });
 
+it("retracts a writer's file from code on the handle, merges the deletion and replays without Git", async () => {
+  const invoke = vi.fn<Harness['invoke']>(async (request) => {
+    await writeFile(join(request.cwd, 'old.txt'), 'stale\n');
+    return response;
+  });
+  const definition = defineWorkflow({
+    version: '1',
+    name: 'retract',
+    input: z.null(),
+    output: z.string(),
+    async run(ctx) {
+      const handle = await ctx.worktree('cache');
+      await ctx.claude.text('write', { prompt: 'write', worktree: handle });
+      // A writer with only Edit and Write cannot delete, so code removes the paths on the handle.
+      await ctx.exec('retract', ['git', 'rm', '-q', '--', 'old.txt', 'file.txt'], {
+        worktree: handle,
+      });
+      return (await ctx.merge('integrate', [handle], { target: { branch: 'out' } })).commit;
+    },
+  });
+  const result = await runWorkflow(definition, {
+    ...options('retract'),
+    harness: { invoke },
+    input: null,
+  });
+  expect(result.status).toBe('completed');
+  // The earlier writer's file drops out of the cumulative change; the base file is a deletion.
+  expect(result.steps['retract']?.worktree?.files).toEqual([
+    { path: 'file.txt', status: 'deleted' },
+  ]);
+  expect((await command('ls-tree', '--name-only', 'out')).split('\n')).toEqual(['.gitignore']);
+  const noGit: ProcessRunner = {
+    run: () => {
+      throw new Error('unexpected Git');
+    },
+  };
+  const replay = await runWorkflow(definition, {
+    ...options('retract'),
+    processRunner: noGit,
+    harness: { invoke },
+    resume: true,
+  });
+  expect(replay.output).toBe(result.output);
+  expect(invoke).toHaveBeenCalledTimes(1);
+});
+
 it('does not advance a shared baseline when capture fails before effect completion', async () => {
   // eslint-disable-next-line @typescript-eslint/unbound-method -- Rebound to each manager with apply below.
   const prepare = RunWorktrees.prototype.prepare;

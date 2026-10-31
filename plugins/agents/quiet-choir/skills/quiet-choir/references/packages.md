@@ -191,7 +191,10 @@ Build entries from the `quiet-choir/std` fragments instead of retyping options: 
 its working directory), and `std.tiers` fixes a Claude model and effort (`Clerk`, `Copyist`,
 `Scribe`, `Mechanic`, `Planner`, `Skeptic`, `Surgeon`, ...). Compose by spread:
 `Mechanic: { ...std.claude.Edit, ...std.tiers.Mechanic, maxTurns: 200 }`. See
-[agent calls](agent-calls.md#roster) for the entry rules.
+[agent calls](agent-calls.md#roster) for the entry rules. `std.claude.Edit` has no shell, so its
+agent cannot delete or rename a file: retract paths from code on the handle
+([shared write, test, fix sequences](worktrees.md#shared-write-test-fix-sequences)) or widen the
+entry with a narrow `Bash(git rm:*)` rule, which makes it `exec` access.
 
 `validate --json` lists each workflow's roster in the `package` section, so you can check what a
 package will spend before a run (see [the validate output](#validate-output)).

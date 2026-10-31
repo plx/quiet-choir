@@ -173,6 +173,22 @@ snapshot of its own. `ctx.exec` and `ctx.step` results carry no receipt, so that
 changes of any exec or step in between. `ctx.merge` of a handle integrates its net change since
 `handle.base`.
 
+A writer without a shell, such as a `std.claude.Edit` entry, cannot remove a file, even one it
+created in an earlier call on the handle. Retract such paths from code, for example the ones the
+writer names in its structured output, with a command or a local `ctx.step` on the handle:
+
+<!-- skills-check: fragment; reason: Inside a workflow with ctx and a shared handle tree. -->
+
+```ts
+await ctx.exec('retract', ['git', 'rm', '-q', '--', ...stale], { worktree: tree });
+```
+
+The handle's change then lists each path as `deleted`, or drops it when an earlier effect on the
+handle added it, and `ctx.merge` carries the deletion. `git rm` fails on a path that no earlier
+effect captured; add `--ignore-unmatch` when the list may hold one. Scratch paths known in advance
+can instead stay out of every snapshot through `worktrees.captureExclude` (see
+[what capture leaves out](#what-capture-leaves-out)).
+
 Handles belong to one run. Forks create new handles; immutable `WorktreeChange` results can be
 reused from the source run. Cleaning a fork never removes source-owned caches or pins.
 

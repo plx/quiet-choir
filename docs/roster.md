@@ -158,6 +158,16 @@ agent starts in, not a read boundary: the read-only sandbox does not confine rea
 directory, so other paths, the source checkout included, can still be read. quiet-choir sets no
 Codex web-search control, so the installed Codex's default applies (#ISSUE-C25-3).
 
+`std.claude.Edit` changes files only through Edit and Write. Its agent can create and rewrite files
+but cannot delete, rename or change the mode of one (an empty Write still leaves the file in place),
+while `std.codex.Edit`'s `workspace-write` sandbox runs shell commands, so a Codex writer can. To
+retract a path, have the writer name it in its structured output and remove it from code on the same
+handle (see [shared write, test, fix sequences](worktrees.md#shared-write-test-fix-sequences)).
+Alternatively, widen the entry with a narrow rule: `tools: [...std.claude.Edit.tools, 'Bash']` with
+`allowedTools: [...std.claude.Edit.tools, 'Bash(git rm:*)']`. Bash makes the entry `exec` rather
+than `write` access ([access classes](#access-classes)), so under `requireGrants` its grant must
+cover exec.
+
 `std.tiers` holds the model tiers of the native epic scripts. Each fixes only a Claude model and
 effort: `Clerk` (haiku, low), `Copyist` (sonnet, low), `Scribe` (sonnet, medium), `Mechanic`
 (sonnet, high), `Planner` (opus, high), `Skeptic` (opus, medium) and `Surgeon` (opus, high).

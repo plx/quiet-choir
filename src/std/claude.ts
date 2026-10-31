@@ -53,7 +53,11 @@ export const ReadOnly: {
   timeoutMs: 900_000,
 });
 
-/** A Claude agent that edits files: the read tools plus Edit and Write, the `edit` preset's limits. */
+/**
+ * A Claude agent that edits files: the read tools plus Edit and Write, the `edit` preset's limits.
+ * Without a shell its agent cannot delete, rename or chmod a file; retract such a path from code on
+ * the shared handle instead (see `docs/worktrees.md`, "Shared write, test, fix sequences").
+ */
 export const Edit: {
   /** Pinned to Claude Code. */
   readonly harness: 'claude';
