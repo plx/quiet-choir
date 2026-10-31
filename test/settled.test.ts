@@ -11,6 +11,7 @@ import {
   HarnessError,
   readRun,
   runWorkflow,
+  WorkflowRunError,
   z,
   type AgentResult,
   type CompletedExecResult,
@@ -154,6 +155,96 @@ it('journals local and structured failures and successes with inferred result ty
   await runWorkflow(definition, { ...options(), harness, resume: true });
   expect(local).toHaveBeenCalledTimes(1);
   expect(harness.invoke).toHaveBeenCalledTimes(2);
+});
+
+it('settles a refused reply with one line per issue and keeps the raw issues on the attempt', async () => {
+  const plan = z
+    .object({ tickets: z.array(z.object({ id: z.string() })) })
+    .superRefine((value, ctx) => {
+      value.tickets.forEach((ticket, index) => {
+        const id = `T${String(index + 1)}`;
+        if (ticket.id !== id)
+          ctx.addIssue({
+            code: 'custom',
+            message: `${ticket.id} should be numbered ${id}`,
+            path: ['tickets', index, 'id'],
+          });
+      });
+    });
+  const harness = {
+    invoke: vi.fn(() => Promise.resolve({ ...reply, text: '{"tickets":[{"id":"T9"}]}' })),
+  };
+  const line = 'tickets[0].id: T9 should be numbered T1';
+  const definition = workflow(async (ctx) => {
+    const result = await ctx.claude.object('plan', {
+      prompt: 'Write the plan.',
+      schema: plan,
+      onError: 'return',
+      retry: { maxAttempts: 2, delayMs: 0, on: ['schema'] },
+    });
+    return result.ok ? 'accepted' : result.error.message;
+  });
+  const result = await runWorkflow(definition, { ...options(), harness });
+  expect(result.output).toBe(line);
+  expect(harness.invoke).toHaveBeenCalledTimes(2);
+  expect(result.steps['plan']).toMatchObject({
+    status: 'settled-failed',
+    error: line,
+    settledError: { message: line, kind: 'schema', attempts: 2 },
+  });
+  expect(result.steps['plan']?.attemptHistory?.[0]).toMatchObject({
+    error: line,
+    validationIssues: [{ code: 'custom', path: ['tickets', 0, 'id'] }],
+  });
+});
+
+it('gives a settled map item the same one-line schema message', async () => {
+  const harness = { invoke: vi.fn(() => Promise.resolve({ ...reply, text: '{"order":["C3"]}' })) };
+  const order = z.object({ order: z.array(z.string()) }).refine((plan) => plan.order[0] === 'C1', {
+    message: 'C3 depends on C2, which is in a later milestone',
+    path: ['order', 0],
+  });
+  const definition = workflow(async (ctx) => {
+    const results = await ctx.map(
+      'strategies',
+      ['foundation-first'],
+      { concurrency: 1, onError: 'return' },
+      (name) => ctx.claude.object('plan', { prompt: name, schema: order }),
+    );
+    expect(results).toEqual([
+      {
+        ok: false,
+        error: {
+          message: 'order[0]: C3 depends on C2, which is in a later milestone',
+          kind: 'schema',
+          attempts: 1,
+          stepId: 'strategies/0/plan',
+        },
+      },
+    ]);
+    return 'done';
+  });
+  expect((await runWorkflow(definition, { ...options(), harness })).output).toBe('done');
+});
+
+it('names a thrown schema failure in one line in the run error and its root cause', async () => {
+  const harness = { invoke: vi.fn(() => Promise.resolve({ ...reply, text: '{"n":"x"}' })) };
+  const definition = workflow(async (ctx) => {
+    await ctx.claude.object('plan', { prompt: 'p', schema: z.object({ n: z.number() }) });
+    return 'unreachable';
+  });
+  const error: unknown = await runWorkflow(definition, { ...options(), harness }).catch(
+    (caught: unknown) => caught,
+  );
+  if (!(error instanceof WorkflowRunError)) throw error;
+  const line = 'n: Invalid input: expected number, received string';
+  expect(error.message).toBe(`Step plan (claude) failed: ${line}`);
+  expect(error.cause).toBeInstanceOf(z.ZodError);
+  expect(error.run).toMatchObject({
+    error: line,
+    rootCause: { stepId: 'plan', error: line, errorKind: 'schema' },
+    steps: { plan: { status: 'failed', error: line } },
+  });
 });
 
 it('uses one ID for selective agent retries and preserves every attempt error', async () => {

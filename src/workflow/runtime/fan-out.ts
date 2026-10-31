@@ -1,4 +1,7 @@
+import { z } from 'zod';
+
 import { brandError, isBranded } from './error-brand.js';
+import { formatIssues } from './issue-format.js';
 import { PromptError } from '../prompts/error.js';
 import type { ErrorKind, StepError } from './model.js';
 
@@ -285,7 +288,11 @@ export function rememberedError(origin: {
   return 'remembered' in origin ? origin.remembered : origin.error;
 }
 
-/** Preserve messages from unknown thrown values. @internal */
+/**
+ * Preserve messages from unknown thrown values. A Zod failure reads as one `path: message` line per
+ * issue ({@link formatIssues}) instead of its JSON dump. @internal
+ */
 export function errorMessage(error: unknown): string {
+  if (error instanceof z.ZodError) return formatIssues(error.issues);
   return error instanceof Error ? error.message : String(error);
 }

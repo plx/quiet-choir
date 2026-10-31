@@ -1,4 +1,5 @@
 import { brandError, isBranded } from './error-brand.js';
+import { errorMessage } from './fan-out.js';
 import type { JsonValue } from './model.js';
 import type { RunRecord } from './store.js';
 
@@ -223,7 +224,7 @@ export class WorkflowRunError extends Error {
     cause: unknown,
   ) {
     const stepId = run.rootCause?.stepId ?? null;
-    const detail = cause instanceof Error ? cause.message : String(cause);
+    const detail = errorMessage(cause);
     super(
       stepId === null
         ? detail

@@ -201,7 +201,7 @@ import { OperationTracker } from './tracking.js';
 import { optionData, validateAgentOptions } from './options.js';
 import { promptOptionsAsText, promptTemplateOf } from '../prompts/prompt.js';
 import { HarnessError, boundedResponse, harnessEvidence } from './harness-error.js';
-import { CancelledError, FailureOrigins } from './fan-out.js';
+import { CancelledError, FailureOrigins, errorMessage } from './fan-out.js';
 import { createMap, settledMapChange } from './map.js';
 import { ExecutionScopes } from './scopes.js';
 import { NameScopes } from './names.js';
@@ -700,7 +700,7 @@ function recordedMapItems(scopes: readonly MapItemScope[]): StepMapItem[] | unde
 }
 
 function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return errorMessage(error);
 }
 
 /** The refusal for a non-resume execution onto an ID that already has a run. */

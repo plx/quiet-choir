@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import { ConfigurationError } from './configuration-error.js';
 import { DecisionError } from './decision-error.js';
-import { CancelledError } from './fan-out.js';
+import { CancelledError, errorMessage } from './fan-out.js';
 import { HarnessError } from './harness-error.js';
 import { outputLimitCode } from '../../processes/output-limit.js';
 import type { ExecStepError } from './exec-model.js';
@@ -118,10 +118,14 @@ function knownKind(kind: unknown): ErrorKind {
   return kind !== 'configuration' && kinds.includes(kind) ? (kind as ErrorKind) : 'unknown';
 }
 
-/** Convert an effect failure to lossless data. @internal */
+/**
+ * Convert an effect failure to data. A schema failure's message is one `path: message` line per Zod
+ * issue ({@link errorMessage}); an agent call keeps the raw issues in its attempt's
+ * `validationIssues`. @internal
+ */
 export function stepError(error: unknown, attempts: number): StepError {
   return {
-    message: error instanceof Error ? error.message : String(error),
+    message: errorMessage(error),
     kind: errorKind(error),
     attempts,
   };

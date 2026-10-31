@@ -1386,8 +1386,8 @@ describe("settled commands and files (onError: 'return')", () => {
       code: 1,
       parsed: { failed: ['b'] },
     });
-    expect(settled('mismatch')['message']).toMatch(
-      /^Command stdout did not match its JSON schema: /u,
+    expect(settled('mismatch')['message']).toBe(
+      'Command stdout did not match its JSON schema: passed: Invalid input: expected boolean, received undefined',
     );
     expect(settled('clean')).toMatchObject({ kind: 'schema', code: 0 });
     expect(settled('clean')['message']).toMatch(/^Command stdout did not match its JSON schema: /u);

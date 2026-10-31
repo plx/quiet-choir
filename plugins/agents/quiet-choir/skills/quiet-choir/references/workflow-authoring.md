@@ -213,7 +213,9 @@ const draft = primary.ok
 
 Every effect that can fail takes `onError: 'return'`. `value`, `text`, `object`, `ctx.step`,
 `ctx.readFile`, `ctx.writeFile` and `ctx.merge` return `Settled<T>` in this mode:
-`{ ok: true, value }` or `{ ok: false, error: { message, kind, attempts } }`. `ctx.exec` and
+`{ ok: true, value }` or `{ ok: false, error: { message, kind, attempts } }`. A `schema` failure's
+`message` is one `path: message` line per Zod issue (`tickets[0].id: T9 should be numbered T1`), and
+an agent call keeps the raw issues in `attemptHistory[].validationIssues`. `ctx.exec` and
 `ctx.exec.json` return `Settled<T, ExecStepError>`, whose error adds the exit `code`, `signal`,
 output tails and, for `exec.json`, the bounded `parsed` stdout (see
 [commands and files](commands-files.md)). `ctx.workflow` returns `Settled<O, MapStepError>` and

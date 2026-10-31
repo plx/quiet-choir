@@ -6,6 +6,7 @@ import { digest } from './json.js';
 import { commandSchema, execOptionsSchema, execResultSchema } from './exec-schema.js';
 import { ConfigurationError } from './configuration-error.js';
 import { ExecError } from './exec-error.js';
+import { errorMessage } from './fan-out.js';
 import type {
   Command,
   ExecOptions,
@@ -158,7 +159,6 @@ export async function executeCommand<T>(
   const reject = (cause: unknown, kind: 'process' | 'schema', message: string): never => {
     throw new ExecError(message, kind, result, { cause, ...failure() });
   };
-  const detail = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause));
   let json: JsonValue;
   try {
     json = JSON.parse(result.stdout) as JsonValue;
@@ -166,13 +166,13 @@ export async function executeCommand<T>(
     // An accepted nonzero exit with no JSON body is a failed command, not a contract violation:
     // the caller accepted that code only to read a body. Exit 0 with no JSON stays `schema`.
     return result.code === 0
-      ? reject(cause, 'schema', `${EXEC_SCHEMA_FAILURE_PREFIX}${detail(cause)}`)
-      : reject(cause, 'process', execNoJsonFailureMessage(result.code, detail(cause)));
+      ? reject(cause, 'schema', `${EXEC_SCHEMA_FAILURE_PREFIX}${errorMessage(cause)}`)
+      : reject(cause, 'process', execNoJsonFailureMessage(result.code, errorMessage(cause)));
   }
   try {
     return schema.parse(json);
   } catch (cause) {
-    return reject(cause, 'schema', `${EXEC_SCHEMA_FAILURE_PREFIX}${detail(cause)}`);
+    return reject(cause, 'schema', `${EXEC_SCHEMA_FAILURE_PREFIX}${errorMessage(cause)}`);
   }
 }
 

@@ -260,6 +260,14 @@ only. Source edits require [acceptance or a fork](durability.md#choose-a-recover
 retry is one attempt; an explicit `retry.on` filters error categories. Earlier attempts may already
 have mutated files. A saved `settled-failed` outcome replays without retrying.
 
+A retry resends the identical request; only the cumulative `attempt` (also in `call`) changes, so a
+`schema` retry does not tell the agent what was refused. Zod refinements (`refine`, `superRefine`)
+are absent from the JSON Schema the harness receives. Even Claude's in-session `--json-schema` check
+therefore accepts a reply that local validation refuses, so restate each refinement in the prompt.
+To tell the agent, settle the call with `onError: 'return'` and quote `error.message` (one
+`path: message` line per issue) in a follow-up call under its own ID. The settled first call is
+latched, so this is not the [incrementing-ID trap](patterns.md#traps).
+
 Each native effect creates a fresh session. Its `sessionId` is diagnostic, not a workflow resume
 token. Pass earlier answers explicitly in later prompts. `HarnessRequest.call` supplies `runId`,
 full `stepId`, cumulative `attempt`, and stable `idempotencyKey` (`runId/stepId`) outside identity.
