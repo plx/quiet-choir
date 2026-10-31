@@ -89,14 +89,14 @@ function checkPath(path: string): void {
  * checkout's `HEAD` and keeps that base on resume. Its identity is a versioned constant with the
  * path and content, not the callback text.
  *
- * The checkout must be clean. An untracked file at `path`, or any other uncommitted change (an
- * untracked file Git does not ignore included), gets past the write and fails at `publish` with
- * `Merge target checkout is dirty; commit or stash changes before integration.` Cleaning the
- * checkout and resuming then publishes. A refused write refuses again on resume, even once `HEAD`
- * drops the file, so a workflow that pays for agent calls before publishing should check the path
- * first with a command that fails, such as `ctx.exec('absent', ['test', '!', '-e', path])`. A
- * failed command runs again on resume, while a completed `ctx.readFile` that found the file replays
- * and keeps refusing.
+ * The checkout must be clean. An untracked file at `path`, or any uncommitted change elsewhere in
+ * the checkout (an untracked file Git does not ignore included), gets past the write and fails at
+ * `publish` with `Merge target checkout is dirty; commit or stash changes before integration.`
+ * Cleaning the checkout and resuming then publishes. A refused write refuses again on resume, even
+ * once `HEAD` drops the file, so a workflow that pays for agent calls before publishing should
+ * check the path first with a command that fails, such as
+ * `ctx.exec('absent', ['test', '!', '-e', path])`. A failed command runs again on resume, while a
+ * completed `ctx.readFile` that found the file replays and keeps refusing.
  *
  * The IDs are fixed, so a second call in the same scope collides: wrap each call in `ctx.scope` or
  * call it on `ctx.within(prefix)`.
