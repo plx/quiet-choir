@@ -86,6 +86,7 @@ interface FakeState {
   readonly pushBeforeMerge?: string | null;
   readonly mergeError?: { readonly message: string; readonly status?: string } | null;
   readonly mergeLag?: number;
+  readonly asyncMergeError?: { readonly message: string; readonly status: string } | null;
   readonly runsTotalCount?: number;
   readonly runsPages?: readonly (readonly number[])[];
   readonly branches?: Record<string, string>;
@@ -550,6 +551,26 @@ describe('pr.merge', { timeout: 30_000 }, () => {
       ),
       expect.stringMatching(/pulls\/9\/merge-async\/async-9$/),
     ]);
+  });
+
+  it('throws on an HTTP error from the asynchronous request, and a retry merges (#747)', async () => {
+    const { runner, state } = await fake({
+      pulls: pull(9, { stacked: true }),
+      asyncMergeError: { message: 'Server Error', status: '502' },
+    });
+    const result = await outcome(runner, 'stacked-502', (ctx) =>
+      client(ctx).pr.merge(
+        'merge',
+        { number: 9, sha: HEAD, method: 'merge' },
+        { retry: { maxAttempts: 2 } },
+      ),
+    );
+    expect(result.output).toMatchObject({ merged: true, mergeCommit: MERGE_COMMIT_9, acted: true });
+    const asyncPuts = (await state()).calls.filter(
+      (call) =>
+        call.argv.join(' ').includes('-X PUT') && call.argv.join(' ').includes('merge-async'),
+    );
+    expect(asyncPuts).toHaveLength(2);
   });
 
   it('merges with the method given and confirms it with one read', async () => {

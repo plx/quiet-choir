@@ -398,6 +398,11 @@ function main() {
     if (!pull) httpError(404, 'Not Found');
     const { merge_method: mergeMethod, merge_action: action, sha } = fields();
     if (pull.state !== 'open') httpError(400, 'Pull request is closed');
+    if (state.asyncMergeError) {
+      const error = state.asyncMergeError;
+      state.asyncMergeError = null;
+      httpError(error.status, error.message, error);
+    }
     const uuid = `async-${match[1]}`;
     state.asyncMerges ??= {};
     state.asyncMerges[uuid] = { pull: match[1], mergeMethod, action, sha: sha ?? pull.head_sha };

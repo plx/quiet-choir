@@ -852,6 +852,9 @@ export function githubWrites(
                 [0, 1],
               );
               const uuid = result.details?.uuid ?? null;
+              // 409: a request for this pull request is already pending (a retry's); poll it.
+              if (String(result.status ?? '') === '409' && uuid !== null)
+                result = { ...result, status: 'pending' };
               if (result.status === 'pending' && uuid !== null)
                 result =
                   (
@@ -879,13 +882,20 @@ export function githubWrites(
               const reread = await read();
               const outcome = mergePrecheck(reread, sha, base);
               if (outcome !== 'put') return settled(reread, outcome, null);
+              const why =
+                `${String(result.status ?? 'no status')}: ${result.details?.message ?? result.message ?? ''}`.trim();
+              // Only GitHub's own verdicts settle the step; an HTTP error or an unknown answer
+              // throws, so the step's retry asks again instead of replaying a refusal.
+              if (result.status !== 'failed' && result.status !== 'enqueued')
+                throw new Error(
+                  `github pr.merge ${id}: GitHub did not accept the asynchronous merge of #${String(number)} (${why}); a retry asks again.`,
+                );
               return {
                 merged: false,
                 number,
                 reason: 'not-mergeable',
                 head: reread.head.sha,
-                message:
-                  `GitHub's asynchronous merge ended ${String(result.status ?? 'without a status')}: ${result.details?.message ?? result.message ?? ''}`.trim(),
+                message: `GitHub's asynchronous merge ended ${why}`,
               };
             }
             if ('merged' in response) {
