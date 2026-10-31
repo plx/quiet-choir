@@ -1,8 +1,9 @@
 // flaky-test-hunt: control flow only. Code reads the history and CI facts, the blind sweeps with
 // evidence to read are a settled map, code screens their suspects to tracked test files,
-// stress-runs the operator's single-test command and computes every verdict, settled
-// diagnosticians see only measured flakes, and a fix runs only after a human approves the exact
-// plan; code checks the isolated change covers the plan and re-stresses it before publishing it.
+// stress-runs the operator's single-test command and computes every verdict, and settled
+// diagnosticians see only flakes measured at one commit. A fix runs only after a human approves
+// the exact plan. Code checks the isolated change against it, re-stresses and verifies that change
+// on the measured commit, and publishes it only while the checkout is still at that commit.
 import { defineWorkflow, type WorktreeHandle } from 'quiet-choir';
 import * as std from 'quiet-choir/std';
 import {
@@ -15,7 +16,7 @@ import {
   Suspects,
   type Stress,
 } from '../contracts.js';
-import { artifacts, classify, cleanAt, history, residue } from '../lib/git.js';
+import { artifacts, classify, cleanHead, headAfter, history, residue } from '../lib/git.js';
 import {
   argvFor,
   cap,
@@ -42,7 +43,7 @@ export default defineWorkflow({
   input: FlakyInput,
   output: FlakyOutput,
   async run(ctx, input) {
-    const { head: commit, prefix } = await cleanAt(ctx, 'clean', null);
+    const { head: commit, prefix } = await cleanHead(ctx, 'clean');
     const facts = {
       history: await history(ctx, commit, input.historyDepth, input.testFiles),
       artifacts: await artifacts(ctx),
@@ -57,7 +58,7 @@ export default defineWorkflow({
     const sweeps = await ctx.map(
       'sweeps',
       swept,
-      { concurrency: 3, onError: 'return', key: (modality) => modality, version: 'sweep/2' },
+      { concurrency: 3, onError: 'return', key: (modality) => modality, version: 'sweep/4' },
       (modality) =>
         ctx.roster.Sweeper.value('suspects', {
           schema: Suspects,
@@ -82,12 +83,14 @@ export default defineWorkflow({
     const { stressed: chosen, skipped } = cap(kept, input.maxSuspects);
     const report = {
       commit,
+      moved: null,
       noEvidence,
       failedSweeps,
       rejected,
       skipped,
       approvedDigest: null,
       fixCommit: null,
+      fixSummary: null,
       refusedFiles: [],
       untouched: [],
       restress: [],
@@ -127,18 +130,27 @@ export default defineWorkflow({
       ),
     }));
     const left = await residue(ctx);
+    const after = await headAfter(ctx, 'stressed-head');
+    // Runs after a move measured another commit: the rates stand as recorded, undiagnosed.
+    const moved = after === commit ? null : { during: 'stress' as const, head: after };
     const by = (verdict: Stress['verdict']) =>
       stressed.filter((suspect) => suspect.stress.verdict === verdict);
     const flaky = by('flaky');
     // A failed diagnosis leaves its flake undiagnosed; the measurement still confirms it.
     const diagnoses = await ctx.map(
       'diagnose',
-      flaky,
-      { concurrency: 3, onError: 'return', version: 'diagnose/1' },
+      moved ? [] : flaky,
+      { concurrency: 3, onError: 'return', version: 'diagnose/3' },
       ({ stress, ...suspect }) =>
         ctx.roster.Diagnostician.value('diagnosis', {
           schema: Diagnosis,
-          prompt: prompts.Diagnose({ suspect, stress, commit, residue: left }),
+          prompt: prompts.Diagnose({
+            suspect,
+            stress,
+            command: JSON.stringify(stress.argv),
+            commit,
+            residue: left,
+          }),
         }),
     );
     const confirmed = flaky.map((suspect, index) => {
@@ -147,6 +159,7 @@ export default defineWorkflow({
     });
     const result = {
       ...report,
+      moved,
       confirmed,
       cleared: by('stable'),
       broken: by('always-fails'),
@@ -155,6 +168,7 @@ export default defineWorkflow({
       unplanned: unplanned(confirmed),
       residue: left,
     };
+    if (moved) return { ...result, status: 'moved' };
     // "No flakes" only when at least one suspect was measured.
     if (!confirmed.length)
       return {
@@ -164,8 +178,11 @@ export default defineWorkflow({
     if (!input.fix) return { ...result, status: 'report' };
     const plan = fixPlan(confirmed);
     if (!plan.length) return { ...result, status: 'no-plan' };
-    // Publication needs the measured checkout, so test residue stops here, before any approval.
-    await cleanAt(ctx, 'clean-for-fix', commit);
+    // Publication needs the measured checkout, so test residue stops here, before any approval,
+    // and a checkout that moved during the diagnoses is reported rather than asked about.
+    const ready = (await cleanHead(ctx, 'clean-for-fix')).head;
+    if (ready !== commit)
+      return { ...result, status: 'moved', moved: { during: 'diagnosis', head: ready } };
     const list = std.exec.json(plan);
     const approvedDigest = planDigest(list);
     const approval = await ctx.approve('approve-fixes', {
@@ -187,12 +204,19 @@ export default defineWorkflow({
       }),
     });
     const { change, refusedFiles, untouched } = owned(fixed.worktree, plan, prefix);
-    const gated = { ...result, approvedDigest, refusedFiles, untouched };
+    const gated = {
+      ...result,
+      approvedDigest,
+      fixSummary: fixed.output.summary,
+      refusedFiles,
+      untouched,
+    };
     if (refusedFiles.length) return { ...gated, status: 'refused' };
     // An unchanged test can pass a few re-stress runs by chance, so every fix must touch its files.
-    if (untouched.length) return { ...gated, status: 'incomplete' };
-    const integrated = await ctx.merge('integrate', [change], { onConflict: 'fail' });
-    const base = { base: { commit: integrated.commit } };
+    if (untouched.length || !change.commit) return { ...gated, status: 'incomplete' };
+    // The fixer's snapshot is the measured commit plus the fix, wherever the checkout has moved.
+    const snapshot = change.commit;
+    const base = { base: { commit: snapshot } };
     const stressTree = await ctx.worktree('restress-tree', base);
     const restress = await ctx.map('restress', plan, { concurrency: 1 }, async (item) => ({
       test: item.test,
@@ -208,9 +232,14 @@ export default defineWorkflow({
     const verification = input.verifyCommands.length
       ? await verify(ctx, await ctx.worktree('verification-tree', base), input.verifyCommands)
       : [];
-    const checked = { ...gated, restress, verification };
-    if (!held(restress, verification))
-      return { ...checked, status: 'fix-failed', fixCommit: integrated.commit };
+    const checked = { ...gated, restress, verification, fixCommit: snapshot };
+    if (!held(restress, verification)) return { ...checked, status: 'fix-failed' };
+    // A merge into the checkout rebases onto its HEAD, so a checkout that moved during the approval
+    // or the re-stress would receive a tree nobody re-stressed or verified. (Between this read and
+    // the merge's preparation a race remains: ctx.merge cannot require a HEAD; see the findings.)
+    const last = (await cleanHead(ctx, 'clean-for-publish')).head;
+    if (last !== commit)
+      return { ...checked, status: 'moved', moved: { during: 'fix', head: last } };
     // Only the fixer's change is published; what the re-stress runs left in their tree is not.
     const published = await ctx.merge('publish', [change], {
       target: 'checkout',

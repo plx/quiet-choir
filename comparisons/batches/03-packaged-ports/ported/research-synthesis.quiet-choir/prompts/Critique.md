@@ -26,7 +26,7 @@ These territories were never searched, because their sweep failed or could not r
 These leads were ranked for reading, but their read failed, so nothing from them is in the sources:
 {%- for lead in failed %}
 
-- {{ lead.ref }} ({{ lead.kind }}, {{ lead.credibility }}): {{ lead.promise }}
+- {{ lead.ref }} ({{ lead.kind }}, {{ lead.credibility }}{% if lead.territory == 'local' %}; from this repository{% endif %}): {{ lead.promise }}
 {%- endfor +%}
 
 {% endif %}
@@ -34,7 +34,7 @@ These leads were ranked for reading, but their read failed, so nothing from them
 Leads found but never read, past the depth cap; one may be the right document for a hunt:
 {%- for lead in deferred %}
 
-- {{ lead.ref }} ({{ lead.kind }}, {{ lead.credibility }}): {{ lead.promise }}
+- {{ lead.ref }} ({{ lead.kind }}, {{ lead.credibility }}{% if lead.territory == 'local' %}; from this repository{% endif %}): {{ lead.promise }}
 {%- endfor +%}
 
 {% endif %}
@@ -49,11 +49,12 @@ put the most important first.
 Give each gap a territory. A web hunt searches and fetches pages but cannot read this repository; a
 local hunt reads this repository at the pinned commit but has no web access. Choose local only when
 the gap is about this repository's own code or configuration.
-
-A web hunt's instruction becomes a public search or fetch, so describe what to look for in general
-terms, and never quote this repository's code, paths or local findings in it.
 {% else %}
 No local hunt can run, so every hunt searches the web: give each gap the territory web.
 {% endif %}
+
+A web hunt's gap and instruction become a public search or fetch, so describe what to look for in
+general terms, and never quote in them the paths, code or findings of anything marked as from this
+repository.
 
 Return an empty list when no gap is worth a hunt: that is the verdict that the answer is adequate.

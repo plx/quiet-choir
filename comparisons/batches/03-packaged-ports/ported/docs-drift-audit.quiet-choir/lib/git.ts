@@ -118,11 +118,19 @@ export const fixedText = (ctx: WorkflowContext, commit: string, path: string) =>
   std.exec.git(ctx, 'fixed', ['show', `${commit}:${path}`], listing);
 
 /**
- * Whether the checkout's HEAD is still the base. `ctx.merge` with `target: 'checkout'` would
- * rebase onto a moved HEAD, publishing a tree that the verification commands never ran on.
+ * Whether the checkout's HEAD is still the base. `ctx.merge` starts from the checkout's live HEAD
+ * for the run-owned integration and the checkout target alike, so after a move the integration
+ * would hold someone else's commits and a publication would rebase onto them.
  */
-export const stillAt = async (ctx: WorkflowContext, base: string) =>
-  (await std.exec.git(ctx, 'head', ['rev-parse', 'HEAD'])).trim() === base;
+export const stillAt = async (ctx: WorkflowContext, id: string, base: string) =>
+  (await std.exec.git(ctx, id, ['rev-parse', 'HEAD'])).trim() === base;
+
+/**
+ * The commit a squash integration started from (its one parent), so code can confirm that the
+ * patch it verifies and shows is the base plus the fixes, even if HEAD moved after `stillAt`.
+ */
+export const startOf = async (ctx: WorkflowContext, commit: string) =>
+  Sha.parse((await std.exec.git(ctx, 'integrated-onto', ['rev-parse', `${commit}^`])).trim());
 
 /** The exact patch a human approves: every fixed doc, from the base to the integrated commit. */
 export const patch = (ctx: WorkflowContext, base: string, commit: string) =>

@@ -1,16 +1,21 @@
 // Pure rules: checking each finding's quote against the material, pooling the lenses' readings,
-// the assumptions rule for inferred findings, ordering the critique, the status verdict, the
+// listing conflicts and unknowns for the writer, the assumptions rule for inferred findings, the
+// revision's caps, ordering the critique, a round's open questions, the status verdict, the
 // critique summary and the output of a refused run.
 import type { MapStepError, Settled } from 'quiet-choir';
 import {
   extractCaps,
+  maxListed,
+  prdCaps,
   type Charter,
   type Critique,
   type Extraction,
   type Finding,
   type Issue,
   type Lens,
+  type OpenQuestion,
   type Prd,
+  type PrdCaps,
   type RequirementsOutput,
   type RoundStatus,
 } from '../contracts.js';
@@ -89,6 +94,34 @@ export function collect(
   return { findings, unknowns: [...unknowns.values()], conflicts: [...conflicts.values()] };
 }
 
+/** Conflicts and unknowns, for the writer or left out of its prompt. */
+export interface Questions {
+  readonly conflicts: string[];
+  readonly unknowns: string[];
+}
+
+/**
+ * The first `maxListed` conflicts and unknowns, conflicts first since each is a decision, go to the
+ * writer; the rest are reported as unlisted rather than dropped in silence.
+ */
+export function listFor(conflicts: readonly string[], unknowns: readonly string[]) {
+  const room = Math.max(0, maxListed - conflicts.length);
+  return {
+    listed: { conflicts: conflicts.slice(0, maxListed), unknowns: unknowns.slice(0, room) },
+    unlisted: { conflicts: conflicts.slice(maxListed), unknowns: unknowns.slice(room) },
+  } satisfies Record<string, Questions>;
+}
+
+/**
+ * A revision returns the whole PRD, the code-added assumptions included, and may turn each issue
+ * into an open question or an assumption: its caps leave room for all of that.
+ */
+export const reviseCaps = (prd: Prd, issues: readonly Issue[]): PrdCaps => ({
+  ...prdCaps,
+  openQuestions: Math.max(prdCaps.openQuestions, prd.openQuestions.length) + issues.length,
+  assumptions: Math.max(prdCaps.assumptions, prd.assumptions.length) + issues.length,
+});
+
 /**
  * The upstream's rule, enforced: every inferred finding a requirement relies on appears in an
  * assumption. Code appends one for each the writer left out and reports their ids.
@@ -127,6 +160,8 @@ export interface Round {
   readonly findings: Finding[];
   readonly unknowns: string[];
   readonly conflicts: string[];
+  /** The conflicts and unknowns the writer was not given. */
+  readonly unlisted: Questions;
   /** How many critics the round asked. */
   readonly critics: number;
   readonly failedCritics: Charter[];
@@ -138,26 +173,60 @@ export interface Round {
   readonly added: string[];
 }
 
+/** A round's open questions: its PRD's, or, when nothing was drafted, its unknowns, as upstream. */
+export const openOf = (round: Round): OpenQuestion[] =>
+  round.prd
+    ? round.prd.openQuestions
+    : round.unknowns.map((question) => ({ question, consequences: null }));
+
+/** An answered question round whose redo drafted no PRD, so the round before it stands. */
+export type FailedRedo = NonNullable<RequirementsOutput['failedRedo']>;
+
+const unlistedCount = (round: Round) =>
+  round.unlisted.conflicts.length + round.unlisted.unknowns.length;
+
 /**
  * Nothing extracted is empty unless a lens failed; a draft whose issues were not revised, or that no
- * critic read, is unrevised; any other failed lens or critic is degraded.
+ * critic read, is unrevised; any other failed lens or critic is degraded; a writer that was not
+ * given every conflict and unknown is limited.
  */
 export function status(round: Round): RoundStatus {
   if (!round.prd) return round.failedLenses.length ? 'degraded' : 'empty';
   if (round.failedCritics.length === round.critics || (round.issues.length && !round.revised))
     return 'unrevised';
   if (round.failedLenses.length || round.failedCritics.length) return 'degraded';
+  if (unlistedCount(round)) return 'limited';
   return 'complete';
+}
+
+/** The run's verdict: the final round's, lowered to degraded when a later redo drafted nothing. */
+export function verdict(round: Round, redo: FailedRedo | null): RoundStatus {
+  const own = status(round);
+  return redo && (own === 'complete' || own === 'limited') ? 'degraded' : own;
 }
 
 const failed = (names: readonly string[], one: string, many: string) =>
   `The ${names.join(', ')} ${names.length > 1 ? many : one} failed.`;
 
+/** How a re-run with answers redoes the PRD, by where this run publishes it. */
+const reRun = {
+  none: 'Re-run with answers, or set questionRounds, to resolve the open questions.',
+  file: 'Re-run with answers and replace set to written.sha256, or set questionRounds, to resolve the open questions.',
+  commit:
+    "Re-run with answers and either a new out or publication 'file' with replace set to written.sha256, or set questionRounds, to resolve the open questions.",
+} as const;
+
 /**
- * The upstream's critique summary, with the failures and the stage that did not run. `written`
- * says whether the run wrote out, so a re-run with answers must replace it.
+ * The upstream's critique summary, with the failures, the stage that did not run, the conflicts and
+ * unknowns the writer was not given, a later redo that drafted nothing, and how to re-run by where
+ * the PRD is published (a managed commit cannot be replaced).
  */
-export function summary(round: Round, open: number, written: boolean): string {
+export function summary(
+  round: Round,
+  open: number,
+  publication: 'file' | 'commit' | null,
+  redo: FailedRedo | null,
+): string {
   const lenses = round.failedLenses.length ? failed(round.failedLenses, 'lens', 'lenses') : null;
   if (!round.prd)
     return lenses
@@ -170,12 +239,22 @@ export function summary(round: Round, open: number, written: boolean): string {
   if (round.failedCritics.length === round.critics) parts.push('The draft was not critiqued.');
   else if (round.issues.length && !round.revised)
     parts.push('The revision failed; the draft stands.');
-  if (open)
+  const unlisted = unlistedCount(round);
+  if (unlisted) {
+    const total = round.conflicts.length + round.unknowns.length;
     parts.push(
-      written
-        ? 'Re-run with answers and replace set to written.sha256, or set questionRounds, to resolve the open questions.'
-        : 'Re-run with answers, or set questionRounds, to resolve the open questions.',
+      `The writer was given ${String(total - unlisted)} of ${String(total)} conflicts and unknowns; the rest are in unlisted.`,
     );
+  }
+  if (redo) {
+    const why = redo.failedLenses.length
+      ? failed(redo.failedLenses, 'lens', 'lenses')
+      : 'Its lenses found nothing.';
+    parts.push(
+      `Round ${String(redo.round)}'s redo with the answers drafted no PRD. ${why} The earlier PRD stands without those answers, which are in failedRedo.`,
+    );
+  }
+  if (open) parts.push(reRun[publication ?? 'none']);
   return parts.join(' ');
 }
 
@@ -186,10 +265,12 @@ export const refused = (reason: string): RequirementsOutput => ({
   rounds: 0,
   answers: [],
   asked: [],
+  failedRedo: null,
   failedLenses: [],
   findings: [],
   unknowns: [],
   conflicts: [],
+  unlisted: { conflicts: [], unknowns: [] },
   failedCritics: [],
   issues: [],
   revised: false,

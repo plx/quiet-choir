@@ -1,6 +1,6 @@
 Find flaky-test suspects in {{ scope }} from one evidence source; other finders work from different
 evidence, so stay inside yours. Report suspects only: the workflow stress-runs every suspect itself,
-so suspicion is cheap and a wrong guess costs one stress run.
+so suspicion is cheap and a wrong guess costs only that suspect's stress runs.
 
 {% if modality == 'history' %}
 The workflow read the messages and changed files of the last {{ history.scanned }} commits for you;
@@ -38,6 +38,10 @@ Test files changed in more than one of the last {{ history.scanned }} commits:
 - {{ file.path }}: {{ file.changes }} commits
 {%- endfor +%}
 
+{% if history.unlistedChurn %}
+{{ history.unlistedChurn }} more test files changed more than once are not listed.
+
+{% endif %}
 {% endif %}
 {% if history.mentions %}
 Use the messages and diffs to name the test each commit deflaked, retried, skipped or quarantined,

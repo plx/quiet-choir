@@ -1,7 +1,7 @@
 // The PRD document, rendered by code from the writer's structured reply in the upstream's section
 // order, with requirements numbered and traced to the findings listed in a traceability appendix;
 // and the bounded details of a question round.
-import type { Finding, Prd } from '../contracts.js';
+import type { Finding, OpenQuestion, Prd } from '../contracts.js';
 
 const traced = (ids: readonly string[]) => (ids.length ? ` (${ids.join(', ')})` : '');
 const bullets = (items: readonly string[]) =>
@@ -73,12 +73,16 @@ export function render(prd: Prd, findings: readonly Finding[], provenance: strin
   return `${lines.join('\n')}\n`;
 }
 
-/** The numbered open questions, cut to fit a question's 16 KiB details; the subject has them all. */
-export function questionDetails(questions: Prd['openQuestions']): string {
+/**
+ * The numbered open questions with their consequences (an unknown has none), cut at a line to fit
+ * a question's 16 KiB details; the subject has them all.
+ */
+export function questionDetails(questions: readonly OpenQuestion[]): string {
   const lines: string[] = [];
   let bytes = 0;
   for (const [index, q] of questions.entries()) {
-    const line = `${String(index + 1)}. ${q.question} Consequences: ${q.consequences}`;
+    const consequences = q.consequences === null ? '' : ` Consequences: ${q.consequences}`;
+    const line = `${String(index + 1)}. ${q.question}${consequences}`;
     if (bytes + Buffer.byteLength(line) + 1 > 15_000) {
       lines.push(
         `...and ${String(questions.length - index)} more; the question's subject lists them all.`,

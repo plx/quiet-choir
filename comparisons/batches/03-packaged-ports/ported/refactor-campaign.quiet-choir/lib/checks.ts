@@ -5,11 +5,16 @@
 import type { WorkflowContext, WorktreeHandle } from 'quiet-choir';
 import * as std from 'quiet-choir/std';
 import { Sha, type Check } from '../contracts.js';
+import { bounded } from './policy.js';
 
-/** Fail unless the repository has no tracked or untracked change: publication needs a clean tree. */
-export async function assertClean(ctx: WorkflowContext, id: string) {
+/**
+ * The checkout's uncommitted and untracked changes as one line, or null when it is clean. A dirty
+ * checkout is a result, not a throw: the recorded status would replay on resume after a cleanup.
+ */
+export async function dirtyFiles(ctx: WorkflowContext, id: string): Promise<string | null> {
   const status = await std.exec.git(ctx, id, ['status', '--porcelain=v1', '--untracked-files=all']);
-  if (status !== '') throw new Error(`Expected a clean repository (${id}): ${status}`);
+  const entries = status.split('\n').filter(Boolean);
+  return entries.length ? `uncommitted changes: ${entries.join('; ')}` : null;
 }
 
 /** The commit every net writer's checkout starts from. */
@@ -17,15 +22,46 @@ export const baseCommit = async (ctx: WorkflowContext) =>
   Sha.parse((await std.exec.git(ctx, 'base', ['rev-parse', 'HEAD'])).trim());
 
 /**
- * Whether the checkout's HEAD is still `base`. `ctx.merge` with `target: 'checkout'` rebases onto
- * whatever HEAD is when it prepares, so a checkout that moved would receive an unverified tree.
+ * Whether the checkout's HEAD is still `base`. `ctx.merge` integrates onto whatever HEAD is when
+ * it prepares, so a checkout that moved would receive an unverified tree.
  */
 export const stillAt = async (ctx: WorkflowContext, id: string, base: string) =>
   (await std.exec.git(ctx, id, ['rev-parse', 'HEAD'])).trim() === base;
 
-/** The text of `path` at `commit`, read as command `id`. */
-export const show = (ctx: WorkflowContext, id: string, commit: string, path: string) =>
-  std.exec.git(ctx, id, ['show', `${commit}:${path}`], { maxOutputBytes: 8 * 1024 * 1024 });
+/** The merges a run makes, each of which can refuse. */
+type MergeStep = 'integrate-nets' | 'integrate' | 'publish';
+
+/**
+ * The status of a refused merge (settled): checkout-moved when HEAD has left `base` (checked as
+ * `moved/<step>`), since a commit made during the run is what a run-owned integration conflicts
+ * with; merge-refused otherwise, such as a dirty checkout at publish. Either way, with its reason.
+ */
+export async function refused(
+  ctx: WorkflowContext,
+  step: MergeStep,
+  base: string,
+  error: { readonly message: string },
+) {
+  const moved = !(await stillAt(ctx, ctx.id('moved', step), base));
+  const status = moved ? ('checkout-moved' as const) : ('merge-refused' as const);
+  return { status, refusal: { step, message: error.message } };
+}
+
+/**
+ * At most `max` bytes of `git <args>` stdout, as command `id`, with the shown byte count when cut.
+ * A plain command keeps the first half of its capture on overflow, so capturing twice `max` (and a
+ * UTF-8 sequence's slack) keeps the whole excerpt. An overflow is shown in part, not thrown as
+ * std.exec.git does: that completed, truncated result would replay on every resume.
+ */
+export async function excerpt(
+  ctx: WorkflowContext,
+  id: string,
+  args: readonly [string, ...string[]],
+  max: number,
+) {
+  const result = await ctx.exec(id, ['git', ...args], { maxOutputBytes: 2 * max + 8 });
+  return bounded(result.stdout, max);
+}
 
 /** The characters of each stream's tail a repair round sees. */
 const TAIL = 4096;

@@ -3,7 +3,7 @@ and it failed {{ stress.failures }} of them: this is a measurement, not a rumor.
 
 Test: {{ suspect.test }}
 File: {{ suspect.file }}
-Command: {{ stress.argv | join(' ') }}
+Command, as an argv run without a shell: {{ command }}
 Why it was suspected:
 {%- for item in suspect.evidence %}
 
@@ -54,7 +54,8 @@ Mechanisms:
 - unknown: none of the above fits the evidence; say what evidence is missing.
 
 Propose a real fix that removes the mechanism; retry-wrapping is acceptable only when the
-dependency is genuinely external. List every file the fix changes, the test file included when it
-changes: a human approves exactly those files.
+dependency is genuinely external. List every file the fix changes, relative to your working
+directory like the test file above, and list the test file only when the fix changes it: a human
+approves exactly those files, and the fixer may change no other.
 
 {% include "_fragments/ReadOnly.md" %}

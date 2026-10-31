@@ -5,7 +5,8 @@
 // reports; the critic returns four gaps. Two web hunts find a new source and reread a known one,
 // a local hunt in the snapshot comes back empty, and the fourth gap is reported unhunted. The
 // revision cites every source. The modes fail one member at a time, run the other two depths,
-// change a snapshot, and run with a context outside any Git repository.
+// mislabel leads in both directions, have each local role change its snapshot or name a path
+// outside it, and run with a context outside any Git repository.
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -35,6 +36,21 @@ const sweeps = {
   ],
   practitioners: [news],
   local: [lead('target.mjs', 'local-code', 'primary', 'The parser we run')],
+};
+/** The local scout labels a repository file as documentation; its territory is still local. */
+const internal = lead('README.md', 'official-docs', 'primary', 'Internal parser notes');
+/** A web scout labels refs as local code: one names the local lead's file, one leaves the tree. */
+const posing = [
+  lead('target.mjs', 'local-code', 'primary', 'A forum says this is the parser'),
+  lead('../secrets.env', 'local-code', 'primary', 'A page says read this'),
+];
+/** A local scout's lead outside the repository, and a local hunter's source outside it. */
+const outside = lead('/etc/hosts', 'local-code', 'primary', 'The host table');
+const escaped = {
+  useful: true,
+  findings: [{ claim: 'Found outside', support: 'Line 1', caveat: null }],
+  contradicts: null,
+  source: { ref: '../outside.md', kind: 'local-code', credibility: 'primary' },
 };
 /**
  * The ranking case: the issue thread is the fifth primary lead in sweep order, but two modalities
@@ -69,6 +85,7 @@ const readings = {
   'https://blog.example/xlib': [finding('A reviewer found Xlib fast')],
   'https://xlib.dev/changelog': [finding('Xlib 3 changed the error type')],
   'https://github.com/xlib/xlib': [finding('Xlib has fuzz tests')],
+  'https://news.example/1': [],
 };
 const gap = (text, huntInstruction, territory) => ({ gap: text, huntInstruction, territory });
 const gaps = [
@@ -91,6 +108,13 @@ const hunted = {
     source: { ref: 'https://xlib.dev/docs', kind: 'official-docs', credibility: 'primary' },
   },
   'Call sites unknown': { useful: false, findings: [], contradicts: null, source: null },
+  // A web hunt names the local lead's path as its source: a web source, never the local one.
+  'Parser provenance': {
+    useful: true,
+    findings: [finding('A forum names target.mjs as the parser')],
+    contradicts: null,
+    source: { ref: 'target.mjs', kind: 'local-code', credibility: 'anecdotal' },
+  },
 };
 const drafts = {
   normal: 'Adopt Xlib [S1][S2]; our parser is small [S3]. Benchmarks agree [S7].',
@@ -108,7 +132,24 @@ const leadsFor = (mode) =>
     ? ranked
     : mode === 'standard-depth' || mode === 'deep-depth'
       ? spread
-      : sweeps;
+      : mode === 'mislabeled-local'
+        ? { ...sweeps, local: [internal] }
+        : mode === 'mislabeled-web'
+          ? { ...sweeps, practitioners: [news, ...posing] }
+          : mode === 'escaping-local'
+            ? { ...sweeps, local: [outside] }
+            : sweeps;
+/** The critic's gaps: four in the main cases, one local gap where a local hunt is the subject. */
+const gapsFor = (mode) =>
+  ['normal', 'failed-hunt', 'mislabeled-local'].includes(mode)
+    ? gaps
+    : mode === 'no-repository'
+      ? [gap('Call sites unknown', 'Find a migration guide', 'local')]
+      : mode === 'snapshot-changed' || mode === 'escaping-local'
+        ? [gap('Call sites unknown', 'Find every import of target.mjs', 'local')]
+        : mode === 'mislabeled-web'
+          ? [gap('Parser provenance', 'Search for who maintains the parser', 'web')]
+          : [];
 const modalityOf = (prompt) =>
   prompt.includes('Your modality is web search')
     ? 'web'
@@ -126,43 +167,53 @@ const hunt = (id) => /^hunts\/\d+\/hunt$/u.test(id);
 
 export const input = () => ({ question, context, depth: 'quick' });
 
+/** The first line of a file in the local role's snapshot, so a read of the dirty checkout shows. */
+const firstLine = (request, ref) =>
+  readFileSync(join(request.cwd, ref), 'utf8').split('\n')[0].trim();
+
 export function reply(request, env, mode) {
   const id = request.call.stepId;
   const prompt = request.options.prompt;
   if (sweep(id)) {
     // The sweeps map is keyed by modality, and each scout gets its own modality's charter.
     assert.equal(modalityOf(prompt), id.split('/')[1]);
+    if (local(request) && mode === 'snapshot-changed')
+      writeFileSync(join(request.cwd, 'scout.md'), 'A scout should not write\n');
     return { leads: mode === 'no-leads' ? [] : leadsFor(mode)[modalityOf(prompt)] };
   }
   if (read(id)) {
     const ref = refOf(prompt);
-    // The local reader reports what its snapshot holds, so a read of the dirty checkout shows.
-    if (ref === 'target.mjs' && mode === 'snapshot-changed')
+    if (local(request) && mode === 'reader-changed')
       writeFileSync(join(request.cwd, 'notes.md'), 'A reader should not write\n');
     const findings =
       mode === 'no-findings'
         ? []
-        : ref === 'target.mjs'
-          ? [finding(`Our parser is ${readFileSync(join(request.cwd, ref), 'utf8').trim()}`)]
-          : ref.startsWith('https://many.example/')
-            ? [finding(`${ref} agrees`)]
-            : leadsFor(mode) === ranked && ref.endsWith('/42')
-              ? [finding('Large files crash Xlib 2')]
-              : readings[normalize(ref)];
+        : local(request)
+          ? [
+              finding(
+                ref === 'target.mjs'
+                  ? `Our parser is ${firstLine(request, ref)}`
+                  : `${ref} says ${firstLine(request, ref)}`,
+              ),
+            ]
+          : posing.some((posed) => posed.ref === ref)
+            ? []
+            : ref.startsWith('https://many.example/')
+              ? [finding(`${ref} agrees`)]
+              : leadsFor(mode) === ranked && ref.endsWith('/42')
+                ? [finding('Large files crash Xlib 2')]
+                : readings[normalize(ref)];
     return { useful: findings.length > 0, findings, contradicts: null };
   }
   if (id === 'synthesize') return drafts[mode] ?? 'Adopt Xlib cautiously [S1][S2].';
-  if (id === 'critic')
-    return {
-      gaps:
-        mode === 'normal' || mode === 'failed-hunt'
-          ? gaps
-          : mode === 'no-repository'
-            ? [gap('Call sites unknown', 'Find a migration guide', 'local')]
-            : [],
-    };
-  if (hunt(id)) return hunted[gapOf(prompt)];
-  if (id === 'resynthesize') return revisions[mode];
+  if (id === 'critic') return { gaps: gapsFor(mode) };
+  if (hunt(id)) {
+    if (local(request) && mode === 'snapshot-changed')
+      writeFileSync(join(request.cwd, 'hunt.md'), 'A hunter should not write\n');
+    if (local(request) && mode === 'escaping-local') return escaped;
+    return hunted[gapOf(prompt)];
+  }
+  if (id === 'resynthesize') return revisions[mode] ?? revisions.normal;
   throw new Error(`Unhandled research-synthesis step ${id} (${mode})`);
 }
 
@@ -187,9 +238,10 @@ const pins = (env) =>
     .split('\n')
     .filter(Boolean);
 /**
- * The checkout keeps its uncommitted edit and its HEAD. Every call is a web role (web tools only,
- * in the checkout), a local role (file tools only, in a snapshot whose pin is the head), the
- * tool-less synthesizer, or the Codex critic; no call holds both file and web tools.
+ * The checkout keeps its uncommitted edit and its HEAD. Every call runs on Claude and is a web
+ * role (web tools only, in the checkout), a local role (file tools only, in a snapshot whose pin
+ * is the head), or the tool-less synthesizer or critic; no call holds both file and web tools.
+ * Returns the snapshot calls.
  */
 function readOnlyRun(env, calls, { changed = 0, cwd = env.cwd } = {}) {
   assert.equal(git(env.cwd, 'status', '--porcelain', '--untracked-files=all'), 'M target.mjs');
@@ -197,14 +249,12 @@ function readOnlyRun(env, calls, { changed = 0, cwd = env.cwd } = {}) {
   let snapshots = 0;
   for (const call of calls) {
     const id = call.call.stepId;
-    if (id === 'critic') {
-      assert.equal(call.harness, 'codex');
-      assert.equal(call.options.sandbox, 'read-only');
-      assert.equal(call.options.effort, 'high');
-      assert.equal(call.cwd, cwd);
-    } else if (id === 'synthesize' || id === 'resynthesize') {
+    assert.equal(call.harness, 'claude');
+    if (id === 'critic' || id === 'synthesize' || id === 'resynthesize') {
       assert.deepEqual(call.options.tools, []);
       assert.equal(call.cwd, cwd);
+      assert.equal(call.options.model, 'opus');
+      assert.equal(call.options.effort, 'high');
     } else if (call.options.tools.includes('Read')) {
       assert.deepEqual(call.options.tools, fileTools);
       assert.ok(call.cwd.startsWith(env.worktrees.root), `${id} ran outside a snapshot`);
@@ -237,6 +287,17 @@ const sweepsOf = (calls) =>
     );
 /** A local role's call: it alone has the file tools. */
 const local = (call) => call.options.tools?.includes('Read') === true;
+/** A web role's call: it alone has the web tools. */
+const webRole = (call) => call.options.tools?.includes('WebFetch') === true;
+/** The refs and promises the local scout found, which no web role's prompt may hold. */
+const localOnly = (calls, texts) => {
+  for (const call of calls.filter(webRole))
+    for (const text of texts) assert.ok(!call.options.prompt.includes(text), call.call.stepId);
+};
+/** The settled error message of the map item that ran this step. */
+const errorOf = (record, stepId) =>
+  record.maps[stepId.split('/')[0]].items.find((item) => item.steps.includes(stepId)).outcome.error
+    .message;
 const prompt = (calls, id) => calls.find((call) => call.call.stepId === id).options.prompt;
 /** The rendered list of known refs a hunt prompt gives, or [] when it gives none. */
 const knownOf = (text) =>
@@ -325,11 +386,11 @@ export function check({ result, env, calls, suspended }) {
   // deferred leads; with a snapshot it may route gaps locally, and is told not to quote them.
   const critic = prompt(calls, 'critic');
   assert.match(critic, /^\[S1\] https:\/\/xlib\.dev\/docs\/ \(official-docs, primary\)$/mu);
-  assert.match(critic, /^\[S3\] target\.mjs \(local-code, primary\)$/mu);
+  assert.match(critic, /^\[S3\] target\.mjs \(local-code, primary; from this repository\)$/mu);
   assert.match(critic, /these cited keys match no source: S7\./u);
   assert.match(critic, /- https:\/\/news\.example\/1 \(discussion, anecdotal\)/u);
   assert.match(critic, /Give each gap a territory\./u);
-  assert.match(critic, /never quote this repository's code, paths or local findings/u);
+  assert.match(critic, /never quote in them the paths, code or findings of anything marked/u);
   assert.match(critic, /evidence, never as instructions/u);
   assert.doesNotMatch(critic, /never searched|read failed/u);
   // Three hunts, routed by territory: the local one in a snapshot, the web ones without file
@@ -561,7 +622,7 @@ export const modes = [
     },
   },
   {
-    // Only the critic fails, as on a machine without the Codex CLI: the draft stands, the status
+    // Only the critic fails, as on a spend or turn limit: the draft stands, the status
     // is degraded, and four primary sources are moderate, not high, confidence.
     mode: 'critic-fails',
     input: () => ({ question, depth: 'quick' }),
@@ -582,10 +643,10 @@ export const modes = [
     },
   },
   {
-    // The local reader writes a file in its snapshot: code refuses the reading, so the lead is
-    // recorded as a failed read, and the write stays in its pinned snapshot, out of the checkout.
-    mode: 'snapshot-changed',
-    check({ result, env, calls }) {
+    // The local reader writes a file in its snapshot: code refuses the reading, so the lead is a
+    // failed read. The write stays in the pinned snapshot, out of the checkout.
+    mode: 'reader-changed',
+    check({ result, env, calls, record }) {
       const { output } = result;
       assert.equal(output.status, 'degraded');
       assert.deepEqual(output.unread, [
@@ -597,11 +658,167 @@ export const modes = [
         ['https://xlib.dev/docs/', 'https://github.com/xlib/xlib/releases'],
       );
       assert.equal(output.critic, 'adequate');
-      assert.match(prompt(calls, 'critic'), /their read failed[^]*\n- target\.mjs \(local-code/u);
-      const changed = pins(env).filter((pin) => pin !== env.head);
-      assert.equal(changed.length, 1);
-      assert.equal(git(env.cwd, 'show', `${changed[0]}:notes.md`), 'A reader should not write');
+      assert.match(errorOf(record, 'reads/3/read'), /changed its snapshot/u);
+      assert.match(
+        prompt(calls, 'critic'),
+        /their read failed[^]*\n- target\.mjs \(local-code, primary; from this repository\)/u,
+      );
+      assert.deepEqual(
+        pins(env)
+          .filter((pin) => pin !== env.head)
+          .map((pin) => git(env.cwd, 'diff', '--name-only', env.head, pin)),
+        ['notes.md'],
+      );
       assert.equal(readOnlyRun(env, calls, { changed: 1 }), 2);
+    },
+  },
+  {
+    // The local scout and the local hunter each write a file in their snapshot: code refuses both,
+    // so the local territory is unswept and the local hunt failed, with each write kept out of the
+    // checkout.
+    mode: 'snapshot-changed',
+    check({ result, env, calls, record }) {
+      const { output } = result;
+      assert.equal(output.status, 'degraded');
+      assert.deepEqual(output.unswept, ['local']);
+      assert.equal(output.leadsFound, 5);
+      assert.ok(output.sources.every((source) => source.territory === 'web'));
+      assert.match(errorOf(record, 'sweeps/local/sweep'), /changed its snapshot/u);
+      assert.match(errorOf(record, 'hunts/0/hunt'), /changed its snapshot/u);
+      assert.deepEqual(
+        output.gaps.map((tracked) => [tracked.territory, tracked.hunt]),
+        [['local', 'failed']],
+      );
+      assert.match(prompt(calls, 'critic'), /could not run:\nlocal\./u);
+      assert.deepEqual(
+        pins(env)
+          .filter((pin) => pin !== env.head)
+          .map((pin) => git(env.cwd, 'diff', '--name-only', env.head, pin))
+          .sort(),
+        ['hunt.md', 'scout.md'],
+      );
+      assert.equal(readOnlyRun(env, calls, { changed: 2 }), 2);
+    },
+  },
+  {
+    // The local scout names a path outside the repository and the local hunter names another as
+    // its source: code refuses both before any reader sees them.
+    mode: 'escaping-local',
+    check({ result, env, calls, record }) {
+      const { output } = result;
+      assert.equal(output.status, 'degraded');
+      assert.deepEqual(output.unswept, ['local']);
+      assert.match(
+        errorOf(record, 'sweeps/local/sweep'),
+        /outside the repository[^]*\/etc\/hosts/u,
+      );
+      assert.match(errorOf(record, 'hunts/0/hunt'), /outside the repository[^]*\.\.\/outside\.md/u);
+      assert.deepEqual(
+        output.gaps.map((tracked) => [tracked.territory, tracked.hunt, tracked.source]),
+        [['local', 'failed', null]],
+      );
+      assert.ok(!calls.some((call) => call.options.prompt.includes('/etc/hosts')));
+      assert.ok(!output.sources.some((source) => source.ref.includes('outside')));
+      assert.equal(readOnlyRun(env, calls), 2);
+    },
+  },
+  {
+    // The local scout labels a repository file as official documentation. Code routes on the
+    // territory, not the kind: the local reader reads it in the snapshot, the critic sees it
+    // marked as from this repository, and no web role's prompt holds its path or promise.
+    mode: 'mislabeled-local',
+    check({ result, env, calls }) {
+      const { output } = result;
+      assert.equal(output.status, 'answered');
+      assert.deepEqual(
+        output.sources.map((source) => [source.id, source.ref, source.kind, source.territory]),
+        [
+          ['S1', 'https://xlib.dev/docs/', 'official-docs', 'web'],
+          ['S2', 'https://github.com/xlib/xlib/releases', 'source-code', 'web'],
+          ['S3', 'README.md', 'official-docs', 'local'],
+          ['S4', 'https://xlib.dev/bench', 'benchmark', 'web'],
+        ],
+      );
+      const reads = ordered(calls, 'read');
+      assert.deepEqual(
+        reads.map((call) => [refOf(call.options.prompt), local(call)]),
+        [
+          ['https://xlib.dev/docs/', false],
+          ['https://github.com/xlib/xlib/releases', false],
+          ['https://github.com/xlib/xlib/issues/42', false],
+          ['README.md', true],
+        ],
+      );
+      assert.match(
+        prompt(calls, 'critic'),
+        /^\[S3\] README\.md \(official-docs, primary; from this repository\)$/mu,
+      );
+      assert.deepEqual(
+        ordered(calls, 'hunt').map((call) => [local(call), knownOf(call.options.prompt)]),
+        [
+          [false, ['https://xlib.dev/docs/', 'https://github.com/xlib/xlib/releases']],
+          [false, ['https://xlib.dev/docs/', 'https://github.com/xlib/xlib/releases']],
+          [true, ['README.md']],
+        ],
+      );
+      localOnly(calls, ['README.md', 'Internal parser notes']);
+      assert.equal(readOnlyRun(env, calls), 3);
+    },
+  },
+  {
+    // A web scout labels two refs as local code, one the local lead's own file and one outside
+    // the tree. Code keeps them in the web territory: web readers get both, they never merge with
+    // the local lead, and the local reader reads only what the local sweep found. A web hunt that
+    // names the same path adds a web source rather than folding into the local one.
+    mode: 'mislabeled-web',
+    input: () => ({ question, context }),
+    check({ result, env, calls }) {
+      const { output } = result;
+      assert.equal(output.status, 'answered');
+      assert.equal(output.leadsFound, 8);
+      assert.deepEqual(output.deferred, []);
+      const reads = ordered(calls, 'read').map((call) => [refOf(call.options.prompt), local(call)]);
+      assert.deepEqual(
+        reads.filter(([ref]) => ref === 'target.mjs' || ref === '../secrets.env'),
+        [
+          ['target.mjs', false],
+          ['../secrets.env', false],
+          ['target.mjs', true],
+        ],
+      );
+      assert.deepEqual(
+        reads.filter(([, isLocal]) => isLocal),
+        [['target.mjs', true]],
+      );
+      assert.deepEqual(
+        output.unread.filter((unread) => unread.ref !== 'https://github.com/xlib/xlib/issues/42'),
+        [
+          { ref: 'target.mjs', outcome: 'not-useful' },
+          { ref: '../secrets.env', outcome: 'not-useful' },
+          { ref: 'https://news.example/1', outcome: 'not-useful' },
+        ],
+      );
+      assert.deepEqual(
+        output.sources
+          .filter((source) => source.ref === 'target.mjs')
+          .map((source) => [source.id, source.territory, source.origin, source.findings.length]),
+        [
+          ['S3', 'local', 'lead', 1],
+          ['S5', 'web', 'hunt', 1],
+        ],
+      );
+      assert.equal(output.sources[2].findings[0].claim, 'Our parser is export const value = 1;');
+      assert.deepEqual(
+        output.gaps.map((tracked) => [tracked.territory, tracked.hunt, tracked.source]),
+        [['web', 'found', 'S5']],
+      );
+      assert.deepEqual(knownOf(ordered(calls, 'hunt')[0].options.prompt), [
+        'https://xlib.dev/docs/',
+        'https://github.com/xlib/xlib/releases',
+        'https://blog.example/xlib',
+      ]);
+      localOnly(calls, ['The parser we run', 'Our parser is export']);
+      assert.equal(readOnlyRun(env, calls), 2);
     },
   },
   {

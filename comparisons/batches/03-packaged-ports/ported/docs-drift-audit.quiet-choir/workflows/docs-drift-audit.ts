@@ -2,8 +2,8 @@
 // librarian ranks them; each chosen doc then flows through its own pipeline with no barrier (read,
 // extract quoted claims, anchor them in code, check them in a snapshot of the base, and with fix,
 // patch in an isolated checkout). A settled map keeps every doc's outcome; code integrates the
-// accepted patches, runs the verification commands on them, and publishes only the exact patch a
-// human approved.
+// accepted patches onto the base (refusing a checkout whose HEAD moved), runs the verification
+// commands on them, and publishes only the exact patch a human approved.
 import { defineWorkflow } from 'quiet-choir';
 import {
   CheckReport,
@@ -22,6 +22,7 @@ import {
   patch,
   pinBase,
   readDoc,
+  startOf,
   stillAt,
   toRoot,
 } from '../lib/git.js';
@@ -64,13 +65,14 @@ export default defineWorkflow({
     // The checker and the fixer each get a fresh checkout of the base, entered at its root.
     const pinned = { worktree: { base: { commit: base } }, ...(root ? { cwd: root } : {}) };
     const { docs: found, unsupported } = await listDocs(ctx, base, input.paths);
-    const { listed, skipped: capped } = inventory(found, unsupported, input);
+    const listed = found.length + unsupported.length;
+    const { inventoried, skipped: capped } = inventory(found, unsupported, input);
     const unfixed = { digest: null, commit: null, verification: [], omitted: [], failure: null };
     const notFixed = { ...unfixed, status: 'not-requested' as const };
     const nothing = (skipped: DriftOutput['skipped']): DriftOutput => ({
       status: emptyStatus(skipped),
       base,
-      listed: found.length,
+      listed,
       docs: [],
       skipped,
       failed: [],
@@ -79,14 +81,14 @@ export default defineWorkflow({
       totals: totals([], false),
       fix: notFixed,
     });
-    const [first, ...rest] = listed.map((doc) => doc.path);
+    const [first, ...rest] = inventoried.map((doc) => doc.path);
     if (first === undefined) return nothing(capped);
     const paths = [first, ...rest] as const;
     const { docs: classified } = await ctx.roster.Librarian.value('classify', {
       schema: Classification(paths),
       prompt: prompts.Classify({ base, docs: await outline(ctx, base, [...paths]) }),
     });
-    const ranked = rank(listed, classified, input.maxDocs);
+    const ranked = rank(inventoried, classified, input.maxDocs);
     const skipped = [...capped, ...ranked.skipped];
     if (skipped.length) ctx.log(`Auditing ${ranked.chosen.length} docs; ${skipped.length} skipped`);
     if (!ranked.chosen.length) return nothing(skipped);
@@ -97,7 +99,7 @@ export default defineWorkflow({
     const settled = await ctx.map(
       'docs',
       ranked.chosen,
-      { concurrency: 3, onError: 'return', version: 'doc/2' },
+      { concurrency: 3, onError: 'return', version: 'doc/3' },
       async (doc): Promise<Pipeline> => {
         const { path, audience } = doc;
         const text = await ctx.phase('Extract', () => readDoc(ctx, base, path));
@@ -146,7 +148,7 @@ export default defineWorkflow({
     const { docs, failed, changes } = collect(ranked.chosen, settled);
     const report = {
       base,
-      listed: found.length,
+      listed,
       docs,
       skipped,
       failed,
@@ -171,9 +173,17 @@ export default defineWorkflow({
       return finish({ ...unfixed, status: 'no-drift' });
     const omitted = omittedOf(docs);
     if (!changes.length) return finish({ ...unfixed, omitted, status: unfixedStatus(omitted) });
-    // Each fixer owns its one doc, so the changes are disjoint and integration cannot conflict.
     ctx.phase('Fix');
-    const merged = await ctx.merge('integrate', changes, { onConflict: 'fail' });
+    // ctx.merge integrates onto the checkout's live HEAD, not onto the changes' base, so a HEAD
+    // that moved during the run is refused before integrating; the squash commit's parent then
+    // confirms the start. Each fixer owns its one doc, so on the base the changes cannot conflict.
+    const moved = { ...unfixed, omitted, status: 'moved' as const };
+    if (!(await stillAt(ctx, 'head-integrate', base))) return finish(moved);
+    const merged = await ctx.merge('integrate', changes, {
+      strategy: 'squash',
+      onConflict: 'fail',
+    });
+    if ((await startOf(ctx, merged.commit)) !== base) return finish(moved);
     const tree = input.verifyCommands.length
       ? await ctx.worktree('verification-tree', { base: { commit: merged.commit } })
       : null;
@@ -202,7 +212,7 @@ export default defineWorkflow({
     const asked = { ...proposed, digest: approved };
     if (!approval.approved) return finish({ ...asked, status: 'declined' });
     // Publish only onto the base, so the published tree is the one approved (and verified).
-    if (!(await stillAt(ctx, base))) return finish({ ...asked, status: 'moved' });
+    if (!(await stillAt(ctx, 'head-publish', base))) return finish({ ...asked, status: 'moved' });
     const published = await ctx.merge('publish', changes, {
       target: 'checkout',
       onConflict: 'fail',

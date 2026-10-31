@@ -1,8 +1,11 @@
-// requirements-to-prd: control flow only. Code refuses an existing out it may not replace before
-// any agent runs, then reads the material; four lenses extract findings as a settled map and code
-// checks each quote against the material. One writer drafts the PRD's sections, three settled
-// critics attack it, and the writer revises it once. Each question round asks the open questions
-// durably and redoes the PRD with the answers; code renders the document and writes it.
+// requirements-to-prd: control flow only. Code refuses an existing out it may not replace (or a
+// dirty checkout a commit cannot merge into) before any agent runs, then reads the material; four
+// lenses extract findings as a settled map and code checks each quote against the material and
+// answers. One writer drafts the PRD's sections from the findings and the first 40 conflicts and
+// unknowns, three settled critics attack it, and the writer revises it once. Each question round
+// asks the open questions (an empty extraction's unknowns) durably and redoes the PRD with the
+// answers, keeping the earlier PRD when the redo drafts none; code renders the document and writes
+// it.
 import { defineWorkflow } from 'quiet-choir';
 import {
   Answers,
@@ -15,6 +18,7 @@ import {
   RequirementsOutput,
   extractCaps,
   maxIssues,
+  prdCaps,
 } from '../contracts.js';
 import { readMaterial } from '../lib/material.js';
 import { checkOut, publish } from '../lib/out.js';
@@ -22,9 +26,14 @@ import {
   collect,
   complete,
   issuesOf,
+  listFor,
+  openOf,
   refused,
+  reviseCaps,
   status,
   summary,
+  verdict,
+  type FailedRedo,
   type Round,
 } from '../lib/policy.js';
 import { questionDetails, render } from '../lib/render.js';
@@ -50,8 +59,11 @@ export default defineWorkflow({
     const charters = Charter.options;
     // One drafting round: the step IDs are relative, so a later round runs under its own scope.
     const draftRound = async (answers: string[]): Promise<Round> => {
+      const readable = [...documents.map((document) => document.text), ...answers].some((text) =>
+        text.trim(),
+      );
       // `version` names the prompt and schema, which a settled map's fingerprint does not show.
-      const readings = documents.some((document) => document.text.trim())
+      const readings = readable
         ? await ctx.map(
             'extract',
             lenses,
@@ -72,6 +84,7 @@ export default defineWorkflow({
       const { findings } = pooled;
       const report: Round = {
         ...pooled,
+        unlisted: { conflicts: [], unknowns: [] },
         failedLenses: lenses.filter((_, index) => readings[index]?.ok === false),
         critics: charters.length,
         failedCritics: [],
@@ -82,11 +95,18 @@ export default defineWorkflow({
       };
       const [first, ...rest] = findings;
       if (!first) return report;
-      const schema = PrdReply([first.id, ...rest.map((finding) => finding.id)]);
+      const ids = [first.id, ...rest.map((finding) => finding.id)] as const;
+      const { listed, unlisted } = listFor(pooled.conflicts, pooled.unknowns);
       const draft = complete(
         await ctx.roster.Writer.value('draft', {
-          schema,
-          prompt: prompts.Draft({ product, ...pooled }),
+          schema: PrdReply(ids),
+          prompt: prompts.Draft({
+            product,
+            findings,
+            ...listed,
+            unlisted: unlisted.conflicts.length + unlisted.unknowns.length,
+            caps: prdCaps,
+          }),
           retry: { maxAttempts: 2, on: ['schema'] },
         }),
         findings,
@@ -105,12 +125,20 @@ export default defineWorkflow({
       );
       const failedCritics = charters.filter((_, index) => critiques[index]?.ok === false);
       const issues = issuesOf(charters, critiques);
-      const drafted = { ...report, failedCritics, issues, prd: draft.prd, added: draft.added };
+      const drafted = {
+        ...report,
+        unlisted,
+        failedCritics,
+        issues,
+        prd: draft.prd,
+        added: draft.added,
+      };
       if (!issues.length) return drafted;
       // A failed revision keeps the draft, as upstream; the status says it was not revised.
+      const caps = reviseCaps(draft.prd, issues);
       const revision = await ctx.roster.Writer.value('revise', {
-        schema,
-        prompt: prompts.Revise({ prd: text, issues }),
+        schema: PrdReply(ids, caps),
+        prompt: prompts.Revise({ prd: text, issues, caps }),
         retry: { maxAttempts: 2, on: ['schema'] },
         onError: 'return',
       });
@@ -122,13 +150,14 @@ export default defineWorkflow({
     const answers = input.answers === null ? [] : [input.answers];
     let round = await draftRound([...answers]);
     const asked: RequirementsOutput['asked'] = [];
+    let failedRedo: FailedRedo | null = null;
     for (let n = 1; n <= input.questionRounds; n++) {
-      const open = round.prd?.openQuestions ?? [];
+      const open = openOf(round);
       if (!open.length) break;
       const reply = await ctx.ask(ctx.id('questions', n), {
         title: 'Questions',
         prompt:
-          'Answer the PRD open questions in one text to redo the PRD with them, or answer empty text to keep them open.',
+          'Answer the open questions in one text to redo the PRD with them, or answer empty text to keep them open.',
         schema: Answers,
         details: questionDetails(open),
         subject: { round: n, questions: open },
@@ -146,33 +175,47 @@ export default defineWorkflow({
         failedCritics,
       });
       if (!answered) break;
+      const redo = await ctx.scope(ctx.id('round', n), () =>
+        draftRound([...answers, reply.answers]),
+      );
+      // A redo that drafts nothing must not discard the PRD the questions came from.
+      if (round.prd && !redo.prd) {
+        const { failedLenses } = redo;
+        failedRedo = { round: n, status: status(redo), failedLenses, answers: reply.answers };
+        break;
+      }
       answers.push(reply.answers);
-      round = await ctx.scope(ctx.id('round', n), () => draftRound([...answers]));
+      round = redo;
     }
 
-    const verdict = status(round);
-    const openQuestions = round.prd
-      ? round.prd.openQuestions
-      : round.unknowns.map((question) => ({ question, consequences: null }));
-    const critiqueSummary = summary(round, openQuestions.length, target !== null);
+    const final = verdict(round, failedRedo);
+    const openQuestions = openOf(round);
+    const critiqueSummary = summary(
+      round,
+      openQuestions.length,
+      target === null ? null : input.publication,
+      failedRedo,
+    );
     const sources = documents.map((document) => document.source.path ?? 'inline material');
     const prd =
       round.prd &&
       render(
         round.prd,
         round.findings,
-        `Drafted from ${sources.join(', ')} by requirements-to-prd; status: ${verdict}. ${critiqueSummary}`,
+        `Drafted from ${sources.join(', ')} by requirements-to-prd; status: ${final}. ${critiqueSummary}`,
       );
     const output = {
-      status: verdict,
+      status: final,
       material: documents.map((document) => document.source),
       rounds: 1 + asked.filter((entry) => entry.answered).length,
       answers,
       asked,
+      failedRedo,
       failedLenses: round.failedLenses,
       findings: round.findings,
       unknowns: round.unknowns,
       conflicts: round.conflicts,
+      unlisted: round.unlisted,
       failedCritics: round.failedCritics,
       issues: round.issues,
       revised: round.revised,

@@ -20,7 +20,8 @@ another source corroborates it.
 Your modality is this repository, checked out for you at commit {{ commit }}.
 Search it for current usage, constraints and integration points that would make general advice
 inapplicable here: this modality grounds the answer in our reality. Give repository-relative file
-paths as refs, with the kind local-code.
+paths as refs, with the kind local-code: a URL, an absolute path, or a path with a . or .. segment
+or inside .git fails the whole sweep.
 {% endif %}
 
 Return leads only: refs a deep reader can follow, each with what it promises for this question, its

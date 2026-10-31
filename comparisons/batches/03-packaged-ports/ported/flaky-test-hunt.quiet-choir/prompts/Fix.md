@@ -1,6 +1,8 @@
 Apply the flaky-test fixes below, which a human approved after the workflow measured each flake and
-a diagnostician named its mechanism. Fix the mechanism itself: do not add retries, longer timeouts
-or skips unless the plan says the dependency is genuinely external.
+a diagnostician named its mechanism. Each fix carries its measured failures and runs, and the
+diagnostician's mechanism, confidence, explanation and proposed fix. Fix the mechanism itself: do
+not add retries, longer timeouts or skips unless the plan says the dependency is genuinely
+external.
 
 Work through the plan in order; its paths are relative to your working directory. Every fix must
 change at least one of the files it lists, and you may change only the files the plan lists: a fix

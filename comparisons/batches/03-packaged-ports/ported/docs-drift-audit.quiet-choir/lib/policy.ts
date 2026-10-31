@@ -40,7 +40,7 @@ export function inventory(
       .slice(limits.maxInventory)
       .map((doc) => ({ doc: doc.path, reason: 'inventory-cap' as const })),
   ];
-  return { listed: fits.slice(0, limits.maxInventory), skipped };
+  return { inventoried: fits.slice(0, limits.maxInventory), skipped };
 }
 
 /**

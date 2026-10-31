@@ -68,6 +68,7 @@ export function historyFacts(log: string, tests: Set<string>) {
     })),
     unlistedMentions: Math.max(0, mentions.length - historyLimits.mentions),
     churn: churn.slice(0, historyLimits.churn),
+    unlistedChurn: Math.max(0, churn.length - historyLimits.churn),
   };
 }
 
@@ -99,7 +100,11 @@ export function withPatches(facts: History, shown: string, max = 2_000): History
 
 const keyOf = (found: Found) => `${found.file}::${found.test}`;
 
-/** One suspect per file and test, its evidence kept per modality, corroborated first. */
+/**
+ * One suspect per file and test, its evidence kept per modality, corroborated first. Corroboration
+ * counts modalities: a sweep that names a test twice counts once (the upstream counted every
+ * mention).
+ */
 export function merge(answers: { modality: Modality; suspects: Found[] }[]): Suspect[] {
   const byKey = new Map<string, Suspect>();
   for (const { modality, suspects } of answers)
@@ -220,8 +225,10 @@ export const tail = (text: string, max = 1_500) => (text.length > max ? text.sli
  * applied every proposed fix whatever its mechanism.)
  */
 export const fixPlan = (confirmed: Flake[]): PlanItem[] =>
-  confirmed.flatMap(({ test, file, diagnosis }) =>
-    diagnosis && diagnosis.mechanism !== 'unknown' ? [planItem(test, file, diagnosis)] : [],
+  confirmed.flatMap((flake) =>
+    flake.diagnosis && flake.diagnosis.mechanism !== 'unknown'
+      ? [planItem(flake, flake.diagnosis)]
+      : [],
   );
 /** The confirmed flakes `fixPlan` leaves out, with the reason. */
 export const unplanned = (confirmed: Flake[]): Unplanned[] =>
@@ -232,22 +239,33 @@ export const unplanned = (confirmed: Flake[]): Unplanned[] =>
         ? [{ test, file, reason: 'unknown-mechanism' }]
         : [],
   );
-const planItem = (test: string, file: string, diagnosis: Diagnosis): PlanItem => ({
+/**
+ * The measurement and the diagnosis, so the human approves the evidence along with the edit, and
+ * exactly the files the diagnosis named: a fix the diagnosis put in the code under test does not
+ * also license an edit (a retry, a skip) to the test file.
+ */
+const planItem = ({ test, file, stress }: Flake, diagnosis: Diagnosis): PlanItem => ({
   test,
   file,
+  failures: stress.failures,
+  runs: stress.runs,
   mechanism: diagnosis.mechanism,
+  confidence: diagnosis.confidence,
+  explanation: diagnosis.explanation,
   proposedFix: diagnosis.proposedFix,
-  files: [...new Set([file, ...diagnosis.files])],
+  files: [...new Set(diagnosis.files)],
 });
 
 /** The SHA-256 of the approved plan text, in the form the fixer receives it. */
 export const planDigest = (plan: string): string => createHash('sha256').update(plan).digest('hex');
 
 /**
- * The fixer's change, with the files it touched outside the approved plan (renames included) and
- * the approved fixes it left untouched: an unchanged tree can pass a re-stress by chance. Plan
- * paths are relative to the working directory, while receipt paths are repository-relative, so
- * `prefix` (the working directory's `git rev-parse --show-prefix`) joins the two.
+ * The fixer's change, with the files it touched outside the approved plan and the approved fixes
+ * it left untouched: an unchanged tree can pass a re-stress by chance. Every rename is refused: a
+ * receipt names only a rename's destination, so a file moved onto an approved path would otherwise
+ * delete its unapproved source unseen. Plan paths are relative to the working directory, while
+ * receipt paths are repository-relative, so `prefix` (the working directory's
+ * `git rev-parse --show-prefix`) joins the two.
  */
 export function owned(change: WorktreeChange | undefined, plan: PlanItem[], prefix: string) {
   if (!change) throw new Error('Fixer did not produce an isolated receipt');
@@ -263,6 +281,16 @@ export function owned(change: WorktreeChange | undefined, plan: PlanItem[], pref
   return { change, refusedFiles, untouched };
 }
 
-/** A bounded preview for the approval question; the subject carries the whole plan. */
-export const preview = (text: string): string =>
-  Buffer.from(text).subarray(0, 15_000).toString('utf8');
+/**
+ * The approval details: the plan, cut at a character boundary below the question's 16 KiB limit,
+ * with a marker naming what was cut. The subject and the digest carry the whole plan.
+ */
+export function preview(text: string, max = 15_000): string {
+  const bytes = Buffer.from(text);
+  if (bytes.length <= max) return text;
+  let end = max;
+  // Back off UTF-8 continuation bytes, so the cut never splits a character.
+  while (end > 0 && ((bytes[end] ?? 0) & 0xc0) === 0x80) end--;
+  const cut = String(bytes.length - end);
+  return `${bytes.subarray(0, end).toString('utf8')}\n[${cut} more bytes cut; the subject and its digest cover the whole plan]`;
+}

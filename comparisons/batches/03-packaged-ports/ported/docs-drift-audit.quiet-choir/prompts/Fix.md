@@ -3,11 +3,11 @@ found that they drifted; each has the doc text, what the code actually does and,
 drafted one, replacement text:
 {%- for claim in drifted %}
 
-{{ loop.index }}. Doc text: "{{ claim.quote }}"
-   Reality: {{ claim.reality }}
+{{ loop.index }}. Doc text: "{{ claim.quote | replace("\n", " ") }}"
+   Reality: {{ claim.reality | indent(3) }}
 {%- if claim.suggestedText %}
 
-   Suggested text: {{ claim.suggestedText }}
+   Suggested text: {{ claim.suggestedText | indent(3) }}
 {%- endif %}
 {%- endfor +%}
 
@@ -15,7 +15,7 @@ drafted one, replacement text:
 These claims were verified true; keep their text:
 {%- for quote in kept %}
 
-- "{{ quote }}"
+- "{{ quote | replace("\n", " ") }}"
 {%- endfor +%}
 
 {% endif %}

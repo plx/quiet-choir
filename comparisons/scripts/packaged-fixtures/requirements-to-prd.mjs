@@ -4,10 +4,12 @@
 // raise a blocking, a major and a minor issue, and the writer revises. One question round asks the
 // two open questions; the answer redoes the PRD under round/1, where findings quote the answers,
 // and code writes docs/prd.md. docs/previous-prd.md stands for a previous run's PRD, which only
-// a matching replace digest may redo, and notes/blank.md holds nothing to read.
+// a matching replace digest may redo, and notes/blank.md holds only whitespace (enough of it to
+// take three files past a maxMaterialBytes of 1000). Every lens and critic reply first checks that
+// its prompt states the charter its step index names, and only that one.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { commitAll, git, writeFiles } from './_support.mjs';
@@ -28,12 +30,36 @@ const tickets = [
   '',
 ].join('\n');
 const previous = '# Reminders PRD, first draft\n\nWeekly or daily is still open.\n';
-const blank = '\n   \n\t\n';
+const blank = `\n   \n\t\n${' '.repeat(700)}\n`;
 const ownerAnswer = 'Reminders go out daily. The current DSO is 45 days.';
+const dailyAnswer = 'Reminders go out daily.';
 const product = 'B2B invoicing SaaS, 200 customers';
 
 const lenses = ['user-needs', 'business', 'constraints', 'unknowns'];
 const charters = ['ambiguity', 'scope', 'feasibility'];
+// The opening sentence of each lens's and critic's charter in prompts/Extract.md and Attack.md.
+const lensOpening = {
+  'user-needs': 'Your lens is user needs:',
+  business: 'Your lens is the business:',
+  constraints: 'Your lens is constraints,',
+  unknowns: 'Your lens is the unknowns.',
+};
+const charterOpening = {
+  ambiguity: 'Your charter is ambiguity.',
+  scope: 'Your charter is scope.',
+  feasibility: 'Your charter is feasibility.',
+};
+
+/** The charter a prompt states, which must be the one its step's index names and no other. */
+function charterOf(openings, names, request) {
+  const id = request.call.stepId;
+  const expected = names[Number(/\/(\d+)\/[a-z]+$/u.exec(id)?.[1])];
+  const stated = Object.keys(openings).filter((key) =>
+    request.options.prompt.includes(openings[key]),
+  );
+  assert.deepEqual(stated, [expected], `${id} states ${stated.join(', ') || 'no charter'}`);
+  return expected;
+}
 const point = {
   overdue: 'Overdue invoices trigger reminder emails automatically',
   pause: 'Customers can pause reminders while an invoice is disputed',
@@ -61,7 +87,9 @@ const tiers = {
   question: 'Which plan tiers get reminders?',
   consequences: 'Decides who sees the feature at launch.',
 };
-// Enough open questions, at the schema's cap of 40, to overflow a question's details.
+// An empty extraction's one unknown, which a question round asks with no consequences.
+const material = { question: 'Is this requirements material at all?', consequences: null };
+// Forty open questions in all, enough to overflow a question's details.
 const many = Array.from({ length: 38 }, (_, index) => ({
   question: `Which escalation applies to dunning case ${String(index + 1)}? ${'Context '.repeat(55).trim()}`,
   consequences: 'Decides that case.',
@@ -86,12 +114,34 @@ export const input = () => ({
 
 const finding = (text, quote, confidence = 'stated') => ({ point: text, quote, confidence });
 
+/** In the overflow mode every lens adds twelve unknowns and the unknowns lens eight conflicts. */
 function extraction(lens, prompt, mode) {
+  const base = reading(lens, prompt, mode);
+  if (mode !== 'overflow') return base;
+  const more = (length, text) => Array.from({ length }, (_, index) => text(index + 1));
+  return {
+    ...base,
+    unknowns: [...base.unknowns, ...more(12, (n) => `Open ${lens} point ${String(n)}?`)],
+    conflicts:
+      lens === 'unknowns'
+        ? [...base.conflicts, ...more(8, (n) => `The notes disagree on point ${String(n)}`)]
+        : base.conflicts,
+  };
+}
+
+function reading(lens, prompt, mode) {
   const answered = prompt.includes('<answers>');
-  if (mode === 'empty')
+  if (mode === 'empty' || (mode === 'empty-asked' && !answered))
     return {
       findings: [],
-      unknowns: lens === 'unknowns' ? ['Is this requirements material at all?'] : [],
+      unknowns: lens === 'unknowns' ? [material.question] : [],
+      conflicts: [],
+    };
+  // The product owner's answer to that unknown is the only thing to quote.
+  if (mode === 'empty-asked')
+    return {
+      findings: lens === 'user-needs' ? [finding(point.daily, 'Reminders go out daily.')] : [],
+      unknowns: [],
       conflicts: [],
     };
   if (lens === 'user-needs')
@@ -224,11 +274,11 @@ export function reply(request, env, mode) {
   const prompt = request.options.prompt;
   const answered = id.startsWith('round/');
   const local = answered ? id.split('/').slice(2).join('/') : id;
-  const extract = /^extract\/(\d+)\/read$/u.exec(local);
-  if (extract) return extraction(lenses[Number(extract[1])], prompt, mode);
+  if (/^extract\/\d+\/read$/u.test(local))
+    return extraction(charterOf(lensOpening, lenses, request), prompt, mode);
   if (local === 'draft') return prd(idsOf(prompt), { revised: false, answered, mode });
-  const attack = /^attack\/(\d+)\/critique$/u.exec(local);
-  if (attack) return { issues: [critiques[charters[Number(attack[1])]]] };
+  if (/^attack\/\d+\/critique$/u.test(local))
+    return { issues: [critiques[charterOf(charterOpening, charters, request)]] };
   if (local === 'revise') return prd(idsOf(prompt), { revised: true, answered, mode });
   throw new Error(`Unhandled requirements-to-prd step ${id} (${mode})`);
 }
@@ -239,7 +289,8 @@ export function fail(request, mode) {
     (mode === 'critic-fails' && id === 'attack/1/critique') ||
     (mode === 'critics-fail' && /^attack\/\d+\/critique$/u.test(id)) ||
     (mode === 'lens-fails' && (id === 'extract/0/read' || id === 'round/1/extract/2/read')) ||
-    (mode === 'reviser-fails' && id === 'revise')
+    (mode === 'reviser-fails' && id === 'revise') ||
+    (mode === 'redo-fails' && /^round\/1\/extract\/\d+\/read$/u.test(id))
   );
 }
 
@@ -288,6 +339,7 @@ export async function check({ result, env, calls, record, suspended }) {
   assert.ok(calls.every((call) => (call.options.tools ?? []).length === 0));
   assert.equal(suspended, 1);
   assert.deepEqual(output.asked, [{ round: 1, questions: 2, answered: true, ...clean }]);
+  assert.equal(output.failedRedo, null);
   assert.equal(output.rounds, 2);
   assert.deepEqual(output.answers, [ownerAnswer]);
   // The durable question: a short title, a one-line prompt, the revised questions in full as its
@@ -296,14 +348,23 @@ export async function check({ result, env, calls, record, suspended }) {
   assert.equal(asked.title, 'Questions');
   assert.equal(
     asked.prompt,
-    'Answer the PRD open questions in one text to redo the PRD with them, or answer empty text to keep them open.',
+    'Answer the open questions in one text to redo the PRD with them, or answer empty text to keep them open.',
   );
   assert.deepEqual(asked.subject, { round: 1, questions: [cadence, baseline] });
   assert.equal(asked.details, listed([cadence, baseline]));
   // Code checked out before reading the material: docs/prd.md did not exist, which a settled read
   // records as its failure.
   assert.equal(record.steps.existing.status, 'settled-failed');
-  // Code read both files once; every lens of both rounds saw both, and the product context.
+  // Each lens and critic of both rounds got its own charter, and nothing downstream lost the
+  // product context.
+  for (const call of calls) {
+    const id = call.call.stepId;
+    if (/extract\/\d+\/read$/u.test(id)) charterOf(lensOpening, lenses, call);
+    if (/attack\/\d+\/critique$/u.test(id)) charterOf(charterOpening, charters, call);
+    if (/(?:extract\/\d+\/read|draft|attack\/\d+\/critique)$/u.test(id))
+      assert.ok(call.options.prompt.includes(`\nProduct context: ${product}\n`), id);
+  }
+  // Code read both files once; every lens of both rounds saw both.
   for (const call of calls.filter((c) => /extract\/\d+\/read$/u.test(c.call.stepId))) {
     assert.ok(
       call.options.prompt.includes(
@@ -311,7 +372,6 @@ export async function check({ result, env, calls, record, suspended }) {
       ),
     );
     assert.ok(call.options.prompt.includes('<material source="notes/tickets.md">'));
-    assert.ok(call.options.prompt.includes(`Product context: ${product}`));
     assert.equal(
       call.options.prompt.includes(`<answers>\n${ownerAnswer}\n</answers>`),
       call.call.stepId.startsWith('round/1/'),
@@ -333,6 +393,7 @@ export async function check({ result, env, calls, record, suspended }) {
   );
   assert.deepEqual(output.unknowns, [tiers.question, howMany.question]);
   assert.deepEqual(output.conflicts, []);
+  assert.deepEqual(output.unlisted, { conflicts: [], unknowns: [] });
   assert.deepEqual(output.failedLenses, []);
   assert.deepEqual(output.failedCritics, []);
   assert.equal(output.revised, true);
@@ -367,11 +428,20 @@ export async function check({ result, env, calls, record, suspended }) {
   );
   for (const call of calls.filter((c) => /^attack\/\d+\/critique$/u.test(c.call.stepId)))
     assert.ok(call.options.prompt.includes(`- ${point.pause} (F2)\n`));
+  // The writer is told the caps its schema enforces; the revision has room for the code-added
+  // assumption and for an open question and an assumption per issue.
+  assert.ok(draft0.options.prompt.includes('\n- At most 60 open questions and 40 assumptions.\n'));
+  assert.equal(draft0.options.prompt.includes('more conflicts and unknowns than'), false);
   const revise0 = calls.find((call) => call.call.stepId === 'revise').options.prompt;
-  assert.ok(
-    revise0.indexOf('- blocking, from the ambiguity') <
-      revise0.indexOf('- major, from the feasibility') &&
-      revise0.indexOf('- major, from the feasibility') < revise0.indexOf('- minor, from the scope'),
+  assert.ok(revise0.includes('\n- At most 63 open questions and 43 assumptions.\n'));
+  // Every issue reaches the reviser with its fix, most severe first.
+  const issueLines = revise0.split('\n').filter((line) => / critic: /u.test(line));
+  assert.deepEqual(
+    issueLines,
+    ['ambiguity', 'feasibility', 'scope'].map((critic) => {
+      const { severity, problem, fix } = critiques[critic];
+      return `- ${severity}, from the ${critic} critic: ${problem} Fix: ${fix}`;
+    }),
   );
   // The published document is the final round's revision, rendered and traced by code.
   const document = await readFile(join(env.cwd, 'docs/prd.md'), 'utf8');
@@ -412,6 +482,35 @@ export const kill = { step: '^write$', boundary: 'checkpoint', writeLocation: 's
 
 const once = (base) => ({ ...base, questionRounds: 0 });
 const readOut = (env, path = 'docs/prd.md') => readFile(join(env.cwd, path), 'utf8');
+
+/** A run refused at the check of out: nothing read, asked or paid, and docs/previous-prd.md kept. */
+const refusal =
+  (reason, { steps = ['existing'], status = '' } = {}) =>
+  async ({ result, env, calls, record, suspended }) => {
+    const { output } = result;
+    assert.equal(output.status, 'refused');
+    assert.equal(calls.length, 0);
+    assert.equal(suspended, 0);
+    assert.deepEqual(Object.keys(record.steps).sort(), steps);
+    assert.equal(output.critiqueSummary, reason);
+    assert.deepEqual(output.material, []);
+    assert.equal(output.rounds, 0);
+    assert.equal(output.prd, null);
+    assert.equal(output.written, null);
+    assert.equal(await readOut(env, 'docs/previous-prd.md'), previous);
+    assert.equal(existsSync(join(env.cwd, 'docs/prd.md')), false);
+    assert.equal(git(env.cwd, 'status', '--porcelain', '--untracked-files=all'), status);
+  };
+
+/** Another writer's bytes, which land at `path` once the harness has answered `step`. */
+const intruder = '# A PRD someone else wrote meanwhile\n';
+const intrude = (harness, step, path) => ({
+  async invoke(request) {
+    const response = await harness.invoke(request);
+    if (request.call.stepId === step) writeFileSync(path, intruder);
+    return response;
+  },
+});
 
 export const modes = [
   {
@@ -537,7 +636,7 @@ export const modes = [
     // Inline material spans lines, earlier answers come as input, and the PRD is committed.
     input: () => ({
       input: `${kickoff}\n${tickets}`,
-      answers: 'Reminders go out daily.',
+      answers: dailyAnswer,
       out: 'docs/prd.md',
       publication: 'commit',
     }),
@@ -549,7 +648,7 @@ export const modes = [
       assert.deepEqual(output.material, [
         { source: 'text', path: null, sha256: sha256(text), bytes: Buffer.byteLength(text) },
       ]);
-      assert.deepEqual(output.answers, ['Reminders go out daily.']);
+      assert.deepEqual(output.answers, [dailyAnswer]);
       assert.deepEqual(
         output.findings.map((f) => [f.point, f.source]),
         [
@@ -565,7 +664,11 @@ export const modes = [
       assert.equal(output.issues.length, 3);
       // The draft stands, with the assumption code added for the inferred pause finding.
       assert.deepEqual(output.addedAssumptions, ['F2']);
-      assert.match(output.critiqueSummary, /The revision failed; the draft stands\./u);
+      // A managed commit cannot be replaced, so the re-run hint does not offer it.
+      assert.equal(
+        output.critiqueSummary,
+        "3 issues raised, 1 blocking. The revision failed; the draft stands. Re-run with answers and either a new out or publication 'file' with replace set to written.sha256, or set questionRounds, to resolve the open questions.",
+      );
       const published = await readOut(env);
       assert.equal(published, output.prd);
       assert.equal(output.written.sha256, sha256(published));
@@ -599,6 +702,90 @@ export const modes = [
       assert.equal(output.written, null);
       assert.equal(existsSync(join(env.cwd, 'docs/prd.md')), false);
       assert.equal(git(env.cwd, 'status', '--porcelain'), '');
+    },
+  },
+  {
+    mode: 'empty-asked',
+    // The question round asks an empty extraction's unknowns, as the upstream checkpoint returns
+    // them; the answer is quoted as stated, and the redo drafts the PRD from it.
+    input: () => ({
+      input: 'Lunch menu\nTacos on Tuesday\n',
+      questionRounds: 1,
+      out: 'docs/prd.md',
+    }),
+    check: async ({ result, env, calls, record, suspended }) => {
+      const { output } = result;
+      assert.equal(output.status, 'complete');
+      assert.equal(suspended, 1);
+      assert.deepEqual(
+        steps(calls).sort(),
+        [...round('').slice(0, 4), ...round('round/1/')].sort(),
+      );
+      assert.deepEqual(output.asked, [
+        {
+          round: 1,
+          questions: 1,
+          answered: true,
+          status: 'empty',
+          failedLenses: [],
+          failedCritics: [],
+        },
+      ]);
+      const asked = record.steps['questions/1'].question.request;
+      assert.deepEqual(asked.subject, { round: 1, questions: [material] });
+      assert.equal(asked.details, `1. ${material.question}`);
+      assert.deepEqual(output.answers, [ownerAnswer]);
+      assert.deepEqual(
+        output.findings.map((f) => [f.id, f.lens, f.confidence, f.source]),
+        [['F1', 'user-needs', 'stated', 'answers']],
+      );
+      assert.equal(await readOut(env), output.prd);
+      assert.ok(output.prd.includes(`- F1 [user-needs, stated, answers]: ${point.daily}`));
+    },
+  },
+  {
+    mode: 'redo-fails',
+    // Every lens of the answered round fails: the first round's revised PRD stands and is written,
+    // degraded, and the answers it lacks are kept beside it.
+    input: () => input(),
+    check: async ({ result, env, calls, suspended }) => {
+      const { output } = result;
+      assert.equal(output.status, 'degraded');
+      assert.equal(suspended, 1);
+      assert.deepEqual(
+        steps(calls).sort(),
+        [...round(''), ...round('round/1/').slice(0, 4)].sort(),
+      );
+      assert.deepEqual(output.asked, [{ round: 1, questions: 2, answered: true, ...clean }]);
+      assert.deepEqual(output.failedRedo, {
+        round: 1,
+        status: 'degraded',
+        failedLenses: lenses,
+        answers: ownerAnswer,
+      });
+      assert.equal(output.rounds, 2);
+      assert.deepEqual(output.answers, []);
+      assert.deepEqual(output.failedLenses, []);
+      assert.equal(output.revised, true);
+      assert.deepEqual(output.openQuestions, [cadence, baseline]);
+      assert.deepEqual(
+        output.findings.map((f) => f.source),
+        ['notes/kickoff.md', null, 'notes/kickoff.md', 'notes/tickets.md', null],
+      );
+      const summary = `3 issues raised, 1 blocking. Round 1's redo with the answers drafted no PRD. The user-needs, business, constraints, unknowns lenses failed. The earlier PRD stands without those answers, which are in failedRedo. ${reRun}`;
+      assert.equal(output.critiqueSummary, summary);
+      const text = await readOut(env);
+      assert.equal(text, output.prd);
+      assert.ok(
+        text.includes(
+          "- R1. Send a reminder email one day after an invoice's due date passes. (F1)\n",
+        ),
+      );
+      assert.ok(text.includes(`; status: degraded. ${summary}\n`));
+      assert.equal(
+        git(env.cwd, 'status', '--porcelain', '--untracked-files=all'),
+        '?? docs/prd.md',
+      );
     },
   },
   {
@@ -659,22 +846,83 @@ export const modes = [
     mode: 'out-exists',
     // A previous run's PRD at out, and no replace digest: refused before anything is read or paid.
     input: () => ({ ...input(), out: 'docs/previous-prd.md' }),
-    check: async ({ result, env, calls, record, suspended }) => {
-      const { output } = result;
-      assert.equal(output.status, 'refused');
-      assert.equal(calls.length, 0);
-      assert.equal(suspended, 0);
-      assert.deepEqual(Object.keys(record.steps), ['existing']);
+    check: refusal(
+      `Not run: docs/previous-prd.md exists (sha256 ${sha256(previous)}); pass that digest as replace to redo it.`,
+    ),
+  },
+  {
+    mode: 'stale-replace',
+    // A replace digest that names other bytes than out holds: refused, out untouched.
+    input: () => ({
+      ...once(input()),
+      out: 'docs/previous-prd.md',
+      replace: sha256('# Another PRD\n'),
+    }),
+    check: refusal(
+      `Not run: docs/previous-prd.md has sha256 ${sha256(previous)}, not the replace digest ${sha256('# Another PRD\n')}; it changed since.`,
+    ),
+  },
+  {
+    mode: 'commit-exists',
+    // A managed commit only creates, so an existing out is refused under it.
+    input: () => ({ ...input(), out: 'docs/previous-prd.md', publication: 'commit' }),
+    check: refusal(
+      `Not run: docs/previous-prd.md exists (sha256 ${sha256(previous)}), and a managed commit only creates; use publication 'file' with replace to redo it.`,
+    ),
+  },
+  {
+    mode: 'commit-dirty',
+    // The material is an untracked file, and the managed commit merges only into a clean checkout:
+    // refused, naming what Git reports, before any read or agent call rather than at the merge.
+    input: () => ({ input: ['inbox/meeting.md'], out: 'docs/prd.md', publication: 'commit' }),
+    options: (opts, env) => {
+      mkdirSync(join(env.cwd, 'inbox'));
+      writeFileSync(join(env.cwd, 'inbox/meeting.md'), kickoff);
+      return opts;
+    },
+    check: refusal(
+      "Not run: publication 'commit' merges into a clean checkout, and Git reports inbox/; commit or stash them (with --include-untracked), or use publication 'file'.",
+      { steps: ['clean-checkout', 'existing'], status: '?? inbox/meeting.md' },
+    ),
+  },
+  {
+    mode: 'out-appears',
+    // Another writer creates docs/prd.md while the agents work: the exclusive write fails rather
+    // than overwrite it, and leaves that file as it found it.
+    input: () => once(input()),
+    options: (opts, env) => ({
+      ...opts,
+      harness: intrude(opts.harness, 'revise', join(env.cwd, 'docs/prd.md')),
+    }),
+    rejects: /File ifMatch failed/u,
+    check: async ({ record, env, calls }) => {
+      assert.equal(record.status, 'failed');
+      assert.deepEqual(steps(calls).sort(), round('').sort());
+      assert.equal(await readOut(env), intruder);
       assert.equal(
-        output.critiqueSummary,
-        `Not run: docs/previous-prd.md exists (sha256 ${sha256(previous)}); pass that digest as replace to redo it.`,
+        git(env.cwd, 'status', '--porcelain', '--untracked-files=all'),
+        '?? docs/prd.md',
       );
-      assert.deepEqual(output.material, []);
-      assert.equal(output.rounds, 0);
-      assert.equal(output.prd, null);
-      assert.equal(output.written, null);
-      assert.equal(await readOut(env, 'docs/previous-prd.md'), previous);
-      assert.equal(git(env.cwd, 'status', '--porcelain', '--untracked-files=all'), '');
+    },
+  },
+  {
+    mode: 'out-changes',
+    // The PRD a valid replace digest named changes while the agents work: the write against that
+    // digest fails and leaves the new bytes in place.
+    input: () => ({ ...once(input()), out: 'docs/previous-prd.md', replace: sha256(previous) }),
+    options: (opts, env) => ({
+      ...opts,
+      harness: intrude(opts.harness, 'revise', join(env.cwd, 'docs/previous-prd.md')),
+    }),
+    rejects: /File ifMatch failed/u,
+    check: async ({ record, env, calls }) => {
+      assert.equal(record.status, 'failed');
+      assert.equal(calls.length, 9);
+      assert.equal(await readOut(env, 'docs/previous-prd.md'), intruder);
+      assert.equal(
+        git(env.cwd, 'status', '--porcelain', '--untracked-files=all'),
+        'M docs/previous-prd.md',
+      );
     },
   },
   {
@@ -709,10 +957,115 @@ export const modes = [
       );
     },
   },
+  {
+    mode: 'overflow',
+    // Fifty unknowns and nine conflicts pool past the forty listed: every conflict and the first
+    // 31 unknowns reach the writer, and the rest are reported as unlisted.
+    input: () => once(input()),
+    check: async ({ result, env, calls }) => {
+      const { output } = result;
+      assert.equal(output.status, 'limited');
+      const open = (lens, from, to) =>
+        Array.from({ length: to - from + 1 }, (_, i) => `Open ${lens} point ${String(from + i)}?`);
+      assert.equal(output.unknowns.length, 50);
+      assert.equal(output.conflicts.length, 9);
+      assert.deepEqual(output.unlisted, {
+        conflicts: [],
+        unknowns: [...open('constraints', 7, 12), howMany.question, ...open('unknowns', 1, 12)],
+      });
+      const draft = calls.find((call) => call.call.stepId === 'draft').options.prompt;
+      assert.ok(
+        draft.includes(
+          'The lenses raised 19 more conflicts and unknowns than the workflow lists below.',
+        ),
+      );
+      for (const conflict of output.conflicts) assert.ok(draft.includes(`\n- ${conflict}\n`));
+      const listed = draft
+        .slice(draft.indexOf('\nUnknowns:\n'))
+        .split('\n')
+        .filter((line) => line.startsWith('- '))
+        .map((line) => line.slice(2));
+      assert.deepEqual(listed, output.unknowns.slice(0, 31));
+      const summary = `3 issues raised, 1 blocking. The writer was given 40 of 59 conflicts and unknowns; the rest are in unlisted. ${reRun}`;
+      assert.equal(output.critiqueSummary, summary);
+      const text = await readOut(env);
+      assert.equal(text, output.prd);
+      assert.ok(text.includes(`; status: limited. ${summary}\n`));
+    },
+  },
+  {
+    mode: 'answers-only',
+    // Blank material with earlier answers: the lenses read the answers, and the question round's
+    // answer joins them for the second round.
+    input: () => ({
+      input: ['notes/blank.md'],
+      answers: dailyAnswer,
+      questionRounds: 1,
+      out: 'docs/prd.md',
+    }),
+    check: async ({ result, env, calls, suspended }) => {
+      const { output } = result;
+      assert.equal(output.status, 'complete');
+      assert.equal(suspended, 1);
+      assert.deepEqual(steps(calls).sort(), [...round(''), ...round('round/1/')].sort());
+      assert.deepEqual(output.answers, [dailyAnswer, ownerAnswer]);
+      assert.deepEqual(output.asked, [{ round: 1, questions: 2, answered: true, ...clean }]);
+      const block = (text) => `<answers>\n${text}\n</answers>`;
+      for (const call of calls.filter((c) => /extract\/\d+\/read$/u.test(c.call.stepId))) {
+        const prompt = call.options.prompt;
+        const later = call.call.stepId.startsWith('round/1/');
+        assert.ok(prompt.includes(block(dailyAnswer)));
+        assert.equal(prompt.includes(block(ownerAnswer)), later);
+        if (later)
+          assert.ok(prompt.indexOf(block(dailyAnswer)) < prompt.indexOf(block(ownerAnswer)));
+      }
+      // Only the answers hold quotes, so every finding quoting the notes is kept inferred.
+      assert.deepEqual(
+        output.findings.map((f) => [f.id, f.confidence, f.source]),
+        [
+          ['F1', 'inferred', null],
+          ['F2', 'inferred', null],
+          ['F3', 'stated', 'answers'],
+          ['F4', 'inferred', null],
+          ['F5', 'stated', 'answers'],
+          ['F6', 'inferred', null],
+          ['F7', 'inferred', null],
+        ],
+      );
+      assert.deepEqual(output.addedAssumptions, ['F1', 'F2', 'F6']);
+      assert.equal(await readOut(env), output.prd);
+      assert.equal(
+        git(env.cwd, 'status', '--porcelain', '--untracked-files=all'),
+        '?? docs/prd.md',
+      );
+    },
+  },
+  {
+    mode: 'too-large',
+    // Three files, each under the limit and over it together: the run fails before any agent runs.
+    input: () => ({
+      input: ['notes/kickoff.md', 'notes/tickets.md', 'notes/blank.md'],
+      maxMaterialBytes: 1000,
+    }),
+    rejects: new RegExp(
+      `The material is ${String([kickoff, tickets, blank].reduce((sum, text) => sum + Buffer.byteLength(text), 0))} bytes, over maxMaterialBytes 1000`,
+      'u',
+    ),
+    check: ({ record, calls }) => {
+      assert.equal(record.status, 'failed');
+      assert.equal(calls.length, 0);
+      assert.deepEqual(Object.keys(record.steps).sort(), [
+        'material/0',
+        'material/1',
+        'material/2',
+      ]);
+    },
+  },
 ];
 
 /** A failed lens or critic in any round, or an unrevised draft, loses part of the critique. */
 export const degraded = (output) =>
+  output.failedRedo !== null ||
   output.failedLenses.length > 0 ||
   output.failedCritics.length > 0 ||
   output.status === 'unrevised' ||

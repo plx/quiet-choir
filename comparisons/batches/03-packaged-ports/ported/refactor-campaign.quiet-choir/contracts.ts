@@ -153,6 +153,7 @@ const Planned = z.object({
 });
 export const RefactorOutput = z.object({
   status: z.enum([
+    'dirty-checkout',
     'no-targets',
     'no-nets',
     'baseline-red',
@@ -160,6 +161,7 @@ export const RefactorOutput = z.object({
     'declined',
     'verification-failed',
     'checkout-moved',
+    'merge-refused',
     'nets-only',
     'applied',
   ]),
@@ -183,6 +185,11 @@ export const RefactorOutput = z.object({
     }),
   ),
   deferred: z.array(Target).describe('Surveyed targets the ranker did not choose'),
+  duplicateTargets: z
+    .number()
+    .int()
+    .nonnegative()
+    .describe('Surveyed targets dropped because an earlier one had the same location'),
   failedNets: z.number().int().nonnegative(),
   failedCalls: z.number().int().nonnegative().describe('Refactor or review calls that failed'),
   truncatedRepairFiles: z
@@ -193,9 +200,18 @@ export const RefactorOutput = z.object({
   netsCommit: Sha.nullable().describe('A run-owned commit holding every green net'),
   approvedDigest: Digest.nullable(),
   commit: Sha.nullable().describe(
-    'The published HEAD; for verification-failed or checkout-moved, the unpublished run-owned integration',
+    'The published HEAD; otherwise the unpublished run-owned commit to merge, on which every net and verify command passed (verification-failed: the red integration)',
   ),
-  baseline: z.array(Check).describe('Every verify command on the nets commit, before any refactor'),
+  refusal: z
+    .object({
+      step: z.enum(['clean', 'integrate-nets', 'integrate', 'publish']),
+      message: z.string(),
+    })
+    .nullable()
+    .describe('What refused and why: a dirty checkout at the start, or a merge that failed'),
+  baseline: z
+    .array(Check)
+    .describe('Every net and verify command on the nets commit, before any approval or refactor'),
   verification: z
     .array(Check)
     .describe('The publish gate: every net and verify command on the integrated tree'),

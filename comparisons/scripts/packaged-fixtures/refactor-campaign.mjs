@@ -5,11 +5,12 @@
 // command on the nets commit, a human approves the goal and plan, the refactorer extracts a
 // subtotal helper behind the net, code runs the net and the verify command again, the reviewer
 // judges the diff structural, and code verifies the integration and publishes it onto the
-// unmoved checkout. The two-targets and chain-break modes also pin and refactor the clock.
+// unmoved checkout. The two-targets, chain-break and declines modes also pin and refactor the
+// clock; the moved and conflict modes commit to the source checkout while the run works.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { commitAll, git, leaf, writeFiles } from './_support.mjs';
@@ -49,6 +50,8 @@ const structural = 'subtotal(items) * (1 + rate)';
 const behavioral = 'subtotal(items) * rate';
 const netFile = 'pricing.net.test.mjs';
 const casesFile = 'pricing.cases.json';
+/** net-repair: a first-round support file larger than the 20,000 bytes a repair round is shown. */
+const golden = 'pricing.first.golden.txt';
 const net = [
   "import assert from 'node:assert/strict';",
   "import { readFileSync } from 'node:fs';",
@@ -125,8 +128,32 @@ const clockNet = [
   'assert.match(stamp(), /^\\d{4}-\\d{2}-\\d{2}T/u);',
   '',
 ].join('\n');
+/** baseline-red: a clock net that is green alone and red beside the pricing net's cases file. */
+const clockNetInterferes = [
+  ...clockNet.split('\n').slice(0, 2),
+  "import { existsSync } from 'node:fs';",
+  ...clockNet.split('\n').slice(2, -1),
+  `assert.equal(existsSync(new URL('./${casesFile}', import.meta.url)), false);`,
+  '',
+].join('\n');
 /** Modes in which the clock writer pins a deterministic net, so two targets reach refactoring. */
-const clockPinned = ['two-targets', 'chain-break', 'net-refusals'];
+const clockPinned = ['two-targets', 'chain-break', 'net-refusals', 'declines', 'baseline-red'];
+/** conflict-move: the user's own rewrite of pricing.mjs, committed while the refactor runs. */
+const pricingRewrite = [
+  'export function total(items) {',
+  '  return items.reduce((sum, item) => sum + item.price * item.qty, 0);',
+  '}',
+  '',
+  'export function totalWithTax(items, rate) {',
+  '  return total(items) * (1 + rate);',
+  '}',
+  '',
+].join('\n');
+/** large: a long pinned behavior, so the approved plan outgrows the approval's 15000-byte preview. */
+const longBehavior = `totalWithTax matches ${'every listed price, quantity and rate; '.repeat(400)}`;
+/** large: a comment block that makes the refactor's diff outgrow the reviewer's 100000 bytes. */
+const notes = Array.from({ length: 3000 }, (_, n) => `// note ${String(n)}: ${'.'.repeat(90)}`);
+const large = `${refactored(structural)}${notes.join('\n')}\n`;
 const writer = /^(?:nets\/\d+\/write\/\d+|refactor\/\d+\/write)$/u;
 const netWrite = /^nets\/\d+\/write\/\d+$/u;
 const refactorWrite = /^refactor\/\d+\/write$/u;
@@ -188,7 +215,7 @@ async function writeNet(request, env, mode) {
       // net-refusals: the clock net also claims the pricing net's cases file.
       const collide = mode === 'net-refusals';
       await writeFiles(cwd, {
-        'clock.net.test.mjs': clockNet,
+        'clock.net.test.mjs': mode === 'baseline-red' ? clockNetInterferes : clockNet,
         ...(collide ? { [casesFile]: cases(0) } : {}),
       });
       return pinned('clock.net.test.mjs', collide ? [casesFile] : []);
@@ -208,19 +235,33 @@ async function writeNet(request, env, mode) {
     });
     return pinned('clock.net.test.mjs');
   }
-  // net-repair: the first round writes a red net under another name; the repair round starts
-  // from a fresh checkout and writes the real one, so the first file is never published.
+  // net-repair: the first round writes a red net under another name, with a golden file too large
+  // to show whole; the repair round starts from a fresh checkout and writes the real one, so
+  // neither first-round file is ever published.
   if (mode === 'net-repair' && round === 0) {
     assert.equal(existsSync(join(cwd, netFile)), false);
-    await writeFile(
-      join(cwd, 'pricing.first.test.mjs'),
-      "import assert from 'node:assert/strict';\nimport { totalWithTax } from './pricing.mjs';\nassert.equal(totalWithTax([{ price: 10, qty: 1 }], 0.5), 16);\n",
-    );
-    return pinned('pricing.first.test.mjs');
+    await writeFiles(cwd, {
+      'pricing.first.test.mjs':
+        "import assert from 'node:assert/strict';\nimport { totalWithTax } from './pricing.mjs';\nassert.equal(totalWithTax([{ price: 10, qty: 1 }], 0.5), 16);\n",
+      [golden]: '7\n'.repeat(15_000),
+    });
+    return pinned('pricing.first.test.mjs', [golden]);
   }
-  if (mode === 'net-repair') assert.equal(existsSync(join(cwd, 'pricing.first.test.mjs')), false);
+  if (mode === 'net-repair')
+    for (const file of ['pricing.first.test.mjs', golden])
+      assert.equal(existsSync(join(cwd, file)), false, file);
+  // moved-early and nets-conflict: someone commits to the source checkout while the net is written,
+  // a README edit or a file of the same name as the net.
+  if (mode === 'moved-early')
+    await writeFile(join(env.cwd, 'README.md'), 'Edited during the run\n');
+  if (mode === 'nets-conflict') await writeFile(join(env.cwd, netFile), '// the user test\n');
+  if (['moved-early', 'nets-conflict'].includes(mode))
+    env.userCommit = commitAll(env.cwd, 'commit while the nets are written');
   await writeFiles(cwd, { [netFile]: net, [casesFile]: cases(15) });
-  return pinned(netFile, [casesFile]);
+  const claim = pinned(netFile, [casesFile]);
+  return mode === 'large'
+    ? { ...claim, behaviorsPinned: [...behaviorsPinned, longBehavior] }
+    : claim;
 }
 
 async function refactor(request, env, mode) {
@@ -228,6 +269,8 @@ async function refactor(request, env, mode) {
   if (request.options.prompt.startsWith('Apply this approved refactoring to clock.mjs:stamp')) {
     // Serial: this checkout starts from the last kept refactor, so it holds the subtotal helper.
     env.clockSawSubtotal = readFileSync(join(cwd, 'pricing.mjs'), 'utf8').includes('subtotal');
+    // declines: a refactorer that claims success but changes nothing.
+    if (mode === 'declines') return { status: 'refactored', summary: 'Injected the clock' };
     await writeFile(join(cwd, 'clock.mjs'), injected);
     // chain-break: a pricing change only the earlier target's net pins.
     if (mode === 'chain-break') await writeFile(join(cwd, 'pricing.mjs'), refactored(behavioral));
@@ -235,16 +278,30 @@ async function refactor(request, env, mode) {
   }
   await writeFile(
     join(cwd, 'pricing.mjs'),
-    refactored(['behavior-change', 'net-support-file'].includes(mode) ? behavioral : structural),
+    mode === 'large'
+      ? large
+      : refactored(
+          ['behavior-change', 'net-support-file', 'declines'].includes(mode)
+            ? behavioral
+            : structural,
+        ),
   );
+  // declines: the refactorer edits, finds it cannot keep the rounding, and declines.
+  if (mode === 'declines')
+    return { status: 'declined', summary: 'Cannot extract without changing the rounding' };
   // net-support-file: the behavior change rewrites the cases file, so every net stays green.
   if (mode === 'net-support-file') await writeFile(join(cwd, casesFile), cases(5));
   if (mode === 'net-touched') await rename(join(cwd, netFile), join(cwd, 'pricing.moved.test.mjs'));
-  // checkout-moved: someone commits to the source checkout while the refactor runs.
-  if (mode === 'checkout-moved') {
+  // checkout-moved and conflict-move: someone commits to the source checkout while the refactor
+  // runs, a README edit or a rewrite of the same code.
+  if (mode === 'checkout-moved')
     await writeFile(join(env.cwd, 'README.md'), 'Edited during the run\n');
+  if (mode === 'conflict-move') await writeFile(join(env.cwd, 'pricing.mjs'), pricingRewrite);
+  if (['checkout-moved', 'conflict-move'].includes(mode))
     env.userCommit = commitAll(env.cwd, 'commit while the campaign runs');
-  }
+  // checkout-dirty: someone leaves an uncommitted file in the source checkout instead.
+  if (mode === 'checkout-dirty')
+    await writeFile(join(env.cwd, 'scratch.txt'), 'work in progress\n');
   return { status: 'refactored', summary: 'Extracted subtotal from total and totalWithTax' };
 }
 
@@ -254,6 +311,9 @@ export async function reply(request, env, mode) {
     if (mode === 'no-targets') return { targets: [] };
     if (mode === 'net-refusals')
       return { targets: [...targets, ...extra.map((entry) => entry.target)] };
+    // report-only: a later duplicate of the first location, which code drops and counts.
+    if (mode === 'report-only')
+      return { targets: [...targets, { ...targets[0], evidence: 'A later duplicate' }] };
     return { targets };
   }
   if (id === 'rank') {
@@ -349,8 +409,13 @@ export function check({ result, env, calls, record, suspended }) {
   assert.equal(output.status, 'applied');
   assert.equal(suspended, 1);
   assert.equal(output.truncatedRepairFiles, 0);
-  // The verify command passed on the nets commit before the approval, which shows the rows.
-  assert.deepEqual(rows(output.baseline), [[exists(netFile), 0]]);
+  assert.equal(output.duplicateTargets, 0);
+  assert.equal(output.refusal, null);
+  // The net and the verify command passed on the nets commit before the approval, which shows them.
+  assert.deepEqual(rows(output.baseline), [
+    [netFile, 0],
+    [exists(netFile), 0],
+  ]);
   const { subject } = record.steps['approve-refactors'].question.request;
   assert.deepEqual(subject.baseline, output.baseline);
   assert.equal(subject.digest, output.approvedDigest);
@@ -445,6 +510,12 @@ export const modes = [
         [['pricing.mjs:totalWithTax', 'apply is false; refactor not performed']],
       );
       assert.equal(output.approvedDigest, null);
+      // The later duplicate is dropped and counted; the ranker saw the first one's evidence.
+      assert.equal(output.duplicateTargets, 1);
+      assert.match(output.summary, / 1 surveyed duplicates dropped\.$/u);
+      assert.ok(!promptOf(calls, 'rank').includes('A later duplicate'));
+      // Report-only has no verify commands, so the baseline runs the net alone, on the nets commit.
+      assert.deepEqual(rows(output.baseline), [[netFile, 0]]);
       netsCommitHoldsNet(env, output);
       // The summary says where the nets are, since the checkout does not hold them.
       assert.ok(output.summary.includes(`run-owned commit ${output.netsCommit}`), output.summary);
@@ -462,10 +533,16 @@ export const modes = [
       assert.match(repair, /The command exited with code 1\./u);
       assert.match(repair, /<stderr>\n[^]*AssertionError[^]*16[^]*<\/stderr>/u);
       assert.match(repair, /<file path="pricing\.first\.test\.mjs">\n[^]*, 16\);\n<\/file>/u);
-      assert.equal(result.output.truncatedRepairFiles, 0);
-      // The superseded red file never reaches the nets commit or the checkout.
+      // The golden file is shown in part, said so after a blank line, and counted.
+      assert.match(
+        repair,
+        /<file path="pricing\.first\.golden\.txt">\n(?:7\n){9999}7\n<\/file>\n\n\(Only the first 20000 bytes of pricing\.first\.golden\.txt are shown\.\)\n\n/u,
+      );
+      assert.equal(result.output.truncatedRepairFiles, 1);
+      // The superseded red files never reach the nets commit or the checkout.
       netsCommitHoldsNet(env, result.output);
-      assert.equal(existsSync(join(env.cwd, 'pricing.first.test.mjs')), false);
+      for (const file of ['pricing.first.test.mjs', golden])
+        assert.equal(existsSync(join(env.cwd, file)), false, file);
       assert.equal(readFileSync(join(env.cwd, netFile), 'utf8'), net);
     },
   },
@@ -569,7 +646,10 @@ export const modes = [
       const { output } = result;
       // Green on the nets commit and on the refactor, red only at the gate: nothing is published.
       assert.equal(output.status, 'verification-failed');
-      assert.deepEqual(rows(output.baseline), [[redAtGate, 0]]);
+      assert.deepEqual(rows(output.baseline), [
+        [netFile, 0],
+        [redAtGate, 0],
+      ]);
       assert.equal(output.refactored.length, 1);
       assert.deepEqual(rows(output.verification), [
         [netFile, 0],
@@ -587,18 +667,25 @@ export const modes = [
     input: () => ({ ...input(), verifyCommands: [[process.execPath, '-e', 'process.exit(4)']] }),
     check({ result, env, calls, suspended }) {
       const { output } = result;
-      // Red before any refactor: no approval is asked and no refactor is paid for.
+      // Red before any refactor: the clock net was green alone but fails beside the pricing net's
+      // cases file, and the verify command fails too. No approval is asked, no refactor paid for.
       assert.equal(output.status, 'baseline-red');
       assert.equal(suspended, 0);
-      assert.deepEqual(rows(output.baseline), [['process.exit(4)', 4]]);
+      assert.deepEqual(rows(output.baseline), [
+        [netFile, 0],
+        ['clock.net.test.mjs', 1],
+        ['process.exit(4)', 4],
+      ]);
       assert.deepEqual(
-        output.netOnly.map((entry) => entry.why),
-        ['the verify commands fail on the nets commit'],
+        output.netOnly.map((entry) => [entry.location, entry.why]),
+        [
+          ['pricing.mjs:totalWithTax', 'a net or verify command fails on the nets commit'],
+          ['clock.mjs:stamp', 'a net or verify command fails on the nets commit'],
+        ],
       );
       assert.equal(output.approvedDigest, null);
       assert.deepEqual(output.verification, []);
       assert.ok(stepIds(calls).every((id) => !id.startsWith('refactor/')));
-      netsCommitHoldsNet(env, output);
       assert.ok(output.summary.includes(output.netsCommit), output.summary);
       untouched(env);
     },
@@ -608,6 +695,7 @@ export const modes = [
     check({ result, env, record }) {
       const { output } = result;
       assert.equal(output.status, 'checkout-moved');
+      assert.equal(output.refusal, null);
       assert.equal(output.refactored.length, 1);
       assert.ok(output.verification.every((row) => row.code === 0));
       // ctx.merge integrates onto the checkout's HEAD of the moment, so the verified, unpublished
@@ -623,6 +711,182 @@ export const modes = [
       // The user's commit stays HEAD; the verified tree was not rebased onto it.
       assert.equal(git(env.cwd, 'rev-parse', 'HEAD'), env.userCommit);
       untouched(env);
+    },
+  },
+  {
+    mode: 'checkout-dirty',
+    check({ result, env, record }) {
+      const { output } = result;
+      // HEAD did not move, so the recorded check passes; the publish itself refuses the dirty
+      // checkout, and the refusal is a result, so there is no failed run to resume onto a moved HEAD.
+      assert.equal(output.status, 'merge-refused');
+      assert.equal(output.refusal.step, 'publish');
+      assert.match(output.refusal.message, /dirty/u);
+      assert.equal(output.refactored.length, 1);
+      assert.ok(output.verification.every((row) => row.code === 0));
+      assert.equal(gated(record), output.commit);
+      assert.equal(git(env.cwd, 'merge-base', env.base, output.commit), env.base);
+      assert.ok(output.summary.includes(output.commit), output.summary);
+      assert.ok(output.summary.includes('git merge that commit'), output.summary);
+      assert.equal(record.steps.publish.status, 'settled-failed');
+      assert.equal(git(env.cwd, 'rev-parse', 'HEAD'), env.base);
+      assert.equal(git(env.cwd, 'status', '--porcelain'), '?? scratch.txt');
+      assert.equal(readFileSync(join(env.cwd, 'pricing.mjs'), 'utf8'), pricing);
+      assert.equal(existsSync(join(env.cwd, netFile)), false);
+    },
+  },
+  {
+    mode: 'conflict-move',
+    check({ result, env, calls }) {
+      const { output } = result;
+      // The user's commit conflicts with the refactor, so the integration refuses: the status says
+      // the checkout moved, and the last kept result (green behind every net) is left to merge.
+      assert.equal(output.status, 'checkout-moved');
+      assert.equal(output.refusal.step, 'integrate');
+      assert.match(output.refusal.message, /conflicts: pricing\.mjs$/u);
+      assert.equal(output.refactored.length, 1);
+      assert.equal(output.commit, output.refactored[0].commit);
+      assert.deepEqual(output.verification, []);
+      assert.ok(stepIds(calls).includes('refactor/0/review'));
+      assert.equal(
+        git(env.cwd, 'show', `${output.commit}:pricing.mjs`),
+        refactored(structural).trimEnd(),
+      );
+      assert.ok(output.summary.includes(`${output.commit}`), output.summary);
+      assert.ok(output.summary.includes('git merge that commit'), output.summary);
+      assert.equal(git(env.cwd, 'rev-parse', 'HEAD'), env.userCommit);
+      assert.equal(readFileSync(join(env.cwd, 'pricing.mjs'), 'utf8'), pricingRewrite);
+      assert.equal(existsSync(join(env.cwd, netFile)), false);
+      assert.equal(git(env.cwd, 'status', '--porcelain'), '');
+    },
+  },
+  {
+    mode: 'moved-early',
+    check({ result, env, calls, suspended }) {
+      const { output } = result;
+      // HEAD moved while the nets were written, so the run stops before the approval and before
+      // any refactor is paid for; the nets commit (green on the moved HEAD) is left to merge.
+      assert.equal(output.status, 'checkout-moved');
+      assert.equal(suspended, 0);
+      assert.equal(output.refusal, null);
+      assert.ok(stepIds(calls).every((id) => !id.startsWith('refactor/')));
+      assert.equal(output.commit, output.netsCommit);
+      assert.equal(git(env.cwd, 'merge-base', env.userCommit, output.netsCommit), env.userCommit);
+      assert.deepEqual(rows(output.baseline), [
+        [netFile, 0],
+        [exists(netFile), 0],
+      ]);
+      assert.deepEqual(
+        output.netOnly.map((entry) => entry.why),
+        ['the checkout moved before the approval'],
+      );
+      assert.equal(output.approvedDigest, null);
+      assert.ok(output.summary.includes('git merge that commit'), output.summary);
+      assert.equal(git(env.cwd, 'rev-parse', 'HEAD'), env.userCommit);
+      assert.equal(existsSync(join(env.cwd, casesFile)), false);
+      assert.equal(git(env.cwd, 'status', '--porcelain'), '');
+    },
+  },
+  {
+    mode: 'nets-conflict',
+    check({ result, env, calls, suspended }) {
+      const { output } = result;
+      // The user committed a file of the net's name, so the nets cannot integrate at all.
+      assert.equal(output.status, 'checkout-moved');
+      assert.equal(suspended, 0);
+      assert.equal(output.refusal.step, 'integrate-nets');
+      assert.match(output.refusal.message, /conflicts: pricing\.net\.test\.mjs$/u);
+      assert.equal(output.netsCommit, null);
+      assert.equal(output.commit, null);
+      assert.deepEqual(output.baseline, []);
+      assert.deepEqual(
+        output.netOnly.map((entry) => entry.why),
+        ['the nets did not integrate'],
+      );
+      assert.ok(stepIds(calls).every((id) => !id.startsWith('refactor/')));
+      assert.ok(output.summary.includes('nothing was integrated'), output.summary);
+      assert.equal(git(env.cwd, 'rev-parse', 'HEAD'), env.userCommit);
+      assert.equal(readFileSync(join(env.cwd, netFile), 'utf8'), '// the user test\n');
+      assert.equal(git(env.cwd, 'status', '--porcelain'), '');
+    },
+  },
+  {
+    mode: 'dirty-start',
+    // An uncommitted file in the checkout before the run starts.
+    input: (env) => {
+      writeFileSync(join(env.cwd, 'scratch.txt'), 'work in progress\n');
+      return input();
+    },
+    check({ result, env, calls, suspended }) {
+      const { output } = result;
+      // Refused before any agent call, as a result: a resume after a cleanup cannot help.
+      assert.equal(output.status, 'dirty-checkout');
+      assert.equal(suspended, 0);
+      assert.deepEqual(calls, []);
+      assert.deepEqual(output.refusal, {
+        step: 'clean',
+        message: 'uncommitted changes: ?? scratch.txt',
+      });
+      assert.ok(output.summary.includes('?? scratch.txt'), output.summary);
+      assert.ok(output.summary.includes('start a new run'), output.summary);
+      assert.equal(git(env.cwd, 'rev-parse', 'HEAD'), env.base);
+      assert.equal(git(env.cwd, 'status', '--porcelain'), '?? scratch.txt');
+    },
+  },
+  {
+    mode: 'declines',
+    check({ result, env, calls, record }) {
+      const { output } = result;
+      // The pricing refactorer edits and then declines; the clock refactorer claims success but
+      // changes nothing. Code keeps neither change, asks no reviewer, and publishes both nets.
+      assert.equal(output.status, 'nets-only');
+      assert.deepEqual(output.refactored, []);
+      assert.deepEqual(
+        output.netOnly.map((entry) => [entry.location, entry.why]),
+        [
+          [
+            'pricing.mjs:totalWithTax',
+            'refactorer declined: Cannot extract without changing the rounding',
+          ],
+          ['clock.mjs:stamp', 'refactorer made no change'],
+        ],
+      );
+      assert.equal(output.failedCalls, 0);
+      assert.ok(stepIds(calls).every((id) => !id.endsWith('/review')));
+      assert.equal(record.steps['refactor/0/touched'], undefined);
+      assert.equal(git(env.cwd, 'rev-parse', 'HEAD'), output.commit);
+      assert.equal(
+        git(env.cwd, 'diff', '--name-only', env.base, 'HEAD'),
+        ['clock.net.test.mjs', casesFile, netFile].join('\n'),
+      );
+      assert.equal(readFileSync(join(env.cwd, 'pricing.mjs'), 'utf8'), pricing);
+      assert.equal(readFileSync(join(env.cwd, 'clock.mjs'), 'utf8'), clock);
+      assert.equal(git(env.cwd, 'status', '--porcelain'), '');
+    },
+  },
+  {
+    mode: 'large',
+    check({ result, env, calls, record }) {
+      const { output } = result;
+      // A diff past what the reviewer is shown (and past its capture) and a plan past the approval
+      // preview: both are cut, said so and counted, and the run still completes.
+      assert.equal(output.status, 'applied');
+      assert.equal(output.refactored[0].reviewedWhole, false);
+      assert.equal(degraded(output), true);
+      const review = promptOf(calls, 'refactor/0/review');
+      assert.match(review, /The diff below is truncated to its first 100000 bytes\./u);
+      const shown = review.split('<diff>\n')[1].split('\n</diff>')[0];
+      assert.ok(shown.startsWith('diff --git a/pricing.mjs b/pricing.mjs'));
+      assert.ok(Buffer.byteLength(shown) <= 100_000 && Buffer.byteLength(shown) > 99_000);
+      const { details, subject } = record.steps['approve-refactors'].question.request;
+      assert.match(
+        details,
+        /\n\n\(Only the first 15000 bytes are shown; the question's subject holds the whole plan\.\)$/u,
+      );
+      assert.ok(subject.targets[0].behaviorsPinned.includes(longBehavior));
+      assert.equal(readFileSync(join(env.cwd, 'pricing.mjs'), 'utf8'), large);
+      assert.equal(git(env.cwd, 'rev-parse', 'HEAD'), output.commit);
+      assert.equal(git(env.cwd, 'status', '--porcelain'), '');
     },
   },
   {

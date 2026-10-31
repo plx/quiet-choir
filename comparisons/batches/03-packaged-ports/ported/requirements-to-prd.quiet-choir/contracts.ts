@@ -42,6 +42,27 @@ export const extractCaps = {
 } as const;
 /** The issue cap of one critique, which the Attack prompt states. */
 export const maxIssues = 25;
+/**
+ * The caps of the writer's PRD reply, which the Draft and Revise prompts state. A revision gets
+ * room for one more open question and assumption per issue (lib/policy.ts reviseCaps).
+ */
+export const prdCaps = {
+  title: 120,
+  goals: 12,
+  users: 12,
+  requirements: 60,
+  nonFunctional: 30,
+  outOfScope: 30,
+  openQuestions: 60,
+  assumptions: 40,
+  cites: 12,
+};
+export type PrdCaps = { readonly [K in keyof typeof prdCaps]: number };
+/**
+ * At most this many pooled conflicts and unknowns, conflicts first, are listed for the writer, so
+ * they fit the draft's open questions with room for its own gaps; the rest are reported unlisted.
+ */
+export const maxListed = 40;
 
 export const Extraction = z.object({
   findings: z
@@ -92,10 +113,10 @@ export type Finding = z.infer<typeof Finding>;
 
 const text = z.string().min(1);
 /** The writer's reply for a draft or a revision: the PRD's sections, traced to finding ids. */
-export const PrdReply = (findingIds: readonly [string, ...string[]]) => {
-  const cites = z.array(z.enum(findingIds)).max(12);
+export const PrdReply = (findingIds: readonly [string, ...string[]], caps: PrdCaps = prdCaps) => {
+  const cites = z.array(z.enum(findingIds)).max(caps.cites);
   return z.object({
-    title: text.max(120),
+    title: text.max(caps.title),
     problem: text.describe('Problem and context, one or two paragraphs'),
     goals: z
       .array(
@@ -106,8 +127,8 @@ export const PrdReply = (findingIds: readonly [string, ...string[]]) => {
             .describe('How success is measured; null when the material gives no measure'),
         }),
       )
-      .max(12),
-    users: z.array(z.object({ user: text, job: text })).max(12),
+      .max(caps.goals),
+    users: z.array(z.object({ user: text, job: text })).max(caps.users),
     requirements: z
       .array(
         z.object({
@@ -117,15 +138,15 @@ export const PrdReply = (findingIds: readonly [string, ...string[]]) => {
         }),
       )
       .min(1)
-      .max(60),
+      .max(caps.requirements),
     nonFunctional: z
       .array(z.object({ text, findings: cites.min(1) }))
-      .max(30)
+      .max(caps.nonFunctional)
       .describe('Non-functional requirements, each traced to findings'),
-    outOfScope: z.array(text).max(30),
+    outOfScope: z.array(text).max(caps.outOfScope),
     openQuestions: z
       .array(z.object({ question: text, consequences: text.describe('What the answer decides') }))
-      .max(40),
+      .max(caps.openQuestions),
     assumptions: z
       .array(
         z.object({
@@ -135,7 +156,7 @@ export const PrdReply = (findingIds: readonly [string, ...string[]]) => {
           ),
         }),
       )
-      .max(40),
+      .max(caps.assumptions),
   });
 };
 export type Prd = z.infer<ReturnType<typeof PrdReply>>;
@@ -163,7 +184,9 @@ export const Answers = z.object({
   answers: z.string().max(16_000).describe('Answers to the open questions; empty keeps them open'),
 });
 
-const OpenQuestion = z.object({ question: z.string(), consequences: z.string().nullable() });
+/** An open question; an empty extraction's unknowns are asked as questions with no consequences. */
+export const OpenQuestion = z.object({ question: z.string(), consequences: z.string().nullable() });
+export type OpenQuestion = z.infer<typeof OpenQuestion>;
 
 export const RequirementsInput = z
   .object({
@@ -222,7 +245,7 @@ export const RequirementsInput = z
       .enum(['file', 'commit'])
       .default('file')
       .describe(
-        'Write out as a file, or create it as a managed commit for later stages (which cannot replace)',
+        'Write out as a file, or create it as a managed commit for later stages, which cannot replace and needs a clean checkout (untracked files included)',
       ),
     maxMaterialBytes: z
       .number()
@@ -248,14 +271,14 @@ export const RequirementsInput = z
 export type RequirementsInput = z.infer<typeof RequirementsInput>;
 
 /** The verdict on one drafting round. */
-export const RoundStatus = z.enum(['complete', 'degraded', 'unrevised', 'empty']);
+export const RoundStatus = z.enum(['complete', 'limited', 'degraded', 'unrevised', 'empty']);
 export type RoundStatus = z.infer<typeof RoundStatus>;
 
 export const RequirementsOutput = z.object({
   status: z
-    .enum(['complete', 'degraded', 'unrevised', 'empty', 'refused'])
+    .enum(['complete', 'limited', 'degraded', 'unrevised', 'empty', 'refused'])
     .describe(
-      "The final round's verdict. complete: every lens and critic answered and the issues were revised; degraded: a lens or critic failed; unrevised: issues were raised, or every critic failed, and the draft stands; empty: no finding; refused: out exists and replace does not name it, so nothing ran. An earlier round's failures are in asked",
+      "The final round's verdict. complete: every lens and critic answered and the issues were revised; limited: as complete, but the writer was given only the first 40 conflicts and unknowns (see unlisted); degraded: a lens or critic failed, or an answered round's redo drafted no PRD (see failedRedo); unrevised: issues were raised, or every critic failed, and the draft stands; empty: no finding; refused: out exists and replace does not name it, or a commit's checkout is dirty, so nothing ran. An earlier round's verdict and failures are in asked",
     ),
   material: z.array(
     z.object({
@@ -269,8 +292,14 @@ export const RequirementsOutput = z.object({
     .number()
     .int()
     .min(0)
-    .describe('Drafting rounds: the first plus one per answered question; 0 when refused'),
-  answers: z.array(z.string()).describe('The answer sets the final round treated as stated'),
+    .describe(
+      'Drafting rounds that ran: the first plus one per answered question round; 0 when refused',
+    ),
+  answers: z
+    .array(z.string())
+    .describe(
+      "The answer sets the final round treated as stated; a failed redo's are in failedRedo",
+    ),
   asked: z.array(
     z
       .object({
@@ -285,10 +314,26 @@ export const RequirementsOutput = z.object({
         'One question round: how many open questions it asked, whether they were answered, and the verdict and failures of the drafting round they came from',
       ),
   ),
+  failedRedo: z
+    .object({
+      round: z.number().int().min(1),
+      status: RoundStatus,
+      failedLenses: z.array(Lens),
+      answers: z.string(),
+    })
+    .nullable()
+    .describe(
+      'An answered question round whose redo drafted no PRD (its lenses failed or found nothing). The round before it stays the final round, so its PRD stands without these answers and the status is degraded; null otherwise',
+    ),
   failedLenses: z.array(Lens).describe('The lenses of the final round that failed'),
   findings: z.array(Finding).describe("The final round's findings"),
-  unknowns: z.array(z.string()),
-  conflicts: z.array(z.string()),
+  unknowns: z.array(z.string()).describe("The final round's pooled unknowns"),
+  conflicts: z.array(z.string()).describe("The final round's pooled conflicts"),
+  unlisted: z
+    .object({ conflicts: z.array(z.string()), unknowns: z.array(z.string()) })
+    .describe(
+      'The conflicts and unknowns past the first 40 (conflicts first) that the writer was not given; empty when nothing was drafted',
+    ),
   failedCritics: z.array(Charter).describe('The critics of the final round that failed'),
   issues: z.array(Issue).describe('The critique of the final round, most severe first'),
   revised: z.boolean(),
@@ -299,8 +344,12 @@ export const RequirementsOutput = z.object({
     .describe(
       'Inferred findings a requirement relied on that the writer left out; code added them',
     ),
-  openQuestions: z.array(OpenQuestion),
+  openQuestions: z
+    .array(OpenQuestion)
+    .describe("The final PRD's open questions, or an empty extraction's unknowns"),
   critiqueSummary: z.string().describe('The critique in one paragraph, or why nothing ran'),
-  written: Receipt.nullable(),
+  written: Receipt.nullable().describe(
+    "The PRD's receipt; previousSha256 is the baseline out was checked against before the run",
+  ),
 });
 export type RequirementsOutput = z.infer<typeof RequirementsOutput>;

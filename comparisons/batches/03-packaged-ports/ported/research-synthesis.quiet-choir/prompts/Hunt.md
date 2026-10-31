@@ -7,7 +7,8 @@ Instruction: {{ gap.huntInstruction }}
 
 {% if commit %}
 This hunt searches this repository, checked out for you at commit {{ commit }}. You have its file
-tools and no web tools. Give a repository-relative path as the ref, with the kind local-code.
+tools and no web tools. Give a repository-relative path as the ref, with the kind local-code: a
+URL, an absolute path, or a path with a . or .. segment or inside .git fails the hunt.
 {% else %}
 This hunt searches the web with WebSearch and WebFetch. You have no access to local files.
 {% endif %}

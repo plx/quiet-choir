@@ -1,7 +1,8 @@
 <sources>
 {%- for source in sources %}
 
-[{{ source.id }}] {{ source.ref }} ({{ source.kind }}, {{ source.credibility }})
+
+[{{ source.id }}] {{ source.ref }} ({{ source.kind }}, {{ source.credibility }}{% if source.territory == 'local' %}; from this repository{% endif %})
 {%- for finding in source.findings %}
 
 - {{ finding.claim }} (support: {{ finding.support }}{% if finding.caveat %}; caveat: {{ finding.caveat }}{% endif %})
@@ -11,5 +12,6 @@
 - Contradicts: {{ note }}
 {%- endfor %}
 {%- endfor %}
+
 
 </sources>

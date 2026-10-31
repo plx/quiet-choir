@@ -15,7 +15,7 @@ export const Path = z
         .split('/')
         .every((part) => part !== '..' && part !== '.' && part !== '' && part !== '.git') &&
       !value.includes('\0'),
-    'Use a repository-relative path without dot segments or .git',
+    'Use a relative path without dot segments or .git',
   );
 export const Argv = z.tuple([z.string().min(1)]).rest(z.string());
 /** A Git glob pathspec without magic, relative to the working directory. */
@@ -59,6 +59,7 @@ export const History = z.object({
   ),
   unlistedMentions: z.int().nonnegative(),
   churn: z.array(z.object({ path: z.string(), changes: z.int().positive() })),
+  unlistedChurn: z.int().nonnegative(),
 });
 export type History = z.infer<typeof History>;
 export const Artifacts = z.object({ paths: z.array(z.string()), unlisted: z.int().nonnegative() });
@@ -92,7 +93,9 @@ export type Run = z.infer<typeof Run>;
 /**
  * Arithmetic over the runs. `stable` means every run exited 0 (and matched passPattern when one is
  * set), not that the named test ran: some runners exit 0 when no test matches the name.
- * `could-not-run` means the command did not start, or a passing exit lacked passPattern.
+ * `could-not-run` means the command did not start, or a passing exit lacked passPattern. Upstream
+ * it also meant a test that needs a live service; code cannot tell a missing service from a real
+ * failure, so such a test fails every run and reads as `always-fails`.
  */
 export const Verdict = z.enum(['flaky', 'stable', 'always-fails', 'could-not-run']);
 export const Stress = z.object({
@@ -132,17 +135,28 @@ export const Diagnosis = z.object({
     .min(1)
     .describe('A real fix; retry-wrapping only if the flake is genuinely external'),
   confidence: z.enum(['high', 'medium', 'low']),
-  files: z.array(Path).min(1).max(6).describe('Every file the proposed fix changes'),
+  files: z
+    .array(Path)
+    .min(1)
+    .max(6)
+    .describe('Every file the proposed fix changes, relative to the working directory'),
 });
 export type Diagnosis = z.infer<typeof Diagnosis>;
 export const Flake = Stressed.extend({ diagnosis: Diagnosis.nullable() });
 export type Flake = z.infer<typeof Flake>;
 
-/** One approved fix, in the order the fixer receives it. */
+/**
+ * One approved fix, in the order the fixer receives it: the measurement and the diagnosis the human
+ * approves, and exactly the files the diagnosis named.
+ */
 export const PlanItem = z.object({
   test: z.string(),
   file: z.string(),
+  failures: z.number().int().nonnegative(),
+  runs: z.number().int().positive(),
   mechanism: Mechanism,
+  confidence: Diagnosis.shape.confidence,
+  explanation: z.string(),
   proposedFix: z.string(),
   files: z.array(z.string()),
 });
@@ -154,6 +168,14 @@ export const Unplanned = Untouched.extend({ reason: z.enum(['undiagnosed', 'unkn
 export type Unplanned = z.infer<typeof Unplanned>;
 export const Restressed = z.object({ test: z.string(), file: z.string(), stress: Stress });
 export type Restressed = z.infer<typeof Restressed>;
+
+/**
+ * When the checkout's HEAD stopped being the measured commit, and what it became. During the stress
+ * runs, later runs may have measured that HEAD, so nothing is diagnosed; during the diagnoses,
+ * nobody is asked; during the fix (the approval, the fixer, the re-stress or the verification), the
+ * held fix stays unpublished.
+ */
+export const Moved = z.object({ during: z.enum(['stress', 'diagnosis', 'fix']), head: Sha });
 
 export const Check = z.object({
   argv: Argv,
@@ -273,9 +295,15 @@ export const FlakyOutput = z.object({
     'refused',
     'incomplete',
     'fix-failed',
+    'moved',
     'fixed',
   ]),
-  commit: Sha.describe('The commit every flake rate was measured at'),
+  commit: Sha.describe(
+    "The commit the run started at and measured; when moved.during is 'stress', runs after the move may have measured moved.head",
+  ),
+  moved: Moved.nullable().describe(
+    "On 'moved', when HEAD left the measured commit and its new value",
+  ),
   noEvidence: z
     .array(Modality)
     .describe('Sources code found no evidence in, so no sweeper was asked'),
@@ -296,8 +324,9 @@ export const FlakyOutput = z.object({
     .describe('Confirmed flakes no fix plan includes: undiagnosed, or no mechanism named'),
   residue: z.array(z.string()).describe('git status lines the stress runs left behind'),
   approvedDigest: Digest.nullable(),
+  fixSummary: z.string().nullable().describe("The fixer's own account of its change, once it ran"),
   fixCommit: Sha.nullable().describe(
-    "The published commit on 'fixed'; on 'fix-failed', the unpublished integration commit on a run ref",
+    "The published commit on 'fixed'; after the fix, on 'fix-failed' or 'moved', the fixer's unpublished snapshot (the measured commit plus the fix) on a run ref",
   ),
   refusedFiles: z
     .array(z.string())

@@ -6,6 +6,8 @@ instead of guessing. Keep the assumptions honest: anything you decide unilateral
 citing no finding. Keep tracing every requirement to the findings in the appendix, by id; the
 workflow again adds an assumption for any inferred finding you rely on without one.
 
+{% include "_fragments/Caps.md" +%}
+
 Issues, {{ issues | length }} in all, most severe first:
 {%- for issue in issues %}
 

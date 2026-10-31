@@ -5,6 +5,7 @@
 // mentions --yes) passes, a human approves the exact patch, and code publishes it. CHANGELOG.md is
 // never listed; docs/notes.txt, matched only by the limits modes' pathspecs, is over its size cap.
 // reply() asserts what each agent was told: the committed doc text, and the anchored claims in order.
+// Every approval is checked to hold only the fixed docs, integrated onto the base.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -31,6 +32,8 @@ const bulk = `\nNotes on the flags, kept for the fixture: ${'Ünïcödé flägs.
 );
 
 export async function setup(env) {
+  seen.question = null;
+  seen.moveOnAnswer = null;
   await writeFiles(env.cwd, {
     'cli.mjs': cli,
     'README.md': readme,
@@ -140,6 +143,12 @@ function classify(request, mode) {
     assert.match(prompt, /- docs\/config\.md: # Configuration\n/u);
     return { docs: [configDoc] };
   }
+  if (mode === 'inventory-cap') {
+    // Only the first supported doc in path order reaches the librarian.
+    assert.deepEqual(enumOf(request.outputSchema, 'docs', 'items', 'path'), ['README.md']);
+    assert.doesNotMatch(prompt, /- docs\//u);
+    return { docs: [readmeDoc] };
+  }
   assert.deepEqual(enumOf(request.outputSchema, 'docs', 'items', 'path'), [
     'README.md',
     'docs/config.md',
@@ -219,8 +228,11 @@ export function fail(request, mode) {
   );
 }
 
-/** The latest approval question, for the checks; modes run one at a time. */
-const seen = { question: null };
+/**
+ * The latest approval question, for the checks, and the moved-wait mode's repository, which
+ * answer() commits to while the run waits; modes run one at a time and setup() resets both.
+ */
+const seen = { question: null, moveOnAnswer: null };
 const marker = /\n\[\.\.\. \d+ more bytes; the digest covers the whole patch\]$/u;
 
 /**
@@ -233,6 +245,13 @@ export function answer(question) {
   assert.ok(Buffer.byteLength(details) <= 16_384);
   assert.equal(marker.test(details), subject.truncated);
   assert.ok(!details.includes('�'));
+  const moving = seen.moveOnAnswer;
+  if (moving) {
+    // Someone commits to the checkout while the approval waits.
+    writeFileSync(join(moving.cwd, 'notes.txt'), 'Unrelated work\n');
+    moving.moved = commitAll(moving.cwd, 'unrelated work');
+    seen.moveOnAnswer = null;
+  }
   return subject.docs.some((doc) => doc.edits.some((edit) => edit.startsWith('DECLINE ')))
     ? { approved: false }
     : undefined;
@@ -265,6 +284,19 @@ function published(env, output) {
   assert.equal(output.fix.commit, git(env.cwd, 'rev-parse', 'HEAD'));
   assert.equal(output.fix.digest, diffDigest(env.cwd, env.base, 'HEAD'));
   assert.equal(git(env.cwd, 'status', '--porcelain', '--untracked-files=all'), '');
+}
+/**
+ * The approval showed the fixed docs and nothing else: its commit is the squash integration parented
+ * on the base, and its diff names exactly the docs the subject lists.
+ */
+function approvedOnly(env) {
+  const { subject } = seen.question;
+  assert.equal(subject.base, env.base);
+  assert.equal(git(env.cwd, 'rev-parse', `${subject.commit}^`), env.base);
+  assert.deepEqual(
+    git(env.cwd, 'diff', '--name-only', env.base, subject.commit).split('\n'),
+    subject.docs.map((doc) => doc.doc).sort(),
+  );
 }
 const statuses = (output) =>
   output.docs.map((doc) => [doc.path, ...doc.results.map((r) => r.status)]);
@@ -319,6 +351,11 @@ export function check({ result, env, calls, suspended }) {
   assert.equal(seen.question.prompt, 'Publish this verified documentation patch to the checkout?');
   assert.equal(seen.question.details, diffText(env.cwd, env.base, 'HEAD'));
   assert.equal(seen.question.subject.digest, output.fix.digest);
+  approvedOnly(env);
+  assert.deepEqual(
+    seen.question.subject.docs.map((doc) => doc.doc),
+    ['README.md'],
+  );
   assert.equal(readFileSync(join(env.cwd, 'README.md'), 'utf8'), fixedReadme);
   assert.equal(readFileSync(join(env.cwd, 'docs/config.md'), 'utf8'), config);
   // Only the fixer edits, in its own worktree; the librarian and the extractor have no tools.
@@ -466,13 +503,43 @@ export const modes = [
     },
   },
   {
+    // HEAD moves while the fixer works. ctx.merge would integrate onto it, so the run stops
+    // before integrating: nothing is verified, no question is asked and nothing is published.
     mode: 'moved',
+    check({ result, env, suspended, calls }) {
+      const { output } = result;
+      assert.equal(suspended, 0);
+      assert.equal(seen.question, null);
+      assert.deepEqual(output.fix, { ...noFix, status: 'moved' });
+      assert.equal(output.docs[1].fix.status, 'changed');
+      assert.equal(output.totals.fixed, 0);
+      assert.equal(callsTo(calls, 'fix').length, 1);
+      assert.equal(git(env.cwd, 'rev-parse', 'HEAD'), env.moved);
+      assert.equal(readFileSync(join(env.cwd, 'README.md'), 'utf8'), readme);
+      assert.equal(git(env.cwd, 'status', '--porcelain', '--untracked-files=all'), '');
+    },
+  },
+  {
+    // HEAD moves while the approval waits: the approved patch was the base plus the fix alone, and
+    // the run refuses to publish it onto the moved HEAD.
+    mode: 'moved-wait',
+    options(opts, env) {
+      seen.moveOnAnswer = env;
+      return opts;
+    },
     check({ result, env, suspended }) {
       const { output } = result;
       assert.equal(suspended, 1);
       assert.equal(output.fix.status, 'moved');
+      approvedOnly(env);
+      assert.equal(output.fix.commit, seen.question.subject.commit);
       assert.equal(output.fix.digest, diffDigest(env.cwd, env.base, output.fix.commit));
+      assert.deepEqual(
+        output.fix.verification.map((row) => row.code),
+        [0],
+      );
       assert.equal(output.totals.fixed, 0);
+      assert.match(env.moved, /^[a-f0-9]{40}$/u);
       assert.equal(git(env.cwd, 'rev-parse', 'HEAD'), env.moved);
       assert.equal(readFileSync(join(env.cwd, 'README.md'), 'utf8'), readme);
       assert.equal(git(env.cwd, 'status', '--porcelain', '--untracked-files=all'), '');
@@ -503,6 +570,7 @@ export const modes = [
       assert.ok(subject.bytes > 15_000);
       assert.equal(subject.bytes, Buffer.byteLength(diffText(env.cwd, env.base, 'HEAD')));
       assert.ok(diffText(env.cwd, env.base, 'HEAD').startsWith(details.replace(marker, '')));
+      approvedOnly(env);
       published(env, result.output);
     },
   },
@@ -619,6 +687,7 @@ export const modes = [
         ['README.md'],
       );
       assert.deepEqual(seen.question.subject.omitted, output.fix.omitted);
+      approvedOnly(env);
       assert.deepEqual(output.totals, {
         docs: 2,
         claims: 3,
@@ -674,6 +743,32 @@ export const modes = [
       assert.deepEqual(output.docs[0].unanchored, ['The tool installs from npm']);
       assert.equal(output.docs[0].results.length, 1);
       assert.equal(callsTo(calls, 'check').length, 1);
+      untouched(env);
+    },
+  },
+  {
+    // A doc whose name has a backslash is reported, never audited, and the inventory cap passes
+    // only the first supported doc to the librarian: limited, with every left-out doc named.
+    mode: 'inventory-cap',
+    input: () => ({ maxInventory: 1, evidenceCommands: [helpCommand] }),
+    options(opts, env) {
+      writeFileSync(join(env.cwd, 'docs/odd\\name.md'), '# Odd\n\nAn oddly named doc.\n');
+      env.base = commitAll(env.cwd, 'add an oddly named doc');
+      return opts;
+    },
+    check({ result, env, calls }) {
+      const { output } = result;
+      assert.equal(output.status, 'limited');
+      assert.equal(output.base, env.base);
+      assert.equal(output.listed, 3);
+      assert.deepEqual(output.skipped, [
+        { doc: 'docs/odd\\name.md', reason: 'unsupported-path' },
+        { doc: 'docs/config.md', reason: 'inventory-cap' },
+      ]);
+      assert.deepEqual(statuses(output), [['README.md', 'drifted', 'true']]);
+      assert.deepEqual([output.failed, output.unclassified], [[], []]);
+      assert.equal(callsTo(calls, 'extract').length, 1);
+      assert.ok(calls.every((call) => !call.options.prompt.includes('odd\\name')));
       untouched(env);
     },
   },

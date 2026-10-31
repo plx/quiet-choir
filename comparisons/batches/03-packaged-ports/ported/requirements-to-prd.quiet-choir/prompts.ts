@@ -1,11 +1,24 @@
 // The prompt index: every agent prompt as a markdown template with typed parameters. Attack and
-// Revise include the draft through prompts/_fragments/Prd.md; the caps the schemas enforce come in
-// as parameters, so the prose states the same numbers.
+// Revise include the draft through prompts/_fragments/Prd.md, and Draft and Revise state the PRD's
+// caps through prompts/_fragments/Caps.md; the caps the schemas enforce come in as parameters, so
+// the prose states the same numbers.
 import { definePrompts, z } from 'quiet-choir';
 import { Charter, Finding, Issue, Lens } from './contracts.js';
 
 const product = z.string().nullable();
 const prd = z.string();
+const count = z.number().int().nonnegative();
+const caps = z.object({
+  title: count,
+  goals: count,
+  users: count,
+  requirements: count,
+  nonFunctional: count,
+  outOfScope: count,
+  openQuestions: count,
+  assumptions: count,
+  cites: count,
+});
 
 export const prompts = definePrompts(import.meta.dirname + '/prompts', {
   Extract: {
@@ -33,6 +46,8 @@ export const prompts = definePrompts(import.meta.dirname + '/prompts', {
       findings: z.array(Finding).min(1),
       conflicts: z.array(z.string()),
       unknowns: z.array(z.string()),
+      unlisted: count.describe('How many more conflicts and unknowns code did not list'),
+      caps,
     }),
   },
   Attack: {
@@ -43,6 +58,6 @@ export const prompts = definePrompts(import.meta.dirname + '/prompts', {
   Revise: {
     file: 'Revise.md',
     description: 'Apply the fixes; a fix that needs the product owner becomes an open question.',
-    params: z.object({ prd, issues: z.array(Issue).min(1) }),
+    params: z.object({ prd, issues: z.array(Issue).min(1), caps }),
   },
 });

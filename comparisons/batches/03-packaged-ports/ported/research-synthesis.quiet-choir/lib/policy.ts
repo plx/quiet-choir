@@ -1,5 +1,5 @@
-// Pure rules: which modalities run, lead deduplication and ranking, the depth and hunt caps, hunt
-// territories, the citation keys and their check, and the confidence and status verdicts.
+// Pure rules: which modalities run, lead territories, deduplication and ranking, the depth and hunt
+// caps, hunt routing, the citation keys and their check, and the confidence and status verdicts.
 import type { MapStepError, Settled } from 'quiet-choir';
 import type {
   Confidence,
@@ -33,14 +33,22 @@ export const huntCap = 3;
 /** Upstream's rule (lowercase, no trailing slash), plus trimming the surrounding whitespace. */
 const normalize = (ref: string) => ref.trim().toLowerCase().replace(/\/+$/u, '');
 
-/** One entry per normalized ref, in sweep order, recording every modality that found it. */
+/** A source's identity: its territory and normalized ref, so a web ref never merges into a file. */
+const identity = (territory: Territory, ref: string) => `${territory} ${normalize(ref)}`;
+
+/**
+ * One entry per territory and normalized ref, in sweep order, recording every modality that found
+ * it. The territory is code's, not the agent's: local for the local sweep's leads, whatever kind
+ * the scout gave them, and web for the rest, a `local-code` lead from a web scout included.
+ */
 export function merge(swept: { modality: Modality; leads: Lead[] }[]): Ranked[] {
   const byRef = new Map<string, Ranked>();
   for (const { modality, leads } of swept)
     for (const lead of leads) {
-      const key = normalize(lead.ref);
+      const territory = modality === 'local' ? 'local' : 'web';
+      const key = identity(territory, lead.ref);
       const previous = byRef.get(key);
-      if (!previous) byRef.set(key, { ...lead, modalities: [modality] });
+      if (!previous) byRef.set(key, { ...lead, modalities: [modality], territory });
       else if (!previous.modalities.includes(modality))
         byRef.set(key, { ...previous, modalities: [...previous.modalities, modality] });
     }
@@ -91,9 +99,7 @@ export const routed = (gaps: Gap[], commit: string | null): Gap[] =>
  * paths, and a local hunt cannot fetch a URL.
  */
 export const knownFor = (found: Source[], territory: Territory): string[] =>
-  found
-    .filter((source) => (source.kind === 'local-code') === (territory === 'local'))
-    .map((source) => source.ref);
+  found.filter((source) => source.territory === territory).map((source) => source.ref);
 
 /** Upstream kept every reading marked useful; a useful reading with no findings has nothing to cite. */
 const yielded = (reading: Reading) => reading.useful && reading.findings.length > 0;
@@ -118,6 +124,7 @@ export function sources(read: Ranked[], readings: Result<Reading>[]) {
         ref: lead.ref,
         kind: lead.kind,
         credibility: lead.credibility,
+        territory: lead.territory,
         origin: 'lead',
         findings: result.value.findings,
         contradicts: result.value.contradicts === null ? [] : [result.value.contradicts],
@@ -127,8 +134,9 @@ export function sources(read: Ranked[], readings: Result<Reading>[]) {
 }
 
 /**
- * Fold the hunts into the sources: a hunt that reread a known ref adds its findings to that
- * source, any other gets the next key. Every critic gap is tracked, past the cap as unhunted.
+ * Fold the hunts into the sources: a hunt that reread a known ref in its own territory adds its
+ * findings to that source, any other gets the next key in the hunt's territory. Every critic gap is
+ * tracked, past the cap as unhunted.
  */
 export function fold(known: Source[], gaps: Gap[], hunts: Result<Hunted>[]) {
   const all = [...known];
@@ -139,7 +147,8 @@ export function fold(known: Source[], gaps: Gap[], hunts: Result<Hunted>[]) {
     const { source, findings, contradicts } = result.value;
     if (!yielded(result.value) || source === null) return { ...gap, hunt: 'empty', source: null };
     const notes = contradicts === null ? [] : [contradicts];
-    const at = all.findIndex((known) => normalize(known.ref) === normalize(source.ref));
+    const key = identity(gap.territory, source.ref);
+    const at = all.findIndex((known) => identity(known.territory, known.ref) === key);
     const previous = all[at];
     if (previous) {
       all[at] = {
@@ -150,7 +159,14 @@ export function fold(known: Source[], gaps: Gap[], hunts: Result<Hunted>[]) {
       return { ...gap, hunt: 'found', source: previous.id };
     }
     const id = `S${String(all.length + 1)}`;
-    all.push({ id, ...source, origin: 'hunt', findings, contradicts: notes });
+    all.push({
+      id,
+      ...source,
+      territory: gap.territory,
+      origin: 'hunt',
+      findings,
+      contradicts: notes,
+    });
     return { ...gap, hunt: 'found', source: id };
   });
   return { sources: all, gaps: tracked };

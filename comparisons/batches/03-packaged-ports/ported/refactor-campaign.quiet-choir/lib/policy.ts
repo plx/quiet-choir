@@ -5,10 +5,17 @@ import { createHash } from 'node:crypto';
 import type { MapStepError, Settled, WorktreeChange } from 'quiet-choir';
 import type { Chosen, NetClaim, RefactorOutput, Target } from '../contracts.js';
 
-/** The first surveyed target per location, so the ranker's enum and the map items are unique. */
-export const uniqueTargets = (targets: Target[]): Target[] => [
-  ...new Map(targets.map((target) => [target.location, target])).values(),
-];
+/**
+ * The first surveyed target per location, so the ranker's enum and the map items are unique;
+ * `duplicates` counts the later ones dropped.
+ */
+export function uniqueTargets(surveyed: Target[]) {
+  const byLocation = new Map<string, Target>();
+  for (const target of surveyed)
+    if (!byLocation.has(target.location)) byLocation.set(target.location, target);
+  const targets = [...byLocation.values()];
+  return { targets, duplicates: surveyed.length - targets.length };
+}
 
 /** The ranker's picks in its order, once each, with the survey's evidence; the rest are deferred. */
 export function choose(
@@ -135,9 +142,16 @@ export const planned = (net: GreenNet & { target: Chosen }) => ({
 /** The SHA-256 of the approved text (the goal and the plan), as the refactorers receive it. */
 export const planDigest = (text: string): string => createHash('sha256').update(text).digest('hex');
 
-/** A bounded preview for the approval question; the subject carries the whole plan. */
-export const preview = (text: string): string =>
-  Buffer.from(text).subarray(0, 15_000).toString('utf8');
+/** The bytes of the plan the approval question's details show. */
+const PREVIEW = 15_000;
+
+/** A bounded preview for the approval question, which says when it is cut. */
+export function preview(text: string): string {
+  const bytes = Buffer.from(text);
+  if (bytes.length <= PREVIEW) return text;
+  const shown = bytes.subarray(0, PREVIEW).toString('utf8');
+  return `${shown}\n\n(Only the first ${String(PREVIEW)} bytes are shown; the question's subject holds the whole plan.)`;
+}
 
 /**
  * At most `max` bytes of a diff or file for an agent, with the shown byte count when truncated.
@@ -155,17 +169,26 @@ export const netsTouched = (touched: string[], protectedFiles: string[]) =>
 
 /** The upstream's one-line summary, from the counts and commits the output already carries. */
 export function summarize(output: Omit<RefactorOutput, 'summary'>): string {
-  const { refactored, netOnly, skipped, deferred, netsCommit, commit } = output;
-  const tail = `${String(skipped.length)} could not be pinned; ${String(deferred.length)} deferred by the ranker.`;
+  const { refactored, netOnly, skipped, deferred, netsCommit, commit, refusal } = output;
+  const dropped = output.duplicateTargets
+    ? ` ${String(output.duplicateTargets)} surveyed duplicates dropped.`
+    : '';
+  const tail = `${String(skipped.length)} could not be pinned; ${String(deferred.length)} deferred by the ranker.${dropped}`;
   // Nothing reached the checkout, so say where the green nets are and how to keep them.
   const keep = `The nets are in run-owned commit ${netsCommit ?? 'none'}; git merge it to keep them.`;
+  const kept = commit
+    ? `run-owned commit ${commit} (the nets and ${String(refactored.length)} kept refactors, every net and verify command green on it) was not published; git merge that commit to keep it.`
+    : 'nothing was integrated.';
+  const reason = refusal ? refusal.message.replace(/\.$/u, '') : '';
   switch (output.status) {
+    case 'dirty-checkout':
+      return `An apply run publishes onto a clean checkout, and this one has uncommitted changes (${reason}), so nothing was surveyed; commit or stash them and start a new run.`;
     case 'no-targets':
-      return `No measurable refactoring targets were chosen; ${String(deferred.length)} deferred.`;
+      return `No measurable refactoring targets were chosen; ${String(deferred.length)} deferred.${dropped}`;
     case 'no-nets':
       return `No target got a green characterization net, so nothing was refactored. ${tail}`;
     case 'baseline-red':
-      return `The verify commands already fail on run-owned nets commit ${netsCommit ?? 'none'}, before any refactor, so nothing was refactored or published; fix the baseline (or the nets, if they broke it) and run again. ${tail}`;
+      return `A net or verify command already fails on run-owned nets commit ${netsCommit ?? 'none'}, before any refactor, so nothing was refactored or published; fix the baseline (or the nets, if they interfere) and run again. ${tail}`;
     case 'report':
       return `${String(netOnly.length)} targets pinned by green nets and planned; apply was false, so the checkout is untouched and a run with apply pins them again. ${keep} ${tail}`;
     case 'declined':
@@ -173,7 +196,9 @@ export function summarize(output: Omit<RefactorOutput, 'summary'>): string {
     case 'verification-failed':
       return `The final verification failed on run-owned integration ${commit ?? 'none'} (${String(refactored.length)} refactors kept), so nothing was published. ${keep} ${tail}`;
     case 'checkout-moved':
-      return `The checkout moved during the run, so the verified integration (run-owned commit ${commit ?? 'none'}, ${String(refactored.length)} refactors) was not published onto it; git merge that commit to keep it. ${tail}`;
+      return `The checkout moved during the run${refusal ? ` and ${refusal.step} conflicted with it (${reason})` : ''}, so nothing was published; ${kept} ${tail}`;
+    case 'merge-refused':
+      return `The ${refusal?.step ?? 'merge'} merge refused (${reason}) although the checkout had not moved, so nothing was published; ${kept} ${tail}`;
     default:
       return `${String(refactored.length)} refactored behind green nets, ${String(netOnly.length)} kept only their nets; the nets were published and left in place. ${tail}`;
   }

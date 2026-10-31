@@ -1,19 +1,21 @@
-// Git facts as durable effects: the clean baseline, the history and CI-artifact evidence the
-// sweepers cannot gather without a shell, the tracked test-file screen and the stress residue.
+// Git facts as durable effects: the clean checkout and its HEAD, the history and CI-artifact
+// evidence the sweepers cannot gather without a shell, the tracked test-file screen, and the
+// stress runs' residue and the HEAD they left.
 import { z, type StepContext, type WorkflowContext } from 'quiet-choir';
 import * as std from 'quiet-choir/std';
 import { Clean, History } from '../contracts.js';
 import { historyFacts, historyLimits, logFormat, withPatches } from './policy.js';
 
 /**
- * Require a clean checkout, at `expected` unless it is null, and return its HEAD with the working
- * directory's prefix in the repository (worktree receipts are repository-relative). This is a
- * local step that throws, not a completed `git status` read: a completed read would replay its
- * dirty output on every resume, so cleaning the checkout and resuming could never pass.
+ * Require a clean checkout and return its HEAD, with the working directory's prefix in the
+ * repository (worktree receipts are repository-relative). Whether HEAD is still the measured
+ * commit is the caller's branch decision, which a resume replays. This is a local step that
+ * throws, not a completed `git status` read: a completed read would replay its dirty output on
+ * every resume, so cleaning the checkout and resuming could never pass.
  */
-export const cleanAt = (ctx: WorkflowContext, id: string, expected: string | null) =>
+export const cleanHead = (ctx: WorkflowContext, id: string) =>
   ctx.step(id, {
-    input: { expected },
+    input: null,
     schema: Clean,
     async run({ exec }) {
       const status = await exec(['git', 'status', '--porcelain=v1', '--untracked-files=all']);
@@ -22,8 +24,6 @@ export const cleanAt = (ctx: WorkflowContext, id: string, expected: string | nul
           `The checkout must be clean (${id}); remove these changes and resume:\n${status.stdout}`,
         );
       const head = (await exec(['git', 'rev-parse', 'HEAD'])).stdout.trim();
-      if (expected !== null && head !== expected)
-        throw new Error(`The checkout moved from ${expected} to ${head} (${id})`);
       return { head, prefix: (await exec(['git', 'rev-parse', '--show-prefix'])).stdout.trim() };
     },
   });
@@ -143,6 +143,13 @@ export async function classify(ctx: WorkflowContext, files: string[], testFiles:
     : { tracked: [], tests: [] };
   return { tracked: new Set(screened.tracked), tests: new Set(screened.tests) };
 }
+
+/**
+ * The checkout's HEAD after the stress runs: a pull, a switch or a teammate's commit during them
+ * means later runs measured another commit. It is a recorded fact, not a precondition.
+ */
+export const headAfter = async (ctx: WorkflowContext, id: string) =>
+  (await std.exec.git(ctx, id, ['rev-parse', 'HEAD'])).trim();
 
 /** What the stress runs left in the checkout: a flake fact, and a publication blocker. */
 export async function residue(ctx: WorkflowContext) {

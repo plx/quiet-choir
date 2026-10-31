@@ -22,6 +22,7 @@ export const prompts = definePrompts(import.meta.dirname + '/prompts', {
     params: z.object({
       suspect: Suspect,
       stress: Stress,
+      command: z.string().describe('The stress argv as one line of JSON'),
       commit: z.string(),
       residue: z.array(z.string()),
     }),

@@ -13,6 +13,8 @@ assumptions, followed by a traceability appendix of the findings.
   the answer decides.
 - A goal the material gives no measure for has a null metric; do not invent a number.
 
+{% include "_fragments/Caps.md" +%}
+
 {% if product %}
 Product context: {{ product }}
 
@@ -24,6 +26,11 @@ code found its quote:
 - {{ finding.id }} [{{ finding.lens }}, {{ finding.confidence }}{% if finding.source %}, {{ finding.source }}{% endif %}]: {{ finding.point }}{% if finding.quote %} ("{{ finding.quote }}"){% endif %}
 {%- endfor +%}
 
+{% if unlisted %}
+The lenses raised {{ unlisted }} more conflicts and unknowns than the workflow lists below. It
+reports them beside the PRD, so do not guess at them.
+
+{% endif %}
 {% if conflicts %}
 Known conflicts:
 {%- for conflict in conflicts %}
@@ -40,6 +47,8 @@ Unknowns:
 
 - {{ unknown }}
 {%- endfor %}
-{% else %}
+{% elif unlisted %}
+The workflow lists none of the unknowns: all of them are among those it reports beside the PRD.
+{%- else %}
 The lenses found no unknowns.
 {%- endif %}

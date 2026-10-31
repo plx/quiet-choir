@@ -1,8 +1,8 @@
 // research-synthesis: control flow only. Modality sweeps, deep reads and gap hunts are settled
-// maps, so each failure is kept beside its modality, lead or gap. Each call goes to a web role or,
-// for the repository, to a local role on a snapshot of the commit pinned first; code deduplicates
-// and ranks the leads, keys the sources, checks the answer's citations and derives confidence and
-// status on every return path.
+// maps, so each failure is kept beside its modality, lead or gap. A lead's territory is code's (the
+// local sweep's leads are local), and it routes each read and hunt: to a web role, or to a local
+// role on a snapshot of the commit pinned first. Code deduplicates and ranks the leads, keys the
+// sources, checks the answer's citations and derives confidence and status on every return path.
 import { defineWorkflow } from 'quiet-choir';
 import {
   Critique,
@@ -60,6 +60,7 @@ export default defineWorkflow({
               worktree: snapshot,
               prompt,
             }),
+            (found) => found.leads.map((lead) => lead.ref),
           );
         return ctx.roster.Scout.value('sweep', { schema: Leads, prompt });
       },
@@ -81,7 +82,7 @@ export default defineWorkflow({
       toRead,
       { concurrency: 4, onError: 'return', version: 'read/1' },
       async (lead) => {
-        if (snapshot && lead.kind === 'local-code')
+        if (snapshot && lead.territory === 'local')
           return unchanged(
             await ctx.roster.LocalReader.object('read', {
               schema: Reading,
@@ -133,6 +134,7 @@ export default defineWorkflow({
               worktree: snapshot,
               prompt: prompts.Hunt({ question, context, gap, known, commit, maxFindings }),
             }),
+            (hunt) => (hunt.source ? [hunt.source.ref] : []),
           );
         return ctx.roster.Hunter.value('hunt', {
           schema: Hunted,

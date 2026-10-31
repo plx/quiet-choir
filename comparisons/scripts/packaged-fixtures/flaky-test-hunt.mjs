@@ -5,11 +5,12 @@
 // exist and a tracked migration script that must never run. The cache flake is diagnosed,
 // approved, fixed in the fixer's worktree, re-stressed by code and only then published. Modes
 // swap the test command for small wrappers: a runner that exits 0 when no test matches, one that
-// hangs, one that commits mid-stress and one that leaves a log behind.
+// hangs, one that leaves a log behind, and one through which a teammate's commit breaks the clock
+// test mid-stress. The same commit lands during a diagnosis or while the approval waits.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { commitAll, git, leaf, writeFiles } from './_support.mjs';
 
@@ -27,12 +28,21 @@ const tests = {
   misnamed: { test: 'formats tomorrow', file: 'tests/clock.test.mjs' },
   // A real test file, but a name that would reach the runner as an option.
   option: { test: '--require=./scripts/migrate.mjs', file: 'tests/clock.test.mjs' },
+  // A second flake, added only by the partly-planned mode.
+  queue: { test: 'drains the queue', file: 'tests/queue.test.mjs' },
 };
-const flaky = (every) =>
-  `${only(tests.cache.test)}${run}if (run % ${every} === 1) {\n  console.error('expected 2, got 3: stale cache');\n  process.exit(1);\n}\n`;
+const flakes = (name, every) =>
+  `${only(name)}${run}if (run % ${every} === 1) {\n  console.error('expected 2, got 3: stale cache');\n  process.exit(1);\n}\n`;
+const flaky = (every) => flakes(tests.cache.test, every);
 const fixed = `${only(tests.cache.test)}// The cache is reset before every read, so the order of runs no longer matters.\n`;
 // The same fix, but every re-stress run leaves an untracked restress.log in its tree.
 const littering = `${fixed}if ((process.env.QUIET_CHOIR_STEP_ID ?? '').startsWith('restress/'))\n  (await import('node:fs')).appendFileSync('restress.log', 'run\\n');\n`;
+// A test edit instead of the fix the diagnosis put in the code under test.
+const retrying = `${only(tests.cache.test)}// Retried until the cache is warm, instead of fixing src/cache.mjs.\n`;
+// Where the rename mode's fixer moves the clock test: a new file its plan approves.
+const renamedTo = 'tests/cache.fixture.mjs';
+// Long enough that the approval details must be cut below the question limit.
+const longFix = `Reset the module cache before each read. ${'Clear the shared fixture map between runs, too. '.repeat(400)}`;
 const files = {
   [tests.cache.file]: flaky(3),
   [tests.clock.file]: only(tests.clock.test),
@@ -79,10 +89,20 @@ const stressLog = wrapped("require('node:fs').appendFileSync('stress.log', 'run\
 const hangsOnNet = wrapped(
   "if (process.argv[1].includes('net')) setInterval(() => {}, 1000); else",
 );
-// Commits on the first stress run, so HEAD moves between the two clean checks.
-const commitsOnce = wrapped(
-  "if (process.env.QUIET_CHOIR_STEP_ID === 'stress/0/run/0') require('node:child_process').execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@localhost', '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-qm', 'Moved during stress']);",
-);
+// A teammate's commit that breaks the clock test, which passes at the measured commit.
+const teammateSubject = 'Teammate breaks the clock test';
+const brokenClock = "console.error('expected Saturday, got Sunday');\nprocess.exit(1);\n";
+/** Make the teammate's commit in the checkout, once: a retried call must not commit twice. */
+function teammate(env) {
+  if (git(env.cwd, 'rev-parse', 'HEAD') !== env.base) return;
+  writeFileSync(join(env.cwd, tests.clock.file), brokenClock);
+  commitAll(env.cwd, teammateSubject);
+}
+/** Makes the teammate's commit in the checkout `dir` during stress run `step`. */
+const breaksClockOn = (dir, step) =>
+  wrapped(
+    `if (process.env.QUIET_CHOIR_STEP_ID === ${JSON.stringify(step)}) { require('node:fs').writeFileSync(require('node:path').join(${JSON.stringify(dir)}, ${JSON.stringify(tests.clock.file)}), ${JSON.stringify(brokenClock)}); require('node:child_process').execFileSync('git', ['-C', ${JSON.stringify(dir)}, '-c', 'user.name=Teammate', '-c', 'user.email=teammate@localhost', '-c', 'commit.gpgsign=false', 'commit', '-qam', ${JSON.stringify(teammateSubject)}]); }`,
+  );
 // Like a TAP runner given a name pattern: "ok 1 - <name>" for a pass, and exit 0 with "# pass 0"
 // when no test matches the name.
 const lenient = [
@@ -110,29 +130,55 @@ function suspectsFor(sweep, mode) {
   };
   const keys = sets[mode] ?? {
     history: ['cache'],
-    smells: ['cache', 'clock', 'net', ...(mode.startsWith('lenient') ? ['misnamed'] : [])],
+    smells: [
+      'cache',
+      'clock',
+      'net',
+      ...(mode.startsWith('lenient') ? ['misnamed'] : []),
+      ...(mode === 'partly-planned' ? ['queue'] : []),
+    ],
     ci: ['cache', 'ghost', 'migrate'],
   };
   return (keys[sweep] ?? []).map(found);
 }
+/**
+ * The run in progress, noted by reply() because answer() receives only the question (see the
+ * findings), so that a mode can decline, or commit to the checkout while the approval waits.
+ */
+let live = null;
+const explanation = 'An earlier run warms the module cache the test reads, so the order decides it';
+const summary = 'Reset the cache before each read';
 export async function reply(request, env, mode) {
+  live = { env, mode };
   const id = request.call.stepId;
   const sweep = sweepOf(id);
   if (sweep) return { suspects: suspectsFor(sweep, mode) };
-  if (/^diagnose\/\d+\/diagnosis$/u.test(id))
+  if (/^diagnose\/\d+\/diagnosis$/u.test(id)) {
+    if (mode === 'moved-diagnosis') teammate(env);
     return {
-      mechanism: mode === 'unknown' ? 'unknown' : 'shared-state',
-      explanation: 'An earlier run warms the module cache the test reads, so the order decides it',
-      proposedFix: `${mode === 'declined' ? 'DECLINE ' : ''}Reset the module cache before each read`,
+      // The partly-planned mode's second flake gets no mechanism, so it is never planned.
+      mechanism:
+        mode === 'unknown' || fileOf(request.options.prompt) === tests.queue.file
+          ? 'unknown'
+          : 'shared-state',
+      explanation,
+      proposedFix: mode === 'declined' ? longFix : 'Reset the module cache before each read',
       confidence: 'high',
-      files: [tests.cache.file],
+      files: { wrapped: ['src/cache.mjs'], rename: [tests.cache.file, renamedTo] }[mode] ?? [
+        tests.cache.file,
+      ],
     };
+  }
   if (leaf(id) === 'fix') {
-    const content = { 'not-held': flaky(2), 'restress-residue': littering }[mode] ?? fixed;
+    const content =
+      { 'not-held': flaky(2), 'restress-residue': littering, wrapped: retrying }[mode] ?? fixed;
     if (mode !== 'no-op') await writeFile(join(request.cwd, tests.cache.file), content);
     if (mode === 'overreach')
       await writeFile(join(request.cwd, 'target.mjs'), 'export const value = 2;\n');
-    return { summary: 'Reset the cache before each read' };
+    // Moves the clock test onto the approved new path, which deletes an unapproved file.
+    if (mode === 'rename')
+      await rename(join(request.cwd, tests.clock.file), join(request.cwd, renamedTo));
+    return { summary };
   }
   throw new Error(`Unhandled flaky-test-hunt step ${id} (${mode})`);
 }
@@ -146,19 +192,39 @@ export function fail(request, mode) {
   );
 }
 
-/** The declined mode's diagnosis marks its plan, since answer() does not receive the mode. */
-export const answer = (question) =>
-  question.subject?.plan?.some((item) => item.proposedFix.startsWith('DECLINE '))
-    ? { approved: false }
-    : undefined;
+/** The declined mode declines; the moved-approval mode's teammate commits, then it approves. */
+export function answer(question) {
+  if (!live || question.subject?.base !== live.env.base) return undefined;
+  if (live.mode === 'declined') return { approved: false };
+  if (live.mode !== 'moved-approval') return undefined;
+  teammate(live.env);
+  return { approved: true };
+}
 
 const promptOf = (calls, pattern) =>
   calls.find((call) => pattern.test(call.call.stepId))?.options.prompt ?? '';
+/** The suspect file a diagnosis prompt names. */
+function fileOf(prompt) {
+  return /^File: (.+)$/mu.exec(prompt)?.[1] ?? null;
+}
+/** The files diagnosed, sorted: only measured flakes may reach a diagnostician. */
+const diagnosed = (calls) =>
+  calls
+    .filter((call) => call.call.stepId.startsWith('diagnose/'))
+    .map((call) => fileOf(call.options.prompt))
+    .sort();
 const fixerCalls = (calls) => calls.filter((call) => leaf(call.call.stepId) === 'fix');
 const pick = (rows) => rows.map((row) => [row.file, row.stress.runs, row.stress.failures]);
 /** The checkout is exactly the measured commit: no fix published, nothing left behind. */
 async function untouched(env) {
   assert.equal(git(env.cwd, 'rev-parse', 'HEAD'), env.base);
+  assert.equal(git(env.cwd, 'status', '--porcelain', '--untracked-files=all'), '');
+  assert.equal(await readFile(join(env.cwd, tests.cache.file), 'utf8'), env.cache);
+}
+/** The checkout holds the teammate's commit on the measured base, and nothing from the run. */
+async function movedOnly(env) {
+  assert.equal(git(env.cwd, 'log', '-1', '--format=%s'), teammateSubject);
+  assert.equal(git(env.cwd, 'rev-parse', 'HEAD^'), env.base);
   assert.equal(git(env.cwd, 'status', '--porcelain', '--untracked-files=all'), '');
   assert.equal(await readFile(join(env.cwd, tests.cache.file), 'utf8'), env.cache);
 }
@@ -178,7 +244,7 @@ const neverMigrated = (env, record) => {
 export async function check({ result, env, calls, record, suspended }) {
   const { output } = result;
   assert.equal(output.status, 'fixed');
-  assert.equal(output.commit, env.base);
+  assert.deepEqual([output.commit, output.moved], [env.base, null]);
   assert.deepEqual([output.noEvidence, output.failedSweeps], [[], []]);
   // An untracked file and a tracked non-test script are rejected before anything runs them.
   assert.deepEqual(
@@ -222,19 +288,40 @@ export async function check({ result, env, calls, record, suspended }) {
   assert.match(history, /tests\/cache\.test\.mjs: 2 commits/u);
   assert.match(history, /globs \(\*\*\/\*\.test\.\*, /u);
   assert.match(promptOf(calls, /^sweeps\/ci\//u), /- \.github\/workflows\/ci\.yml/u);
-  assert.match(promptOf(calls, /^diagnose\//u), /failed 3 of them[\s\S]*stale cache/u);
+  // Only the measured flake is diagnosed: not the cleared clock test, nor the broken net test.
+  assert.deepEqual(diagnosed(calls), [tests.cache.file]);
+  const diagnosis = promptOf(calls, /^diagnose\//u);
+  assert.match(diagnosis, /failed 3 of them[\s\S]*stale cache/u);
+  assert.ok(diagnosis.includes(`argv run without a shell: ${JSON.stringify(flake.stress.argv)}\n`));
   // The fixer received exactly the plan the human approved, and wrote only in its worktree.
   assert.equal(suspended, 1);
   const [fixer] = fixerCalls(calls);
   const plan = fixer.options.prompt.split('Approved plan:\n')[1];
   assert.equal(output.approvedDigest, createHash('sha256').update(plan).digest('hex'));
-  const { subject } = record.steps['approve-fixes'].question.request;
+  const { subject, details } = record.steps['approve-fixes'].question.request;
   assert.deepEqual(subject, {
     plan: JSON.parse(plan),
     digest: output.approvedDigest,
     base: env.base,
   });
+  assert.equal(details, plan);
+  // The human approved the measurement and the diagnosis, with exactly the diagnosed files.
+  assert.deepEqual(subject.plan, [
+    {
+      ...tests.cache,
+      failures: 3,
+      runs: 8,
+      mechanism: 'shared-state',
+      confidence: 'high',
+      explanation,
+      proposedFix: 'Reset the module cache before each read',
+      files: [tests.cache.file],
+    },
+  ]);
+  // The fixer's tree was pinned to the measured commit, and its own account is reported.
   assert.notEqual(fixer.cwd, env.cwd);
+  assert.equal(record.steps.fix.worktree.base, env.base);
+  assert.equal(output.fixSummary, summary);
   assert.ok(
     calls.filter((call) => call !== fixer).every((call) => !call.options.tools.includes('Write')),
   );
@@ -268,11 +355,19 @@ export const modes = [
   },
   {
     mode: 'declined',
-    async check({ result, env, calls, suspended }) {
+    async check({ result, env, calls, suspended, record }) {
       assert.equal(result.output.status, 'declined');
       assert.match(result.output.approvedDigest, /^[a-f0-9]{64}$/u);
       assert.equal(suspended, 1);
       assert.equal(fixerCalls(calls).length, 0);
+      // A long plan is cut in the details with a marker that says so; the subject keeps all of it.
+      const { details, subject } = record.steps['approve-fixes'].question.request;
+      assert.ok(Buffer.byteLength(details) <= 16_384);
+      assert.match(
+        details,
+        /\n\[\d+ more bytes cut; the subject and its digest cover the whole plan\]$/u,
+      );
+      assert.equal(subject.plan[0].proposedFix, longFix);
       await untouched(env);
     },
   },
@@ -305,6 +400,7 @@ export const modes = [
       ]);
       assert.deepEqual([result.output.approvedDigest, suspended], [null, 0]);
       assert.equal(fixerCalls(calls).length, 0);
+      assert.equal(degraded(result.output), true);
       await untouched(env);
     },
   },
@@ -419,10 +515,7 @@ export const modes = [
         ],
       );
       assert.equal(result.output.unrunnable[0].stress.outcomes[0].outcome, 'error');
-      assert.equal(
-        calls.some((call) => call.call.stepId.startsWith('diagnose/')),
-        false,
-      );
+      assert.deepEqual(diagnosed(calls), []);
       await untouched(env);
     },
   },
@@ -437,7 +530,7 @@ export const modes = [
       assert.deepEqual([result.output.fixCommit, result.output.restress], [null, []]);
       assert.equal(fixerCalls(calls).length, 1);
       assert.equal(
-        Object.keys(record.steps).some((id) => id === 'integrate' || id.startsWith('restress/')),
+        Object.keys(record.steps).some((id) => id.startsWith('restress')),
         false,
       );
       await untouched(env);
@@ -505,9 +598,10 @@ export const modes = [
   {
     mode: 'test-files',
     input: () => ({ testCommand: command, testFiles: ['tests/clock.*'] }),
-    async check({ result, env, record }) {
+    async check({ result, env, calls, record }) {
       // The operator's globs, not the sweepers, decide which files the test command may run.
       assert.equal(result.output.status, 'no-flakes');
+      assert.deepEqual(diagnosed(calls), []);
       assert.deepEqual(pick(result.output.cleared), [[tests.clock.file, 8, 0]]);
       assert.deepEqual(
         result.output.rejected.map((row) => [row.file, row.reason]),
@@ -570,7 +664,7 @@ export const modes = [
   {
     mode: 'tests-only',
     input: reportOnly,
-    async check({ result, env, record }) {
+    async check({ result, env, calls, record }) {
       // Suspects that all share tests/ still pass the default globs; an option-like name does not.
       assert.equal(result.output.status, 'report');
       assert.deepEqual(
@@ -583,6 +677,7 @@ export const modes = [
       );
       assert.deepEqual(pick(result.output.cleared), [[tests.clock.file, 8, 0]]);
       assert.deepEqual(pick(result.output.broken), [[tests.net.file, 8, 8]]);
+      assert.deepEqual(diagnosed(calls), [tests.cache.file]);
       neverMigrated(env, record);
       await untouched(env);
     },
@@ -590,9 +685,11 @@ export const modes = [
   {
     mode: 'timeout',
     input: () => ({ testCommand: hangsOnNet, runs: 2, runTimeoutMs: 1_000 }),
-    async check({ result, env }) {
-      // A lone suspect file is screened in, and a run past its deadline is a recorded failure.
+    async check({ result, env, calls }) {
+      // A lone suspect file is screened in, and a run past its deadline is a recorded failure,
+      // which makes it always-fails: no diagnosis is paid for it.
       assert.equal(result.output.status, 'no-flakes');
+      assert.deepEqual(diagnosed(calls), []);
       assert.deepEqual(result.output.rejected, []);
       assert.deepEqual(pick(result.output.broken), [[tests.net.file, 2, 2]]);
       const [net] = result.output.broken;
@@ -685,21 +782,168 @@ export const modes = [
   },
   {
     mode: 'moved',
-    input: () => ({ testCommand: commitsOnce, fix: true }),
-    rejects: /The checkout moved from [a-f0-9]{40} to [a-f0-9]{40} \(clean-for-fix\)/u,
-    check({ result, env, calls }) {
-      // A clean checkout at another commit would publish onto code nobody measured.
-      assert.equal(result.status, 'failed');
-      assert.deepEqual([result.pending ?? [], fixerCalls(calls)], [[], []]);
+    input: (env) => ({ testCommand: breaksClockOn(env.cwd, 'stress/0/run/0') }),
+    async check({ result, env, calls, suspended, record }) {
+      // During the cache test's first run a teammate's commit broke the clock test, whose runs
+      // then measured that commit. Even report-only, the run says so and diagnoses nothing, rather
+      // than report every rate as the measured commit's.
+      const { output } = result;
+      assert.equal(output.status, 'moved');
+      const head = git(env.cwd, 'rev-parse', 'HEAD');
+      assert.deepEqual([output.commit, output.moved], [env.base, { during: 'stress', head }]);
+      assert.deepEqual(pick(output.broken), [
+        [tests.clock.file, 8, 8],
+        [tests.net.file, 8, 8],
+      ]);
+      assert.deepEqual(
+        output.confirmed.map((flake) => [flake.file, flake.stress.failures, flake.diagnosis]),
+        [[tests.cache.file, 3, null]],
+      );
+      assert.deepEqual(diagnosed(calls), []);
+      assert.deepEqual(output.unplanned, [
+        { test: tests.cache.test, file: tests.cache.file, reason: 'undiagnosed' },
+      ]);
+      assert.deepEqual([output.approvedDigest, suspended], [null, 0]);
+      assert.equal('approve-fixes' in record.steps, false);
+      await movedOnly(env);
+    },
+  },
+  {
+    mode: 'moved-diagnosis',
+    async check({ result, env, calls, suspended, record }) {
+      // HEAD moved during the diagnosis: the measurement and the diagnosis stand, but nobody is
+      // asked to approve a fix that could only be published onto code nobody measured.
+      const { output } = result;
+      assert.equal(output.status, 'moved');
+      const head = git(env.cwd, 'rev-parse', 'HEAD');
+      assert.deepEqual(output.moved, { during: 'diagnosis', head });
+      assert.deepEqual(
+        output.confirmed.map((flake) => [flake.file, flake.diagnosis?.mechanism]),
+        [[tests.cache.file, 'shared-state']],
+      );
+      assert.deepEqual(pick(output.cleared), [[tests.clock.file, 8, 0]]);
+      assert.deepEqual([output.approvedDigest, output.fixCommit, suspended], [null, null, 0]);
+      assert.equal(fixerCalls(calls).length, 0);
+      assert.equal('approve-fixes' in record.steps, false);
+      await movedOnly(env);
+    },
+  },
+  {
+    mode: 'moved-approval',
+    async check({ result, env, calls, suspended, record }) {
+      // The teammate's commit landed while the approval waited. The fixer still worked on the
+      // measured commit, and the fix held there: re-stressed, and verified by the clock test, which
+      // passes on the measured commit plus the fix. A merge into the moved checkout would publish
+      // a tree nobody re-stressed or verified, so the fix stays on its run ref.
+      const { output } = result;
+      assert.equal(output.status, 'moved');
+      const head = git(env.cwd, 'rev-parse', 'HEAD');
+      assert.deepEqual(output.moved, { during: 'fix', head });
+      assert.deepEqual([suspended, fixerCalls(calls).length], [1, 1]);
+      assert.equal(record.steps.fix.worktree.base, env.base);
+      assert.deepEqual(pick(output.restress), [[tests.cache.file, 5, 0]]);
+      assert.deepEqual(
+        output.verification.map((row) => [row.code, row.failure]),
+        [[0, null]],
+      );
+      assert.equal('publish' in record.steps, false);
+      // fixCommit is the fixer's snapshot: the measured commit plus the fix, on a run ref.
+      assert.equal(git(env.cwd, 'rev-parse', `${output.fixCommit}^`), env.base);
+      assert.equal(git(env.cwd, 'show', `${output.fixCommit}:${tests.cache.file}`), fixed.trim());
+      await movedOnly(env);
+    },
+  },
+  {
+    mode: 'wrapped',
+    options(opts, env) {
+      // The code under test, where the diagnosis puts the fix.
+      mkdirSync(join(env.cwd, 'src'));
+      writeFileSync(join(env.cwd, 'src', 'cache.mjs'), 'export const cache = new Map();\n');
+      env.base = commitAll(env.cwd, 'Add the cache module');
+      return opts;
+    },
+    async check({ result, env, record }) {
+      // The diagnosis put the fix in src/cache.mjs and the fixer retried the test instead. Only the
+      // diagnosed file is approved, so the test edit is refused and the fix is left untouched.
+      const { output } = result;
+      assert.equal(output.status, 'refused');
+      const { subject } = record.steps['approve-fixes'].question.request;
+      assert.deepEqual(
+        subject.plan.map((item) => item.files),
+        [['src/cache.mjs']],
+      );
+      assert.deepEqual(output.refusedFiles, [tests.cache.file]);
+      assert.deepEqual(output.untouched, [{ test: tests.cache.test, file: tests.cache.file }]);
+      assert.deepEqual([output.fixCommit, output.restress], [null, []]);
+      await untouched(env);
+    },
+  },
+  {
+    mode: 'rename',
+    async check({ result, env, record }) {
+      // The plan approves a new fixture file, and the fixer moved the clock test onto it. The
+      // receipt names only the destination, so a check of paths alone would accept the move and
+      // delete the clock test unseen: every rename is refused.
+      const { output } = result;
+      assert.equal(output.status, 'refused');
+      assert.deepEqual(
+        record.steps.fix.worktree.files.toSorted((a, b) => a.path.localeCompare(b.path)),
+        [
+          { path: renamedTo, status: 'renamed' },
+          { path: tests.cache.file, status: 'modified' },
+        ],
+      );
+      assert.deepEqual(output.refusedFiles, [renamedTo]);
+      assert.deepEqual([output.untouched, output.fixCommit, output.restress], [[], null, []]);
+      await untouched(env);
+      assert.equal(existsSync(join(env.cwd, tests.clock.file)), true);
+    },
+  },
+  {
+    mode: 'partly-planned',
+    options(opts, env) {
+      // A second flake, which its diagnostician cannot explain.
+      writeFileSync(join(env.cwd, tests.queue.file), flakes(tests.queue.test, 4));
+      env.base = commitAll(env.cwd, 'Add the queue test');
+      return opts;
+    },
+    async check({ result, env, calls, record }) {
+      // Both flakes are confirmed and diagnosed, but only the explained one is planned and fixed:
+      // 'fixed' covers the plan, and the unplanned flake makes the output degraded.
+      const { output } = result;
+      assert.equal(output.status, 'fixed');
+      assert.deepEqual(
+        output.confirmed.map((flake) => [flake.file, flake.stress.failures]),
+        [
+          [tests.cache.file, 3],
+          [tests.queue.file, 2],
+        ],
+      );
+      assert.deepEqual(diagnosed(calls), [tests.cache.file, tests.queue.file]);
+      assert.deepEqual(output.unplanned, [
+        { test: tests.queue.test, file: tests.queue.file, reason: 'unknown-mechanism' },
+      ]);
+      assert.equal(degraded(output), true);
+      const { subject } = record.steps['approve-fixes'].question.request;
+      assert.deepEqual(
+        subject.plan.map((item) => item.file),
+        [tests.cache.file],
+      );
+      assert.deepEqual(pick(output.restress), [[tests.cache.file, 5, 0]]);
+      assert.equal(git(env.cwd, 'rev-parse', 'HEAD'), output.fixCommit);
       assert.equal(git(env.cwd, 'rev-parse', 'HEAD^'), env.base);
+      assert.equal(git(env.cwd, 'show', '--name-only', '--format=', 'HEAD'), tests.cache.file);
       assert.equal(git(env.cwd, 'status', '--porcelain', '--untracked-files=all'), '');
     },
   },
 ];
 
-/** A failed sweep, a suspect never stressed or measured, or an undiagnosed flake is partial. */
+/**
+ * A failed sweep, a suspect never stressed or measured, or a confirmed flake no plan includes
+ * (undiagnosed, or with no mechanism named) is partial.
+ */
 export const degraded = (output) =>
   output.failedSweeps.length > 0 ||
   output.skipped.length > 0 ||
   output.unrunnable.length > 0 ||
-  output.undiagnosed > 0;
+  output.unplanned.length > 0;

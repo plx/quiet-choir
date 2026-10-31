@@ -7,8 +7,8 @@ import { defineTeam, type TeamOf, type WorkflowContext, type WorktreeChange } fr
 import * as std from 'quiet-choir/std';
 import { Net, Refactored, Review, type Check, type Chosen } from '../contracts.js';
 import { prompts } from '../prompts.js';
-import { ended, green, netArgv, run, show, verify } from './checks.js';
-import { acceptNet, bounded, netsTouched, type NetOutcome } from './policy.js';
+import { ended, excerpt, green, netArgv, run, verify } from './checks.js';
+import { acceptNet, netsTouched, type NetOutcome } from './policy.js';
 
 /** The slot {@link pinNet} needs. */
 export const NetTeam = defineTeam({
@@ -65,7 +65,8 @@ export async function pinNet(
     if (round + 1 === options.rounds) break;
     const files: RedNet['files'] = [];
     for (const [index, path] of net.files.entries()) {
-      const text = bounded(await show(ctx, ctx.id('source', round, index), commit, path), SHOWN);
+      const show = ['show', `${commit}:${path}`] as const;
+      const text = await excerpt(ctx, ctx.id('source', round, index), show, SHOWN);
       if (text.shownBytes !== null) partial++;
       files.push({ path, source: text.text, shownBytes: text.shownBytes });
     }
@@ -182,13 +183,9 @@ export async function refactorTarget(
       why: `verify command ${JSON.stringify(red.argv)} failed after the refactor (${ended(red)}); discarded`,
       failed: false,
     };
-  const diff = bounded(
-    await std.exec.git(ctx, 'diff', ['diff', '--unified=8', from, change.commit], {
-      maxOutputBytes: 8 * 1024 * 1024,
-    }),
-    100_000,
-  );
-  const source = bounded(await show(ctx, 'net-source', from, netFile), 50_000);
+  // Excerpts, never a failed run: a diff or net too large to show whole sets reviewedWhole false.
+  const diff = await excerpt(ctx, 'diff', ['diff', '--unified=8', from, change.commit], 100_000);
+  const source = await excerpt(ctx, 'net-source', ['show', `${from}:${netFile}`], 50_000);
   const review = await team.reviewer.value('review', {
     schema: Review,
     onError: 'return',

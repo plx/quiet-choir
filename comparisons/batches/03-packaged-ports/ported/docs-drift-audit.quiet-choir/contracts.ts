@@ -251,7 +251,7 @@ export const DriftInput = z.object({
     .max(8)
     .default([])
     .describe(
-      'Operator-selected argv commands (a CLI --help, a config dump), run once in a fresh checkout of the base, which holds committed files only; every checker sees their output. An argv passes on exit 0, {argv, okExitCodes} names other accepted exits, and any other outcome degrades the run',
+      "Operator-selected argv commands (a CLI --help, a config dump), run once in a fresh checkout of the base, which holds committed files only, at the run's directory within it (the checkers start at its root); every checker sees their output. An argv passes on exit 0, {argv, okExitCodes} names other accepted exits, and any other outcome degrades the run",
     ),
   verifyCommands: z
     .array(Argv)
@@ -267,10 +267,14 @@ export const DriftOutput = z.object({
   status: z
     .enum(['no-docs', 'complete', 'limited', 'degraded'])
     .describe(
-      "no-docs: nothing matched or the librarian skipped every doc; limited: a cap or an unsupported path skipped docs; degraded: a doc pipeline, the classification or an evidence command failed, a claim list was capped, a claim's quote was not found in its doc, or a drifted doc's fix is missing from the patch (failed, refused or unchanged)",
+      "no-docs: nothing matched or the librarian skipped every doc; limited: a cap or an unsupported path skipped docs; degraded: a doc pipeline or an evidence command failed, the librarian left a listed doc unclassified, a claim list was capped, a claim's quote was not found in its doc, or a drifted doc's fix is missing from the patch (failed, refused or unchanged)",
     ),
   base: Sha.describe('The commit every doc, checker and evidence command read'),
-  listed: z.number().int().nonnegative().describe('Docs the pathspecs matched at the base'),
+  listed: z
+    .number()
+    .int()
+    .nonnegative()
+    .describe('Docs the pathspecs matched at the base: those audited, failed and skipped'),
   docs: z.array(Audited),
   skipped: z.array(Skipped),
   failed: z.array(Failed),
@@ -279,7 +283,7 @@ export const DriftOutput = z.object({
   totals: Totals,
   fix: z.object({
     status: FixStatus.describe(
-      'no-change, refused, failed: no fixer change was accepted (refused or failed when one was); moved: the checkout left the base before publication; publish-failed: the checkout merge failed, see failure; applied: published, though omitted may name drifted docs it leaves out',
+      'no-change, refused, failed: no fixer change was accepted (refused or failed when one was); moved: the checkout HEAD left the base, either before integration (nothing verified or asked; digest null) or while the approval waited (digest set); publish-failed: the checkout merge failed, see failure; applied: published, though omitted may name drifted docs it leaves out',
     ),
     digest: Digest.nullable().describe('SHA-256 of the patch the human was asked to approve'),
     commit: Sha.nullable().describe('The integrated fix: published when applied, else run-owned'),

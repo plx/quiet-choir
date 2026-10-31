@@ -2,6 +2,21 @@
 import { z } from 'quiet-choir';
 
 export const Sha = z.string().regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/u);
+/** A repository-relative path: what a local role may name, so nothing outside its snapshot is read. */
+export const Path = z
+  .string()
+  .min(1)
+  .max(500)
+  .refine(
+    (value) =>
+      !value.startsWith('/') &&
+      !value.includes('\\') &&
+      value
+        .split('/')
+        .every((part) => part !== '..' && part !== '.' && part !== '' && part !== '.git') &&
+      !value.includes('\0'),
+    'Use a repository-relative path without dot segments or .git',
+  );
 
 /** Caps on agent answers. The prompts state each one: an answer over a cap fails validation. */
 export const maxLeads = 20;
@@ -24,6 +39,13 @@ export const Kind = z.enum([
 export const Credibility = z.enum(['primary', 'secondary', 'anecdotal']);
 export type Credibility = z.infer<typeof Credibility>;
 
+/**
+ * Where a lead or source lives, owned by code: local for what the local sweep or a local hunt
+ * found, read only by local roles; web for everything else, which no local role reads.
+ */
+export const Territory = z.enum(['web', 'local']);
+export type Territory = z.infer<typeof Territory>;
+
 /** Where one source lives: enough for a reader to find it, and how much to trust it. */
 export const Found = z.object({
   ref: z
@@ -39,8 +61,8 @@ export const Lead = Found.extend({
 });
 export type Lead = z.infer<typeof Lead>;
 export const Leads = z.object({ leads: z.array(Lead).max(maxLeads) });
-/** A lead after deduplication, with every modality that found it. */
-export const Ranked = Lead.extend({ modalities: z.array(Modality).min(1) });
+/** A lead after deduplication within its territory, with every modality that found it. */
+export const Ranked = Lead.extend({ modalities: z.array(Modality).min(1), territory: Territory });
 export type Ranked = z.infer<typeof Ranked>;
 
 export const Finding = z.object({
@@ -66,16 +88,15 @@ export const Hunted = Reading.extend({
 }).refine((hunt) => !hunt.useful || hunt.source !== null, 'A useful hunt names its source');
 export type Hunted = z.infer<typeof Hunted>;
 
-/** A local hunt reads the pinned repository and nothing else; a web hunt cannot read it at all. */
-export const Territory = z.enum(['web', 'local']);
-export type Territory = z.infer<typeof Territory>;
 export const Gap = z.object({
   gap: z.string().min(1).describe('What the answer is missing or asserts without evidence'),
   huntInstruction: z
     .string()
     .min(1)
     .describe('A targeted search or a specific document to read, not "search more"'),
-  territory: Territory.describe("local only for this repository's own code, when it is pinned"),
+  territory: Territory.describe(
+    "Where to hunt: local only for this repository's own code, when it is pinned",
+  ),
 });
 export type Gap = z.infer<typeof Gap>;
 /** No gaps means adequate: code derives the verdict, so the two cannot disagree. */
@@ -84,6 +105,7 @@ export const Critique = z.object({ gaps: z.array(Gap).max(maxGaps) });
 /** A reading that yielded findings, under the citation key the synthesizer uses. */
 export const Source = Found.extend({
   id: z.string().regex(/^S\d+$/u),
+  territory: Territory,
   origin: z.enum(['lead', 'hunt']),
   findings: z.array(Finding),
   contradicts: z.array(z.string()),

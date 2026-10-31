@@ -5,7 +5,7 @@ Claims, numbered in the order you must answer them:
 {%- for claim in claims %}
 
 {{ loop.index }}. [{{ claim.kind }}] {{ claim.claim }}
-   Doc text: "{{ claim.quote }}"
+   Doc text: "{{ claim.quote | replace("\n", " ") }}"
    Check hint: {{ claim.checkHint }}
 {%- endfor +%}
 
