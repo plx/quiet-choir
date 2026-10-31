@@ -1,20 +1,28 @@
-// Git and verification mechanics as durable commands. Verification commands settle with
+// Git and verification mechanics as durable effects. Verification commands settle with
 // onError: 'return', so a nonzero exit, timeout or signal is a recorded result, not a crash.
-import type { WorkflowContext, WorktreeHandle } from 'quiet-choir';
+import { z, type WorkflowContext, type WorktreeHandle } from 'quiet-choir';
 import * as std from 'quiet-choir/std';
 import { Sha, type Check } from '../contracts.js';
 
 /**
  * Fail before any agent call unless the checkout has no tracked or untracked change: publication
  * fast-forwards it, and a dirty checkout would refuse that only after every module was paid for.
+ * This is a local step that throws, not a completed `git status` read: a completed read would
+ * replay its dirty output on every resume, so cleaning the checkout and resuming could never pass.
  */
-export async function assertClean(ctx: WorkflowContext, id: string) {
-  const status = await std.exec.git(ctx, id, ['status', '--porcelain=v1', '--untracked-files=all']);
-  if (status !== '')
-    throw new Error(
-      `The checkout must be clean, since publication fast-forwards it; commit the PRD or pass it inline (${id}): ${status}`,
-    );
-}
+export const assertClean = (ctx: WorkflowContext, id: string) =>
+  ctx.step(id, {
+    input: null,
+    schema: z.null(),
+    async run({ exec }) {
+      const status = await exec(['git', 'status', '--porcelain=v1', '--untracked-files=all']);
+      if (status.stdout !== '' || status.truncated)
+        throw new Error(
+          `The checkout must be clean, since publication fast-forwards it; commit the PRD or pass it inline (${id}): ${status.stdout}`,
+        );
+      return null;
+    },
+  });
 
 /** The commit the first builder's isolated checkout starts from. */
 export const baseCommit = async (ctx: WorkflowContext) =>

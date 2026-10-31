@@ -6,7 +6,7 @@
 // confirmed, the fixer corrects it in hello's snapshot, and the verification command (which needs
 // the fix) passes on the integration before the checkout is fast-forwarded.
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { commitAll, enumOf, git, leaf, writeFiles } from './_support.mjs';
@@ -368,6 +368,45 @@ export const kill = {
 export const faults = { F1: '^plan$', F2: '^plan$' };
 
 export const modes = [
+  {
+    mode: 'dirty',
+    setup: (env) => writeFileSync(join(env.cwd, 'stray.txt'), 'uncommitted\n'),
+    rejects:
+      /The checkout must be clean, since publication fast-forwards it; commit the PRD or pass it inline \(clean\): \?\? stray\.txt/u,
+    check({ result, calls }) {
+      // Publication fast-forwards the checkout, so a dirty one stops the run before any agent call.
+      assert.equal(result.status, 'failed');
+      assert.equal(calls.length, 0);
+    },
+    // Removing the stray file heals the precondition: the clean step reruns, and all 20 agent
+    // calls are paid, since none completed. The resumed run ends where the success run does.
+    repair: {
+      run: (env) => rmSync(join(env.cwd, 'stray.txt')),
+      paid: [
+        'decompose/lenses/0/read',
+        'decompose/lenses/1/read',
+        'decompose/lenses/2/read',
+        'decompose/lenses/3/read',
+        'decompose/lenses/4/read',
+        'decompose/merge',
+        'decompose/audit/0',
+        'plan',
+        'foundations/0/build',
+        'features/0/build',
+        'features/1/build',
+        'reviews/0/review/scope',
+        'reviews/0/review/reviews/correctness/review',
+        'reviews/1/review/scope',
+        'reviews/1/review/reviews/correctness/review',
+        'reviews/1/review/verify/0/refute',
+        'reviews/1/review/report',
+        'reviews/2/review/scope',
+        'reviews/2/review/reviews/correctness/review',
+        'repairs/0/fix',
+      ],
+    },
+    resumeCheck: check,
+  },
   {
     mode: 'declined',
     check({ result, env, calls, questions }) {
