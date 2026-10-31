@@ -173,6 +173,16 @@ starts, even with `onError: 'return'`, and fail the run without recording the st
 a regular file (`ENOTDIR`), another `realpath` error such as `EACCES` or `ELOOP`, or a dangling
 symlink (#ISSUE-C03-2). Like commands, only `onError: 'return'` enters identity.
 
+To learn only whether a file exists, or its baseline for `ifMatch`, probe it in a local `ctx.step`
+that returns `{ sha256, bytes } | null`, with the path in `input`. Resolve the path against
+`StepContext.cwd`, `stat` it and throw for anything but a regular file (reading a FIFO would block),
+return `null` only for `ENOENT`, and hash the raw bytes with `node:crypto` as SHA-256 hex. Only the
+digest is journaled, so the probe also works for a file over the snapshot cap or not in UTF-8. Its
+`sha256` is exactly what `ifMatch` compares: `ifMatch: probe?.sha256 ?? null` creates only a missing
+file and replaces only an unchanged one, without matching a settled read's `ENOENT` message. Like
+`readFile`, the probe replays its saved digest on resume, and like `ifMatch` it is an optimistic
+check. `writeFile` still applies its own cwd path guard and regular-file check at publication.
+
 ## Guarding a mutation
 
 `guardFile(ctx, id, path, body, { onChange: 'restore' | 'error' })` saves the current uncommitted

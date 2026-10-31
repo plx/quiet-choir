@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   chmod,
   mkdtemp,
@@ -11,7 +12,7 @@ import {
   stat,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   defineWorkflow,
@@ -711,6 +712,83 @@ it('rejects invalid UTF-8 instead of saving a lossy snapshot', async () => {
     'File is not valid UTF-8; use a local callback for binary content.',
   );
   expect((await readRun(setup())).steps['read']?.status).toBe('failed');
+});
+
+it('a local digest probe supplies writeFile ifMatch without journaling content', async () => {
+  // Over the snapshot cap and not UTF-8, so ctx.readFile cannot serve as the probe.
+  const marker = 'probe-content-marker';
+  const original = Buffer.concat([
+    Buffer.from([0xff, 0xfe, 0x00]),
+    Buffer.from(marker),
+    Buffer.alloc(1024 * 1024, 7),
+  ]);
+  await writeFile(join(cwd, 'big.bin'), original);
+  let probes = 0;
+  let broken = true;
+  const workflow = definition(async (ctx) => {
+    const probe = (id: string, path: string) =>
+      ctx.step(id, {
+        input: { path },
+        schema: z.object({ sha256: z.string(), bytes: z.int() }).nullable(),
+        run: async (context) => {
+          probes++;
+          const file = resolve(context.cwd, path);
+          const info = await stat(file).catch((error: unknown) => {
+            if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+            throw error;
+          });
+          if (!info) return null;
+          if (!info.isFile()) throw new Error(`${path} is not a regular file.`);
+          const bytes = await readFile(file, { signal: context.signal });
+          return { sha256: createHash('sha256').update(bytes).digest('hex'), bytes: bytes.length };
+        },
+      });
+    const present = await probe('probe-big', 'big.bin');
+    const absent = await probe('probe-new', 'new.md');
+    const read = await ctx.readFile('read', 'big.bin', { onError: 'return' });
+    const created = await ctx.writeFile('create', 'new.md', 'created', {
+      ifMatch: absent?.sha256 ?? null,
+    });
+    const replaced = await ctx.writeFile('replace', 'big.bin', 'replaced', {
+      ifMatch: present?.sha256 ?? null,
+    });
+    if (broken) throw new Error('tail');
+    // The replayed probe still holds the original digest, so a fresh write against it conflicts.
+    const stale = await ctx.writeFile('stale', 'big.bin', 'again', {
+      ifMatch: present?.sha256 ?? null,
+      onError: 'return',
+    });
+    return {
+      present,
+      absent,
+      read: read.ok ? null : read.error.message,
+      created: created.previousSha256,
+      replaced: replaced.previousSha256,
+      stale: stale.ok ? null : stale.error.message,
+    };
+  });
+  await expect(runWorkflow(workflow, setup())).rejects.toThrow('tail');
+  broken = false;
+  const run = await runWorkflow(workflow, { ...setup(), resume: true });
+  const digest = createHash('sha256').update(original).digest('hex');
+  expect(probes).toBe(2);
+  expect(run.output).toMatchObject({
+    present: { sha256: digest, bytes: original.length },
+    absent: null,
+    created: null,
+    replaced: digest,
+  });
+  const { read, stale } = run.output as { read: string; stale: string };
+  expect(read).toContain('snapshot limit');
+  expect(stale).toContain(`not the expected ${digest}`);
+  expect(await readFile(join(cwd, 'new.md'), 'utf8')).toBe('created');
+  expect(await readFile(join(cwd, 'big.bin'), 'utf8')).toBe('replaced');
+  const saved = await Promise.all(
+    (await readdir(stateDir, { recursive: true, withFileTypes: true }))
+      .filter((entry) => entry.isFile())
+      .map((entry) => readFile(join(entry.parentPath, entry.name), 'utf8')),
+  );
+  expect(saved.join('\n')).not.toContain(marker);
 });
 
 it('round-trips a BOM-prefixed file with the BOM intact and a matching sha256', async () => {

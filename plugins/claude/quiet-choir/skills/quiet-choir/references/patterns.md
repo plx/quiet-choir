@@ -868,7 +868,9 @@ export default defineWorkflow({
 
 Snapshot existing text, change it in code, and publish with an optimistic baseline guard. The write
 receipt stores hashes, not content. Replaying the snapshot uses saved bytes. Concurrent unrelated
-writers still need isolation/coordination.
+writers still need isolation/coordination. When only the baseline is needed, not the old text, take
+`ifMatch` from the [digest probe](commands-files.md#files) instead of `ctx.readFile`, which journals
+the snapshot.
 
 <!-- skills-check: example pattern-file-update -->
 

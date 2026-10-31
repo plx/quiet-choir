@@ -169,6 +169,58 @@ starts, even with `onError: 'return'`, and fail the run without recording the st
 a regular file (`ENOTDIR`), another `realpath` error such as `EACCES` or `ELOOP`, or a dangling
 symlink (#ISSUE-C03-2). Like commands, only `onError: 'return'` enters identity.
 
+To learn only whether a file exists, or its baseline for `ifMatch`, probe it in a local `ctx.step`
+that returns `{ sha256, bytes } | null`, with the path in `input`. Resolve the path against
+`StepContext.cwd`, `stat` it and throw for anything but a regular file (reading a FIFO would block),
+return `null` only for `ENOENT`, and hash the raw bytes with `node:crypto` as SHA-256 hex. Only the
+digest is journaled, so the probe also works for a file over the snapshot cap or not in UTF-8. Its
+`sha256` is exactly what `ifMatch` compares: `ifMatch: probe?.sha256 ?? null` creates only a missing
+file and replaces only an unchanged one, without matching a settled read's `ENOENT` message. Like
+`readFile`, the probe replays its saved digest on resume, and like `ifMatch` it is an optimistic
+check. `writeFile` still applies its own cwd path guard and regular-file check at publication.
+
+```ts
+import { createHash } from 'node:crypto';
+import { readFile, stat } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { defineWorkflow, z, type WorkflowContext } from 'quiet-choir';
+
+const Digest = z.object({ sha256: z.string(), bytes: z.int().nonnegative() }).nullable();
+
+/** Journal the digest of `path`, never its content; null only when it is missing. */
+const probe = (ctx: WorkflowContext, id: string, path: string) =>
+  ctx.step(id, {
+    input: { path },
+    schema: Digest,
+    run: async ({ cwd, signal }) => {
+      const file = resolve(cwd, path);
+      const info = await stat(file).catch((error: unknown) => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+        throw error;
+      });
+      if (!info) return null;
+      if (!info.isFile()) throw new Error(`${path} is not a regular file.`);
+      const bytes = await readFile(file, { signal });
+      return { sha256: createHash('sha256').update(bytes).digest('hex'), bytes: bytes.length };
+    },
+  });
+
+export default defineWorkflow({
+  name: 'publish-report',
+  version: '1',
+  input: z.object({ out: z.string(), report: z.string() }),
+  output: z.string(),
+  async run(ctx, input) {
+    const before = await probe(ctx, 'baseline', input.out);
+    // Creates out when it was missing, or replaces exactly the bytes the probe saw.
+    const written = await ctx.writeFile('publish', input.out, input.report, {
+      ifMatch: before?.sha256 ?? null,
+    });
+    return written.sha256;
+  },
+});
+```
+
 ## Guarding a mutation
 
 `guardFile(ctx, id, path, body, { onChange: 'restore' | 'error' })` saves the current uncommitted
