@@ -303,6 +303,15 @@ const statuses = (output) =>
   output.docs.map((doc) => [doc.path, ...doc.results.map((r) => r.status)]);
 const callsTo = (calls, name) => calls.filter((call) => leaf(call.call.stepId) === name);
 const noFix = { digest: null, commit: null, verification: [], omitted: [], failure: null };
+/** The success run's agent calls: the librarian, each doc's extractor and checker, one fixer. */
+const allCalls = [
+  'classify',
+  'docs/0/extract',
+  'docs/0/check',
+  'docs/1/extract',
+  'docs/1/check',
+  'docs/1/fix',
+];
 
 export function check({ result, env, calls, suspended, questions }) {
   const { output } = result;
@@ -835,6 +844,10 @@ export const modes = [
       assert.equal(result.status, 'failed');
       assert.equal(calls.length, 0);
     },
+    // Removing the file heals the precondition: the clean step reruns, and every agent call of the
+    // audit is paid, since none completed. The resumed run ends where the success run does.
+    repair: { run: (env) => rmSync(join(env.cwd, 'scratch.txt')), paid: allCalls },
+    resumeCheck: check,
   },
   {
     mode: 'dirty',
@@ -847,6 +860,9 @@ export const modes = [
       assert.equal(result.status, 'failed');
       assert.equal(calls.length, 0);
     },
+    // Discarding the edit heals it the same way.
+    repair: { run: (env) => git(env.cwd, 'checkout', '--', 'docs/config.md'), paid: allCalls },
+    resumeCheck: check,
   },
 ];
 

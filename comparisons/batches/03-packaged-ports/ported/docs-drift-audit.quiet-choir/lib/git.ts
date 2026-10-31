@@ -1,4 +1,4 @@
-// Git mechanics as durable commands. The base commit, the doc listing, sizes and outlines, every
+// Git mechanics as durable effects. The base commit, the doc listing, sizes and outlines, every
 // doc's text and the approved patch are read from Git by code; agents never choose what is audited.
 import { z, type WorkflowContext } from 'quiet-choir';
 import * as std from 'quiet-choir/std';
@@ -16,21 +16,30 @@ const listing = { maxOutputBytes: 16 * 1024 * 1024 };
  * The commit the audit reads: HEAD. Every reader works in its own checkout of it, so a report-only
  * run ignores the state of the source checkout. A fix run publishes to that checkout, so it is
  * refused before any agent call by the rule `ctx.merge` applies to a checkout target: no tracked
- * change and no untracked, non-ignored path.
+ * change and no untracked, non-ignored path. The check is a local step that throws, not a completed
+ * `git status` read: a completed read would replay its dirty output on every resume, so cleaning
+ * the checkout and resuming could never pass.
  */
 export async function pinBase(ctx: WorkflowContext, fix: boolean) {
-  if (fix) {
-    const dirt = await std.exec.git(ctx, 'clean', [
-      'status',
-      '--porcelain',
-      '--untracked-files=normal',
-      '--no-renames',
-    ]);
-    if (dirt !== '')
-      throw new Error(
-        `Commit, stash or remove these paths before a fix run, which publishes to the checkout:\n${dirt.trimEnd()}`,
-      );
-  }
+  if (fix)
+    await ctx.step('clean', {
+      input: null,
+      schema: z.null(),
+      async run({ exec }) {
+        const status = await exec([
+          'git',
+          'status',
+          '--porcelain',
+          '--untracked-files=normal',
+          '--no-renames',
+        ]);
+        if (status.stdout !== '' || status.truncated)
+          throw new Error(
+            `Commit, stash or remove these paths before a fix run, which publishes to the checkout:\n${status.stdout.trimEnd()}`,
+          );
+        return null;
+      },
+    });
   return Sha.parse((await std.exec.git(ctx, 'base', ['rev-parse', 'HEAD'])).trim());
 }
 
