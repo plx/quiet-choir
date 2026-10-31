@@ -342,9 +342,9 @@ export function fail(request, mode) {
   );
 }
 
-/** The declined mode's goal asks the fixture human to decline; the goal is in the subject. */
-export const answer = (question) =>
-  /^approve-refactors$/u.test(leaf(question.stepId)) && question.subject?.goal?.includes('decline')
+/** The declined mode's human declines the goal and plan. */
+export const answer = (question, env, mode) =>
+  mode === 'declined' && leaf(question.stepId) === 'approve-refactors'
     ? { approved: false, comment: 'Fixture human declined' }
     : undefined;
 
@@ -610,7 +610,6 @@ export const modes = [
   },
   {
     mode: 'declined',
-    input: () => ({ ...input(), goal: 'fixture: decline this plan' }),
     check({ result, env, calls, suspended }) {
       const { output } = result;
       assert.equal(output.status, 'declined');

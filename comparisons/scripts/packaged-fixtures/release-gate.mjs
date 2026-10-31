@@ -482,10 +482,7 @@ export const modes = [
   {
     // A tagged release candidate is gated against the previous tag, not its own.
     mode: 'tagged-head',
-    input: (env) => {
-      git(env.cwd, 'tag', 'v1.1.0', env.until);
-      return input();
-    },
+    setup: (env) => git(env.cwd, 'tag', 'v1.1.0', env.until),
     async check({ result, env, calls }) {
       const { output } = result;
       assert.equal(output.status, 'complete');
@@ -638,10 +635,8 @@ export const modes = [
   {
     // An untracked file the tests could read is not HEAD: refused before any command runs.
     mode: 'untracked-start',
-    input: (env) => {
-      writeFileSync(join(env.cwd, 'helper.mjs'), 'export {};\n');
-      return { testCommands: [[process.execPath, '--input-type=module', '-e', helper]] };
-    },
+    setup: (env) => writeFileSync(join(env.cwd, 'helper.mjs'), 'export {};\n'),
+    input: () => ({ testCommands: [[process.execPath, '--input-type=module', '-e', helper]] }),
     async check({ result, env, calls }) {
       const { output } = result;
       assert.equal(output.status, 'refused');
@@ -675,11 +670,11 @@ export const modes = [
     // A range longer than maxRangeChars: every reader sees the first part of its log (at most a
     // quarter of the budget) and of its patch (the rest), told so, and the gate says limited.
     mode: 'clipped-range',
-    input: (env) => {
+    setup: (env) => {
       writeFileSync(join(env.cwd, 'big.txt'), `${'y'.repeat(60)}\n`.repeat(50));
       commitAll(env.cwd, `Add big.txt\n\n${'Long release note. '.repeat(80)}`);
-      return { ...input(), maxRangeChars: 1000 };
     },
+    input: () => ({ ...input(), maxRangeChars: 1000 }),
     async check({ result, env, calls }) {
       const { output } = result;
       const end = git(env.cwd, 'rev-parse', 'HEAD');
@@ -849,11 +844,11 @@ export const modes = [
   {
     // An explicit since that is an ancestor of HEAD bounds the range, its log and its patch.
     mode: 'explicit-since',
-    input: (env) => {
+    setup: (env) => {
       writeFileSync(join(env.cwd, 'notes.md'), 'Release notes\n');
       commitAll(env.cwd, 'Add release notes');
-      return { ...input(), since: env.until };
     },
+    input: (env) => ({ ...input(), since: env.until }),
     async check({ result, env, calls }) {
       const { output } = result;
       const end = git(env.cwd, 'rev-parse', 'HEAD');
@@ -873,9 +868,8 @@ export const modes = [
   {
     // A since off HEAD's history is refused: its log and its tree diff would disagree.
     mode: 'non-ancestor-since',
-    input: (env) => ({
-      ...input(),
-      since: git(
+    setup: (env) => {
+      env.side = git(
         env.cwd,
         '-c',
         'user.name=Fixture',
@@ -887,8 +881,9 @@ export const modes = [
         env.since,
         '-m',
         'Side',
-      ),
-    }),
+      );
+    },
+    input: (env) => ({ ...input(), since: env.side }),
     async check({ result, env, calls }) {
       const { output } = result;
       assert.equal(output.status, 'refused');

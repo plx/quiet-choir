@@ -139,7 +139,7 @@ function plan(request, mode) {
     isFoundation,
     fileAreas: overlap && name === 'hello' ? ['src'] : areas[name],
     ticketIds: [id],
-    notes: mode === 'declined' && isFoundation ? 'Keep it pure (decline)' : null,
+    notes: null,
   }));
   const deferred = wanted.slice(max).map(([, id]) => ({ ticket: id, reason: 'Module limit' }));
   return { modules, deferred };
@@ -227,10 +227,9 @@ export function fail(request, mode) {
   );
 }
 
-/** The declined mode's planner marks its plan, since answer() does not receive the mode. */
-export const answer = (question) =>
-  leaf(question.stepId) === 'approve-plan' &&
-  question.subject?.plan?.modules?.some((module) => module.notes?.includes('(decline)'))
+/** The declined mode's human declines the module plan. */
+export const answer = (question, env, mode) =>
+  mode === 'declined' && leaf(question.stepId) === 'approve-plan'
     ? { approved: false, comment: 'Fixture human declined' }
     : undefined;
 

@@ -96,7 +96,7 @@ const opts = {
   killOrphans: resume,
   killGraceMs: 20,
 };
-const { result } = await drive(await load(batch, name), opts);
+const { result } = await drive(await load(batch, name), opts, { env });
 writeFileSync(
   join(root, 'result.json'),
   JSON.stringify({

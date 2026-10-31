@@ -446,15 +446,15 @@ export function exitFailure(request) {
  * into the first schema request; a Batch 03 fixture module may name the step each fault targets
  * through its `faults` export. For a fixture module, F2 holds on the faulted step through its
  * in-run schema retries until `endFault()`. `faultedStep()` is the step that was faulted, or null.
+ * `calls` may be an array to append to, so a second harness continues the first one's requests.
  */
 export function harnessFor(
   batch,
   name,
   env,
-  { mode = 'normal', fault = null, onCall, onReplyError } = {},
+  { mode = 'normal', fault = null, onCall, onReplyError, calls = [] } = {},
 ) {
-  const calls = [],
-    replyErrors = [];
+  const replyErrors = [];
   const module = batch === 3 ? packagedFixtures[name] : undefined;
   const named = fault && module?.faults?.[fault];
   const target = named ? new RegExp(named, 'u') : null;
@@ -539,7 +539,16 @@ export function assertNoReplyErrors(replyErrors, label) {
       .join('\n')}`,
   );
 }
-export async function drive(definition, options, { redo = false, onSuspended } = {}) {
+/**
+ * Run until the workflow stops suspending, answering every durable question. A Batch 03 fixture
+ * module's `answer(question, env, mode)` answers first; `questions` collects each
+ * `{ question, value }` answered (pass an array to keep them when the run rejects).
+ */
+export async function drive(
+  definition,
+  options,
+  { redo = false, onSuspended, mode = 'normal', env, questions = [] } = {},
+) {
   let result = await runWorkflow(definition, options);
   let redone = false,
     suspended = 0;
@@ -548,7 +557,7 @@ export async function drive(definition, options, { redo = false, onSuspended } =
     await onSuspended?.(result);
     const packaged = packagedFixtures[definition.name];
     for (const question of result.pending) {
-      let value = packaged?.answer?.(question);
+      let value = packaged?.answer?.(question, env, mode);
       if (value !== undefined);
       else if (
         question.stepId.endsWith('approve-plan') ||
@@ -563,6 +572,7 @@ export async function drive(definition, options, { redo = false, onSuspended } =
         };
         redone ||= again;
       }
+      questions.push({ question, value });
       await writeAnswer({
         stateDir: options.stateDir,
         runId: options.runId,
@@ -573,11 +583,14 @@ export async function drive(definition, options, { redo = false, onSuspended } =
     }
     result = await runWorkflow(definition, { ...options, resume: true });
   }
-  return { result, suspended };
+  return { result, suspended, questions };
 }
-/** Let a Batch 03 fixture module add its own files to a fresh fixture repository. */
-export async function prepare(batch, name, env) {
-  if (batch === 3) await packagedFixtures[name]?.setup?.(env);
+/**
+ * Let a Batch 03 fixture module add its own files to a fresh fixture repository; `mode` is the
+ * mode about to run, 'normal' for the success run, the fault matrix and the kill case.
+ */
+export async function prepare(batch, name, env, mode = 'normal') {
+  if (batch === 3) await packagedFixtures[name]?.setup?.(env, mode);
   return env;
 }
 /** A Batch 03 fixture module's F3 kill point, or null. */

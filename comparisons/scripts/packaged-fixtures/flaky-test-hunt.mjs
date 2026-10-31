@@ -9,7 +9,7 @@
 // test mid-stress. The same commit lands during a diagnosis or while the approval waits.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { commitAll, git, leaf, writeFiles } from './_support.mjs';
@@ -141,15 +141,9 @@ function suspectsFor(sweep, mode) {
   };
   return (keys[sweep] ?? []).map(found);
 }
-/**
- * The run in progress, noted by reply() because answer() receives only the question (see the
- * findings), so that a mode can decline, or commit to the checkout while the approval waits.
- */
-let live = null;
 const explanation = 'An earlier run warms the module cache the test reads, so the order decides it';
 const summary = 'Reset the cache before each read';
 export async function reply(request, env, mode) {
-  live = { env, mode };
   const id = request.call.stepId;
   const sweep = sweepOf(id);
   if (sweep) return { suspects: suspectsFor(sweep, mode) };
@@ -193,11 +187,11 @@ export function fail(request, mode) {
 }
 
 /** The declined mode declines; the moved-approval mode's teammate commits, then it approves. */
-export function answer(question) {
-  if (!live || question.subject?.base !== live.env.base) return undefined;
-  if (live.mode === 'declined') return { approved: false };
-  if (live.mode !== 'moved-approval') return undefined;
-  teammate(live.env);
+export function answer(question, env, mode) {
+  if (leaf(question.stepId) !== 'approve-fixes') return undefined;
+  if (mode === 'declined') return { approved: false };
+  if (mode !== 'moved-approval') return undefined;
+  teammate(env);
   return { approved: true };
 }
 
@@ -499,6 +493,18 @@ export const modes = [
       assert.deepEqual([result.pending ?? [], fixerCalls(calls)], [[], []]);
       assert.equal(git(env.cwd, 'rev-parse', 'HEAD'), env.base);
       assert.equal(await readFile(join(env.cwd, tests.cache.file), 'utf8'), env.cache);
+    },
+    // Removing the residue heals the precondition: the cleanAt step reruns and only the fixer is
+    // paid, while the measurement and the diagnosis stand.
+    repair: { run: (env) => rmSync(join(env.cwd, 'stress.log')), paid: ['fix'] },
+    async resumeCheck({ result, env, suspended }) {
+      const { output } = result;
+      assert.equal(output.status, 'fixed');
+      assert.equal(suspended, 1);
+      assert.equal(git(env.cwd, 'rev-parse', 'HEAD'), output.fixCommit);
+      assert.equal(git(env.cwd, 'rev-parse', 'HEAD^'), env.base);
+      assert.equal(await readFile(join(env.cwd, tests.cache.file), 'utf8'), fixed);
+      assert.equal(git(env.cwd, 'status', '--porcelain', '--untracked-files=all'), '');
     },
   },
   {

@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { enumOf, git } from './_support.mjs';
+import { enumOf, git, ordered } from './_support.mjs';
 
 const philosophies = ['ship-simplest', 'evolvability', 'data-first', 'failure-first'];
 const titles = {
@@ -129,11 +129,6 @@ export function fail(request, mode) {
 }
 
 const sha256 = (text) => createHash('sha256').update(text).digest('hex');
-/** The calls whose step matches, in step order: concurrent members finish in any order. */
-const byStep = (calls, pattern) =>
-  calls
-    .filter((call) => pattern.test(call.call.stepId))
-    .sort((a, b) => a.call.stepId.localeCompare(b.call.stepId, 'en', { numeric: true }));
 
 /** The written document is the returned design byte for byte, behind an exclusive create. */
 async function assertWritten(env, output) {
@@ -188,7 +183,7 @@ export async function check({ result, env, calls, suspended }) {
   await assertWritten(env, output);
   assert.equal(git(env.cwd, 'status', '--porcelain', '--untracked-files=all'), `?? ${out}`);
   // Judges see letters, never philosophies, each seat in its own rotation of A to D.
-  const judges = byStep(calls, judge);
+  const judges = ordered(calls, judge);
   assert.deepEqual(
     judges.map((call) => order(call.options.prompt).join('')),
     ['ABCD', 'BCDA', 'CDAB'],
@@ -201,13 +196,13 @@ export async function check({ result, env, calls, suspended }) {
       assert.ok(!call.options.prompt.includes(phrase), phrase);
     assert.ok(call.options.prompt.includes(brief));
   }
-  const [synthesis] = byStep(calls, /^synthesize$/u);
+  const [synthesis] = ordered(calls, /^synthesize$/u);
   assert.equal(order(synthesis.options.prompt).join(''), 'C');
   assert.match(synthesis.options.prompt, /^- D1, from D .*named by 2 of 3 judges/mu);
   assert.match(synthesis.options.prompt, /^- Judge 3 gave it 24 of 40: Judge 3 on C/mu);
   // Proposers and judges read; the synthesizer has no tools; nothing may edit.
   assert.deepEqual(synthesis.options.tools, []);
-  for (const call of [...byStep(calls, proposer), ...judges])
+  for (const call of [...ordered(calls, proposer), ...judges])
     assert.deepEqual(call.options.tools, ['Read', 'Grep', 'Glob']);
 }
 
@@ -231,7 +226,7 @@ export const modes = [
         ],
       );
       assert.deepEqual(
-        byStep(calls, judge).map((call) => order(call.options.prompt).join('')),
+        ordered(calls, judge).map((call) => order(call.options.prompt).join('')),
         ['AC', 'CA', 'AC'],
       );
       assert.deepEqual(
@@ -271,7 +266,7 @@ export const modes = [
       assert.equal(output.proposals.length, 4);
       assert.deepEqual(output.scoreboard, []);
       assert.equal(output.design, null);
-      assert.equal(byStep(calls, /^synthesize$/u).length, 0);
+      assert.equal(ordered(calls, /^synthesize$/u).length, 0);
       assert.equal(existsSync(join(env.cwd, out)), false);
     },
   },
@@ -305,7 +300,7 @@ export const modes = [
         ],
       );
       assert.deepEqual(
-        byStep(calls, judge).map((call) => order(call.options.prompt).join('')),
+        ordered(calls, judge).map((call) => order(call.options.prompt).join('')),
         ['ABCD', 'BCDA', 'CDAB', 'DABC'],
       );
       assert.match(output.design, /^Failed: proposers none; judges 1\.$/mu);
@@ -313,7 +308,7 @@ export const modes = [
         output.design,
         /^- Judge 3 scored the winner 24 of 40 \(panel average 31\.3\)/mu,
       );
-      const [synthesis] = byStep(calls, /^synthesize$/u);
+      const [synthesis] = ordered(calls, /^synthesize$/u);
       assert.match(synthesis.options.prompt, /^- Judge 3 gave it 24 of 40: Judge 3 on C/mu);
       assert.match(synthesis.options.prompt, /^- B1, from B .*named by 1 of 3 judges/mu);
       await assertWritten(env, output);
@@ -362,7 +357,7 @@ export const modes = [
         ],
       );
       assert.deepEqual(output.winner.tiedWith, ['B']);
-      const [synthesis] = byStep(calls, /^synthesize$/u);
+      const [synthesis] = ordered(calls, /^synthesize$/u);
       assert.match(synthesis.options.prompt, /^It tied with B on the average/mu);
       await assertWritten(env, output);
     },
@@ -376,7 +371,7 @@ export const modes = [
       assert.equal(output.winner.letter, 'C');
       assert.equal(output.winner.avg, 32.5);
       assert.deepEqual(
-        byStep(calls, judge).map((call) => [call.harness, call.options.sandbox ?? null]),
+        ordered(calls, judge).map((call) => [call.harness, call.options.sandbox ?? null]),
         [
           ['claude', null],
           ['codex', 'read-only'],

@@ -2,15 +2,16 @@
 // exporter; the data-model and architecture lenses raise the same load-bearing decision in
 // different case and spacing (code merges it into D1 with both lenses' options), api-contracts a
 // moderate one (D2) and operations a reversible one (D3). D1 goes to the design-tournament child,
-// whose data-first ledger (C) wins; the merger adopts its design, the implementability audit finds
-// one gap and the fidelity audit none, the repair adds an open question, and code writes
-// docs/spec.md.
+// whose steps its own fixture module answers and whose data-first ledger (C) wins; the merger
+// adopts its design, the implementability audit finds one gap and the fidelity audit none, the
+// repair adds an open question, and code writes docs/spec.md.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { commitAll, enumOf, git, writeFiles } from './_support.mjs';
+import { commitAll, git, within, writeFiles } from './_support.mjs';
+import * as tournament from './design-tournament.mjs';
 
 const prd = [
   '# CSV export',
@@ -151,56 +152,17 @@ function lensReply(lens, mode) {
   };
 }
 
-const totals = { A: 28, B: 30, C: 36, D: 26 };
-const split = (total) =>
-  [0, 1, 2, 3].map((axis) => Math.floor(total / 4) + (axis < total % 4 ? 1 : 0));
-function tournamentReply(request) {
-  const id = request.call.stepId;
-  if (proposer.test(id)) {
-    const philosophy = proposer.exec(id)[1];
-    return {
-      title: philosophy === 'data-first' ? 'Append-only export ledger' : `${philosophy} exporter`,
-      summary: `A ${philosophy} export design.`,
-      components: [{ name: 'ExportService', responsibility: 'Runs exports', interfaces: null }],
-      dataFlow: null,
-      tradeoffs: ['Simplicity over generality'],
-      risks: ['Large reports'],
-      migrationPath: null,
-    };
-  }
-  if (judge.test(id))
-    return {
-      scores: enumOf(request.outputSchema, 'scores', 'items', 'proposal').map((letter) => {
-        const [fitness, simplicity, evolvability, operability] = split(totals[letter]);
-        return {
-          proposal: letter,
-          fitness,
-          simplicity,
-          evolvability,
-          operability,
-          rationale: `ExportService in ${letter} carries the load`,
-          bestIdea: `Best idea of ${letter}`,
-        };
-      }),
-    };
-  if (id === 'tournament/synthesize')
-    return {
-      design: tournamentDesign,
-      grafts: enumOf(request.outputSchema, 'grafts', 'items', 'idea').map((idea) => ({
-        idea,
-        decision: 'rejected',
-        reason: 'Out of scope here',
-      })),
-    };
-  throw new Error(`Unhandled tournament step ${id}`);
-}
+/** The design-tournament child's fixture mode for one of this package's modes. */
+const childMode = (mode) => (mode === 'tournament-aborted' ? 'aborted' : 'normal');
 
 export function reply(request, env, mode) {
   const id = request.call.stepId,
     prompt = request.options.prompt;
   if (id === 'ground') return grounding;
   if (lensStep.test(id)) return lensReply(lensStep.exec(id)[1], mode);
-  if (id.startsWith('tournament/')) return tournamentReply(request);
+  // The child's own fixture answers its steps.
+  if (id.startsWith('tournament/'))
+    return tournament.reply(within(request, 'tournament/'), env, childMode(mode));
   if (id === 'merge') {
     const ids = idsOf(prompt);
     // A first merge without the Operations heading is refused by the schema and retried.
@@ -224,7 +186,8 @@ export function fail(request, mode) {
     return id === 'lenses/operations/draft' || id === 'audits/fidelity/audit';
   if (mode === 'undrafted') return lensStep.test(id);
   if (mode === 'tournament-fails') return id === 'tournament/synthesize';
-  if (mode === 'tournament-aborted') return proposer.test(id) && !id.includes('data-first');
+  if (id.startsWith('tournament/'))
+    return tournament.fail(within(request, 'tournament/'), childMode(mode));
   if (mode === 'repair-fails') return id === 'repair';
   return false;
 }
@@ -282,7 +245,8 @@ export async function check({ result, env, calls, suspended }) {
   assert.deepEqual(output.tournament, {
     decision: 'D1',
     status: 'complete',
-    winner: { title: 'Append-only export ledger', philosophy: 'data-first', avg: 36, tiedWith: [] },
+    // The child's fixture scores C 36, 36 and 24, its third judge dissenting.
+    winner: { title: 'Append-only export ledger', philosophy: 'data-first', avg: 32, tiedWith: [] },
     adopted: true,
     failure: null,
   });

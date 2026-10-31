@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { commitAll, git, writeFiles } from './_support.mjs';
+import { commitAll, git, ordered, writeFiles } from './_support.mjs';
 
 const csv = [
   'id,plan,platform,text',
@@ -226,9 +226,7 @@ export async function check({ result, env, calls, suspended }) {
     'F10',
     'F11',
   ]);
-  const tagged = steps(calls, /^shards\/\d+\/tag$/u).sort((a, b) =>
-    a.call.stepId < b.call.stepId ? -1 : 1,
-  );
+  const tagged = ordered(calls, /^shards\/(\d+)\/tag$/u);
   assert.deepEqual(
     tagged.map((call) => ids(call.options.prompt)),
     [

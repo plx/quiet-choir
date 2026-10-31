@@ -121,9 +121,9 @@ export function fail(request, mode) {
   );
 }
 
-/** The declined mode's API asks the fixture human to decline; it is in the subject. */
-export const answer = (question) =>
-  leaf(question.stepId) === 'approve-migration' && question.subject?.from?.includes('(decline)')
+/** The declined mode's human declines the migration plan. */
+export const answer = (question, env, mode) =>
+  mode === 'declined' && leaf(question.stepId) === 'approve-migration'
     ? { approved: false, comment: 'Fixture human declined' }
     : undefined;
 
@@ -199,7 +199,6 @@ export const kill = {
 export const modes = [
   {
     mode: 'declined',
-    input: () => ({ ...input(), from: 'legacyFormat(x) (decline)' }),
     check({ result, env, calls, suspended }) {
       assert.equal(result.output.status, 'declined');
       assert.equal(suspended, 1);

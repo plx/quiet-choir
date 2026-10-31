@@ -5,7 +5,7 @@
 // docs/roadmap.md.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { commitAll, enumOf, git, writeFiles } from './_support.mjs';
@@ -402,6 +402,16 @@ export const modes = [
       assert.equal(record.steps.finalize.status, 'completed');
       assert.equal(record.steps.write.status, 'failed');
       assert.equal(git(env.cwd, 'status', '--porcelain'), '');
+    },
+    repair: { run: (env) => rmSync(join(env.cwd, 'README.md')), paid: [] },
+    resumeCheck: async ({ result, env }) => {
+      const { output } = result;
+      assert.equal(output.status, 'complete');
+      const document = await readFile(join(env.cwd, 'README.md'), 'utf8');
+      assert.equal(output.written.path, join(env.cwd, 'README.md'));
+      assert.equal(output.written.sha256, sha256(document));
+      assert.equal(output.written.previousSha256, null);
+      assert.equal(git(env.cwd, 'status', '--porcelain'), 'M README.md');
     },
   },
   {

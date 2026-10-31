@@ -60,7 +60,7 @@ export async function scenario(setup, batch, name, fault) {
   const opts = await options(env, batch, name, harness);
   let first;
   try {
-    first = (await drive(definition, opts)).result;
+    first = (await drive(definition, opts, { env })).result;
   } catch {
     first = await readRun(opts);
   }
@@ -76,7 +76,7 @@ export async function scenario(setup, batch, name, fault) {
   );
   let final;
   try {
-    ({ result: final } = await drive(definition, { ...opts, resume: true }));
+    ({ result: final } = await drive(definition, { ...opts, resume: true }, { env }));
   } finally {
     // A reply that threw explains a failed resume better than the run's own error.
     if (packaged) assertNoReplyErrors(replyErrors, `${name} ${fault}`);
@@ -97,7 +97,8 @@ export async function scenario(setup, batch, name, fault) {
     outputAdmitsDegradation: degradation(final, name),
   };
 }
-export async function fixResume(setup, batch, name) {
+/** F4. `onResult(result, env)`, when given, sees the resumed run before the cell is built. */
+export async function fixResume(setup, batch, name, { onResult } = {}) {
   const env = await prepare(batch, name, await setup()),
     base = await load(batch, name);
   const { harness, calls, replyErrors } = harnessFor(batch, name, env),
@@ -116,7 +117,7 @@ export async function fixResume(setup, batch, name) {
   });
   const fingerprint = (source) => createHash('sha256').update(source).digest('hex');
   await assert.rejects(
-    drive(wrap(beforeSource), { ...opts, fingerprint: fingerprint(beforeSource) }),
+    drive(wrap(beforeSource), { ...opts, fingerprint: fingerprint(beforeSource) }, { env }),
     /one-line fixture tail/u,
   );
   const before = calls.length;
@@ -130,17 +131,22 @@ export async function fixResume(setup, batch, name) {
   );
   let result;
   try {
-    ({ result } = await drive(wrap(afterSource), {
-      ...opts,
-      resume: true,
-      fingerprint: fingerprint(afterSource),
-      acceptCodeChange: true,
-    }));
+    ({ result } = await drive(
+      wrap(afterSource),
+      {
+        ...opts,
+        resume: true,
+        fingerprint: fingerprint(afterSource),
+        acceptCodeChange: true,
+      },
+      { env },
+    ));
   } finally {
     if (batch === 3 && packagedFixtures[name]) assertNoReplyErrors(replyErrors, `${name} F4`);
   }
   assert.equal(result.status, 'completed');
   assert.equal(calls.length, before);
+  await onResult?.(result, env);
   return {
     initialStatus: 'failed',
     finalStatus: result.status,

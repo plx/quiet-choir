@@ -505,6 +505,15 @@ export const modes = [
       assert.deepEqual(steps(calls).slice(5), ['merge']);
       assert.equal(existsSync(join(env.cwd, 'docs/backlog.md')), false);
     },
+    // Once the merger answers, the resume pays the merge and what follows it, never a lens again.
+    repair: { mode: 'normal', paid: ['merge', 'audit/0', 'repair/0', 'audit/1'] },
+    resumeCheck: async ({ result, env }) => {
+      const { output } = result;
+      assert.equal(output.status, 'covered');
+      const document = await readFile(join(env.cwd, 'docs/backlog.md'), 'utf8');
+      assert.equal(output.written.sha256, sha256(document));
+      assert.equal(output.written.previousSha256, null);
+    },
   },
 ];
 

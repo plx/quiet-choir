@@ -1984,7 +1984,9 @@
       "fixture": "residue",
       "status": "passed",
       "finalStatus": "failed",
-      "agentCalls": 4
+      "agentCalls": 4,
+      "resumedStatus": "completed",
+      "resumedCalls": 1
     },
     {
       "workflow": "flaky-test-hunt",
@@ -2239,7 +2241,9 @@
       "fixture": "merge-fails",
       "status": "passed",
       "finalStatus": "failed",
-      "agentCalls": 6
+      "agentCalls": 6,
+      "resumedStatus": "completed",
+      "resumedCalls": 4
     },
     {
       "workflow": "prd-to-spec",
@@ -2957,14 +2961,18 @@
       "fixture": "out-appears",
       "status": "passed",
       "finalStatus": "failed",
-      "agentCalls": 9
+      "agentCalls": 9,
+      "resumedStatus": "completed",
+      "resumedCalls": 0
     },
     {
       "workflow": "requirements-to-prd",
       "fixture": "out-changes",
       "status": "passed",
       "finalStatus": "failed",
-      "agentCalls": 9
+      "agentCalls": 9,
+      "resumedStatus": "completed",
+      "resumedCalls": 0
     },
     {
       "workflow": "requirements-to-prd",
@@ -3212,7 +3220,9 @@
       "fixture": "out-exists",
       "status": "passed",
       "finalStatus": "failed",
-      "agentCalls": 7
+      "agentCalls": 7,
+      "resumedStatus": "completed",
+      "resumedCalls": 0
     },
     {
       "workflow": "roadmap-plan",

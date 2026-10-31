@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { git, leaf, writeFiles } from './_support.mjs';
+import { git, ordered, writeFiles } from './_support.mjs';
 
 const question = 'Should we replace our parser with Xlib?';
 const context = 'Node 22; target.mjs is our parser';
@@ -271,10 +271,8 @@ function readOnlyRun(env, calls, { changed = 0, cwd = env.cwd } = {}) {
   return snapshots;
 }
 const steps = (calls) => calls.map((call) => call.call.stepId).sort();
-/** A map item's index; calls are recorded in admission order, not item order. */
-const index = (call) => Number(call.call.stepId.split('/')[1]);
-const ordered = (calls, name) =>
-  calls.filter((call) => leaf(call.call.stepId) === name).sort((a, b) => index(a) - index(b));
+/** The reads' or the hunts' calls in item order; calls are recorded in admission order. */
+const inOrder = (calls, name) => ordered(calls, new RegExp(`^${name}s/(\\d+)/${name}$`, 'u'));
 /** The sweeps map is keyed by modality, so its calls are listed in modality order. */
 const modalities = ['web', 'source', 'practitioners', 'local'];
 const sweepsOf = (calls) =>
@@ -357,7 +355,7 @@ export function check({ result, env, calls, suspended }) {
   assert.ok(output.answer.startsWith('Adopt Xlib [S1][S2]: it is faster [S4]'));
   assert.ok(output.answer.endsWith('- [S4] https://xlib.dev/bench (benchmark, primary)'));
   // The ranked top four were read: the local lead by the local reader, the rest by web readers.
-  const reads = ordered(calls, 'read');
+  const reads = inOrder(calls, 'read');
   assert.deepEqual(
     reads.map((call) => [refOf(call.options.prompt), local(call)]),
     [
@@ -395,7 +393,7 @@ export function check({ result, env, calls, suspended }) {
   assert.doesNotMatch(critic, /never searched|read failed/u);
   // Three hunts, routed by territory: the local one in a snapshot, the web ones without file
   // tools. A web hunt is never told the repository's paths; the local hunt knows only them.
-  const hunts = ordered(calls, 'hunt');
+  const hunts = inOrder(calls, 'hunt');
   assert.deepEqual(
     hunts.map((call) => [gapOf(call.options.prompt), local(call), knownOf(call.options.prompt)]),
     [
@@ -451,7 +449,7 @@ export const modes = [
       assert.equal(record.steps.head, undefined);
       assert.equal(output.leadsFound, 7);
       assert.deepEqual(
-        ordered(calls, 'read').map((call) => refOf(call.options.prompt)),
+        inOrder(calls, 'read').map((call) => refOf(call.options.prompt)),
         [
           'https://xlib.dev/docs/',
           'https://github.com/xlib/xlib/issues/42',
@@ -459,7 +457,7 @@ export const modes = [
           'https://github.com/xlib/xlib/releases',
         ],
       );
-      assert.match(ordered(calls, 'read')[1].options.prompt, /found by source, practitioners\)/u);
+      assert.match(inOrder(calls, 'read')[1].options.prompt, /found by source, practitioners\)/u);
       assert.deepEqual(
         output.deferred.map((deferred) => deferred.ref),
         ['https://github.com/xlib/xlib', 'https://blog.example/xlib', 'https://news.example/1'],
@@ -485,7 +483,7 @@ export const modes = [
       assert.equal(output.status, 'answered');
       assert.equal(output.leadsFound, 16);
       assert.deepEqual(
-        ordered(calls, 'read').map((call) => refOf(call.options.prompt)),
+        inOrder(calls, 'read').map((call) => refOf(call.options.prompt)),
         refs([0, 2, 4, 6, 8, 10, 12, 14]),
       );
       assert.deepEqual(
@@ -504,7 +502,7 @@ export const modes = [
       const { output } = result;
       assert.equal(output.status, 'answered');
       assert.deepEqual(
-        ordered(calls, 'read').map((call) => refOf(call.options.prompt)),
+        inOrder(calls, 'read').map((call) => refOf(call.options.prompt)),
         refs([0, 2, 4, 6, 8, 10, 12, 14, 1, 3, 5, 7, 9, 11]),
       );
       assert.deepEqual(
@@ -746,7 +744,7 @@ export const modes = [
           ['S4', 'https://xlib.dev/bench', 'benchmark', 'web'],
         ],
       );
-      const reads = ordered(calls, 'read');
+      const reads = inOrder(calls, 'read');
       assert.deepEqual(
         reads.map((call) => [refOf(call.options.prompt), local(call)]),
         [
@@ -761,7 +759,7 @@ export const modes = [
         /^\[S3\] README\.md \(official-docs, primary; from this repository\)$/mu,
       );
       assert.deepEqual(
-        ordered(calls, 'hunt').map((call) => [local(call), knownOf(call.options.prompt)]),
+        inOrder(calls, 'hunt').map((call) => [local(call), knownOf(call.options.prompt)]),
         [
           [false, ['https://xlib.dev/docs/', 'https://github.com/xlib/xlib/releases']],
           [false, ['https://xlib.dev/docs/', 'https://github.com/xlib/xlib/releases']],
@@ -784,7 +782,7 @@ export const modes = [
       assert.equal(output.status, 'answered');
       assert.equal(output.leadsFound, 8);
       assert.deepEqual(output.deferred, []);
-      const reads = ordered(calls, 'read').map((call) => [refOf(call.options.prompt), local(call)]);
+      const reads = inOrder(calls, 'read').map((call) => [refOf(call.options.prompt), local(call)]);
       assert.deepEqual(
         reads.filter(([ref]) => ref === 'target.mjs' || ref === '../secrets.env'),
         [
@@ -819,7 +817,7 @@ export const modes = [
         output.gaps.map((tracked) => [tracked.territory, tracked.hunt, tracked.source]),
         [['web', 'found', 'S5']],
       );
-      assert.deepEqual(knownOf(ordered(calls, 'hunt')[0].options.prompt), [
+      assert.deepEqual(knownOf(inOrder(calls, 'hunt')[0].options.prompt), [
         'https://xlib.dev/docs/',
         'https://github.com/xlib/xlib/releases',
         'https://blog.example/xlib',
@@ -854,7 +852,7 @@ export const modes = [
         output.gaps.map((tracked) => [tracked.territory, tracked.hunt]),
         [['web', 'empty']],
       );
-      assert.deepEqual(ordered(calls, 'hunt')[0].options.tools, webTools);
+      assert.deepEqual(inOrder(calls, 'hunt')[0].options.tools, webTools);
       assert.ok(!steps(calls).includes('resynthesize'));
       assert.deepEqual(readdirSync(env.plain), []);
       assert.equal(readOnlyRun(env, calls, { cwd: env.plain }), 0);

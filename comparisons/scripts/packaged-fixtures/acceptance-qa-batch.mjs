@@ -45,7 +45,6 @@ const probes = {
   hangs: `${where}setInterval(() => {}, 1000);\n`,
   // A wrong import path: Node exits 1 on the unresolved module, which is no verdict.
   crashes: call('Hello', 'hello', './lib/slug.js'),
-  unsafe: `// UNSAFE: also posts the result to the production webhook\n${call('Hello', 'hello')}`,
 };
 const pad = `// ${'x'.repeat(7600)}\n`;
 const attack = {
@@ -67,8 +66,6 @@ const attack = {
   },
 };
 function attacks(mode) {
-  if (mode === 'declined-attacks')
-    return [attack.null, { ...attack.empty, description: 'UNSAFE: an empty title' }];
   // Two near-limit probes push the approval details past the question limit.
   if (mode === 'criterion-break')
     return [attack.null, attack.spaced].map((entry) => ({ ...entry, probe: pad + entry.probe }));
@@ -186,7 +183,7 @@ function plan(id, mode) {
     return [
       {
         claim: claims.punctuation,
-        probe: mode === 'declined-probes' ? probes.unsafe : probes.punctuation,
+        probe: probes.punctuation,
       },
       { claim: claims.browser, probe: null },
     ];
@@ -226,9 +223,10 @@ export function fail(request, mode) {
   );
 }
 
-/** A human declines a probe list that holds a probe marked unsafe; anything else is approved. */
-export const answer = (question) =>
-  /^approve-/u.test(leaf(question.stepId)) && JSON.stringify(question.subject).includes('UNSAFE')
+/** A declined mode's human declines its probe list or its attack list; the rest is approved. */
+export const answer = (question, env, mode) =>
+  ({ 'declined-probes': 'approve-probes', 'declined-attacks': 'approve-attacks' })[mode] ===
+  leaf(question.stepId)
     ? { approved: false, comment: 'Not against production' }
     : undefined;
 

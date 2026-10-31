@@ -32,8 +32,6 @@ const bulk = `\nNotes on the flags, kept for the fixture: ${'Ünïcödé flägs.
 );
 
 export async function setup(env) {
-  seen.question = null;
-  seen.moveOnAnswer = null;
   await writeFiles(env.cwd, {
     'cli.mjs': cli,
     'README.md': readme,
@@ -192,7 +190,7 @@ async function fixDoc(request, env, mode) {
     await writeFiles(env.cwd, { 'notes.txt': 'Unrelated work\n' });
     env.moved = commitAll(env.cwd, 'unrelated work');
   }
-  return { edits: [`${mode === 'declined' ? 'DECLINE ' : ''}Usage: replaced --yes with --force`] };
+  return { edits: ['Usage: replaced --yes with --force'] };
 }
 
 export async function reply(request, env, mode) {
@@ -228,34 +226,29 @@ export function fail(request, mode) {
   );
 }
 
-/**
- * The latest approval question, for the checks, and the moved-wait mode's repository, which
- * answer() commits to while the run waits; modes run one at a time and setup() resets both.
- */
-const seen = { question: null, moveOnAnswer: null };
 const marker = /\n\[\.\.\. \d+ more bytes; the digest covers the whole patch\]$/u;
 
 /**
  * Every approval's details fit the 16 KiB limit, say when they are cut and never split a
- * character. The declined mode's fixer marks its edit, since answer() does not receive the mode.
+ * character. The declined mode's human declines; in the moved-wait mode someone commits to the
+ * checkout while the approval waits.
  */
-export function answer(question) {
-  seen.question = question;
+export function answer(question, env, mode) {
   const { subject, details } = question;
   assert.ok(Buffer.byteLength(details) <= 16_384);
   assert.equal(marker.test(details), subject.truncated);
   assert.ok(!details.includes('�'));
-  const moving = seen.moveOnAnswer;
-  if (moving) {
-    // Someone commits to the checkout while the approval waits.
-    writeFileSync(join(moving.cwd, 'notes.txt'), 'Unrelated work\n');
-    moving.moved = commitAll(moving.cwd, 'unrelated work');
-    seen.moveOnAnswer = null;
+  if (mode === 'moved-wait' && !env.moved) {
+    writeFileSync(join(env.cwd, 'notes.txt'), 'Unrelated work\n');
+    env.moved = commitAll(env.cwd, 'unrelated work');
   }
-  return subject.docs.some((doc) => doc.edits.some((edit) => edit.startsWith('DECLINE ')))
-    ? { approved: false }
-    : undefined;
+  return mode === 'declined' ? { approved: false } : undefined;
 }
+/** The run's one approval question. */
+const approval = (questions) => {
+  assert.equal(questions.length, 1);
+  return questions[0].question;
+};
 
 export const kill = {
   step: '^docs/\\d+/fix$',
@@ -289,8 +282,8 @@ function published(env, output) {
  * The approval showed the fixed docs and nothing else: its commit is the squash integration parented
  * on the base, and its diff names exactly the docs the subject lists.
  */
-function approvedOnly(env) {
-  const { subject } = seen.question;
+function approvedOnly(env, question) {
+  const { subject } = question;
   assert.equal(subject.base, env.base);
   assert.equal(git(env.cwd, 'rev-parse', `${subject.commit}^`), env.base);
   assert.deepEqual(
@@ -303,7 +296,7 @@ const statuses = (output) =>
 const callsTo = (calls, name) => calls.filter((call) => leaf(call.call.stepId) === name);
 const noFix = { digest: null, commit: null, verification: [], omitted: [], failure: null };
 
-export function check({ result, env, calls, suspended }) {
+export function check({ result, env, calls, suspended, questions }) {
   const { output } = result;
   assert.equal(output.status, 'complete');
   assert.equal(output.base, env.base);
@@ -348,12 +341,13 @@ export function check({ result, env, calls, suspended }) {
     [0],
   );
   assert.equal(suspended, 1);
-  assert.equal(seen.question.prompt, 'Publish this verified documentation patch to the checkout?');
-  assert.equal(seen.question.details, diffText(env.cwd, env.base, 'HEAD'));
-  assert.equal(seen.question.subject.digest, output.fix.digest);
-  approvedOnly(env);
+  const question = approval(questions);
+  assert.equal(question.prompt, 'Publish this verified documentation patch to the checkout?');
+  assert.equal(question.details, diffText(env.cwd, env.base, 'HEAD'));
+  assert.equal(question.subject.digest, output.fix.digest);
+  approvedOnly(env, question);
   assert.deepEqual(
-    seen.question.subject.docs.map((doc) => doc.doc),
+    question.subject.docs.map((doc) => doc.doc),
     ['README.md'],
   );
   assert.equal(readFileSync(join(env.cwd, 'README.md'), 'utf8'), fixedReadme);
@@ -421,14 +415,14 @@ export const modes = [
   },
   {
     mode: 'declined',
-    check({ result, env, suspended }) {
+    check({ result, env, suspended, questions }) {
       const { output } = result;
       assert.equal(suspended, 1);
       assert.equal(output.fix.status, 'declined');
       assert.match(output.fix.digest, /^[a-f0-9]{64}$/u);
       assert.equal(output.fix.digest, diffDigest(env.cwd, env.base, output.fix.commit));
       assert.deepEqual(output.docs[1].fix.collateral, ['docs/config.md describes the settings']);
-      assert.deepEqual(seen.question.subject.docs[0].collateral, [
+      assert.deepEqual(approval(questions).subject.docs[0].collateral, [
         'docs/config.md describes the settings',
       ]);
       assert.equal(output.totals.fixed, 0);
@@ -506,10 +500,10 @@ export const modes = [
     // HEAD moves while the fixer works. ctx.merge would integrate onto it, so the run stops
     // before integrating: nothing is verified, no question is asked and nothing is published.
     mode: 'moved',
-    check({ result, env, suspended, calls }) {
+    check({ result, env, suspended, calls, questions }) {
       const { output } = result;
       assert.equal(suspended, 0);
-      assert.equal(seen.question, null);
+      assert.deepEqual(questions, []);
       assert.deepEqual(output.fix, { ...noFix, status: 'moved' });
       assert.equal(output.docs[1].fix.status, 'changed');
       assert.equal(output.totals.fixed, 0);
@@ -523,16 +517,13 @@ export const modes = [
     // HEAD moves while the approval waits: the approved patch was the base plus the fix alone, and
     // the run refuses to publish it onto the moved HEAD.
     mode: 'moved-wait',
-    options(opts, env) {
-      seen.moveOnAnswer = env;
-      return opts;
-    },
-    check({ result, env, suspended }) {
+    check({ result, env, suspended, questions }) {
       const { output } = result;
       assert.equal(suspended, 1);
       assert.equal(output.fix.status, 'moved');
-      approvedOnly(env);
-      assert.equal(output.fix.commit, seen.question.subject.commit);
+      const question = approval(questions);
+      approvedOnly(env, question);
+      assert.equal(output.fix.commit, question.subject.commit);
       assert.equal(output.fix.digest, diffDigest(env.cwd, env.base, output.fix.commit));
       assert.deepEqual(
         output.fix.verification.map((row) => row.code),
@@ -564,13 +555,13 @@ export const modes = [
   {
     // The approval shows a cut, marked preview of a patch over 15,000 bytes; the subject says so.
     mode: 'large-patch',
-    check({ result, env }) {
-      const { subject, details } = seen.question;
+    check({ result, env, questions }) {
+      const { subject, details } = approval(questions);
       assert.equal(subject.truncated, true);
       assert.ok(subject.bytes > 15_000);
       assert.equal(subject.bytes, Buffer.byteLength(diffText(env.cwd, env.base, 'HEAD')));
       assert.ok(diffText(env.cwd, env.base, 'HEAD').startsWith(details.replace(marker, '')));
-      approvedOnly(env);
+      approvedOnly(env, approval(questions));
       published(env, result.output);
     },
   },
@@ -578,7 +569,7 @@ export const modes = [
     // No verification commands: the approved patch is published unverified, as the input asked.
     mode: 'checker-fails',
     input: () => ({ fix: true, evidenceCommands: [helpCommand] }),
-    check({ result, env }) {
+    check({ result, env, questions }) {
       const { output } = result;
       assert.equal(output.status, 'degraded');
       assert.deepEqual(
@@ -588,7 +579,7 @@ export const modes = [
       assert.deepEqual(statuses(output), [['README.md', 'drifted', 'true']]);
       assert.deepEqual(output.fix.verification, []);
       assert.equal(
-        seen.question.prompt,
+        approval(questions).prompt,
         'Publish this unverified documentation patch to the checkout?',
       );
       published(env, output);
@@ -672,8 +663,9 @@ export const modes = [
     // Both docs drift; the config fixer also edits cli.mjs and is refused, and the README fix is
     // published alone. The run is degraded, since docs/config.md stays wrong.
     mode: 'mixed',
-    check({ result, env }) {
+    check({ result, env, questions }) {
       const { output } = result;
+      const question = approval(questions);
       assert.equal(output.status, 'degraded');
       assert.deepEqual(statuses(output), [
         ['docs/config.md', 'drifted'],
@@ -683,11 +675,11 @@ export const modes = [
       assert.deepEqual(output.docs[0].fix.unexpected, [{ path: 'cli.mjs', status: 'modified' }]);
       assert.deepEqual(output.fix.omitted, [{ doc: 'docs/config.md', status: 'refused' }]);
       assert.deepEqual(
-        seen.question.subject.docs.map((doc) => doc.doc),
+        question.subject.docs.map((doc) => doc.doc),
         ['README.md'],
       );
-      assert.deepEqual(seen.question.subject.omitted, output.fix.omitted);
-      approvedOnly(env);
+      assert.deepEqual(question.subject.omitted, output.fix.omitted);
+      approvedOnly(env, question);
       assert.deepEqual(output.totals, {
         docs: 2,
         claims: 3,

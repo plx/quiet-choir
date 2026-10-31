@@ -3,15 +3,16 @@
 // the writer drafts without the assumption that finding needs, so code adds it, three critics
 // raise a blocking, a major and a minor issue, and the writer revises. One question round asks the
 // two open questions; the answer redoes the PRD under round/1, where findings quote the answers,
-// and code writes docs/prd.md. docs/previous-prd.md stands for a previous run's PRD, which only
-// a matching replace digest may redo, and notes/blank.md holds only whitespace (enough of it to
-// take three files past a maxMaterialBytes of 1000). Every lens and critic reply first checks that
-// its prompt states the charter its step index names, and only that one.
+// and code writes docs/prd.md. Modes add their own files: docs/previous-prd.md stands for a
+// previous run's PRD, which only a matching replace digest may redo, and notes/blank.md holds only
+// whitespace (enough of it to take three files past a maxMaterialBytes of 1000). Every lens and
+// critic reply first checks that its prompt states the charter its step index names, and only that
+// one.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { commitAll, git, writeFiles } from './_support.mjs';
 
 const kickoff = [
@@ -96,13 +97,18 @@ const many = Array.from({ length: 38 }, (_, index) => ({
 }));
 
 export async function setup(env) {
-  await writeFiles(env.cwd, {
-    'notes/kickoff.md': kickoff,
-    'notes/tickets.md': tickets,
-    'notes/blank.md': blank,
-    'docs/previous-prd.md': previous,
-  });
+  await writeFiles(env.cwd, { 'notes/kickoff.md': kickoff, 'notes/tickets.md': tickets });
   commitAll(env.cwd, 'add the reminders material');
+}
+/** A mode's setup: a previous run's PRD, committed at docs/previous-prd.md. */
+async function previousPrd(env) {
+  await writeFiles(env.cwd, { 'docs/previous-prd.md': previous });
+  commitAll(env.cwd, 'add the previous PRD');
+}
+/** A mode's setup: a committed note of whitespace only. */
+async function blankNote(env) {
+  await writeFiles(env.cwd, { 'notes/blank.md': blank });
+  commitAll(env.cwd, 'add a blank note');
 }
 
 export const input = () => ({
@@ -211,7 +217,7 @@ function prd(ids, { revised, answered, mode }) {
     ? [howMany]
     : revised
       ? mode === 'left-open'
-        ? [tiers, baseline, ...many]
+        ? [cadence, baseline, ...many]
         : [cadence, baseline]
       : [cadence];
   return {
@@ -294,11 +300,10 @@ export function fail(request, mode) {
   );
 }
 
-/** The question round's answer: the fixture's answers, unless only the plan tiers are open. */
-export function answer(question) {
+/** The question round's answer: the fixture's answers, or empty text to leave them open. */
+export function answer(question, env, mode) {
   if (!/^questions\/\d+$/u.test(question.stepId)) return undefined;
-  const open = question.subject.questions.map((q) => q.question);
-  return { answers: open.includes(tiers.question) ? '' : ownerAnswer };
+  return { answers: mode === 'left-open' ? '' : ownerAnswer };
 }
 
 const sha256 = (text) => createHash('sha256').update(text).digest('hex');
@@ -483,12 +488,15 @@ export const kill = { step: '^write$', boundary: 'checkpoint', writeLocation: 's
 /** The extraction is a settled fan-out, so F1 and F2 fail the draft, the first call that throws. */
 export const faults = { F1: '^draft$', F2: '^draft$' };
 
+/** A kill at the write or a code fix resumes to the success run's output, receipt included. */
+export const faultCheck = true;
+
 const once = (base) => ({ ...base, questionRounds: 0 });
 const readOut = (env, path = 'docs/prd.md') => readFile(join(env.cwd, path), 'utf8');
 
 /** A run refused at the check of out: nothing read, asked or paid, and docs/previous-prd.md kept. */
 const refusal =
-  (reason, { steps = ['existing'], status = '' } = {}) =>
+  (reason, { steps = ['existing'], status = '', kept = true } = {}) =>
   async ({ result, env, calls, record, suspended }) => {
     const { output } = result;
     assert.equal(output.status, 'refused');
@@ -500,7 +508,7 @@ const refusal =
     assert.equal(output.rounds, 0);
     assert.equal(output.prd, null);
     assert.equal(output.written, null);
-    assert.equal(await readOut(env, 'docs/previous-prd.md'), previous);
+    if (kept) assert.equal(await readOut(env, 'docs/previous-prd.md'), previous);
     assert.equal(existsSync(join(env.cwd, 'docs/prd.md')), false);
     assert.equal(git(env.cwd, 'status', '--porcelain', '--untracked-files=all'), status);
   };
@@ -510,7 +518,10 @@ const intruder = '# A PRD someone else wrote meanwhile\n';
 const intrude = (harness, step, path) => ({
   async invoke(request) {
     const response = await harness.invoke(request);
-    if (request.call.stepId === step) writeFileSync(path, intruder);
+    if (request.call.stepId === step) {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, intruder);
+    }
     return response;
   },
 });
@@ -794,6 +805,7 @@ export const modes = [
   {
     mode: 'blank',
     // A file of whitespace is read, and no lens is paid to read it.
+    setup: blankNote,
     input: () => ({ input: ['notes/blank.md'], out: 'docs/prd.md' }),
     check: ({ result, env, calls }) => {
       const { output } = result;
@@ -827,8 +839,10 @@ export const modes = [
       assert.equal(output.rounds, 1);
       assert.deepEqual(output.answers, []);
       assert.deepEqual(steps(calls).sort(), round('').sort());
-      assert.deepEqual(output.openQuestions, [tiers, baseline, ...many]);
-      assert.ok(output.prd.includes(`1. ${tiers.question} Consequences: ${tiers.consequences}\n`));
+      assert.deepEqual(output.openQuestions, [cadence, baseline, ...many]);
+      assert.ok(
+        output.prd.includes(`1. ${cadence.question} Consequences: ${cadence.consequences}\n`),
+      );
       assert.ok(output.prd.includes(`40. ${many[37].question} Consequences: `));
       // Forty questions overflow the details, which stop at a line and say how many are left out;
       // the subject holds them all.
@@ -848,6 +862,7 @@ export const modes = [
   {
     mode: 'out-exists',
     // A previous run's PRD at out, and no replace digest: refused before anything is read or paid.
+    setup: previousPrd,
     input: () => ({ ...input(), out: 'docs/previous-prd.md' }),
     check: refusal(
       `Not run: docs/previous-prd.md exists (sha256 ${sha256(previous)}); pass that digest as replace to redo it.`,
@@ -856,6 +871,7 @@ export const modes = [
   {
     mode: 'stale-replace',
     // A replace digest that names other bytes than out holds: refused, out untouched.
+    setup: previousPrd,
     input: () => ({
       ...once(input()),
       out: 'docs/previous-prd.md',
@@ -868,6 +884,7 @@ export const modes = [
   {
     mode: 'commit-exists',
     // A managed commit only creates, so an existing out is refused under it.
+    setup: previousPrd,
     input: () => ({ ...input(), out: 'docs/previous-prd.md', publication: 'commit' }),
     check: refusal(
       `Not run: docs/previous-prd.md exists (sha256 ${sha256(previous)}), and a managed commit only creates; use publication 'file' with replace to redo it.`,
@@ -877,15 +894,14 @@ export const modes = [
     mode: 'commit-dirty',
     // The material is an untracked file, and the managed commit merges only into a clean checkout:
     // refused, naming what Git reports, before any read or agent call rather than at the merge.
-    input: () => ({ input: ['inbox/meeting.md'], out: 'docs/prd.md', publication: 'commit' }),
-    options: (opts, env) => {
+    setup: (env) => {
       mkdirSync(join(env.cwd, 'inbox'));
       writeFileSync(join(env.cwd, 'inbox/meeting.md'), kickoff);
-      return opts;
     },
+    input: () => ({ input: ['inbox/meeting.md'], out: 'docs/prd.md', publication: 'commit' }),
     check: refusal(
       "Not run: publication 'commit' merges into a clean checkout, and Git reports inbox/; commit or stash them (with --include-untracked), or use publication 'file'.",
-      { steps: ['clean-checkout', 'existing'], status: '?? inbox/meeting.md' },
+      { steps: ['clean-checkout', 'existing'], status: '?? inbox/meeting.md', kept: false },
     ),
   },
   {
@@ -907,11 +923,30 @@ export const modes = [
         '?? docs/prd.md',
       );
     },
+    // Once the other writer's file is gone, the resume retries only the write: no agent is paid.
+    repair: { run: (env) => rmSync(join(env.cwd, 'docs/prd.md')), paid: [] },
+    resumeCheck: async ({ result, env }) => {
+      const { output } = result;
+      assert.equal(output.status, 'complete');
+      const text = await readOut(env);
+      assert.equal(text, output.prd);
+      assert.deepEqual(output.written, {
+        path: join(env.cwd, 'docs/prd.md'),
+        sha256: sha256(text),
+        bytes: Buffer.byteLength(text),
+        previousSha256: null,
+      });
+      assert.equal(
+        git(env.cwd, 'status', '--porcelain', '--untracked-files=all'),
+        '?? docs/prd.md',
+      );
+    },
   },
   {
     mode: 'out-changes',
     // The PRD a valid replace digest named changes while the agents work: the write against that
     // digest fails and leaves the new bytes in place.
+    setup: previousPrd,
     input: () => ({ ...once(input()), out: 'docs/previous-prd.md', replace: sha256(previous) }),
     options: (opts, env) => ({
       ...opts,
@@ -927,10 +962,28 @@ export const modes = [
         'M docs/previous-prd.md',
       );
     },
+    // With the bytes the digest named restored, the resume replaces them, paying no agent again.
+    repair: {
+      run: (env) => writeFileSync(join(env.cwd, 'docs/previous-prd.md'), previous),
+      paid: [],
+    },
+    resumeCheck: async ({ result, env }) => {
+      const { output } = result;
+      assert.equal(output.status, 'complete');
+      const text = await readOut(env, 'docs/previous-prd.md');
+      assert.equal(text, output.prd);
+      assert.equal(output.written.previousSha256, sha256(previous));
+      assert.equal(output.written.sha256, sha256(text));
+      assert.equal(
+        git(env.cwd, 'status', '--porcelain', '--untracked-files=all'),
+        'M docs/previous-prd.md',
+      );
+    },
   },
   {
     mode: 'replace',
     // The upstream's checkpoint loop: a re-run with the answers redoes the PRD a run wrote before.
+    setup: previousPrd,
     input: () => ({
       ...once(input()),
       out: 'docs/previous-prd.md',
@@ -1000,6 +1053,7 @@ export const modes = [
     mode: 'answers-only',
     // Blank material with earlier answers: the lenses read the answers, and the question round's
     // answer joins them for the second round.
+    setup: blankNote,
     input: () => ({
       input: ['notes/blank.md'],
       answers: dailyAnswer,
@@ -1046,6 +1100,7 @@ export const modes = [
   {
     mode: 'too-large',
     // Three files, each under the limit and over it together: the run fails before any agent runs.
+    setup: blankNote,
     input: () => ({
       input: ['notes/kickoff.md', 'notes/tickets.md', 'notes/blank.md'],
       maxMaterialBytes: 1000,

@@ -55,3 +55,45 @@ export const enumOf = (schema, ...path) => {
 
 /** The leaf of a step ID, after the last scope or map segment. */
 export const leaf = (stepId) => stepId.split('/').at(-1);
+
+/** Compare step ID segments: numbers by value, anything else as text. */
+const bySegments = (a, b) => {
+  for (let index = 0; index < Math.max(a.length, b.length); index++) {
+    const [x, y] = [a[index] ?? '', b[index] ?? ''];
+    if (x === y) continue;
+    if (/^\d+$/u.test(x) && /^\d+$/u.test(y)) return Number(x) - Number(y);
+    return x < y ? -1 : 1;
+  }
+  return 0;
+};
+
+/**
+ * The calls whose step ID matches `pattern`, in item order: by the pattern's first capture group
+ * when it has one, else by the whole step ID, comparing numeric segments by value. `calls` are in
+ * admission order, which a concurrent map does not fix, even at agent limit 1.
+ */
+export function ordered(calls, pattern) {
+  const matcher = new RegExp(
+    pattern.source ?? pattern,
+    (pattern.flags ?? 'u').replace(/[gy]/gu, ''),
+  );
+  const keyOf = (call) => {
+    const match = matcher.exec(call.call.stepId);
+    return (match?.[1] ?? call.call.stepId).split('/');
+  };
+  return calls
+    .filter((call) => matcher.test(call.call.stepId))
+    .map((call) => ({ call, key: keyOf(call) }))
+    .sort((a, b) => bySegments(a.key, b.key))
+    .map(({ call }) => call);
+}
+
+/**
+ * The request as a composed child workflow's fixture sees it: its step ID without the parent's
+ * `prefix` (for example 'tournament/'), so a parent module can delegate to the child's `reply`.
+ */
+export function within(request, prefix) {
+  const id = request.call.stepId;
+  assert.ok(id.startsWith(prefix), `${id} is not under ${prefix}`);
+  return { ...request, call: { ...request.call, stepId: id.slice(prefix.length) } };
+}

@@ -96,8 +96,7 @@ export async function reply(request, env, mode) {
     return {
       riskLevel: mode === 'reconsider' ? 'reconsider' : 'moderate',
       steps: ['Bump tinyclock to ^2.0.0 in package.json', 'Replace now() with tick() in src/'],
-      riskNotes:
-        mode === 'declined' ? 'Every caller uses now() (decline)' : 'Every caller uses now()',
+      riskNotes: 'Every caller uses now()',
       testFocus: ['src/report.mjs'],
       files: planFiles,
     };
@@ -181,9 +180,9 @@ export function fail(request, mode) {
   );
 }
 
-export const answer = (question) =>
-  leaf(question.stepId) === 'approve-upgrade' &&
-  question.subject?.plan?.riskNotes?.includes('(decline)')
+/** The declined mode's human declines the upgrade plan. */
+export const answer = (question, env, mode) =>
+  mode === 'declined' && leaf(question.stepId) === 'approve-upgrade'
     ? { approved: false, comment: 'Fixture human declined' }
     : undefined;
 

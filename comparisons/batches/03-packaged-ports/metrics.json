@@ -499,7 +499,8 @@
               "outputAdmitsDegradation": false,
               "boundary": "after bytes, before terminal checkpoint append",
               "writeLocation": "isolated-checkout",
-              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup."
+              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup.",
+              "outputMatchesSuccess": true
             },
             "F4": {
               "initialStatus": "failed",
@@ -508,7 +509,8 @@
               "completedCallsPaidAgain": 0,
               "filesystem": { "targetPristine": true, "status": "" },
               "outputAdmitsDegradation": false,
-              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit.",
+              "outputMatchesSuccess": true
             },
             "F5": {
               "initialStatus": "suspended",
@@ -588,7 +590,8 @@
               "completedCallsPaidAgain": 0,
               "filesystem": { "targetPristine": true, "status": "M greet.mjs\n?? greet.test.mjs" },
               "outputAdmitsDegradation": false,
-              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit.",
+              "outputMatchesSuccess": true
             },
             "F5": {
               "finalStatus": "not-applicable",
@@ -655,7 +658,8 @@
               "outputAdmitsDegradation": false,
               "boundary": "before harness response",
               "writeLocation": "isolated-checkout",
-              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup."
+              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup.",
+              "outputMatchesSuccess": true
             },
             "F4": {
               "initialStatus": "failed",
@@ -664,7 +668,8 @@
               "completedCallsPaidAgain": 0,
               "filesystem": { "targetPristine": true, "status": "" },
               "outputAdmitsDegradation": false,
-              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit.",
+              "outputMatchesSuccess": true
             },
             "F5": {
               "initialStatus": "suspended",
@@ -734,7 +739,8 @@
               "outputAdmitsDegradation": false,
               "boundary": "after bytes, before terminal checkpoint append",
               "writeLocation": "source-checkout",
-              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup."
+              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup.",
+              "outputMatchesSuccess": false
             },
             "F4": {
               "initialStatus": "failed",
@@ -743,7 +749,8 @@
               "completedCallsPaidAgain": 0,
               "filesystem": { "targetPristine": true, "status": "?? docs/atlas.md" },
               "outputAdmitsDegradation": false,
-              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit.",
+              "outputMatchesSuccess": true
             },
             "F5": {
               "finalStatus": "not-applicable",
@@ -810,7 +817,8 @@
               "outputAdmitsDegradation": false,
               "boundary": "before harness response",
               "writeLocation": "isolated-checkout",
-              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup."
+              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup.",
+              "outputMatchesSuccess": true
             },
             "F4": {
               "initialStatus": "failed",
@@ -819,7 +827,8 @@
               "completedCallsPaidAgain": 0,
               "filesystem": { "targetPristine": true, "status": "" },
               "outputAdmitsDegradation": false,
-              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit.",
+              "outputMatchesSuccess": true
             },
             "F5": {
               "initialStatus": "suspended",
@@ -893,7 +902,8 @@
               "completedCallsPaidAgain": 0,
               "filesystem": { "targetPristine": true, "status": "" },
               "outputAdmitsDegradation": false,
-              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit.",
+              "outputMatchesSuccess": true
             },
             "F5": {
               "finalStatus": "not-applicable",
@@ -960,7 +970,8 @@
               "outputAdmitsDegradation": false,
               "boundary": "before harness response",
               "writeLocation": "isolated-checkout",
-              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup."
+              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup.",
+              "outputMatchesSuccess": true
             },
             "F4": {
               "initialStatus": "failed",
@@ -969,7 +980,8 @@
               "completedCallsPaidAgain": 0,
               "filesystem": { "targetPristine": true, "status": "" },
               "outputAdmitsDegradation": false,
-              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit.",
+              "outputMatchesSuccess": true
             },
             "F5": {
               "initialStatus": "suspended",
@@ -1039,7 +1051,8 @@
               "outputAdmitsDegradation": false,
               "boundary": "after bytes, before terminal checkpoint append",
               "writeLocation": "source-checkout",
-              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup."
+              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup.",
+              "outputMatchesSuccess": false
             },
             "F4": {
               "initialStatus": "failed",
@@ -1048,7 +1061,8 @@
               "completedCallsPaidAgain": 0,
               "filesystem": { "targetPristine": true, "status": "?? docs/design.md" },
               "outputAdmitsDegradation": false,
-              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit.",
+              "outputMatchesSuccess": true
             },
             "F5": {
               "finalStatus": "not-applicable",
@@ -1115,7 +1129,8 @@
               "outputAdmitsDegradation": false,
               "boundary": "before harness response",
               "writeLocation": "isolated-checkout",
-              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup."
+              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup.",
+              "outputMatchesSuccess": true
             },
             "F4": {
               "initialStatus": "failed",
@@ -1124,7 +1139,8 @@
               "completedCallsPaidAgain": 0,
               "filesystem": { "targetPristine": true, "status": "" },
               "outputAdmitsDegradation": false,
-              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit.",
+              "outputMatchesSuccess": true
             },
             "F5": {
               "initialStatus": "suspended",
@@ -1194,7 +1210,8 @@
               "outputAdmitsDegradation": false,
               "boundary": "before harness response",
               "writeLocation": "isolated-checkout",
-              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup."
+              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup.",
+              "outputMatchesSuccess": true
             },
             "F4": {
               "initialStatus": "failed",
@@ -1203,7 +1220,8 @@
               "completedCallsPaidAgain": 0,
               "filesystem": { "targetPristine": true, "status": "" },
               "outputAdmitsDegradation": false,
-              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit.",
+              "outputMatchesSuccess": true
             },
             "F5": {
               "initialStatus": "suspended",
@@ -1277,7 +1295,8 @@
               "completedCallsPaidAgain": 0,
               "filesystem": { "targetPristine": true, "status": "" },
               "outputAdmitsDegradation": false,
-              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit.",
+              "outputMatchesSuccess": true
             },
             "F5": {
               "finalStatus": "not-applicable",
@@ -1344,7 +1363,8 @@
               "outputAdmitsDegradation": false,
               "boundary": "before harness response",
               "writeLocation": "isolated-checkout",
-              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup."
+              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup.",
+              "outputMatchesSuccess": true
             },
             "F4": {
               "initialStatus": "failed",
@@ -1353,7 +1373,8 @@
               "completedCallsPaidAgain": 0,
               "filesystem": { "targetPristine": true, "status": "" },
               "outputAdmitsDegradation": false,
-              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit.",
+              "outputMatchesSuccess": true
             },
             "F5": {
               "initialStatus": "suspended",
@@ -1423,7 +1444,8 @@
               "outputAdmitsDegradation": false,
               "boundary": "after bytes, before terminal checkpoint append",
               "writeLocation": "source-checkout",
-              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup."
+              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup.",
+              "outputMatchesSuccess": false
             },
             "F4": {
               "initialStatus": "failed",
@@ -1432,7 +1454,8 @@
               "completedCallsPaidAgain": 0,
               "filesystem": { "targetPristine": true, "status": "?? docs/backlog.md" },
               "outputAdmitsDegradation": false,
-              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit.",
+              "outputMatchesSuccess": true
             },
             "F5": {
               "finalStatus": "not-applicable",
@@ -1499,7 +1522,8 @@
               "outputAdmitsDegradation": false,
               "boundary": "after bytes, before terminal checkpoint append",
               "writeLocation": "source-checkout",
-              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup."
+              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup.",
+              "outputMatchesSuccess": false
             },
             "F4": {
               "initialStatus": "failed",
@@ -1508,7 +1532,8 @@
               "completedCallsPaidAgain": 0,
               "filesystem": { "targetPristine": true, "status": "?? docs/spec.md" },
               "outputAdmitsDegradation": false,
-              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit.",
+              "outputMatchesSuccess": true
             },
             "F5": {
               "finalStatus": "not-applicable",
@@ -1575,7 +1600,8 @@
               "outputAdmitsDegradation": false,
               "boundary": "before harness response",
               "writeLocation": "isolated-checkout",
-              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup."
+              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup.",
+              "outputMatchesSuccess": true
             },
             "F4": {
               "initialStatus": "failed",
@@ -1584,7 +1610,8 @@
               "completedCallsPaidAgain": 0,
               "filesystem": { "targetPristine": true, "status": "" },
               "outputAdmitsDegradation": false,
-              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit.",
+              "outputMatchesSuccess": true
             },
             "F5": {
               "initialStatus": "suspended",
@@ -1658,7 +1685,8 @@
               "completedCallsPaidAgain": 0,
               "filesystem": { "targetPristine": true, "status": "" },
               "outputAdmitsDegradation": false,
-              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit.",
+              "outputMatchesSuccess": true
             },
             "F5": {
               "finalStatus": "not-applicable",
@@ -1725,7 +1753,8 @@
               "outputAdmitsDegradation": false,
               "boundary": "after bytes, before terminal checkpoint append",
               "writeLocation": "source-checkout",
-              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup."
+              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup.",
+              "outputMatchesSuccess": true
             },
             "F4": {
               "initialStatus": "failed",
@@ -1734,7 +1763,8 @@
               "completedCallsPaidAgain": 0,
               "filesystem": { "targetPristine": true, "status": "?? docs/prd.md" },
               "outputAdmitsDegradation": false,
-              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit.",
+              "outputMatchesSuccess": true
             },
             "F5": {
               "initialStatus": "suspended",
@@ -1808,7 +1838,8 @@
               "completedCallsPaidAgain": 0,
               "filesystem": { "targetPristine": false, "status": "M target.mjs" },
               "outputAdmitsDegradation": true,
-              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit.",
+              "outputMatchesSuccess": true
             },
             "F5": {
               "finalStatus": "not-applicable",
@@ -1875,7 +1906,8 @@
               "outputAdmitsDegradation": false,
               "boundary": "after bytes, before terminal checkpoint append",
               "writeLocation": "source-checkout",
-              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup."
+              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup.",
+              "outputMatchesSuccess": false
             },
             "F4": {
               "initialStatus": "failed",
@@ -1884,7 +1916,8 @@
               "completedCallsPaidAgain": 0,
               "filesystem": { "targetPristine": true, "status": "?? docs/roadmap.md" },
               "outputAdmitsDegradation": false,
-              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit.",
+              "outputMatchesSuccess": true
             },
             "F5": {
               "finalStatus": "not-applicable",
@@ -1955,7 +1988,8 @@
               "completedCallsPaidAgain": 0,
               "filesystem": { "targetPristine": true, "status": "" },
               "outputAdmitsDegradation": false,
-              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit.",
+              "outputMatchesSuccess": true
             },
             "F5": {
               "finalStatus": "not-applicable",

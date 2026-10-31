@@ -420,13 +420,12 @@ export const modes = [
   {
     // The work is committed before the run, so the default base is the latest commit's parent.
     mode: 'committed',
-    input(env) {
-      const stubHead = env.head;
+    setup(env) {
+      env.stubHead = env.head;
       env.head = commitAll(env.cwd, 'deliver greeting');
       env.status = '';
-      env.stubHead = stubHead;
-      return { criteria: ticket };
     },
+    input: () => ({ criteria: ticket }),
     check({ result, env, calls }) {
       const { output } = result;
       assert.equal(output.status, 'complete');
