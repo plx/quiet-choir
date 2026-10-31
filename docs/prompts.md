@@ -98,9 +98,24 @@ experimental, so quiet-choir pins its version exactly and uses it only through
 | date-time module, `pycompat`    | never enabled | No clock, and no Python-style methods such as `dict.items()`                                                                          |
 
 The other built-in filters are available, such as `tojson`, `indent`, `trim`, `join`, `default`,
-`upper` and `length`. MiniJinja's `tojson` escapes `<`, `>`, `&` and `'` as `<`-style sequences. The
-output is still valid JSON. Under strict undefined, test an optional parameter with
-`{% if name is defined %}` or `name | default('')`.
+`upper` and `length`. MiniJinja's `tojson` escapes `<`, `>`, `&` and `'` as `\u003c`-style
+sequences. The output is still valid JSON.
+
+Strict undefined catches a missing key, not `null`. Test an omitted `.optional()` parameter with
+`{% if name is defined %}` or `name | default('')`. A `.nullable()` parameter passed `null` prints
+as `None`, MiniJinja's name for it. `default('x')` replaces only undefined, so
+`{{ commit | default('unknown') }}` still prints `None`. Guard a nullable value with
+`{% if commit is not none %}`, or write `commit or 'unknown'` or
+`commit | default('unknown', true)`; those two also replace `''`, `0` and `false`. `tojson` prints
+`null`.
+
+Values print verbatim, so a `</items>` inside a value closes an `<items>` fence early. For data the
+agent parses, write `{{ value | tojson(indent=2) }}`, the same layout as `std.exec.json` (from
+`quiet-choir/std`) with `<`, `>`, `&` and `'` escaped. For prose, neutralize the closing tag with
+the built-in `replace` filter: `{{ text | replace("</items", "<\\/items") }}`. Write the backslash
+twice, because `\/` in a template string is a plain `/`. `std.exec.json`, and any string built from
+it in code, is not escaped. A fence helps the agent tell data from instructions but is not a
+security boundary, so also say in the prompt that the fenced text is data.
 
 Rendered text is step identity. An engine upgrade or settings change that changes the output of an
 existing template changes the identity of every step that uses it. `test/prompts.test.ts` pins

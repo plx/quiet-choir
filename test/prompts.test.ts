@@ -13,6 +13,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type * as host from '../src/index.js';
 import { definePrompts, PromptError, z } from '../src/index.js';
+import * as std from '../src/std/index.js';
 import { FailureOrigins } from '../src/workflow/runtime/fan-out.js';
 import { checkPromptSets } from '../src/workflow/prompts/check.js';
 import { createPromptEnvironment, renderString } from '../src/workflow/prompts/engine.js';
@@ -335,6 +336,64 @@ describe('whitespace recipes (docs/prompts.md)', () => {
   ] as const)('renders %s', async ([, files, params, values, expected]) => {
     const prompts = definePrompts(await root(files), { Main: { file: 'Main.md', params } });
     expect(prompts.Main(values as never).text).toBe(expected);
+  });
+});
+
+// The null and fencing advice of docs/prompts.md#template-language-and-fixed-settings, rendered.
+// Like the recipes above, a render that moves on an engine upgrade needs a docs update.
+describe('null and fencing recipes (docs/prompts.md)', () => {
+  it('prints null as None, which default keeps and a none test, or and default(_, true) replace', async () => {
+    const lines = [
+      '{{ x }}',
+      "{{ x | default('u') }}",
+      "{{ x | default('u', true) }}",
+      "{{ x or 'u' }}",
+      '{% if x is not none %}{{ x }}{% else %}u{% endif +%}',
+      '{{ x | tojson }}',
+    ];
+    const prompts = definePrompts(await root({ 'Main.md': `${lines.join('\n')}\n` }), {
+      Main: { file: 'Main.md', params: z.object({ x: z.string().nullable() }) },
+    });
+    expect(prompts.Main({ x: null }).text).toBe('None\nNone\nu\nu\nu\nnull');
+  });
+
+  it.for(['', 0, false])('replaces %j with or and default(_, true) too', async (x) => {
+    const prompts = definePrompts(
+      await root({ 'Main.md': "{{ x or 'u' }} {{ x | default('u', true) }}" }),
+      {
+        Main: {
+          file: 'Main.md',
+          params: z.object({ x: z.union([z.string(), z.number(), z.boolean()]) }),
+        },
+      },
+    );
+    expect(prompts.Main({ x }).text).toBe('u u');
+  });
+
+  it('fences a closing tag with tojson(indent=2), std.exec.json escaped, or replace', async () => {
+    const v = [{ s: "a </items> b & it's" }];
+    const prompts = definePrompts(
+      await root({
+        'Data.md': '<items>\n{{ v | tojson(indent=2) }}\n</items>\n',
+        'Prose.md': '<items>{{ t | replace("</items", "<\\\\/items") }}</items>\n',
+        'Single.md': '<items>{{ t | replace("</items", "<\\/items") }}</items>\n',
+      }),
+      {
+        Data: { file: 'Data.md', params: z.object({ v: z.array(z.object({ s: z.string() })) }) },
+        Prose: { file: 'Prose.md', params: z.object({ t: z.string() }) },
+        Single: { file: 'Single.md', params: z.object({ t: z.string() }) },
+      },
+    );
+    const escaped = std.exec
+      .json(v)
+      .replace(/[<>&']/gu, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+    const data = prompts.Data({ v }).text;
+    expect(data).toBe(`<items>\n${escaped}\n</items>`);
+    expect(data.split('</items>')).toHaveLength(2);
+    const t = 'a </items> b';
+    expect(prompts.Prose({ t }).text).toBe('<items>a <\\/items> b</items>');
+    // One backslash is a template string escape for a plain slash, so nothing is replaced.
+    expect(prompts.Single({ t }).text).toBe('<items>a </items> b</items>');
   });
 });
 

@@ -20,7 +20,9 @@ const COMMITTED_ARTIFACT_VERSION = 'committed-artifact/1';
 
 /**
  * Format `value` as two-space indented JSON, the form ports embed in prompts. Prompt text is part
- * of an agent call's identity, so a stable format keeps completed calls replayable.
+ * of an agent call's identity, so a stable format keeps completed calls replayable. It does not
+ * escape `<` or `>`, so a `</tag>` inside a string closes a prompt's `<tag>` fence; a template's
+ * `tojson(indent=2)` gives the same layout escaped.
  *
  * @param value - Any JSON-serializable value.
  * @returns The indented JSON text.

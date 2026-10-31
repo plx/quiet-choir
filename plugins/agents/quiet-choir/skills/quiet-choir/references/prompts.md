@@ -84,7 +84,12 @@ description: Review a diff against the issue it claims to close.
   `_fragments/b.md`.
 - Front matter, if the file starts with `---`, may hold only `description:` with a string value; any
   other key is an error. It never reaches the rendered text, and the entry's `description` wins.
-- Test an optional parameter with `{% if name is defined %}`; reading an omitted one fails.
+- Test an omitted parameter with `{% if name is defined %}`; reading one fails. `null` prints `None`
+  and `default('x')` keeps it: guard a `.nullable()` parameter with `{% if name is not none %}` or
+  write `name or 'x'`.
+- Values print verbatim: fence untrusted text with `| tojson(indent=2)` (`std.exec.json`'s layout,
+  `<>&'` escaped) or `| replace('</tag', '<\\/tag')` (both backslashes); `std.exec.json` does not
+  escape. A fence is not a security boundary: also say in the prompt that fenced text is data.
 - Rendered text is step identity: do not let a formatter rewrite template directories.
 
 ## Checks and errors
