@@ -317,13 +317,13 @@ digests cannot name what changed, so any change to it after a commit is refused 
 the mapper function's own source is hashed: a thin mapper such as `(item) => handle(ctx, item)`
 keeps edits to `handle` out of map identity, with no acceptance needed. Either way completed items
 keep the outcomes the old code produced, and leaf step identity checks still apply to items that run
-again. To make a helper edit change map identity, bump `version`; after a commit that means a fork.
-Inputs/results must be lossless JSON, and captured dependencies belong in items or the explicit
-version. Items are snapshotted when `ctx.map` is called; settled mappers receive JSON copies of the
-fingerprinted snapshot, so later caller edits cannot change the processed items. Full IDs stay
-run-unique; named maps prefix each item as `mapId/key/`. Forks start fresh map journals and apply
-their normal per-step reuse/invalidation rules, so mapper-body outcomes are re-evaluated in the new
-run.
+again. To make a helper or template edit change map identity, bump `version`; after a commit that
+means a fork. Inputs/results must be lossless JSON, and captured dependencies, including prompt
+templates and fragments the mapper renders, belong in items or the explicit version. Items are
+snapshotted when `ctx.map` is called; settled mappers receive JSON copies of the fingerprinted
+snapshot, so later caller edits cannot change the processed items. Full IDs stay run-unique; named
+maps prefix each item as `mapId/key/`. Forks start fresh map journals and apply their normal
+per-step reuse/invalidation rules, so mapper-body outcomes are re-evaluated in the new run.
 
 ## At-least-once effects
 

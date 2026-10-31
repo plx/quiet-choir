@@ -6,6 +6,8 @@
   [0006](0006-code-change-recovery.md) (source drift and explicit acceptance),
   [0011](0011-harness-controls-and-contracts.md) (role prompts travel as private files) and
   [0063](0063-bound-agents-and-typed-rosters.md) (roster standing prompts)
+- Amended by #ISSUE-C21-1: settled maps and settled frames replay committed outcomes without
+  re-rendering, so §4's prompt check reaches only the steps a resumed body renders again.
 
 ## Context
 
@@ -112,7 +114,11 @@ the TypeScript sources, whether or not a template currently references it. With 
 targets (§1) that set is a superset of every file a render can read, so a fragment cannot change
 unfingerprinted. The rules of ADR 0006 apply unchanged: a changed template on resume is refused
 unless `--accept-code-change` is given, and even then a completed step whose rendered prompt changed
-fails its own fingerprint check because the prompt is identity. Forks follow the same rules as code.
+fails its own fingerprint check because the prompt is identity, provided the resumed body renders it
+again. A committed item of a settled map ([0008](0008-scoped-fan-out.md)) or a settled child frame
+([0007](0007-durable-failure-outcomes.md)) replays its saved outcome without running the mapper or
+body, so a template edit only such work renders is accepted with the old outputs unless the map's or
+child's `version` changes with it. Forks follow the same rules as code.
 
 ### 5. Records
 

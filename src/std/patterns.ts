@@ -157,8 +157,9 @@ export interface TolerantPanelOptions<T, O = string> {
   readonly retry?: RetryPolicy | undefined;
   /**
    * A revision for dependencies the items and the mapper source do not show, such as the `prompt`
-   * function or the `schema`, as `MapOptions.version` for `ctx.map`. Change it when such a
-   * dependency changes in a way that should not reuse the settled votes.
+   * function, a template or fragment it renders, or the `schema`, as `MapOptions.version` for
+   * `ctx.map`. Change it when such a dependency changes in a way that should not reuse the settled
+   * votes.
    */
   readonly version?: string | undefined;
 }
@@ -195,8 +196,8 @@ export interface TolerantPanelResult<O = string, T = unknown> {
  * outcome, failure included, is journaled once the call's `retry` policy is spent: a failed vote
  * stays failed on resume instead of being retried into a different quorum. Cancellation,
  * configuration and checkpoint failures still reject rather than becoming votes. The settled map
- * fingerprints the items, keys and mapper source but not the `prompt` function or the `schema`; set
- * `version` to refuse replay after changing them.
+ * fingerprints the items, keys and mapper source but not the `prompt` function, a template or
+ * fragment it renders, or the `schema`; set `version` to refuse replay after changing them.
  *
  * @param ctx - The workflow context.
  * @param options - The map ID, the team, the items, the prompt, the map's concurrency and an

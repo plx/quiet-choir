@@ -451,11 +451,12 @@ every review and revise call. `std.patterns.tolerantPanel` (team `std.patterns.P
 into a different quorum. `outcomes` keeps every item's settled outcome in item order, failures
 included, each with its `item` and `index`, so a caller can name a failed member or attribute an
 answer without pairing results by index. Its optional `version` is the map's `version`, a revision
-for the `prompt` function and `schema`, which the settled map's fingerprint does not show, and its
-optional `retry` is the panelist call's retry policy, outside identity. A settled failure is saved
-only after the call's retries are spent, so give agent calls inside an `onError: 'return'` map an
-explicit retry, such as `{ maxAttempts: 2, on: ['schema', 'process', 'transient'] }`, when a blip
-should not become a permanent vote.
+for the `prompt` function, a template or fragment it renders, and the `schema`, which the settled
+map's fingerprint does not show, and its optional `retry` is the panelist call's retry policy,
+outside identity. A settled failure is saved only after the call's retries are spent, so give agent
+calls inside an `onError: 'return'` map an explicit retry, such as
+`{ maxAttempts: 2, on: ['schema', 'process', 'transient'] }`, when a blip should not become a
+permanent vote.
 
 `ReviewTeam.from(record)` is the one convenience. It picks the slot keys from any record that has
 them, so `ReviewTeam.from(ctx.roster)` fills a team whose roster entries use the slot names, and

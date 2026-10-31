@@ -81,16 +81,18 @@ type, or JSON for a bare `WorkflowContext`). The frame records `onError: 'return
 body ends, a terminal `settled` outcome with the effect, settled-map and child-frame IDs it owned. A
 settled success keeps status `completed`; a settled failure keeps `failed`, and `error.stepId` names
 the effect that failed (null for a body error). Resume returns the saved outcome without running the
-body, its effects or `child.started`, even if the failure would now succeed. Cancellation, latched
-run-budget stops, configuration and checkpoint failures, and authoring guards still reject, as do
-input validation, the depth guard and identity refusals, which happen before the frame starts. A
-settled frame's descendants must be declared, as in a settled map. Its name, version, input, schemas
-and `onError` cannot change on resume, and the refusal does not suggest `--accept-code-change`; an
-unsettled frame may switch modes, so a child that failed can be resumed with `onError: 'return'`
-added. Supersession skips settled frames. A fork does not copy frames: it runs a settled frame's
-body again, reusing its completed and settled-failed steps, so an `--invalidate` glob matching an
-owned step recomputes the outcome and a plain failed step inside it runs again. A fixtures export
-replays a settled frame's failed steps the same way; see [rehearsal](rehearsal.md#fixtures). See
+body, its effects or `child.started`, even if the failure would now succeed. A prompt template edit
+accepted with `--accept-code-change` therefore does not reach a frame that saved its outcome; it
+keeps the outputs of the old prompt. Cancellation, latched run-budget stops, configuration and
+checkpoint failures, and authoring guards still reject, as do input validation, the depth guard and
+identity refusals, which happen before the frame starts. A settled frame's descendants must be
+declared, as in a settled map. Its name, version, input, schemas and `onError` cannot change on
+resume, and the refusal does not suggest `--accept-code-change`; an unsettled frame may switch
+modes, so a child that failed can be resumed with `onError: 'return'` added. Supersession skips
+settled frames. A fork does not copy frames: it runs a settled frame's body again, reusing its
+completed and settled-failed steps, so an `--invalidate` glob matching an owned step recomputes the
+outcome and a plain failed step inside it runs again. A fixtures export replays a settled frame's
+failed steps the same way; see [rehearsal](rehearsal.md#fixtures). See
 [ADR 0007](decisions/0007-durable-failure-outcomes.md).
 
 `RunOptions.maxChildDepth` defaults to 8, with root depth zero. `--max-child-depth N` on execute or

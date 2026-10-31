@@ -313,15 +313,20 @@ describe('prompt checks in the CLI loader', { timeout: 90_000 }, () => {
 /**
  * A project whose workflow renders `Review` in step `review` and then calls `second`, which has no
  * fixture, so a first execute fails after `review` completes. `prompts/_fragments/unused.md` is
- * under the root but no template includes it.
+ * under the root but no template includes it. With `settled`, `review` runs as the one item of
+ * `ctx.map('m', ['a'], { onError: 'return' })`, so its step is `m/0/review`, and `writeWorkflow`
+ * rewrites the map with a `version`.
  */
-async function resumable() {
+async function resumable(settled = false) {
   const made = await project('Review {{ title }}.\n');
   await mkdir(join(made.root, 'prompts', '_fragments'));
   await writeFile(join(made.root, 'prompts', '_fragments', 'unused.md'), 'Unused fragment.\n');
-  await writeFile(
-    made.file,
-    `import { definePrompts, defineWorkflow, z } from ${JSON.stringify(join(repository, 'src/index.js'))};
+  const call = `ctx.claude.text('review', { prompt: prompts.Review({ title: 'T' }) })`;
+  const writeWorkflow = (version?: string) => {
+    const versioned = version === undefined ? '' : `, version: ${JSON.stringify(version)}`;
+    return writeFile(
+      made.file,
+      `import { definePrompts, defineWorkflow, z } from ${JSON.stringify(join(repository, 'src/index.js'))};
 const prompts = definePrompts(${JSON.stringify(join(made.root, 'prompts'))}, {
   Review: { file: 'Review.md', params: z.object({ title: z.string() }) },
 });
@@ -332,12 +337,27 @@ export default defineWorkflow({
   output: z.string(),
   prompts: [prompts],
   async run(ctx) {
-    const reply = await ctx.claude.text('review', { prompt: prompts.Review({ title: 'T' }) });
+${
+  settled
+    ? `    const [item] = await ctx.map('m', ['a'], { concurrency: 1, onError: 'return'${versioned} }, () =>
+      ${call},
+    );
+    if (!item?.ok) throw new Error('The review item failed.');
+    const reply = item.value;`
+    : `    const reply = await ${call};`
+}
     const next = await ctx.claude.text('second', { prompt: 'Second.' });
     return reply.output + next.output;
   },
 });
 `,
+    );
+  };
+  await writeWorkflow();
+  const review = settled ? 'm/0/review' : 'review';
+  await writeFile(
+    join(made.root, 'fixtures.json'),
+    JSON.stringify({ version: 1, calls: [{ step: review, text: 'reviewed' }] }),
   );
   const stateDir = join(made.root, 'state');
   const execute = async (resume: boolean, acceptCodeChange?: boolean) =>
@@ -361,23 +381,24 @@ export default defineWorkflow({
       cwd: made.root,
       ...(acceptCodeChange === undefined ? {} : { acceptCodeChange }),
     });
-  const addSecondFixture = () =>
+  const addSecondFixture = (reviewed = 'reviewed') =>
     writeFile(
       join(made.root, 'fixtures.json'),
       JSON.stringify({
         version: 1,
         calls: [
-          { step: 'review', text: 'reviewed' },
+          { step: review, text: reviewed },
           { step: 'second', text: ' twice' },
         ],
       }),
     );
-  return { ...made, stateDir, execute, checkResume, addSecondFixture };
+  return { ...made, stateDir, execute, checkResume, addSecondFixture, writeWorkflow };
 }
 
 // measured: 2.5 s for the first case alone (its full engine compile), 1.2-1.7 s for later ones
-// in a whole-file run without coverage (three or four imports each; coverage slows compiles 2.5x).
-// The first case took 9.7 s on CI's Node 22.13 leg, so the budget is 60 s.
+// in a whole-file run without coverage (two to four imports each; coverage slows compiles 2.5x).
+// The first case took 9.7 s on CI's Node 22.13 leg, so the budget is 60 s. On a loaded machine
+// (Oct 2026) the two settled-map cases took 3.0-3.4 s, against 3.4-5.5 s for the other later ones.
 describe('prompt templates as execution dependencies (#582)', { timeout: 60_000 }, () => {
   it('lists every prompt-root file in validate --json identity, matching the executed run', async ({
     cli,
@@ -431,6 +452,44 @@ describe('prompt templates as execution dependencies (#582)', { timeout: 60_000 
     if (accepted.ok) throw new Error('Expected a divergence refusal.');
     expect(accepted.message).toContain('Step review: prompt changed on a completed step.');
     expect(accepted.message).toContain('--fork-from templated');
+    expect(await readRun({ stateDir: made.stateDir, runId: 'templated' })).toEqual(before);
+  });
+
+  // A committed settled-map item replays its saved outcome without running the mapper, so the
+  // edited template is never rendered for it and no step check sees the edit; #ISSUE-C21-1 proposes
+  // refusing it, which would flip this case.
+  it('accepts a template edit only a committed settled-map item renders, keeping its output', async () => {
+    const made = await resumable(true);
+    expect(await made.execute(false)).toMatchObject({ ok: false });
+    await writeFile(join(made.root, 'prompts', 'Review.md'), 'Review {{ title }} carefully.\n');
+    await made.addSecondFixture('rewritten');
+    expect(await made.execute(true)).toMatchObject({ ok: false, code: 'run.incompatible' });
+    const accepted = await made.execute(true, true);
+    expect(accepted).toMatchObject({
+      ok: true,
+      run: { status: 'completed', output: 'reviewed twice' },
+    });
+    const run = await readRun({ stateDir: made.stateDir, runId: 'templated' });
+    expect(run.codeChanges).toEqual([
+      expect.objectContaining({ files: ['prompts/Review.md'], components: ['code'] }),
+    ]);
+  });
+
+  it('refuses that edit under --accept-code-change when it also bumps the map version', async () => {
+    const made = await resumable(true);
+    expect(await made.execute(false)).toMatchObject({ ok: false });
+    await writeFile(join(made.root, 'prompts', 'Review.md'), 'Review {{ title }} carefully.\n');
+    await made.writeWorkflow('2');
+    await made.addSecondFixture('rewritten');
+    const before = await readRun({ stateDir: made.stateDir, runId: 'templated' });
+    const accepted = await made.execute(true, true);
+    expect(accepted).toMatchObject({
+      ok: false,
+      code: 'run.incompatible',
+      details: { divergent: [{ stepId: 'm', components: ['version'], map: true }] },
+    });
+    if (accepted.ok) throw new Error('Expected a settled-map refusal.');
+    expect(accepted.message).toContain('Settled map m: version changed after an item completed.');
     expect(await readRun({ stateDir: made.stateDir, runId: 'templated' })).toEqual(before);
   });
 

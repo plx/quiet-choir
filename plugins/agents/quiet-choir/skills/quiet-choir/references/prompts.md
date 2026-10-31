@@ -130,10 +130,13 @@ every file a render reads is hashed.
   `check-resume` refuse with `Workflow code (prompts/Review.md) changed; ...`, the path also in
   `files`.
 - `--accept-code-change` waives that and records the files in `codeChanges`, but a completed step
-  whose rendered prompt changed still fails its own fingerprint check: the preflight refuses with
-  `Step <id>: prompt changed on a completed step` and a `--fork-from ... --invalidate <id>` command,
-  and changes nothing. An edit no completed step renders (an unused fragment) resumes under the
-  flag.
+  the resumed body renders again still fails its own fingerprint check when its rendered prompt
+  changed: the preflight refuses with `Step <id>: prompt changed on a completed step` and a
+  `--fork-from ... --invalidate <id>` command, and changes nothing. An edit no such step renders (an
+  unused fragment) resumes under the flag. Items of a committed `onError: 'return'` map and settled
+  child frames whose body ended replay their saved outcome without rendering, so an edit only they
+  render is accepted and keeps the old outputs; bump the map's or settled child's `version` in the
+  same edit to refuse it (after a commit, a fork).
 - Forks follow the code rules. A dynamic `ctx.workflow` child outside the static tree is checked at
   start but not fingerprinted. A run launched by an earlier build from a prompt-declaring workflow
   needs one `--accept-code-change`.

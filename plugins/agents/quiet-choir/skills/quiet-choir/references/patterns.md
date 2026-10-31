@@ -208,11 +208,11 @@ drain recipe when failed reviewers should be retried on resume. `std.patterns.to
 `schema` for typed answers, and returns `{ quorum, answers, failed, outcomes }`. `outcomes` keeps
 every item's settled outcome in item order, failures included, each with its `item` and `index`, so
 a failed member can be named and an answer attributed without pairing results by index. The settled
-map fingerprints the items, keys and mapper source but not the `prompt` function or the `schema`, so
-set the optional `version` string and change it when either changes in a way that should not reuse
-the saved votes. The optional `retry` is the panelist call's retry policy, outside identity. A
-settled failure is saved only after the call's retries are spent, so give agent calls inside an
-`onError: 'return'` map an explicit retry, such as
+map fingerprints the items, keys and mapper source but not the `prompt` function, a template or
+fragment it renders, or the `schema`, so set the optional `version` string and change it when any of
+them changes in a way that should not reuse the saved votes. The optional `retry` is the panelist
+call's retry policy, outside identity. A settled failure is saved only after the call's retries are
+spent, so give agent calls inside an `onError: 'return'` map an explicit retry, such as
 `{ maxAttempts: 2, on: ['schema', 'process', 'transient'] }`, when a blip should not become a
 permanent vote.
 

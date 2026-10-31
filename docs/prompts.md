@@ -418,11 +418,18 @@ workflow, so `workflow validate --json` (`workflow.identity.files`), `workflow c
 - **Resume.** A changed, added or removed file under a root is a code change: resume and
   `check-resume` refuse it with `Workflow code (prompts/Review.md) changed; ...` and list the path
   in the report's `files`. `--accept-code-change` waives the run-level check and records the files
-  in `codeChanges`. A completed step whose rendered prompt changed still fails its own fingerprint
-  check, because the prompt text is step identity: the accepted-change preflight refuses with
-  `Step <id>: prompt changed on a completed step` and the `--fork-from ... --invalidate <id>`
-  command to run instead, and the run is left unchanged. An edit that changes no completed step's
-  prompt, such as an unused fragment or a template only later steps render, resumes under the flag.
+  in `codeChanges`. A completed step that the resumed body renders again still fails its own
+  fingerprint check when its rendered prompt changed, because the prompt text is step identity: the
+  accepted-change preflight refuses with `Step <id>: prompt changed on a completed step` and the
+  `--fork-from ... --invalidate <id>` command to run instead, and the run is left unchanged. An item
+  of a committed `onError: 'return'` map and a settled child frame whose body ended replay their
+  saved outcome without running the mapper or body, so their prompts are never rendered again: a
+  template or fragment edit that only such items render is accepted under the flag and they keep the
+  outputs of the old prompt; the run-level `codeChanges` entry still lists the file, with no map
+  entry. To make such an edit refuse, bump the map's `version` (or the settled child's `version`,
+  which a settled frame refuses to change) in the same edit; after a commit that means a fork. An
+  edit that changes the prompt of no completed step the body re-renders, such as an unused fragment
+  or a template only later steps render, resumes under the flag.
 - **Forks** follow the same rules as code: a forked step reuses its result only when its own
   identity, including the rendered prompt, still matches.
 - **Scope.** The roots are those of the static workflow tree: the root workflow's `prompts` and
