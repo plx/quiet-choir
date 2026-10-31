@@ -123,9 +123,11 @@ and the current guards that supersede older workarounds.
 
 Use ordinary `if`, loops, and async helper functions at the workflow level. Wrap a helper in
 `ctx.scope('review', () => helper(ctx))`, or pass `ctx.within('review')` to bind a lexical context.
-Every local/agent/sleep call receives that prefix; nested scopes compose. Keep leaf names explicit
-(`verdict`, `read`, `summarize`). IDs are fixed at launch, so completion order cannot renumber them.
-Never allocate leaf IDs with a counter shared across concurrent branches.
+Every local/agent/sleep call made through that context receives that prefix; an agent read from
+another context and passed in (`ctx.roster.X`, a `ctx.claude.bind(...)` agent) does not, so read it
+from the view (`view.roster.X`) or wrap the helper in `ctx.scope`. Nested scopes compose. Keep leaf
+names explicit (`verdict`, `read`, `summarize`). IDs are fixed at launch, so completion order cannot
+renumber them. Never allocate leaf IDs with a counter shared across concurrent branches.
 
 `ctx.map('files', files, { concurrency: 3, key: (file) => ctx.id(file) }, mapper)` runs each item in
 `files/<key>/`. All keys and combined prefixes are validated before any mapper starts. Omission of

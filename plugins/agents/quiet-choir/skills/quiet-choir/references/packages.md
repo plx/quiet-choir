@@ -260,12 +260,13 @@ await fixer.value(ctx.id('fix', round), { prompt: prompts.Implement(params), sch
 fails typecheck and throws a `TypeError` for an untyped caller), so a team whose slot names equal
 roster names is filled by `Team.from(ctx.roster)`, and
 `Team.from({ ...ctx.roster, critic: ctx.roster.Skeptic })` overrides one slot. Calls through a slot
-are identical to calls through the entry that fills it: same step IDs, fingerprints and records.
-Teams serve in-process patterns; pass one to a `quiet-choir/std` pattern such as
-`std.patterns.reviewRevise` ([bounded review/revise](patterns.md#bounded-reviewrevise)), or to your
-own helper typed with the team's record. `merge-down` has two teams: `FixTeam` (`mechanic`,
-`surgeon`) and `ResolveTeam` (`resolver`, the surgeon for a change PR and the mechanic for a
-Dependabot PR).
+are identical to calls through the entry that fills it: same step IDs, fingerprints and records,
+including the prefix. Slots filled from `ctx.roster` ignore a `ctx.within` view the pattern
+receives, so scope the stage or fill the slots from `view.roster`. Teams serve in-process patterns;
+pass one to a `quiet-choir/std` pattern such as `std.patterns.reviewRevise`
+([bounded review/revise](patterns.md#bounded-reviewrevise)), or to your own helper typed with the
+team's record. `merge-down` has two teams: `FixTeam` (`mechanic`, `surgeon`) and `ResolveTeam`
+(`resolver`, the surgeon for a change PR and the mechanic for a Dependabot PR).
 
 ## Run a package
 

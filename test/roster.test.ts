@@ -14,6 +14,7 @@ import {
   HarnessError,
   readRun,
   z,
+  type Agent,
   type AgentRequest,
   type HarnessAdapter,
   type StepRecord,
@@ -464,6 +465,47 @@ describe('ctx.roster calls', () => {
     expect(attempt(record.steps['review'])?.sources).toMatchObject({
       maxTurns: 'profile:Reviewer',
     });
+  });
+
+  it('prefixes only calls through a ctx.within view, not roster agents passed beside it', async ({
+    stateDir,
+    runs,
+  }) => {
+    const fake = capture('ok');
+    // The helper's local step goes through the view; its agent call goes through `worker`.
+    async function helper(view: WorkflowContext, worker: Agent): Promise<void> {
+      await view.step('local', { input: null, schema: z.null(), run: () => null });
+      await worker.text('work', { prompt });
+    }
+    const definition = defineWorkflow({
+      ...base,
+      name: 'roster-within-helper',
+      harnesses: [third],
+      roster,
+      async run(ctx) {
+        await helper(ctx.within('root'), ctx.roster.Reviewer);
+        const view = ctx.within('view');
+        await helper(view, view.roster.Reviewer);
+        await ctx.scope('scope', () => helper(ctx, ctx.roster.Reviewer));
+        return null;
+      },
+    });
+    await runs.run(definition, {
+      stateDir,
+      runId: 'within-helper',
+      input: null,
+      harness: fake.harness,
+      adapters: { third: fake.adapter },
+    });
+    const record = await readRun({ stateDir, runId: 'within-helper' });
+    expect(Object.keys(record.steps).sort()).toEqual(
+      ['root/local', 'work', 'view/local', 'view/work', 'scope/local', 'scope/work'].sort(),
+    );
+    expect(fake.requests.map((request) => request.stepId)).toEqual([
+      'work',
+      'view/work',
+      'scope/work',
+    ]);
   });
 
   it('fills a required registered option from the entry', async ({ stateDir, runs }) => {

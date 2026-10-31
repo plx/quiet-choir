@@ -347,9 +347,11 @@ branches.
 
 `const panel = ctx.within('panel')` binds a context to the current prefix plus `panel/`. It can be
 passed to helpers without a prefix argument. Calls inside that view's own scopes or maps retain
-those descendant prefixes; calls from unrelated scopes use its lexical prefix. Its `signal` still
-reads the current cancellation scope. All six effect methods, events, policies, checkpoint keys, and
-local idempotency keys use the full ID.
+those descendant prefixes; calls from unrelated scopes use its lexical prefix. It prefixes only
+calls made through it: an agent bound from `ctx.claude` or read from `ctx.roster` and passed to the
+helper beside it keeps the prefix where it is called. Its `signal` still reads the current
+cancellation scope. All six effect methods, events, policies, checkpoint keys, and local idempotency
+keys use the full ID.
 
 ```ts
 const review = ctx.within('round-1');

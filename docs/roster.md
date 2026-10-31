@@ -179,7 +179,9 @@ the prompt, the schema, placement (`cwd`, `addDirs`, `worktree`) and policy (`on
   fails with `Roster entry Reviewer is pinned to harness claude; it cannot run on codex.`
 - **Prefixes.** Each read of `ctx.roster` gives agents bound over that context, so
   `ctx.within('p').roster.Reviewer` keeps the `p/` prefix, and an agent called inside `ctx.scope` or
-  `ctx.map` takes the IDs a raw call there would.
+  `ctx.map` takes the IDs a raw call there would. A view prefixes only the calls made through it: an
+  agent read from `ctx.roster` (or bound from `ctx.claude`) and called in a helper that was given
+  `ctx.within('p')` keeps the prefix of the scope or map it is called in, not `p/`.
 - **Children.** Inside an inline child, `ctx.roster` is the child's own roster. An agent resolves
   its entry by name against the definition whose body is running when it is called, so an agent read
   in a parent and called from a child body through shared closure state resolves against the child's
@@ -342,9 +344,11 @@ each bound call are read the same way: a getter, symbol key or non-enumerable op
 same rules. Binding performs no effect, claims no step ID and reads no run state, so one agent can
 be created early and reused. A call takes its step ID prefix where it is invoked: an agent bound
 before `ctx.scope` or `ctx.map` and called inside gets the same qualified IDs as a raw call there,
-and an agent bound from `ctx.within('w').claude` keeps the `w/` prefix. `bind` needs a harness
-client, so it is called inside the body; declaring agents at module load is the
-[roster's](#the-roster) job.
+and an agent bound from `ctx.within('w').claude` keeps the `w/` prefix. An agent bound from the root
+client does not take a `ctx.within` view's prefix just because it is called beside the view, such as
+in a helper given the view: only calls through the view, and agents bound from it, take that prefix.
+`bind` needs a harness client, so it is called inside the body; declaring agents at module load is
+the [roster's](#the-roster) job.
 
 `Agent<C>` is generic over the harness's capabilities, like `RegisteredAgentClient`. The default is
 `NativeHarnessCapabilities`, the built-in harnesses' capabilities (the ADR's `BuiltInCapabilities`).
@@ -388,7 +392,13 @@ Filling is explicit at the call site. A team value is a plain object of agents, 
 ordinary function that takes the context and an options object holding the team (ADR 0067 §3). A
 bound agent carries its own context and takes its step ID prefix where it is called, so calls
 through a slot claim the same IDs, fingerprints and records as calls through the agent that fills
-it; the pattern's context is for scoping and fan-out. `quiet-choir/std` ships two such patterns:
+it. Slot agents take the prefix of the `ctx.scope` or `ctx.map` they run inside, or of the view they
+were read from. A `ctx.within('p')` view passed as the pattern's context does not apply to slots
+filled from `ctx.roster`: the pattern's own effects through the view land under `p/`, its slot calls
+at the caller's ambient prefix, and calling it again with another view collides with
+`Duplicate step ID`. Either have the pattern scope its slot calls (`ctx.scope(id, …)`, as
+`reviewRevise` does with `id`, or `ctx.map`), or fill the slots from the same view
+(`view.roster.Name`). `quiet-choir/std` ships two such patterns:
 
 ```ts
 import * as std from 'quiet-choir/std';
@@ -405,9 +415,11 @@ const { approved, draft: final } = await std.patterns.reviewRevise(ctx, {
 the last round, and returns `{ approved, draft, feedback, reviews }`: `feedback` is the last
 review's feedback about the returned draft (null when no review ran), so an unapproved result can
 say why, and `reviews` counts the reviews. `id` runs the loop under `ctx.scope(id, ...)`, so two
-loops in one workflow do not collide, `prompts` replaces the default review and revise prompts, and
-`retry` is the retry policy of every review and revise call. `std.patterns.tolerantPanel` (team
-`std.patterns.PanelTeam`, one `panelist` slot) asks the panelist about each item under
+loops in one workflow do not collide. Without `id` the pattern makes no call on `ctx`, so a
+`ctx.within` view passed as `ctx` does not prefix `review/<n>`: pass `id` or a team read from the
+view. `prompts` replaces the default review and revise prompts, and `retry` is the retry policy of
+every review and revise call. `std.patterns.tolerantPanel` (team `std.patterns.PanelTeam`, one
+`panelist` slot) asks the panelist about each item under
 `ctx.map(id, items, { concurrency, key, onError: 'return' })` as `<id>/<key>/answer`, or
 `<id>/<index>/answer` without a `key`, optionally with a `schema`, and returns
 `{ quorum, answers, failed, outcomes }`: a failed vote is journaled, so a resume does not retry it

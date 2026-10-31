@@ -406,10 +406,12 @@ see [child workflows and discovery](child-workflows.md).
 
 Ordinary async functions taking `WorkflowContext` are the extension mechanism for multi-step
 helpers. Call them at the workflow level inside `ctx.scope('review', () => helper(ctx))`, or pass
-`ctx.within('review')` for a lexical context. Helpers use explicit leaves; nested scopes/named maps
-supply prefixes. Do not use a shared completion-order counter for IDs. Use `ctx.id(...)` for path or
-title segments and `ctx.step` for individual local effects. Do not wrap a multi-step helper in
-another durable step, and do not run effects at module import time.
+`ctx.within('review')` for a lexical context. A view prefixes only calls made through it, not an
+agent read from `ctx.roster` or bound from `ctx.claude` and passed in beside it, so read such agents
+from the view (`view.roster.X`). Helpers use explicit leaves; nested scopes/named maps supply
+prefixes. Do not use a shared completion-order counter for IDs. Use `ctx.id(...)` for path or title
+segments and `ctx.step` for individual local effects. Do not wrap a multi-step helper in another
+durable step, and do not run effects at module import time.
 
 ## Service helper pattern
 

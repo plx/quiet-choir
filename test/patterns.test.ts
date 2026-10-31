@@ -682,6 +682,43 @@ it('std reviewRevise scopes its IDs under id and uses custom prompts', async () 
   ]);
 });
 
+it('std reviewRevise leaves a ctx.within view out of its IDs unless id scopes the loop', async () => {
+  const workflow = (scoped: boolean) =>
+    defineWorkflow({
+      name: 'viewed-review',
+      version: '1',
+      input: z.null(),
+      output: z.array(Reviewed),
+      async run(ctx) {
+        // Root agents: without `id` the pattern makes no call on the view it is given.
+        const team = { actor: ctx.claude.bind({}), critic: ctx.codex.bind({}) };
+        const first = await std.patterns.reviewRevise(ctx.within('a'), {
+          team,
+          draft: 'one',
+          rounds: 1,
+        });
+        const second = await std.patterns.reviewRevise(ctx.within('b'), {
+          team,
+          draft: 'two',
+          rounds: 1,
+          ...(scoped ? { id: 'loop' } : {}),
+        });
+        return [first, second];
+      },
+    });
+  const harness = new Fake(() => JSON.stringify({ approved: true, feedback: 'fine' }));
+  const result = await runWorkflow(workflow(true), { ...options(), input: null, harness });
+  assertCompleted(result);
+  expect(harness.calls.map((request) => request.call.stepId)).toEqual([
+    'review/0',
+    'b/loop/review/0',
+  ]);
+  // A second view does not separate the unscoped loops, so they claim one step ID.
+  await expect(
+    runWorkflow(workflow(false), { ...options(), runId: 'unscoped', input: null, harness }),
+  ).rejects.toThrow('Duplicate step ID: "review/0"');
+});
+
 it('std reviewRevise returns the last feedback and review count, and replays them', async () => {
   const workflow = defineWorkflow({
     name: 'exhausted-review',

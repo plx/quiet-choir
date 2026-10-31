@@ -38,7 +38,9 @@ export interface ReviewReviseOptions {
   readonly rounds: number;
   /**
    * A scope prefix for the loop's step IDs, so two loops in one workflow do not collide. Omitted,
-   * the IDs are `review/<n>` and `revise/<n>` in the caller's scope.
+   * the IDs are `review/<n>` and `revise/<n>` wherever the team's agents take their prefix: the
+   * enclosing `ctx.scope` or `ctx.map`, or the view they were read from. A `ctx.within` view passed
+   * as `ctx` does not apply, since the loop then makes no call on `ctx`.
    */
   readonly id?: string;
   /** Replacement prompts; each may return text or a rendered {@link Prompt}. */
@@ -78,7 +80,8 @@ export interface ReviewReviseResult {
  * rather than throwing. Either way the result carries the last review's `feedback`, which is about
  * the returned draft, and the count of `reviews`, both from the journaled `review/<n>` outputs.
  *
- * @param ctx - The workflow context; with `id`, the loop runs under `ctx.scope(id, ...)`.
+ * @param ctx - The workflow context; with `id`, the loop runs under `ctx.scope(id, ...)`. Without
+ * `id` it is unused, so a `ctx.within` view passed here does not prefix the team's calls.
  * @param options - The team, the first draft, the round limit, an optional scope, prompts and retry
  * policy.
  * @returns Whether a draft was approved, that draft or the last reviewed one, the last review's

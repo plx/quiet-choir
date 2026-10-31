@@ -173,7 +173,8 @@ export default defineWorkflow({
   `--accept-code-change` still reuses its completed step.
 - Binding performs no effect. The step ID prefix comes from where the agent is called, so bind once
   and reuse it inside `ctx.scope`, `ctx.map` items or helpers; an agent bound from
-  `ctx.within('w').claude` keeps `w/`.
+  `ctx.within('w').claude` keeps `w/`. Inside a helper given a `ctx.within` view, an agent bound
+  from the root keeps the ambient prefix, not the view's.
 - A registered harness with `structuredOutput: 'none'` binds to a text-only agent (no `object`, no
   schema on `value`), which a parameter typed `Agent` rejects; use
   `Agent<{ structuredOutput: 'none' }>` for helpers that only need text. `Agent` defaults to
