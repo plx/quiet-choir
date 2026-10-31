@@ -402,9 +402,11 @@ const { approved, draft: final } = await std.patterns.reviewRevise(ctx, {
 
 `std.patterns.reviewRevise` (team `std.patterns.ReviewTeam`) reviews up to `rounds` times as
 `review/<n>` and revises after each rejection as `revise/<n>`, without an unreviewed revision after
-the last round, and returns `{ approved, draft }`. `id` runs the loop under `ctx.scope(id, ...)`, so
-two loops in one workflow do not collide, `prompts` replaces the default review and revise prompts,
-and `retry` is the retry policy of every review and revise call. `std.patterns.tolerantPanel` (team
+the last round, and returns `{ approved, draft, feedback, reviews }`: `feedback` is the last
+review's feedback about the returned draft (null when no review ran), so an unapproved result can
+say why, and `reviews` counts the reviews. `id` runs the loop under `ctx.scope(id, ...)`, so two
+loops in one workflow do not collide, `prompts` replaces the default review and revise prompts, and
+`retry` is the retry policy of every review and revise call. `std.patterns.tolerantPanel` (team
 `std.patterns.PanelTeam`, one `panelist` slot) asks the panelist about each item under
 `ctx.map(id, items, { concurrency, key, onError: 'return' })` as `<id>/<key>/answer`, or
 `<id>/<index>/answer` without a `key`, optionally with a `schema`, and returns

@@ -628,12 +628,20 @@ it('rehearses the tolerant panel from fixtures and freezes the failed vote on re
   expect(ids).toHaveLength(3);
 });
 
+/** The whole result of `std.patterns.reviewRevise`, as a workflow output schema. */
+const Reviewed = z.object({
+  approved: z.boolean(),
+  draft: z.string(),
+  feedback: z.string().nullable(),
+  reviews: z.number(),
+});
+
 it('std reviewRevise scopes its IDs under id and uses custom prompts', async () => {
   const workflow = defineWorkflow({
     name: 'scoped-review',
     version: '1',
     input: z.null(),
-    output: z.array(z.boolean()),
+    output: z.array(Reviewed),
     async run(ctx) {
       const team = { actor: ctx.claude.bind({}), critic: ctx.codex.bind({}) };
       const prompts = {
@@ -653,7 +661,7 @@ it('std reviewRevise scopes its IDs under id and uses custom prompts', async () 
         rounds: 1,
         id: 'second',
       });
-      return [first.approved, second.approved];
+      return [first, second];
     },
   });
   const harness = new Fake((request) =>
@@ -662,12 +670,46 @@ it('std reviewRevise scopes its IDs under id and uses custom prompts', async () 
       : 'fixed',
   );
   const result = await runWorkflow(workflow, { ...options(), input: null, harness });
-  expect(result.output).toEqual([true, false]);
+  expect(result.output).toEqual([
+    { approved: true, draft: 'fixed', feedback: 'more', reviews: 2 },
+    { approved: false, draft: 'two', feedback: 'more', reviews: 1 },
+  ]);
   expect(harness.calls.map((request) => [request.call.stepId, request.options.prompt])).toEqual([
     ['first/review/0', 'Judge: one'],
     ['first/revise/0', 'Fix one (more)'],
     ['first/review/1', 'Judge: fixed'],
     ['second/review/0', 'Review this draft: two'],
+  ]);
+});
+
+it('std reviewRevise returns the last feedback and review count, and replays them', async () => {
+  const workflow = defineWorkflow({
+    name: 'exhausted-review',
+    version: '1',
+    input: z.null(),
+    output: z.array(Reviewed),
+    async run(ctx) {
+      const team = { actor: ctx.claude.bind({}), critic: ctx.codex.bind({}) };
+      const unreviewed = await std.patterns.reviewRevise(ctx, { team, draft: 'zero', rounds: 0 });
+      const exhausted = await std.patterns.reviewRevise(ctx, { team, draft: 'one', rounds: 2 });
+      return [unreviewed, exhausted];
+    },
+  });
+  // The critic always rejects and names its step, so the result shows which feedback it kept.
+  const harness = new Fake((request) =>
+    request.harness === 'codex'
+      ? JSON.stringify({ approved: false, feedback: `Rejected by ${request.call.stepId}` })
+      : 'two',
+  );
+  const result = await replayAfterTail(workflow, null, harness);
+  expect(result.output).toEqual([
+    { approved: false, draft: 'zero', feedback: null, reviews: 0 },
+    { approved: false, draft: 'two', feedback: 'Rejected by review/1', reviews: 2 },
+  ]);
+  expect(harness.calls.map((request) => request.call.stepId)).toEqual([
+    'review/0',
+    'revise/0',
+    'review/1',
   ]);
 });
 

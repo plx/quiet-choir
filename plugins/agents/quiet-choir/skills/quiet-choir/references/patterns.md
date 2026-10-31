@@ -326,7 +326,9 @@ running a body, and `TeamOf` derives the record type. `quiet-choir/std` ships th
 `std.patterns.ReviewTeam` and `std.patterns.reviewRevise(ctx, { team, draft, rounds })`, with step
 IDs `review/<n>` and `revise/<n>`; `id` runs the loop under `ctx.scope(id, ...)` so two loops do not
 collide, `prompts` replaces the default review and revise prompts, and `retry` is the retry policy
-of every review and revise call. The workflow fills the team explicitly at the call site, from its
+of every review and revise call. It returns `{ approved, draft, feedback, reviews }`, where
+`feedback` is the last review's feedback about the returned draft (null when no review ran) and
+`reviews` counts the reviews. The workflow fills the team explicitly at the call site, from its
 roster. Where roster names equal slot names, `ReviewTeam.from(ctx.roster)` fills it, and
 `ReviewTeam.from({ ...ctx.roster, critic: ctx.roster.Skeptic })` overrides one slot: `from` keeps
 only the slot keys and throws if one is missing. A team registers nothing, checks no capability (put

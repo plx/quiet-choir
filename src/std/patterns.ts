@@ -61,6 +61,13 @@ export interface ReviewReviseResult {
   readonly approved: boolean;
   /** The approved draft, or the last reviewed one when no round approved. */
   readonly draft: string;
+  /**
+   * The last review's feedback, about the returned `draft` because no revision follows the last
+   * review; null when no review ran.
+   */
+  readonly feedback: string | null;
+  /** How many reviews ran, from zero to `rounds`. */
+  readonly reviews: number;
 }
 
 /**
@@ -68,12 +75,14 @@ export interface ReviewReviseResult {
  * `{ approved, feedback }` as step `review/<n>` and, when rejected, asks `team.actor` for a new
  * draft as `revise/<n>`. Approval returns early, and the last round is not followed by an
  * unreviewed revision, so exhaustion returns `approved: false` with the last reviewed draft as data
- * rather than throwing.
+ * rather than throwing. Either way the result carries the last review's `feedback`, which is about
+ * the returned draft, and the count of `reviews`, both from the journaled `review/<n>` outputs.
  *
  * @param ctx - The workflow context; with `id`, the loop runs under `ctx.scope(id, ...)`.
  * @param options - The team, the first draft, the round limit, an optional scope, prompts and retry
  * policy.
- * @returns Whether a draft was approved, and that draft or the last reviewed one.
+ * @returns Whether a draft was approved, that draft or the last reviewed one, the last review's
+ * feedback (null when no review ran) and how many reviews ran.
  */
 export async function reviewRevise(
   ctx: WorkflowContext,
@@ -86,13 +95,17 @@ export async function reviewRevise(
     ((draft, feedback) => `Revise ${draft} using this feedback: ${feedback}`);
   const loop = async (): Promise<ReviewReviseResult> => {
     let draft = options.draft;
+    let feedback: string | null = null;
+    let reviews = 0;
     for (let round = 0; round < rounds; round++) {
       const verdict = await team.critic.value(`review/${String(round)}`, {
         prompt: review(draft),
         schema: Review,
         retry,
       });
-      if (verdict.approved) return { approved: true, draft };
+      reviews = round + 1;
+      feedback = verdict.feedback;
+      if (verdict.approved) return { approved: true, draft, feedback, reviews };
       if (round + 1 < rounds) {
         draft = await team.actor.value(`revise/${String(round)}`, {
           prompt: revise(draft, verdict.feedback),
@@ -100,7 +113,7 @@ export async function reviewRevise(
         });
       }
     }
-    return { approved: false, draft };
+    return { approved: false, draft, feedback, reviews };
   };
   return id === undefined ? loop() : ctx.scope(id, loop);
 }
