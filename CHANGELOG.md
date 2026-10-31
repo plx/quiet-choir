@@ -15,6 +15,16 @@
   object with no fields; `runWorkflow` now refuses a thenable among the input's own enumerable
   values with a `WorkflowInputError` whose cause is a `ZodError` naming its path, and `ctx.workflow`
   fails a child's input validation the same way.
+- Fix six Batch 03 ports (dependency-upgrade, project-bootstrap, feature-factory, api-migration,
+  docs-drift-audit and incident-investigation) that refused a dirty checkout on a completed
+  `git status` read. The read replays on resume, so cleaning the checkout and resuming failed again
+  every time, the trap `std.exec.git`'s documentation warns against (#759). Each now checks inside a
+  `ctx.step` that throws and so reruns on resume, as flaky-test-hunt does, and gains a Lab mode that
+  cleans the checkout, resumes and pays every agent call once; Batch 02's six take such modes from a
+  `sixModes` table in `packaged-checks.mjs`. incident-investigation's two checks after its read-only
+  calls stay completed reads on purpose: evidence gathered while the checkout changed is suspect, so
+  they refuse on every resume and say to start a new run. Batch 02's `support.ts` keeps the old
+  pattern.
 - Port the other twenty Workflow Lab workflows into Batch 03, so it holds all 26 as
   `<name>.quiet-choir` packages; the reader shows each of the twenty beside its Batch 01 port. Code
   owns the evidence and effects the upstream left to agents: commands run through `ctx.exec`,
@@ -29,8 +39,8 @@
   `--mutant` and a failure summary that names the run's failed and settled steps. The fault matrix
   fails a check when a fixture reply throws, holds an F2 fault through schema retries, records
   whether the F3 and F4 outputs match the success run's, and gives a mode refused before any record
-  a `refused` row. Batch 03 now records 478 results (455 passed, 23 not applicable), 408 of them for
-  the twenty; the six's rows and the Batch 01 and 02 reports are unchanged.
+  a `refused` row. Batch 03 now records 483 results (460 passed, 23 not applicable), 411 of them for
+  the twenty; the Batch 01 and 02 reports are unchanged.
 - Repair what porting the last 20 Workflow Lab Batch 03 packages surfaced in std (#753–#798 track
   the design-level rest on #594). `std.patterns.tolerantPanel` returns `outcomes`, every item's
   settled outcome in item order with its `item` and `index` (`TolerantPanelOutcome<T, O>`, narrowing
@@ -115,7 +125,7 @@
   `--require-grants`, and restores `autoApprove` as a `Gatekeeper` roster decider (ADR 0066) whose
   fallback is the human review. `comparisons/scripts/verify-packaged-ports.mjs` reruns the Batch 02
   fixture intents and F1–F5 matrix against the packages and adds package validation and hygiene,
-  template, requireGrants and CLI decision-fixture contracts (70 results), and writes
+  template, requireGrants and CLI decision-fixture contracts (72 results), and writes
   `packages.json`, the CLI package sections the reader shows. The Batch 02 and Batch 03 verifiers
   now share `fault-matrix.mjs` and the parametrized fixtures, fault and kill scripts; Batch 02's
   recorded reports are unchanged. The reader compares the upstream original, the earlier ports

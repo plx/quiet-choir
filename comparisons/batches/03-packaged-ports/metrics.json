@@ -82,11 +82,11 @@
           "formattedLines": 74,
           "package": {
             "files": 10,
-            "lines": 350,
-            "bytes": 14645,
+            "lines": 362,
+            "bytes": 15011,
             "parts": {
               "contracts": { "files": 1, "lines": 80 },
-              "lib": { "files": 2, "lines": 87 },
+              "lib": { "files": 2, "lines": 99 },
               "manifest": { "files": 1, "lines": 18 },
               "promptIndex": { "files": 1, "lines": 25 },
               "templates": { "files": 3, "lines": 43 },
@@ -234,19 +234,19 @@
       "workflow": "incident-investigation",
       "batches": {
         "3": {
-          "formattedLines": 81,
+          "formattedLines": 82,
           "package": {
             "files": 13,
-            "lines": 401,
-            "bytes": 17268,
+            "lines": 426,
+            "bytes": 18436,
             "parts": {
               "contracts": { "files": 1, "lines": 69 },
-              "lib": { "files": 2, "lines": 65 },
+              "lib": { "files": 2, "lines": 89 },
               "manifest": { "files": 1, "lines": 18 },
               "promptIndex": { "files": 1, "lines": 30 },
               "templates": { "files": 6, "lines": 112 },
               "roster": { "files": 1, "lines": 26 },
-              "workflows": { "files": 1, "lines": 81 }
+              "workflows": { "files": 1, "lines": 82 }
             }
           },
           "agentCalls": 8,
@@ -611,11 +611,11 @@
           "formattedLines": 208,
           "package": {
             "files": 13,
-            "lines": 1057,
-            "bytes": 40808,
+            "lines": 1069,
+            "bytes": 41175,
             "parts": {
               "contracts": { "files": 1, "lines": 168 },
-              "lib": { "files": 3, "lines": 425 },
+              "lib": { "files": 3, "lines": 437 },
               "manifest": { "files": 1, "lines": 18 },
               "promptIndex": { "files": 1, "lines": 52 },
               "templates": { "files": 5, "lines": 157 },
@@ -923,11 +923,11 @@
           "formattedLines": 261,
           "package": {
             "files": 18,
-            "lines": 1148,
-            "bytes": 45289,
+            "lines": 1159,
+            "bytes": 45637,
             "parts": {
               "contracts": { "files": 1, "lines": 194 },
-              "lib": { "files": 4, "lines": 357 },
+              "lib": { "files": 4, "lines": 368 },
               "manifest": { "files": 1, "lines": 18 },
               "promptIndex": { "files": 1, "lines": 80 },
               "templates": { "files": 9, "lines": 198 },
@@ -1082,11 +1082,11 @@
           "formattedLines": 225,
           "package": {
             "files": 12,
-            "lines": 1264,
-            "bytes": 50240,
+            "lines": 1273,
+            "bytes": 50647,
             "parts": {
               "contracts": { "files": 1, "lines": 297 },
-              "lib": { "files": 3, "lines": 551 },
+              "lib": { "files": 3, "lines": 560 },
               "manifest": { "files": 1, "lines": 18 },
               "promptIndex": { "files": 1, "lines": 36 },
               "templates": { "files": 4, "lines": 106 },
@@ -1163,11 +1163,11 @@
           "formattedLines": 226,
           "package": {
             "files": 14,
-            "lines": 1152,
-            "bytes": 45936,
+            "lines": 1160,
+            "bytes": 46289,
             "parts": {
               "contracts": { "files": 1, "lines": 234 },
-              "lib": { "files": 4, "lines": 483 },
+              "lib": { "files": 4, "lines": 491 },
               "manifest": { "files": 1, "lines": 19 },
               "promptIndex": { "files": 1, "lines": 51 },
               "templates": { "files": 5, "lines": 110 },

@@ -926,6 +926,24 @@
       "completedCallsPaidAgain": 0
     },
     {
+      "workflow": "project-bootstrap",
+      "fixture": "dirty",
+      "status": "passed",
+      "finalStatus": "failed",
+      "agentCalls": 0,
+      "resumedStatus": "completed",
+      "resumedCalls": 4
+    },
+    {
+      "workflow": "incident-investigation",
+      "fixture": "dirty-start",
+      "status": "passed",
+      "finalStatus": "failed",
+      "agentCalls": 0,
+      "resumedStatus": "completed",
+      "resumedCalls": 8
+    },
+    {
       "workflow": "acceptance-qa-batch",
       "fixture": "refused-dirty",
       "status": "passed",
@@ -1161,6 +1179,15 @@
     },
     {
       "workflow": "api-migration",
+      "fixture": "dirty",
+      "status": "passed",
+      "finalStatus": "failed",
+      "agentCalls": 0,
+      "resumedStatus": "completed",
+      "resumedCalls": 3
+    },
+    {
+      "workflow": "api-migration",
       "fixture": "declined",
       "status": "passed",
       "finalStatus": "completed",
@@ -1363,6 +1390,15 @@
       "status": "passed",
       "finalStatus": "failed",
       "agentCalls": 0
+    },
+    {
+      "workflow": "dependency-upgrade",
+      "fixture": "dirty",
+      "status": "passed",
+      "finalStatus": "failed",
+      "agentCalls": 0,
+      "resumedStatus": "completed",
+      "resumedCalls": 6
     },
     {
       "workflow": "dependency-upgrade",
@@ -1738,14 +1774,27 @@
       "fixture": "untracked",
       "status": "passed",
       "finalStatus": "failed",
-      "agentCalls": 0
+      "agentCalls": 0,
+      "resumedStatus": "completed",
+      "resumedCalls": 6
     },
     {
       "workflow": "docs-drift-audit",
       "fixture": "dirty",
       "status": "passed",
       "finalStatus": "failed",
-      "agentCalls": 0
+      "agentCalls": 0,
+      "resumedStatus": "completed",
+      "resumedCalls": 6
+    },
+    {
+      "workflow": "feature-factory",
+      "fixture": "dirty",
+      "status": "passed",
+      "finalStatus": "failed",
+      "agentCalls": 0,
+      "resumedStatus": "completed",
+      "resumedCalls": 20
     },
     {
       "workflow": "feature-factory",
