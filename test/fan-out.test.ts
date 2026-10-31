@@ -680,13 +680,17 @@ it('processes the settled-map snapshot when the caller mutates items during the 
   expect(journal?.status).toBe('completed');
 });
 
-it('hands a settled mapper JSON copies of the items and returns sorted-key JSON copies', async () => {
+it('hands a settled mapper sorted-key JSON copies of the items and returns sorted-key copies', async () => {
   const found: number[] = [];
   const indexes: number[] = [];
+  const itemKeys: string[][] = [];
   const order: string[][] = [];
   let tail = true;
   const definition = workflow(async (ctx) => {
-    const items = [{ id: 'a' }, { id: 'b' }];
+    const items = [
+      { id: 'a', at: 1 },
+      { id: 'b', at: 2 },
+    ];
     const results = await ctx.map(
       'items',
       items,
@@ -694,6 +698,7 @@ it('hands a settled mapper JSON copies of the items and returns sorted-key JSON 
       (item, index) => {
         found.push(items.indexOf(item));
         indexes.push(index);
+        itemKeys.push(Object.keys(item));
         return Promise.resolve({ s: index, p: 1, d: 2 });
       },
     );
@@ -704,6 +709,10 @@ it('hands a settled mapper JSON copies of the items and returns sorted-key JSON 
   await expect(runWorkflow(definition, options())).rejects.toThrow('tail');
   expect(found).toEqual([-1, -1]);
   expect(indexes).toEqual([0, 1]);
+  expect(itemKeys).toEqual([
+    ['at', 'id'],
+    ['at', 'id'],
+  ]);
   const sorted = ['d', 'p', 's'];
   expect(order).toEqual([sorted, sorted]);
   const journal = (await readRun(options())).maps?.['items'];

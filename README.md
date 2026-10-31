@@ -456,13 +456,13 @@ journal and its items prefix leaf IDs. Item inputs, resolved keys, original mapp
 `version`, and cwd define its identity; concurrency can change on resume. Inputs and results must be
 lossless JSON. The map snapshots `items` when called; settled mappers receive JSON copies of that
 snapshot (not the caller's objects: use the mapper's index argument, not `items.indexOf(item)`), and
-saved results come back as JSON copies with sorted object keys. Put captured dependencies, including
-prompt templates and fragments the mapper renders, in items or bump `version`. Resume skips each
-committed mapper and its owned effects and returns the saved outcome, so an ordinary mapper-body
-failure cannot heal and change a downstream fingerprint. Incomplete items execute again. A change
-after an item committed is refused with the changed component named; `--accept-code-change` accepts
-a mapper-only change, keeping committed outcomes and running unfinished items with the new mapper.
-Forks start fresh map journals and use the normal per-step reuse rules.
+saved results come back as JSON copies; both have sorted object keys. Put captured dependencies,
+including prompt templates and fragments the mapper renders, in items or bump `version`. Resume
+skips each committed mapper and its owned effects and returns the saved outcome, so an ordinary
+mapper-body failure cannot heal and change a downstream fingerprint. Incomplete items execute again.
+A change after an item committed is refused with the changed component named; `--accept-code-change`
+accepts a mapper-only change, keeping committed outcomes and running unfinished items with the new
+mapper. Forks start fresh map journals and use the normal per-step reuse rules.
 
 ## Durable commands and files
 
