@@ -16,6 +16,7 @@ import {
   lifecycle,
   names,
   packageRoot,
+  packagedFixtures,
   prepare,
   project,
   runOptions,
@@ -108,6 +109,12 @@ export async function killCase(root, batch, name) {
       encoding: 'utf8',
       timeout: 60_000,
     });
+    // A Batch 03 fixture module's replies must not throw in either process.
+    if (batch === 3 && packagedFixtures[name]) {
+      const errors = join(env.root, 'reply-errors.jsonl');
+      const thrown = existsSync(errors) ? (await readFile(errors, 'utf8')).trim() : '';
+      assert.equal(thrown, '', `${name} F3: fixture replies threw\n${thrown}`);
+    }
     assert.equal(resumed.status, 0, (resumed.stderr + resumed.stdout).slice(-5000));
     const result = JSON.parse(await readFile(join(env.root, 'result.json'), 'utf8'));
     const calls = (await readFile(join(env.root, 'calls.jsonl'), 'utf8'))

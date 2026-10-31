@@ -341,6 +341,9 @@ export const kill = {
   writeLocation: 'isolated-checkout',
 };
 
+/** The sweeps and the diagnoses are settled fan-outs; the fixer is the first call that throws. */
+export const faults = { F1: '^fix$', F2: '^fix$' };
+
 export const modes = [
   {
     mode: 'report-only',

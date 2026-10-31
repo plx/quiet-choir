@@ -346,6 +346,9 @@ export const kill = {
   writeLocation: 'isolated-checkout',
 };
 
+/** The child decomposition opens with a settled fan-out, so the faults name the module plan. */
+export const faults = { F1: '^plan$', F2: '^plan$' };
+
 export const modes = [
   {
     mode: 'declined',

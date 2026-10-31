@@ -5,7 +5,8 @@
 // ports bring a fixture module under packaged-fixtures/. packaged-checks.mjs holds the per-package
 // checks, which check-packaged-port.mjs runs for one package while authoring.
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { rmSync } from 'node:fs';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -266,5 +267,8 @@ try {
   }
 } finally {
   console.error = stderr;
-  await rm(root, { recursive: true, force: true });
+  // Synchronous on purpose: every run leaves its AsyncLocalStorage instances registered with Node,
+  // so after the whole matrix each async request carries thousands of properties, and the
+  // promise-based recursive rm, which starts one request per entry at once, exhausts the heap.
+  rmSync(root, { recursive: true, force: true });
 }

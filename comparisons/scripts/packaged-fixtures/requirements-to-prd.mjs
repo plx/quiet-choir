@@ -480,6 +480,9 @@ export async function check({ result, env, calls, record, suspended }) {
 
 export const kill = { step: '^write$', boundary: 'checkpoint', writeLocation: 'source-checkout' };
 
+/** The extraction is a settled fan-out, so F1 and F2 fail the draft, the first call that throws. */
+export const faults = { F1: '^draft$', F2: '^draft$' };
+
 const once = (base) => ({ ...base, questionRounds: 0 });
 const readOut = (env, path = 'docs/prd.md') => readFile(join(env.cwd, path), 'utf8');
 

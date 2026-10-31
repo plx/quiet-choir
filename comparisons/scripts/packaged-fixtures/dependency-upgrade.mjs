@@ -59,22 +59,7 @@ export const input = () => ({
 const read = (cwd, file) => readFileSync(join(cwd, file), 'utf8');
 const writer = (id) => leaf(id) === 'apply' || /^round\/\d+\/fixes\/\d+\/fix$/u.test(id);
 
-// The triage and the fixers are settled calls, so a reply that throws (a failed assertion, an
-// unexpected step) would be journaled as a failed call and the run would complete. Every throw is
-// kept here, and each check asserts there was none.
-const thrown = [];
-const noReplyThrew = () => assert.equal(thrown.length, 0, thrown.splice(0).map(String).join('\n'));
-
 export async function reply(request, env, mode) {
-  try {
-    return await answerCall(request, env, mode);
-  } catch (error) {
-    thrown.push(error);
-    throw error;
-  }
-}
-
-async function answerCall(request, env, mode) {
   const id = request.call.stepId,
     prompt = request.options.prompt;
   if (id === 'research') {
@@ -219,7 +204,6 @@ const noWriters = (calls) =>
   );
 
 export async function check({ result, env, calls, record, suspended }) {
-  noReplyThrew();
   const { output } = result;
   assert.equal(output.status, 'upgraded');
   assert.equal(suspended, 1);
@@ -293,6 +277,9 @@ export const kill = {
   writeLocation: 'isolated-checkout',
 };
 
+/** The research and the impact analysis run concurrently, so the faults name the research. */
+export const faults = { F1: '^research$', F2: '^research$' };
+
 /** The checkout holds the setup commit plus one unrelated commit, and nothing from the run. */
 function movedOnly(env) {
   assert.equal(git(env.cwd, 'rev-parse', 'HEAD~1'), env.base);
@@ -305,7 +292,6 @@ export const modes = [
   {
     mode: 'reconsider',
     check({ result, env, calls, suspended }) {
-      noReplyThrew();
       assert.equal(result.output.status, 'not-attempted');
       assert.equal(suspended, 0);
       assert.equal(result.output.riskLevel, 'reconsider');
@@ -317,7 +303,6 @@ export const modes = [
   {
     mode: 'declined',
     check({ result, env, calls, suspended }) {
-      noReplyThrew();
       assert.equal(result.output.status, 'declined');
       assert.equal(suspended, 1);
       assert.match(result.output.approvedDigest, /^[a-f0-9]{64}$/u);
@@ -328,7 +313,6 @@ export const modes = [
   {
     mode: 'upgrader-strays',
     check({ result, env, calls }) {
-      noReplyThrew();
       // The upgrader's receipt names a file the plan does not list: nothing is integrated.
       const { output } = result;
       assert.equal(output.status, 'refused');
@@ -344,7 +328,6 @@ export const modes = [
   {
     mode: 'fixer-fails',
     check({ result, env }) {
-      noReplyThrew();
       // A failed fixer is journaled and leaves its cluster unfixed; with no change to integrate the
       // loop stops instead of verifying the same commit again, and nothing is published. What is
       // left failing is the triager's clusters.
@@ -363,7 +346,6 @@ export const modes = [
     mode: 'triage-fails',
     input: () => ({ ...input(), maxFixRounds: 0 }),
     check({ result, env, calls }) {
-      noReplyThrew();
       // maxFixRounds 0 verifies once and never fixes. The triage that would report the red round
       // fails; it is settled like upstream's unavailable verifier, and the failing commands remain.
       const { output } = result;
@@ -388,7 +370,6 @@ export const modes = [
     mode: 'round-cap',
     input: () => ({ ...input(), maxFixRounds: 1 }),
     check({ result, env, calls }) {
-      noReplyThrew();
       // Round 0 triages four root causes: three fixers run (two change nothing) and the fourth
       // cluster is over the cap. The one change keeps now(), so round 1 is red again with no fix
       // round left: the triage only reports, and its cluster is what remains.
@@ -430,7 +411,6 @@ export const modes = [
   {
     mode: 'fix-strays',
     check({ result, env }) {
-      noReplyThrew();
       // A fixer that touched a file its cluster does not own is refused and never integrated.
       const { output } = result;
       assert.equal(output.status, 'unstable');
@@ -451,7 +431,6 @@ export const modes = [
       ],
     }),
     check({ result, env }) {
-      noReplyThrew();
       // The install wrote a file the plan does not list, which the snapshot captures. The green
       // tree's handle has no receipt, so code diffs the integration against the base and refuses
       // to publish it.
@@ -465,7 +444,6 @@ export const modes = [
   {
     mode: 'checkout-moves',
     check({ result, env, calls }) {
-      noReplyThrew();
       // Someone commits during the research: code sees it after the approval, before paying for
       // the upgrader or any verification.
       const { output } = result;
@@ -478,7 +456,6 @@ export const modes = [
   {
     mode: 'moves-mid-loop',
     check({ result, env, calls }) {
-      noReplyThrew();
       // Someone commits while a fixer works: code sees it before integrating the fix, so no later
       // round verifies a tree that includes the foreign commit, and nothing is published.
       const { output } = result;

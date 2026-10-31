@@ -438,15 +438,42 @@ export function exitFailure(request) {
     usage: { inputTokens: 1, outputTokens: 0, costUsd: 0.01 },
   });
 }
-export function harnessFor(batch, name, env, { mode = 'normal', fault = null, onCall } = {}) {
-  const calls = [];
-  let injected = false;
+/**
+ * The inert harness of one run: `calls` are the requests in admission order, `replyErrors` what
+ * each fixture reply threw (`{ stepId, message }`, also passed to `onReplyError`).
+ *
+ * `fault` injects F1 (a process failure) into the first request, or F2 (a schema-invalid reply)
+ * into the first schema request; a Batch 03 fixture module may name the step each fault targets
+ * through its `faults` export. For a fixture module, F2 holds on the faulted step through its
+ * in-run schema retries until `endFault()`. `faultedStep()` is the step that was faulted, or null.
+ */
+export function harnessFor(
+  batch,
+  name,
+  env,
+  { mode = 'normal', fault = null, onCall, onReplyError } = {},
+) {
+  const calls = [],
+    replyErrors = [];
+  const module = batch === 3 ? packagedFixtures[name] : undefined;
+  const named = fault && module?.faults?.[fault];
+  const target = named ? new RegExp(named, 'u') : null;
+  const holds = fault === 'F2' && Boolean(module);
+  let injected = false,
+    faultedStep = null,
+    ended = false;
   const harness = {
     async invoke(request) {
       calls.push(request);
       await onCall?.(request, calls.length);
-      if (!injected && (fault === 'F1' || (fault === 'F2' && request.outputSchema))) {
+      const id = request.call.stepId;
+      const first =
+        !injected &&
+        (fault === 'F1' || (fault === 'F2' && request.outputSchema)) &&
+        (!target || target.test(id));
+      if (!ended && (first || (holds && injected && id === faultedStep))) {
         injected = true;
+        faultedStep = id;
         if (fault === 'F1') throw exitFailure(request);
         return response({ deliberatelyInvalid: true }, request);
       }
@@ -471,7 +498,7 @@ export function harnessFor(batch, name, env, { mode = 'normal', fault = null, on
           (mode === 'failed-finders' && /\/finders\/\d+\/answer$/u.test(request.call.stepId)))
       )
         throw exitFailure(request);
-      if (batch === 3 && packagedFixtures[name]?.fail?.(request, mode)) throw exitFailure(request);
+      if (batch === 3 && module?.fail?.(request, mode)) throw exitFailure(request);
       if (
         batch === 3 &&
         name === 'incident-investigation' &&
@@ -479,10 +506,38 @@ export function harnessFor(batch, name, env, { mode = 'normal', fault = null, on
         request.call.stepId.startsWith('falsifiers/1/')
       )
         throw exitFailure(request);
-      return response(await reply(batch, name, request, env, mode), request);
+      let output;
+      try {
+        output = await reply(batch, name, request, env, mode);
+      } catch (error) {
+        // The engine journals a throwing reply as an agent failure, which a settled call keeps.
+        const entry = { stepId: id, message: String(error?.message ?? error) };
+        replyErrors.push(entry);
+        onReplyError?.(entry);
+        throw error;
+      }
+      return response(output, request);
     },
   };
-  return { calls, harness };
+  return {
+    calls,
+    harness,
+    replyErrors,
+    faultedStep: () => faultedStep,
+    endFault: () => {
+      ended = true;
+    },
+  };
+}
+/** Fail when a Batch 03 fixture module's replies threw: a settled call would hide the throw. */
+export function assertNoReplyErrors(replyErrors, label) {
+  assert.deepEqual(
+    replyErrors,
+    [],
+    `${label}: fixture replies threw\n${replyErrors
+      .map((error) => `${error.stepId}: ${error.message}`)
+      .join('\n')}`,
+  );
 }
 export async function drive(definition, options, { redo = false, onSuspended } = {}) {
   let result = await runWorkflow(definition, options);
@@ -527,17 +582,24 @@ export async function prepare(batch, name, env) {
 }
 /** A Batch 03 fixture module's F3 kill point, or null. */
 export const killSpec = (batch, name) => (batch === 3 && packagedFixtures[name]?.kill) || null;
-export const runOptions = (env, runId, harness, input) => ({
-  cwd: env.cwd,
-  stateDir: env.stateDir,
-  worktrees: env.worktrees,
-  processRunner: env.processRunner,
-  grants: ['all'],
-  agentLimit: 1,
-  runId,
-  harness,
-  input,
-});
+export function runOptions(env, runId, harness, input) {
+  assert.notEqual(
+    typeof input?.then,
+    'function',
+    `${runId}: the workflow input is a Promise; await input(env) before the run`,
+  );
+  return {
+    cwd: env.cwd,
+    stateDir: env.stateDir,
+    worktrees: env.worktrees,
+    processRunner: env.processRunner,
+    grants: ['all'],
+    agentLimit: 1,
+    runId,
+    harness,
+    input,
+  };
+}
 export async function snapshot(cwd) {
   // Git status plus tracked fixture target are enough to distinguish the contracted effects.
   const target = await readFile(join(cwd, 'target.mjs'), 'utf8');

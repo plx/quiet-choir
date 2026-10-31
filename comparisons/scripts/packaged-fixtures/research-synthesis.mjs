@@ -419,6 +419,13 @@ export function check({ result, env, calls, suspended }) {
 
 export const readOnly = 'Read-only: every role reads and the workflow writes nothing';
 
+/**
+ * The sweeps are a concurrent fan-out, so the faults name their steps: F1 fails the synthesis,
+ * the first call that throws, and F2 the critic, the one schema call outside a fan-out (every
+ * schema call is settled, so the run completes without its critique).
+ */
+export const faults = { F1: '^synthesize$', F2: '^critic$' };
+
 /** A clean, adequately critiqued run but for the one failure a mode injects. */
 function cleanBut(output) {
   assert.equal(output.answer.split('\n')[0], 'Adopt Xlib cautiously [S1][S2].');

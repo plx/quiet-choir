@@ -61,7 +61,7 @@ try {
       const env = await setup(),
         definition = await load(batch, name);
       const { harness, calls } = harnessFor(batch, name, env),
-        opts = options(env, batch, name, harness);
+        opts = await options(env, batch, name, harness);
       let approvedPlan;
       const { result, suspended } = await drive(definition, opts, {
         onSuspended: (record) => {

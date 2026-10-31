@@ -304,6 +304,9 @@ export async function check({ result, env, calls }) {
 
 export const kill = { step: '^write$', boundary: 'checkpoint', writeLocation: 'source-checkout' };
 
+/** The lenses are a settled fan-out, so F1 and F2 fail the merge, the first call that throws. */
+export const faults = { F1: '^merge$', F2: '^merge$' };
+
 export const modes = [
   {
     mode: 'lens-fails',

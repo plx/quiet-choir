@@ -108,13 +108,6 @@ export const input = () => ({
   evidenceCommands: [{ dimension: 'security', argv: [process.execPath, '-e', audit] }],
 });
 
-/**
- * What each run's replies threw, by checkout. A settled map turns a throwing reply into workflow
- * data (an unassessed dimension), so the reply-side assertions below are checked here as well.
- */
-const replyErrors = new Map();
-const noReplyErrors = (env) => assert.deepEqual(replyErrors.get(env.cwd) ?? [], []);
-
 /** A reader works in its own clean checkout of the gated commit, not in the source checkout. */
 function pinnedReader(request, env) {
   assert.notEqual(request.cwd, env.cwd);
@@ -123,16 +116,6 @@ function pinnedReader(request, env) {
 }
 
 export function reply(request, env, mode) {
-  try {
-    return answer(request, env, mode);
-  } catch (error) {
-    const errors = replyErrors.get(env.cwd) ?? [];
-    replyErrors.set(env.cwd, [...errors, `${request.call.stepId}: ${String(error.message)}`]);
-    throw error;
-  }
-}
-
-function answer(request, env, mode) {
   const id = request.call.stepId;
   const assess = /^dimensions\/([a-z-]+)\/assess$/u.exec(id);
   if (assess) {
@@ -206,7 +189,6 @@ async function untouched(env, calls) {
   assert.equal(git(env.cwd, 'status', '--porcelain=v1', '--untracked-files=all'), '');
   assert.equal(await readFile(join(env.cwd, 'target.mjs'), 'utf8'), pristine);
   noNewRefs(env);
-  noReplyErrors(env);
 }
 
 /** The run adds no branch or tag; the reader pins it leaves are all under refs/quiet-choir/. */
@@ -294,6 +276,12 @@ export async function check({ result, env, calls }) {
 
 export const readOnly =
   "Read-only gate: agents only read and code runs the operator's commands; no prescribed write effect to kill";
+
+/**
+ * Every agent call is settled and retried on a process failure, so the faults name one assessor
+ * of the concurrent dimension map: F1 is retried away, and F2 leaves security unassessed.
+ */
+export const faults = { F1: '^dimensions/security/assess$', F2: '^dimensions/security/assess$' };
 
 export const modes = [
   {
@@ -681,7 +669,6 @@ export const modes = [
       assert.equal(output.decision, 'conditional-go');
       assert.equal(calls.filter((call) => leaf(call.call.stepId) === 'assess').length, 5);
       assert.equal(git(env.cwd, 'status', '--porcelain=v1'), '?? coverage/');
-      noReplyErrors(env);
     },
   },
   {

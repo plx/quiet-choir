@@ -213,6 +213,9 @@ export async function check({ result, env, calls, suspended }) {
 
 export const kill = { step: '^write$', boundary: 'checkpoint', writeLocation: 'source-checkout' };
 
+/** The proposals and the judges are settled fan-outs; the synthesis is the first call to throw. */
+export const faults = { F1: '^synthesize$', F2: '^synthesize$' };
+
 export const modes = [
   {
     mode: 'two-proposers-fail',

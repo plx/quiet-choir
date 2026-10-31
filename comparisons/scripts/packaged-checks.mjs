@@ -12,6 +12,7 @@ import ts from 'typescript';
 import { readRun } from 'quiet-choir';
 import { degradation, fixResume, options, scenario, stable } from './fault-matrix.mjs';
 import {
+  assertNoReplyErrors,
   command,
   drive,
   harnessFor,
@@ -262,19 +263,35 @@ const notApplicable = async (env, reason) => ({
 });
 const readOnlySix = ['incident-investigation', 'bug-hunt'];
 
+/**
+ * Await a fixture run, then fail when its replies threw (`replyErrors` falsy skips the check). A
+ * settled call keeps a throwing reply as data, and a failed run's error would hide the cause.
+ */
+async function replied(replyErrors, label, run) {
+  try {
+    return await run;
+  } finally {
+    if (replyErrors) assertNoReplyErrors(replyErrors, label);
+  }
+}
+
 /** The success run with completed replay and its assertions, without the fault matrix. */
 export async function checkSuccess(name, { setup }) {
   const module = packagedFixtures[name];
   const env = await prepare(3, name, await setup()),
     definition = await load(3, name);
-  const { harness, calls } = harnessFor(3, name, env),
-    opts = options(env, 3, name, harness);
+  const { harness, calls, replyErrors } = harnessFor(3, name, env),
+    opts = await options(env, 3, name, harness);
   let approvedPlan;
-  const { result, suspended } = await drive(definition, opts, {
-    onSuspended: (record) => {
-      if (name === 'project-bootstrap') approvedPlan = record.pending[0].subject;
-    },
-  });
+  const { result, suspended } = await replied(
+    module && replyErrors,
+    name,
+    drive(definition, opts, {
+      onSuspended: (record) => {
+        if (name === 'project-bootstrap') approvedPlan = record.pending[0].subject;
+      },
+    }),
+  );
   assert.equal(result.status, 'completed', JSON.stringify(result.error ?? null));
   const before = calls.length;
   assert.equal(
@@ -357,39 +374,45 @@ export async function checkPort(name, { setup, root }) {
 /**
  * A fixture module's extra modes: each a fresh run under `harnessFor(..., { mode })` whose
  * outcome its `check` asserts, then a resume that must pay nothing again. A mode with `rejects`
- * expects the run to fail with that pattern.
+ * expects the run to fail with that pattern; a refusal before the run starts leaves no record.
+ * Every mode fails when a reply threw, unless it sets `allowReplyErrors`.
  */
 export async function modeContracts(name, { setup }) {
   const rows = [];
   for (const mode of packagedFixtures[name]?.modes ?? []) {
     const env = await prepare(3, name, await setup()),
       definition = await load(3, name);
-    const { harness, calls } = harnessFor(3, name, env, { mode: mode.mode });
+    const { harness, calls, replyErrors } = harnessFor(3, name, env, { mode: mode.mode });
     const base = runOptions(
       env,
       `mode-${mode.mode}`,
       harness,
-      mode.input ? mode.input(env) : inputFor(3, name, env),
+      mode.input ? await mode.input(env) : await inputFor(3, name, env),
     );
     const opts = mode.options ? mode.options(base, env) : base;
+    const checked = !mode.allowReplyErrors && replyErrors,
+      label = `${name} ${mode.mode}`;
     if (mode.rejects) {
-      await assert.rejects(drive(definition, opts), mode.rejects);
-      const record = await readRun(opts);
+      await replied(checked, label, assert.rejects(drive(definition, opts), mode.rejects));
+      const record = await readRun(opts).catch((error) => {
+        if (error?.code === 'ENOENT') return null;
+        throw error;
+      });
       await mode.check?.({ result: record, env, calls, record });
       rows.push({
         workflow: name,
         fixture: mode.mode,
         status: 'passed',
-        finalStatus: record.status,
+        finalStatus: record?.status ?? 'refused',
         agentCalls: calls.length,
       });
       continue;
     }
-    const { result, suspended } = await drive(definition, opts);
+    const { result, suspended } = await replied(checked, label, drive(definition, opts));
     const record = await readRun(opts);
     await mode.check({ result, env, calls, record, suspended });
     const before = calls.length;
-    await drive(definition, { ...opts, resume: true });
+    await replied(checked, label, drive(definition, { ...opts, resume: true }));
     assert.equal(calls.length, before, `${mode.mode}: resume must not call an agent again`);
     rows.push({
       workflow: name,

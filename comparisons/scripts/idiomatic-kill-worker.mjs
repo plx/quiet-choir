@@ -24,6 +24,10 @@ const { harness } = harnessFor(batch, name, env, {
       JSON.stringify({ stepId: request.call.stepId }) + '\n',
     );
   },
+  // Synchronous, so a reply that threw is on disk before any kill; killCase reads it.
+  onReplyError(entry) {
+    appendFileSync(join(root, 'reply-errors.jsonl'), JSON.stringify(entry) + '\n');
+  },
 });
 const invoke = harness.invoke;
 harness.invoke = async (request) => {
@@ -82,7 +86,7 @@ class KillStore extends FileRunStore {
     });
   }
 }
-const input = inputFor(batch, name, env);
+const input = await inputFor(batch, name, env);
 if (batch >= 2 && name === 'test-gap-filler')
   input.testCommand = [process.execPath, 'kill-check.mjs'];
 const opts = {

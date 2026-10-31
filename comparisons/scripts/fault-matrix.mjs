@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readRun, runWorkflow } from 'quiet-choir';
 import {
+  assertNoReplyErrors,
   drive,
   harnessFor,
   inputFor,
@@ -45,20 +46,27 @@ export function repeated(calls, before) {
   const old = new Set(calls.slice(0, before).map((call) => call.call.stepId));
   return calls.slice(before).filter((call) => old.has(call.call.stepId)).length;
 }
-export function options(env, batch, name, harness) {
-  return runOptions(env, `batch-${batch}-${name}`, harness, inputFor(batch, name, env));
+export async function options(env, batch, name, harness) {
+  return runOptions(env, `batch-${batch}-${name}`, harness, await inputFor(batch, name, env));
 }
 export async function scenario(setup, batch, name, fault) {
   const env = await prepare(batch, name, await setup()),
     definition = await load(batch, name);
-  const { harness, calls } = harnessFor(batch, name, env, { fault });
-  const opts = options(env, batch, name, harness);
+  // A Batch 03 fixture module's replies must not throw, and its F2 holds until the resume.
+  const packaged = batch === 3 && Boolean(packagedFixtures[name]);
+  const { harness, calls, replyErrors, faultedStep, endFault } = harnessFor(batch, name, env, {
+    fault,
+  });
+  const opts = await options(env, batch, name, harness);
   let first;
   try {
     first = (await drive(definition, opts)).result;
   } catch {
     first = await readRun(opts);
   }
+  const named = packaged && packagedFixtures[name].faults?.[fault];
+  if (named) assert.ok(faultedStep(), `${name} ${fault}: no step matched /${named}/u`);
+  if (packaged) endFault();
   const afterFault = await snapshot(env.cwd),
     before = calls.length;
   const completedIDs = new Set(
@@ -66,7 +74,13 @@ export async function scenario(setup, batch, name, fault) {
       .filter(([, step]) => step.status === 'completed')
       .map(([id]) => id),
   );
-  const { result: final } = await drive(definition, { ...opts, resume: true });
+  let final;
+  try {
+    ({ result: final } = await drive(definition, { ...opts, resume: true }));
+  } finally {
+    // A reply that threw explains a failed resume better than the run's own error.
+    if (packaged) assertNoReplyErrors(replyErrors, `${name} ${fault}`);
+  }
   assert.equal(final.status, 'completed');
   const completedCallsPaidAgain = calls
     .slice(before)
@@ -75,6 +89,7 @@ export async function scenario(setup, batch, name, fault) {
   return {
     initialStatus: first.status,
     finalStatus: final.status,
+    ...(packaged ? { faultedStep: faultedStep() } : {}),
     callsPaidAgain: repeated(calls, before),
     completedCallsPaidAgain,
     filesystemAfterFault: afterFault,
@@ -85,8 +100,8 @@ export async function scenario(setup, batch, name, fault) {
 export async function fixResume(setup, batch, name) {
   const env = await prepare(batch, name, await setup()),
     base = await load(batch, name);
-  const { harness, calls } = harnessFor(batch, name, env),
-    opts = options(env, batch, name, harness);
+  const { harness, calls, replyErrors } = harnessFor(batch, name, env),
+    opts = await options(env, batch, name, harness);
   // Only the final statement changes. No workflow/effect contract is redefined.
   const beforeSource =
     'const output = await base.run(ctx, input); throw new Error("one-line fixture tail");';
@@ -113,12 +128,17 @@ export async function fixResume(setup, batch, name) {
     }),
     /changed|fingerprint/iu,
   );
-  const { result } = await drive(wrap(afterSource), {
-    ...opts,
-    resume: true,
-    fingerprint: fingerprint(afterSource),
-    acceptCodeChange: true,
-  });
+  let result;
+  try {
+    ({ result } = await drive(wrap(afterSource), {
+      ...opts,
+      resume: true,
+      fingerprint: fingerprint(afterSource),
+      acceptCodeChange: true,
+    }));
+  } finally {
+    if (batch === 3 && packagedFixtures[name]) assertNoReplyErrors(replyErrors, `${name} F4`);
+  }
   assert.equal(result.status, 'completed');
   assert.equal(calls.length, before);
   return {

@@ -574,5 +574,2298 @@
       "bytes": 11595,
       "sha256": "01ffcfc2425b0ed1c15e5bc5a204c974dd962ae671c898ccf98b803b1f835912"
     }
+  },
+  "acceptance-qa-batch": {
+    "name": "acceptance-qa-batch",
+    "version": "1",
+    "description": "Per ticket: demonstrate every acceptance criterion with an approved probe that code runs in a prepared checkout pinned at one commit, then attack the feature with approved probes; pass = demonstrated AND unbroken, judged by exit codes",
+    "whenToUse": "Acceptance QA on finished work — verifying committed tickets meet their own criteria before merge or release, beyond unit-test green; report-only. Input: {tickets, probeCommand, prepare?, probeEnv?, scope?, maxTickets?, maxAttacks?, probeTimeoutMs?, prepareTimeoutMs?}.",
+    "entry": "acceptance-qa-batch",
+    "workflows": [
+      {
+        "name": "acceptance-qa-batch",
+        "version": "packaged-03",
+        "description": "Demonstrate each ticket with approved probes that code runs, attack the ones that pass, and grade both by exit code.",
+        "module": "workflows/acceptance-qa-batch.ts",
+        "roster": [
+          {
+            "name": "Breaker",
+            "harness": "claude",
+            "access": "read",
+            "model": "opus",
+            "description": "Writes attack probes against a demonstrated feature; code keeps what reproduces.",
+            "effort": "high"
+          },
+          {
+            "name": "Demonstrator",
+            "harness": "claude",
+            "access": "read",
+            "model": "opus",
+            "description": "Writes one probe per acceptance criterion against the pinned checkout; never edits.",
+            "effort": "high"
+          },
+          {
+            "name": "Ingester",
+            "harness": "claude",
+            "access": "read",
+            "model": "sonnet",
+            "description": "Copies tickets and criteria exactly and notes how probes can exercise the project.",
+            "effort": "low"
+          }
+        ]
+      }
+    ],
+    "deciders": {},
+    "prompts": [
+      {
+        "root": "comparisons/batches/03-packaged-ports/ported/acceptance-qa-batch.quiet-choir/prompts",
+        "entries": [
+          {
+            "name": "Ingest",
+            "file": "Ingest.md",
+            "description": "Copy the tickets and criteria verbatim and describe how probes can run.",
+            "params": ["argv", "backlog", "maxCriteria", "maxTranscribed", "prepare", "scope"],
+            "variables": ["argv", "backlog", "maxCriteria", "maxTranscribed", "prepare", "scope"]
+          },
+          {
+            "name": "Demonstrate",
+            "file": "Demonstrate.md",
+            "description": "Write one probe per acceptance criterion, or say why it cannot be shown here.",
+            "params": [
+              "argv",
+              "base",
+              "failCode",
+              "prepare",
+              "runContext",
+              "scope",
+              "seconds",
+              "ticket",
+              "variables"
+            ],
+            "variables": ["failCode", "runContext", "scope", "ticket"]
+          },
+          {
+            "name": "Break",
+            "file": "Break.md",
+            "description": "Write attack probes against a feature whose criteria were demonstrated.",
+            "params": [
+              "argv",
+              "base",
+              "criteria",
+              "failCode",
+              "maxAttacks",
+              "prepare",
+              "runContext",
+              "scope",
+              "seconds",
+              "ticket",
+              "variables"
+            ],
+            "variables": ["criteria", "failCode", "maxAttacks", "runContext", "scope", "ticket"]
+          }
+        ]
+      }
+    ],
+    "files": {
+      "count": 15,
+      "bytes": 51409,
+      "sha256": "f7ca306358635edcdcf359a32c8fbe0d39ee7ae504c4c36f83d1945af6e22f8a"
+    }
+  },
+  "acceptance-qa-deep": {
+    "name": "acceptance-qa-deep",
+    "version": "1",
+    "description": "Decompose a ticket's acceptance criteria into binary checks, verify each against a pinned snapshot of the delivered work, and challenge every pass for letter-vs-spirit before code computes the verdict",
+    "whenToUse": "Gating whether finished work truly satisfies its ticket, the check \"tests pass\" does not make, including the criteria the developer forgot; read-only. Input: {criteria | criteriaFile, ticket?, base?, paths?, checkCommands?, maxCriteria?, maxPatchBytes?}.",
+    "entry": "acceptance-qa-deep",
+    "workflows": [
+      {
+        "name": "acceptance-qa-deep",
+        "version": "packaged-03",
+        "description": "Pin the delivered work, check each decomposed criterion against it, challenge every pass and compute the gate verdict in code.",
+        "module": "workflows/acceptance-qa-deep.ts",
+        "roster": [
+          {
+            "name": "Challenger",
+            "harness": "codex",
+            "access": "read",
+            "model": null,
+            "description": "Re-examines a passing criterion for letter-vs-spirit gaps; never edits.",
+            "effort": "high"
+          },
+          {
+            "name": "Checker",
+            "harness": "claude",
+            "access": "read",
+            "model": "opus",
+            "description": "Judges one criterion's sub-checks against the pinned snapshot; never edits.",
+            "effort": "high"
+          },
+          {
+            "name": "Decomposer",
+            "harness": "claude",
+            "access": "none",
+            "model": "opus",
+            "description": "Breaks the criteria into binary sub-checks and adds implied ones; uses no tools.",
+            "effort": "high"
+          },
+          {
+            "name": "Narrator",
+            "harness": "claude",
+            "access": "none",
+            "model": "sonnet",
+            "description": "Narrates the verdict the workflow computed for stakeholders; uses no tools.",
+            "effort": "low"
+          }
+        ]
+      }
+    ],
+    "deciders": {},
+    "prompts": [
+      {
+        "root": "comparisons/batches/03-packaged-ports/ported/acceptance-qa-deep.quiet-choir/prompts",
+        "entries": [
+          {
+            "name": "Decompose",
+            "file": "Decompose.md",
+            "description": "Break each criterion into binary sub-checks and surface the implied criteria.",
+            "params": ["criteria", "files", "limits", "source", "ticket"],
+            "variables": ["criteria", "files", "limits", "source", "ticket"]
+          },
+          {
+            "name": "Check",
+            "file": "Check.md",
+            "description": "Answer each of one criterion's sub-checks from the snapshot and command output.",
+            "params": [
+              "base",
+              "checks",
+              "commands",
+              "criterion",
+              "files",
+              "implied",
+              "kind",
+              "patch",
+              "patchTruncated",
+              "paths",
+              "snapshot",
+              "uncommitted"
+            ],
+            "variables": [
+              "checks",
+              "commands",
+              "criterion",
+              "implied",
+              "kind",
+              "patch",
+              "patchTruncated"
+            ]
+          },
+          {
+            "name": "Challenge",
+            "file": "Challenge.md",
+            "description": "Look for the narrow pass: letter satisfied, intent missed.",
+            "params": [
+              "base",
+              "checks",
+              "commands",
+              "criterion",
+              "files",
+              "paths",
+              "snapshot",
+              "uncommitted"
+            ],
+            "variables": ["checks", "commands", "criterion"]
+          },
+          {
+            "name": "Summarize",
+            "file": "Summarize.md",
+            "description": "One stakeholder paragraph around the verdict the workflow computed.",
+            "params": ["graded", "mustFix", "pendingManual", "verdict"],
+            "variables": ["graded", "mustFix", "pendingManual", "verdict"]
+          }
+        ]
+      }
+    ],
+    "files": {
+      "count": 14,
+      "bytes": 35940,
+      "sha256": "d0b2810e19f01e6ea903e595f2701a2c83555a76ed214931f976c31b8bd8e74c"
+    }
+  },
+  "api-migration": {
+    "name": "api-migration",
+    "version": "1",
+    "description": "Discover every call site of an old API, approve a disjoint file-group plan, migrate the groups in parallel isolated worktrees, then verify the integration once with code-run commands and repair the fallout",
+    "whenToUse": "Library swaps, API renames and contract changes with many call sites needing contextual judgment, the long tail codemods cannot handle; nothing is written before a human approves the plan. Input: {from, to, verifyCommands, notes?, paths?, searchTerms?, batchSize?, maxGroups?}.",
+    "entry": "api-migration",
+    "workflows": [
+      {
+        "name": "api-migration",
+        "version": "packaged-03",
+        "description": "Approve a disjoint migration plan, migrate each group in its own worktree, and publish only a code-verified integration.",
+        "module": "workflows/api-migration.ts",
+        "roster": [
+          {
+            "name": "Discoverer",
+            "harness": "claude",
+            "access": "read",
+            "model": "sonnet",
+            "description": "Finds every call site of the old API and groups them by file; never edits.",
+            "effort": "medium"
+          },
+          {
+            "name": "Migrator",
+            "harness": "claude",
+            "access": "write",
+            "model": "sonnet",
+            "description": "Migrates one approved file group in an isolated checkout; code verifies it.",
+            "effort": "high"
+          },
+          {
+            "name": "Repairer",
+            "harness": "claude",
+            "access": "write",
+            "model": "sonnet",
+            "description": "Fixes one failure cluster within the approved files, in an isolated checkout.",
+            "effort": "high"
+          },
+          {
+            "name": "Triager",
+            "harness": "claude",
+            "access": "none",
+            "model": "sonnet",
+            "description": "Clusters code-run verification failures by root cause; uses no tools.",
+            "effort": "medium"
+          }
+        ]
+      }
+    ],
+    "deciders": {},
+    "prompts": [
+      {
+        "root": "comparisons/batches/03-packaged-ports/ported/api-migration.quiet-choir/prompts",
+        "entries": [
+          {
+            "name": "Discover",
+            "file": "Discover.md",
+            "description": "Find every call site and group the sites into disjoint file groups.",
+            "params": ["from", "hits", "notes", "paths", "terms", "to"],
+            "variables": ["hits", "paths", "terms"]
+          },
+          {
+            "name": "Migrate",
+            "file": "Migrate.md",
+            "description": "Migrate one approved file group; the approved plan JSON comes last.",
+            "params": ["digest", "from", "group", "notes", "plan", "to"],
+            "variables": ["digest", "group", "plan"]
+          },
+          {
+            "name": "Triage",
+            "file": "Triage.md",
+            "description": "Cluster the code-run verification failures by root cause.",
+            "params": ["failures", "from", "leftovers", "migrated", "notes", "to", "unmigrated"],
+            "variables": ["failures", "leftovers", "migrated", "unmigrated"]
+          },
+          {
+            "name": "Repair",
+            "file": "Repair.md",
+            "description": "Fix one failure cluster within the approved files; the plan JSON comes last.",
+            "params": [
+              "allowed",
+              "cluster",
+              "digest",
+              "failures",
+              "from",
+              "leftovers",
+              "notes",
+              "plan",
+              "to"
+            ],
+            "variables": ["allowed", "cluster", "digest", "failures", "leftovers", "plan"]
+          }
+        ]
+      }
+    ],
+    "files": {
+      "count": 13,
+      "bytes": 40808,
+      "sha256": "c8cfd3883c4a9c6ee84998ce9919c3fc7308381e9900b14e69cecc9743816c6f"
+    }
+  },
+  "codebase-atlas": {
+    "name": "codebase-atlas",
+    "version": "1",
+    "description": "Survey a pinned commit into subsystems, deep-read each into a card in parallel, assemble an onboarding atlas in code, and run one completeness-critic repair round",
+    "whenToUse": "Onboarding to an unfamiliar codebase, or generating the architecture doc a project never had; regenerating it needs replace. Input: {out?, maxSubsystems?, maxRepairs?, replace?}.",
+    "entry": "codebase-atlas",
+    "workflows": [
+      {
+        "name": "codebase-atlas",
+        "version": "packaged-03",
+        "description": "Survey a pinned commit into subsystems, deep-read them into cards, assemble the atlas in code and repair the gaps one critique finds.",
+        "module": "workflows/codebase-atlas.ts",
+        "roster": [
+          {
+            "name": "Critic",
+            "harness": "codex",
+            "access": "read",
+            "model": null,
+            "description": "Audits the assembled atlas against the repository for gaps; never edits.",
+            "effort": "high"
+          },
+          {
+            "name": "Reader",
+            "harness": "claude",
+            "access": "read",
+            "model": "sonnet",
+            "description": "Deep-reads one subsystem, or researches one repair, into a card; never edits.",
+            "effort": "medium"
+          },
+          {
+            "name": "Surveyor",
+            "harness": "claude",
+            "access": "read",
+            "model": "sonnet",
+            "description": "Skims the layout and build files to partition the repository; never edits.",
+            "effort": "low"
+          },
+          {
+            "name": "Synthesizer",
+            "harness": "claude",
+            "access": "none",
+            "model": "sonnet",
+            "description": "Writes the overview and start-here list from the cards alone; uses no tools.",
+            "effort": "low"
+          }
+        ]
+      }
+    ],
+    "deciders": {},
+    "prompts": [
+      {
+        "root": "comparisons/batches/03-packaged-ports/ported/codebase-atlas.quiet-choir/prompts",
+        "entries": [
+          {
+            "name": "Survey",
+            "file": "Survey.md",
+            "description": "Partition the repository into subsystems from a code-built layout.",
+            "params": ["fileCount", "layout", "maxSubsystems", "omitted"],
+            "variables": ["fileCount", "layout", "maxSubsystems", "omitted"]
+          },
+          {
+            "name": "Read",
+            "file": "Read.md",
+            "description": "Deep-read one subsystem into a card.",
+            "params": ["files", "hint", "moreFiles", "name", "others", "paths", "projectSummary"],
+            "variables": ["files", "hint", "moreFiles", "name", "paths", "projectSummary"]
+          },
+          {
+            "name": "Synthesize",
+            "file": "Synthesize.md",
+            "description": "Write the overview and start-here list from every card at once.",
+            "params": ["cards", "projectSummary", "skipped", "unread"],
+            "variables": ["cards", "projectSummary", "skipped", "unread"]
+          },
+          {
+            "name": "Critique",
+            "file": "Critique.md",
+            "description": "Audit the assembled atlas for completeness against the repository.",
+            "params": [
+              "atlas",
+              "commit",
+              "sections",
+              "skipped",
+              "uncovered",
+              "unmatched",
+              "unread"
+            ],
+            "variables": [
+              "atlas",
+              "commit",
+              "sections",
+              "skipped",
+              "uncovered",
+              "unmatched",
+              "unread"
+            ]
+          },
+          {
+            "name": "Repair",
+            "file": "Repair.md",
+            "description": "Research one section's gaps into a corrected or new card.",
+            "params": ["card", "gaps", "others", "projectSummary", "section"],
+            "variables": ["card", "gaps", "projectSummary", "section"]
+          }
+        ]
+      }
+    ],
+    "files": {
+      "count": 15,
+      "bytes": 38967,
+      "sha256": "b6bd4a3f41885bef04f68c4ca2b24d5027b56098e333e051bb02a6c061cd03c3"
+    }
+  },
+  "dead-code-sweep": {
+    "name": "dead-code-sweep",
+    "version": "1",
+    "description": "Find dead-code candidates through three search modalities, cross-check each with a default-to-keep skeptic, and remove an approved list in an isolated checkout that code verifies",
+    "whenToUse": "Codebase hygiene: removing provably unused exports and files without breaking dynamic or reflective consumers; report-only unless apply is set. Input: {scope?, apply?, verifyCommands?, maxCandidates?}.",
+    "entry": "dead-code-sweep",
+    "workflows": [
+      {
+        "name": "dead-code-sweep",
+        "version": "packaged-03",
+        "description": "Sweep three modalities, keep every candidate a skeptic does not clear, and remove an approved list only after code verifies it.",
+        "module": "workflows/dead-code-sweep.ts",
+        "roster": [
+          {
+            "name": "Remover",
+            "harness": "claude",
+            "access": "write",
+            "model": "sonnet",
+            "description": "Deletes the approved list in an isolated checkout; code runs verification.",
+            "effort": "high"
+          },
+          {
+            "name": "Skeptic",
+            "harness": "claude",
+            "access": "read",
+            "model": "opus",
+            "description": "Hunts a living reference for one candidate, keeping it when unsure; never edits.",
+            "effort": "high"
+          },
+          {
+            "name": "Sweeper",
+            "harness": "claude",
+            "access": "read",
+            "model": "sonnet",
+            "description": "Finds dead-code candidates through one search modality; never edits.",
+            "effort": "medium"
+          }
+        ]
+      }
+    ],
+    "deciders": {},
+    "prompts": [
+      {
+        "root": "comparisons/batches/03-packaged-ports/ported/dead-code-sweep.quiet-choir/prompts",
+        "entries": [
+          {
+            "name": "Sweep",
+            "file": "Sweep.md",
+            "description": "Find candidates through one modality; each is blind to the others.",
+            "params": ["modality", "scope"],
+            "variables": ["modality", "scope"]
+          },
+          {
+            "name": "Alive",
+            "file": "Alive.md",
+            "description": "Try to prove one candidate alive, with a default-to-keep bias.",
+            "params": ["candidate", "modalities"],
+            "variables": ["candidate", "modalities"]
+          },
+          {
+            "name": "Remove",
+            "file": "Remove.md",
+            "description": "Delete exactly the approved list; the approved JSON comes last.",
+            "params": ["digest", "list"],
+            "variables": ["digest", "list"]
+          }
+        ]
+      }
+    ],
+    "files": {
+      "count": 10,
+      "bytes": 16476,
+      "sha256": "05298fe37012e1c64f3c11edf72ed6d5887d1b586eddb12729f8ff330df993f4"
+    }
+  },
+  "deep-code-review": {
+    "name": "deep-code-review",
+    "version": "1",
+    "description": "Review a pinned change set across up to five dimensions, deduplicate in code, adversarially verify every finding, and synthesize a ranked report",
+    "whenToUse": "Pre-merge review of a branch, pull request or module change set when you want findings you can trust without re-reviewing them yourself; read-only, and committed changes only. Input: {base?, head?, paths?, dimensions?, maxChangedLines?, maxFindings?}.",
+    "entry": "deep-code-review",
+    "workflows": [
+      {
+        "name": "deep-code-review",
+        "version": "packaged-03",
+        "description": "Review a pinned range per dimension, deduplicate in code, and report only findings a skeptic could not refute.",
+        "module": "workflows/deep-code-review.ts",
+        "roster": [
+          {
+            "name": "Reporter",
+            "harness": "claude",
+            "access": "none",
+            "model": "sonnet",
+            "description": "Writes the markdown report from the verified findings alone; uses no tools.",
+            "effort": "low"
+          },
+          {
+            "name": "Reviewer",
+            "harness": "claude",
+            "access": "read",
+            "model": "sonnet",
+            "description": "Reviews the patch through one dimension in a snapshot of the head; never edits.",
+            "effort": "medium"
+          },
+          {
+            "name": "Scoper",
+            "harness": "claude",
+            "access": "none",
+            "model": "sonnet",
+            "description": "Summarizes the pinned change and flags risky areas from its patch; uses no tools.",
+            "effort": "low"
+          },
+          {
+            "name": "Skeptic",
+            "harness": "claude",
+            "access": "read",
+            "model": "opus",
+            "description": "Tries to refute one finding at the head, refuting when unsure; never edits.",
+            "effort": "high"
+          }
+        ]
+      }
+    ],
+    "deciders": {},
+    "prompts": [
+      {
+        "root": "comparisons/batches/03-packaged-ports/ported/deep-code-review.quiet-choir/prompts",
+        "entries": [
+          {
+            "name": "Scope",
+            "file": "Scope.md",
+            "description": "Summarize the pinned change and its risks without reviewing it.",
+            "params": ["files", "omitted", "patch"],
+            "variables": ["patch"]
+          },
+          {
+            "name": "Review",
+            "file": "Review.md",
+            "description": "Review the patch through one dimension, in a snapshot of the head.",
+            "params": [
+              "base",
+              "dimension",
+              "files",
+              "head",
+              "omitted",
+              "patch",
+              "riskNotes",
+              "summary"
+            ],
+            "variables": ["dimension", "patch", "riskNotes", "summary"]
+          },
+          {
+            "name": "Refute",
+            "file": "Refute.md",
+            "description": "Try to refute one deduplicated finding, refuting when uncertain.",
+            "params": ["base", "finding", "head", "patch"],
+            "variables": ["finding", "patch"]
+          },
+          {
+            "name": "Report",
+            "file": "Report.md",
+            "description": "Write the report from the confirmed findings and the review gaps.",
+            "params": [
+              "confirmed",
+              "omitted",
+              "summary",
+              "unchecked",
+              "unreviewedDimensions",
+              "unverified"
+            ],
+            "variables": [
+              "confirmed",
+              "omitted",
+              "summary",
+              "unchecked",
+              "unreviewedDimensions",
+              "unverified"
+            ]
+          }
+        ]
+      }
+    ],
+    "files": {
+      "count": 14,
+      "bytes": 29634,
+      "sha256": "2413e4535541b9556100fffbd4842627c54c4855a3bdfb4c13c296fdec76e0f5"
+    }
+  },
+  "dependency-upgrade": {
+    "name": "dependency-upgrade",
+    "version": "1",
+    "description": "Upgrade a dependency: parallel changelog research and usage impact analysis, one approved plan applied in an isolated checkout, and a bounded code-run verify/triage/fix loop before publication",
+    "whenToUse": "Major-version dependency bumps where breaking changes are likely and usage is nontrivial; the operator names the install and verification commands, and nothing reaches the checkout before a human approves the plan and the commands pass. The commands run in the checkout that is published: what the install writes to the manifests is published, and an unignored file they write outside the plan refuses publication, so give verification commands ignored output paths. Input: {package, verifyCommands, toVersion?, maxFixRounds?, manifests?, installCommand?, maxUsageFiles?}.",
+    "entry": "dependency-upgrade",
+    "workflows": [
+      {
+        "name": "dependency-upgrade",
+        "version": "packaged-03",
+        "description": "Research and map an upgrade in parallel, approve one plan, and publish it only after code-run verification and bounded repair rounds.",
+        "module": "workflows/dependency-upgrade.ts",
+        "roster": [
+          {
+            "name": "Analyst",
+            "harness": "claude",
+            "access": "read",
+            "model": "sonnet",
+            "description": "Maps which files use which APIs of the package; never edits.",
+            "effort": "medium"
+          },
+          {
+            "name": "Fixer",
+            "harness": "claude",
+            "access": "write",
+            "model": "sonnet",
+            "description": "Fixes one failure cluster in the files it owns, in an isolated checkout.",
+            "effort": "high"
+          },
+          {
+            "name": "Planner",
+            "harness": "claude",
+            "access": "none",
+            "model": "opus",
+            "description": "Joins the breaking changes with the usage map into a plan; uses no tools.",
+            "effort": "high"
+          },
+          {
+            "name": "Researcher",
+            "harness": "claude",
+            "access": "read",
+            "model": "sonnet",
+            "description": "Reads the changelog and migration guide on the web; sees no repository file.",
+            "effort": "medium"
+          },
+          {
+            "name": "Triager",
+            "harness": "claude",
+            "access": "read",
+            "model": "sonnet",
+            "description": "Clusters code-run failures by root cause in the verified checkout; never edits.",
+            "effort": "medium"
+          },
+          {
+            "name": "Upgrader",
+            "harness": "claude",
+            "access": "write",
+            "model": "sonnet",
+            "description": "Applies the approved plan in an isolated checkout; code installs and verifies.",
+            "effort": "high"
+          }
+        ]
+      }
+    ],
+    "deciders": {},
+    "prompts": [
+      {
+        "root": "comparisons/batches/03-packaged-ports/ported/dependency-upgrade.quiet-choir/prompts",
+        "entries": [
+          {
+            "name": "Research",
+            "file": "Research.md",
+            "description": "Read the changelog and migration guide for every breaking change up to the target.",
+            "params": ["evidence", "evidenceOmitted", "manifests", "package", "toVersion"],
+            "variables": ["package", "toVersion"]
+          },
+          {
+            "name": "Impact",
+            "file": "Impact.md",
+            "description": "Map which files use which APIs of the package, classifying every code-found file.",
+            "params": ["evidence", "evidenceOmitted", "files", "manifests", "package", "unmapped"],
+            "variables": ["files", "package", "unmapped"]
+          },
+          {
+            "name": "Plan",
+            "file": "Plan.md",
+            "description": "Join the breaking changes with the usage map into an ordered, scoped plan.",
+            "params": [
+              "breaking",
+              "exposure",
+              "from",
+              "install",
+              "manifests",
+              "package",
+              "to",
+              "usage",
+              "verify"
+            ],
+            "variables": [
+              "exposure",
+              "from",
+              "install",
+              "manifests",
+              "package",
+              "to",
+              "usage",
+              "verify"
+            ]
+          },
+          {
+            "name": "Apply",
+            "file": "Apply.md",
+            "description": "Apply the approved plan in an isolated checkout; the plan JSON comes last.",
+            "params": ["digest", "from", "install", "package", "plan", "to"],
+            "variables": ["digest", "from", "install", "package", "plan", "to"]
+          },
+          {
+            "name": "Triage",
+            "file": "Triage.md",
+            "description": "Cluster the code-run failures by root cause, for the fixers or, at the cap, for the report.",
+            "params": [
+              "allowed",
+              "breaking",
+              "failures",
+              "from",
+              "install",
+              "package",
+              "repair",
+              "testFocus",
+              "to"
+            ],
+            "variables": ["allowed", "from", "install", "package", "repair", "testFocus", "to"]
+          },
+          {
+            "name": "Fix",
+            "file": "Fix.md",
+            "description": "Fix one failure cluster forward, in the files it owns; the plan JSON comes last.",
+            "params": [
+              "breaking",
+              "cluster",
+              "digest",
+              "failures",
+              "from",
+              "package",
+              "plan",
+              "to"
+            ],
+            "variables": ["cluster", "digest", "from", "package", "plan", "to"]
+          }
+        ]
+      }
+    ],
+    "files": {
+      "count": 18,
+      "bytes": 45289,
+      "sha256": "44c7446f976bf829be8dd6e1a6ecb15a233b37b3ef15b76ce6b655393364215e"
+    }
+  },
+  "design-tournament": {
+    "name": "design-tournament",
+    "version": "1",
+    "description": "Four proposers with forced-diverse design philosophies, an independent anonymized judge panel scoring a fixed rubric that code tallies, and a synthesis that grafts or rejects each of the losers' best ideas",
+    "whenToUse": "Architecture and product decisions with a wide option space, where a single-track designer would anchor on the first workable idea. Input: {brief, context?, judges?, crossHarness?, out?, publication?}. A parent under --require-grants maps Proposer, Judge and Synthesizer to a Claude ReadOnly ceiling and CodexJudge to a Codex ReadOnly ceiling, even with crossHarness off.",
+    "entry": "design-tournament",
+    "workflows": [
+      {
+        "name": "design-tournament",
+        "version": "packaged-03",
+        "description": "Propose under four forced philosophies, score anonymized proposals with an independent panel, tally in code and synthesize with recorded grafts.",
+        "module": "workflows/design-tournament.ts",
+        "roster": [
+          {
+            "name": "CodexJudge",
+            "harness": "codex",
+            "access": "read",
+            "model": null,
+            "description": "A judge seat on the other harness, so agreement spans two models; never edits.",
+            "effort": "high"
+          },
+          {
+            "name": "Judge",
+            "harness": "claude",
+            "access": "read",
+            "model": "opus",
+            "description": "Scores every anonymized proposal on the rubric as one seat; never edits.",
+            "effort": "high"
+          },
+          {
+            "name": "Proposer",
+            "harness": "claude",
+            "access": "read",
+            "model": "sonnet",
+            "description": "Designs for the brief in character, as one assigned philosophy; never edits.",
+            "effort": "medium"
+          },
+          {
+            "name": "Synthesizer",
+            "harness": "claude",
+            "access": "none",
+            "model": "opus",
+            "description": "Builds the design on the winner and decides every losing idea; uses no tools.",
+            "effort": "high"
+          }
+        ]
+      }
+    ],
+    "deciders": {},
+    "prompts": [
+      {
+        "root": "comparisons/batches/03-packaged-ports/ported/design-tournament.quiet-choir/prompts",
+        "entries": [
+          {
+            "name": "Propose",
+            "file": "Propose.md",
+            "description": "Design for the brief in character, as one assigned philosophy.",
+            "params": ["brief", "context", "philosophy"],
+            "variables": ["brief", "context", "philosophy"]
+          },
+          {
+            "name": "Judge",
+            "file": "Judge.md",
+            "description": "Score every anonymized proposal on the fixed rubric as one independent seat.",
+            "params": ["brief", "context", "judges", "proposals", "seat"],
+            "variables": ["brief", "context", "judges", "proposals", "seat"]
+          },
+          {
+            "name": "Synthesize",
+            "file": "Synthesize.md",
+            "description": "Build the design on the winner and decide every losing idea by its ID.",
+            "params": [
+              "brief",
+              "context",
+              "dissent",
+              "ideas",
+              "judges",
+              "proposal",
+              "scoreboard",
+              "winner"
+            ],
+            "variables": ["brief", "context", "dissent", "ideas", "judges", "scoreboard", "winner"]
+          }
+        ]
+      }
+    ],
+    "files": {
+      "count": 12,
+      "bytes": 32026,
+      "sha256": "aec678b1576b86150357e9013408275507651fdd7502bce7a648c873a9599753"
+    }
+  },
+  "docs-drift-audit": {
+    "name": "docs-drift-audit",
+    "version": "1",
+    "description": "Decompose each prioritized doc at HEAD into quoted, checkable claims, verify each doc against the code, and report the drift or publish a human-approved patch for it, gated on verifyCommands when given",
+    "whenToUse": "Pre-release doc truthfulness check, or after refactors that likely invalidated READMEs and guides; report-only unless fix is set, and a fix run needs a clean checkout. Input: {paths? (Git pathspecs), fix?, maxDocs?, maxInventory?, maxClaims?, maxDocBytes?, evidenceCommands? (argv or {argv, okExitCodes}), verifyCommands?}.",
+    "entry": "docs-drift-audit",
+    "workflows": [
+      {
+        "name": "docs-drift-audit",
+        "version": "packaged-03",
+        "description": "Rank the docs at HEAD, decompose each into quoted claims, verify them against the code, and publish a human-approved patch for the drift, gated on verifyCommands when given.",
+        "module": "workflows/docs-drift-audit.ts",
+        "roster": [
+          {
+            "name": "Checker",
+            "harness": "claude",
+            "access": "read",
+            "model": "sonnet",
+            "description": "Verifies one doc's claims against the code at the base commit; never edits.",
+            "effort": "medium"
+          },
+          {
+            "name": "Extractor",
+            "harness": "claude",
+            "access": "none",
+            "model": "sonnet",
+            "description": "Decomposes one doc, given in its prompt, into checkable quoted claims.",
+            "effort": "low"
+          },
+          {
+            "name": "Fixer",
+            "harness": "claude",
+            "access": "write",
+            "model": "sonnet",
+            "description": "Patches one drifted doc in an isolated checkout; code checks and publishes it.",
+            "effort": "low"
+          },
+          {
+            "name": "Librarian",
+            "harness": "claude",
+            "access": "none",
+            "model": "sonnet",
+            "description": "Classifies the listed docs by audience and priority from paths and headings.",
+            "effort": "low"
+          }
+        ]
+      }
+    ],
+    "deciders": {},
+    "prompts": [
+      {
+        "root": "comparisons/batches/03-packaged-ports/ported/docs-drift-audit.quiet-choir/prompts",
+        "entries": [
+          {
+            "name": "Classify",
+            "file": "Classify.md",
+            "description": "Give each listed doc an audience and a priority from its path and headings.",
+            "params": ["base", "docs"],
+            "variables": ["base", "docs"]
+          },
+          {
+            "name": "Extract",
+            "file": "Extract.md",
+            "description": "Decompose one doc into atomic, checkable claims, each with a verbatim quote.",
+            "params": ["audience", "maxClaims", "path", "text"],
+            "variables": ["audience", "maxClaims", "path", "text"]
+          },
+          {
+            "name": "Check",
+            "file": "Check.md",
+            "description": "Verify one doc's claims against the code, in order, with the evidence commands.",
+            "params": ["base", "claims", "evidence", "path"],
+            "variables": ["base", "claims", "evidence", "path"]
+          },
+          {
+            "name": "Fix",
+            "file": "Fix.md",
+            "description": "Patch one doc where its verified claims drifted, leaving true claims alone.",
+            "params": ["drifted", "kept", "path"],
+            "variables": ["drifted", "kept", "path"]
+          }
+        ]
+      }
+    ],
+    "files": {
+      "count": 12,
+      "bytes": 50270,
+      "sha256": "fe2d838ad9ec82aa7d3d1e051a44f3128051891651db48a286f65a8524921fac"
+    }
+  },
+  "feature-factory": {
+    "name": "feature-factory",
+    "version": "1",
+    "description": "Conductor: run prd-decompose as a child, build an approved plan of disjoint modules in isolated worktrees, review each module with a deep-code-review child, repair confirmed findings, and publish only a verified integration",
+    "whenToUse": "PRD-to-reviewed-code for a feature sized to one repository, from a clean checkout, or as the template for composing package workflows as typed children. Input: {prd, verifyCommands, codebase?, maxModules?, dimensions?, maxFindings?, maxCalls?}.",
+    "entry": "feature-factory",
+    "workflows": [
+      {
+        "name": "feature-factory",
+        "version": "packaged-03",
+        "description": "Decompose a PRD as a child, build an approved disjoint module plan in worktrees, review each module as a child, repair, verify and publish.",
+        "module": "workflows/feature-factory.ts",
+        "roster": [
+          {
+            "name": "Builder",
+            "harness": "claude",
+            "access": "write",
+            "model": "sonnet",
+            "description": "Implements one module inside its file areas, in an isolated checkout.",
+            "effort": "high"
+          },
+          {
+            "name": "Fixer",
+            "harness": "claude",
+            "access": "write",
+            "model": "sonnet",
+            "description": "Fixes one module’s confirmed review findings, in an isolated checkout.",
+            "effort": "high"
+          },
+          {
+            "name": "Planner",
+            "harness": "claude",
+            "access": "read",
+            "model": "opus",
+            "description": "Groups the backlog into disjoint, ordered modules; never edits.",
+            "effort": "high"
+          },
+          {
+            "name": "Reader",
+            "harness": "claude",
+            "access": "read",
+            "model": null,
+            "description": "Delegation ceiling for the children’s read-only roles; never called directly.",
+            "effort": null
+          }
+        ]
+      }
+    ],
+    "deciders": {},
+    "prompts": [
+      {
+        "root": "comparisons/batches/03-packaged-ports/ported/feature-factory.quiet-choir/prompts",
+        "entries": [
+          {
+            "name": "Plan",
+            "file": "Plan.md",
+            "description": "Group the backlog into disjoint modules that build in a fixed order.",
+            "params": ["files", "max", "omitted", "openQuestions", "sequencing", "tickets"],
+            "variables": ["files", "max", "omitted", "openQuestions", "sequencing", "tickets"]
+          },
+          {
+            "name": "Build",
+            "file": "Build.md",
+            "description": "Implement one module of the approved plan; the plan JSON comes last.",
+            "params": ["builtOn", "digest", "module", "plan", "tickets"],
+            "variables": ["builtOn", "digest", "module", "plan", "tickets"]
+          },
+          {
+            "name": "Repair",
+            "file": "Repair.md",
+            "description": "Fix the confirmed review findings of one module, inside its areas.",
+            "params": ["findings", "module"],
+            "variables": ["findings", "module"]
+          }
+        ]
+      },
+      {
+        "root": "comparisons/batches/03-packaged-ports/ported/prd-decompose.quiet-choir/prompts",
+        "entries": [
+          {
+            "name": "Lens",
+            "file": "Lens.md",
+            "description": "Extract anchored work items through one lens; four other readers own the rest.",
+            "params": ["codebase", "lens", "prd"],
+            "variables": ["codebase", "lens"]
+          },
+          {
+            "name": "Merge",
+            "file": "Merge.md",
+            "description": "Merge the lenses into deduplicated, ordered tickets by judgment.",
+            "params": ["items", "questions"],
+            "variables": ["items", "questions"]
+          },
+          {
+            "name": "Audit",
+            "file": "Audit.md",
+            "description": "Walk the PRD backwards and report every coverage gap in the backlog.",
+            "params": ["prd", "tickets"],
+            "variables": []
+          },
+          {
+            "name": "Repair",
+            "file": "Repair.md",
+            "description": "Add or amend tickets for the gaps, quoting the PRD; code applies the patch.",
+            "params": ["gaps", "next", "prd", "sequencing", "tickets"],
+            "variables": ["gaps", "next", "sequencing"]
+          }
+        ]
+      },
+      {
+        "root": "comparisons/batches/03-packaged-ports/ported/deep-code-review.quiet-choir/prompts",
+        "entries": [
+          {
+            "name": "Scope",
+            "file": "Scope.md",
+            "description": "Summarize the pinned change and its risks without reviewing it.",
+            "params": ["files", "omitted", "patch"],
+            "variables": ["patch"]
+          },
+          {
+            "name": "Review",
+            "file": "Review.md",
+            "description": "Review the patch through one dimension, in a snapshot of the head.",
+            "params": [
+              "base",
+              "dimension",
+              "files",
+              "head",
+              "omitted",
+              "patch",
+              "riskNotes",
+              "summary"
+            ],
+            "variables": ["dimension", "patch", "riskNotes", "summary"]
+          },
+          {
+            "name": "Refute",
+            "file": "Refute.md",
+            "description": "Try to refute one deduplicated finding, refuting when uncertain.",
+            "params": ["base", "finding", "head", "patch"],
+            "variables": ["finding", "patch"]
+          },
+          {
+            "name": "Report",
+            "file": "Report.md",
+            "description": "Write the report from the confirmed findings and the review gaps.",
+            "params": [
+              "confirmed",
+              "omitted",
+              "summary",
+              "unchecked",
+              "unreviewedDimensions",
+              "unverified"
+            ],
+            "variables": [
+              "confirmed",
+              "omitted",
+              "summary",
+              "unchecked",
+              "unreviewedDimensions",
+              "unverified"
+            ]
+          }
+        ]
+      }
+    ],
+    "files": {
+      "count": 14,
+      "bytes": 45957,
+      "sha256": "18fcf3215b4ad9cca4a0345fad1c50f578d92713c34b8f3b47c87edc1542903c"
+    }
+  },
+  "feedback-synthesis": {
+    "name": "feedback-synthesis",
+    "version": "1",
+    "description": "Parse a feedback corpus into numbered items in code, fix a theme vocabulary on an even sample, tag disjoint shards in parallel, count, check quotes and rank by severity in code, and deep-dive the top themes into a quotable report",
+    "whenToUse": "Turning support, review, NPS or survey exports in the repository into ranked product themes with counts, severity and verbatim quotes; read-only, and every item is accounted for. Input: {sources, format?, textField?, fields?, focus?, deepDives?, severityWeight?, sampleSize?, shardSize?, maxShards?, diveItems?}.",
+    "entry": "feedback-synthesis",
+    "workflows": [
+      {
+        "name": "feedback-synthesis",
+        "version": "packaged-03",
+        "description": "Parse a feedback corpus in code, calibrate a theme vocabulary, tag disjoint shards, count and rank in code, and deep-dive the top themes into a quotable report.",
+        "module": "workflows/feedback-synthesis.ts",
+        "roster": [
+          {
+            "name": "Calibrator",
+            "harness": "claude",
+            "access": "none",
+            "model": "sonnet",
+            "description": "Fixes the theme vocabulary from a code-drawn sample; uses no tools.",
+            "effort": "medium"
+          },
+          {
+            "name": "Diver",
+            "harness": "claude",
+            "access": "none",
+            "model": "sonnet",
+            "description": "Explains one theme's mechanism from its own items; uses no tools.",
+            "effort": "medium"
+          },
+          {
+            "name": "Reporter",
+            "harness": "claude",
+            "access": "none",
+            "model": "opus",
+            "description": "Writes the summary and long-tail prose around code-rendered facts; no tools.",
+            "effort": "high"
+          },
+          {
+            "name": "Tagger",
+            "harness": "claude",
+            "access": "none",
+            "model": "sonnet",
+            "description": "Tags every item of one shard against the fixed vocabulary; uses no tools.",
+            "effort": "low"
+          }
+        ]
+      }
+    ],
+    "deciders": {},
+    "prompts": [
+      {
+        "root": "comparisons/batches/03-packaged-ports/ported/feedback-synthesis.quiet-choir/prompts",
+        "entries": [
+          {
+            "name": "Calibrate",
+            "file": "Calibrate.md",
+            "description": "Fix the theme vocabulary from an evenly spread sample before any tagging.",
+            "params": ["fields", "focus", "items", "total"],
+            "variables": ["fields", "focus", "items", "total"]
+          },
+          {
+            "name": "Tag",
+            "file": "Tag.md",
+            "description": "Tag every item of one shard against the fixed vocabulary, with verbatim quotes.",
+            "params": ["focus", "items", "shard", "shards", "vocabulary"],
+            "variables": ["focus", "shard", "shards", "vocabulary"]
+          },
+          {
+            "name": "Dive",
+            "file": "Dive.md",
+            "description": "Deep-dive one ranked theme from its own items: storyline, segments, one action.",
+            "params": ["focus", "items", "omitted", "starters", "theme"],
+            "variables": ["focus", "items", "omitted", "starters", "theme"]
+          },
+          {
+            "name": "Report",
+            "file": "Report.md",
+            "description": "Write the summary, long-tail and emergent prose; code renders the rest.",
+            "params": [
+              "coverage",
+              "dives",
+              "emergent",
+              "gaps",
+              "longTail",
+              "moreEmergent",
+              "ranked",
+              "weight"
+            ],
+            "variables": [
+              "coverage",
+              "dives",
+              "emergent",
+              "gaps",
+              "longTail",
+              "moreEmergent",
+              "ranked",
+              "weight"
+            ]
+          }
+        ]
+      }
+    ],
+    "files": {
+      "count": 15,
+      "bytes": 50175,
+      "sha256": "e0ccf4a3689eb18f835f1f4f76dceca4f5587a29d0223b6e2d754a0e29e57a42"
+    }
+  },
+  "flaky-test-hunt": {
+    "name": "flaky-test-hunt",
+    "version": "1",
+    "description": "Gather flaky-test suspects from git history, test-code smells and CI artifacts, stress-run each suspect in a tracked test file with the operator's single-test command for a measured flake rate, diagnose a mechanism for each confirmed flake, and publish approved fixes only after code re-stresses them",
+    "whenToUse": "Unexplained CI red streaks, or auditing a test suite with a reputation for randomness; report-only unless fix is set. Input: {testCommand, scope?, testFiles?, passPattern?, runs?, maxSuspects?, fix?, fixRuns?, verifyCommands?, runTimeoutMs?, historyDepth?}.",
+    "entry": "flaky-test-hunt",
+    "workflows": [
+      {
+        "name": "flaky-test-hunt",
+        "version": "packaged-03",
+        "description": "Sweep three evidence sources, stress-run suspects in code, diagnose only measured flakes, and publish approved fixes only after code re-stresses them.",
+        "module": "workflows/flaky-test-hunt.ts",
+        "roster": [
+          {
+            "name": "Diagnostician",
+            "harness": "claude",
+            "access": "read",
+            "model": "opus",
+            "description": "Names the mechanism of one empirically flaky test and proposes a real fix.",
+            "effort": "high"
+          },
+          {
+            "name": "Fixer",
+            "harness": "claude",
+            "access": "write",
+            "model": "opus",
+            "description": "Applies the approved fixes in an isolated checkout; code re-stresses them.",
+            "effort": "high"
+          },
+          {
+            "name": "Sweeper",
+            "harness": "claude",
+            "access": "read",
+            "model": "sonnet",
+            "description": "Finds flaky-test suspects from one evidence source; never edits or runs tests.",
+            "effort": "medium"
+          }
+        ]
+      }
+    ],
+    "deciders": {},
+    "prompts": [
+      {
+        "root": "comparisons/batches/03-packaged-ports/ported/flaky-test-hunt.quiet-choir/prompts",
+        "entries": [
+          {
+            "name": "Sweep",
+            "file": "Sweep.md",
+            "description": "Find suspects from one evidence source; each sweeper is blind to the others.",
+            "params": ["artifacts", "history", "limit", "modality", "scope", "testFiles"],
+            "variables": ["artifacts", "history", "limit", "modality", "scope", "testFiles"]
+          },
+          {
+            "name": "Diagnose",
+            "file": "Diagnose.md",
+            "description": "Name the mechanism of one measured flake and propose a fix that removes it.",
+            "params": ["command", "commit", "residue", "stress", "suspect"],
+            "variables": ["command", "commit", "residue", "stress", "suspect"]
+          },
+          {
+            "name": "Fix",
+            "file": "Fix.md",
+            "description": "Apply exactly the approved fixes; the approved JSON comes last.",
+            "params": ["digest", "fixRuns", "plan", "verifying"],
+            "variables": ["digest", "fixRuns", "plan", "verifying"]
+          }
+        ]
+      }
+    ],
+    "files": {
+      "count": 12,
+      "bytes": 55821,
+      "sha256": "f8ac9bb5bca7be6a7cacda737dbee40c1e0d37c4b47ed690d8f8d6ecc80a044c"
+    }
+  },
+  "prd-decompose": {
+    "name": "prd-decompose",
+    "version": "1",
+    "description": "Read a PRD through five parallel lenses, merge the items code can anchor into deduplicated, dependency-ordered tickets with acceptance criteria, and audit coverage backwards with bounded patch repairs",
+    "whenToUse": "Sprint planning from a PRD or spec, producing a backlog whose error states, migrations and instrumentation are ticketed, not just the happy path; composable as a typed child. Input: {prd, codebase?, out?, publication?, maxRepairs?, maxPrdBytes?, maxCodebaseFiles?}.",
+    "entry": "prd-decompose",
+    "workflows": [
+      {
+        "name": "prd-decompose",
+        "version": "packaged-03",
+        "description": "Read a PRD through five settled lenses, merge anchored items into ordered tickets, and audit coverage backwards with patch repairs.",
+        "module": "workflows/prd-decompose.ts",
+        "roster": [
+          {
+            "name": "Critic",
+            "harness": "claude",
+            "access": "none",
+            "model": "opus",
+            "description": "Walks the PRD backwards and reports the backlog coverage gaps; uses no tools.",
+            "effort": "high"
+          },
+          {
+            "name": "LensReader",
+            "harness": "claude",
+            "access": "none",
+            "model": "sonnet",
+            "description": "Extracts anchored work items from the PRD through one lens; uses no tools.",
+            "effort": "medium"
+          },
+          {
+            "name": "Merger",
+            "harness": "claude",
+            "access": "none",
+            "model": "opus",
+            "description": "Merges the lenses into deduplicated tickets in dependency order; uses no tools.",
+            "effort": "high"
+          },
+          {
+            "name": "Repairer",
+            "harness": "claude",
+            "access": "none",
+            "model": "sonnet",
+            "description": "Adds or amends tickets for the coverage gaps as a patch; uses no tools.",
+            "effort": "medium"
+          }
+        ]
+      }
+    ],
+    "deciders": {},
+    "prompts": [
+      {
+        "root": "comparisons/batches/03-packaged-ports/ported/prd-decompose.quiet-choir/prompts",
+        "entries": [
+          {
+            "name": "Lens",
+            "file": "Lens.md",
+            "description": "Extract anchored work items through one lens; four other readers own the rest.",
+            "params": ["codebase", "lens", "prd"],
+            "variables": ["codebase", "lens"]
+          },
+          {
+            "name": "Merge",
+            "file": "Merge.md",
+            "description": "Merge the lenses into deduplicated, ordered tickets by judgment.",
+            "params": ["items", "questions"],
+            "variables": ["items", "questions"]
+          },
+          {
+            "name": "Audit",
+            "file": "Audit.md",
+            "description": "Walk the PRD backwards and report every coverage gap in the backlog.",
+            "params": ["prd", "tickets"],
+            "variables": []
+          },
+          {
+            "name": "Repair",
+            "file": "Repair.md",
+            "description": "Add or amend tickets for the gaps, quoting the PRD; code applies the patch.",
+            "params": ["gaps", "next", "prd", "sequencing", "tickets"],
+            "variables": ["gaps", "next", "sequencing"]
+          }
+        ]
+      }
+    ],
+    "files": {
+      "count": 17,
+      "bytes": 39265,
+      "sha256": "0676232cc973dfadeb34c4e73dfff75fbee2ca2471867515fea3aa6fae75559d"
+    }
+  },
+  "prd-to-spec": {
+    "name": "prd-to-spec",
+    "version": "1",
+    "description": "Ground a PRD in the existing codebase, draft a technical spec through five lenses, optionally settle the top load-bearing decision with a design-tournament child, and audit the merged spec for implementability and PRD fidelity with one repair round",
+    "whenToUse": "The step between PRD and tickets: producing a spec an engineer can build from without re-deriving the architecture inside the tickets. Input: {prd, codebase?, decideArchitecture?, judges?, crossHarness?, out?, publication?, maxPrdBytes?, maxCodebaseFiles?}. Under --require-grants nothing needs a grant: no role edits, and the tournament child maps onto the Reader and CodexReader ceilings.",
+    "entry": "prd-to-spec",
+    "workflows": [
+      {
+        "name": "prd-to-spec",
+        "version": "packaged-03",
+        "description": "Ground a PRD in the codebase, draft five technical lenses, optionally settle the top load-bearing decision with a design-tournament child, merge, audit twice and repair once.",
+        "module": "workflows/prd-to-spec.ts",
+        "roster": [
+          {
+            "name": "Auditor",
+            "harness": "claude",
+            "access": "none",
+            "model": "opus",
+            "description": "Audits the spec for implementability or PRD fidelity; uses no tools.",
+            "effort": "high"
+          },
+          {
+            "name": "CodexReader",
+            "harness": "codex",
+            "access": "read",
+            "model": null,
+            "description": "Delegation ceiling for the tournament child Codex judge; never called directly.",
+            "effort": null
+          },
+          {
+            "name": "Grounder",
+            "harness": "claude",
+            "access": "read",
+            "model": "sonnet",
+            "description": "Maps the architecture, conventions and constraints the spec must fit; never edits.",
+            "effort": "medium"
+          },
+          {
+            "name": "LensWriter",
+            "harness": "claude",
+            "access": "read",
+            "model": "sonnet",
+            "description": "Drafts one technical lens of the spec and its contested decisions; never edits.",
+            "effort": "medium"
+          },
+          {
+            "name": "Merger",
+            "harness": "claude",
+            "access": "none",
+            "model": "opus",
+            "description": "Merges the lenses into one spec and decides every contested item; uses no tools.",
+            "effort": "high"
+          },
+          {
+            "name": "Reader",
+            "harness": "claude",
+            "access": "read",
+            "model": null,
+            "description": "Delegation ceiling for the tournament child Claude roles; never called directly.",
+            "effort": null
+          },
+          {
+            "name": "Repairer",
+            "harness": "claude",
+            "access": "none",
+            "model": "sonnet",
+            "description": "Fixes the audited gaps in place, deferring to open questions; uses no tools.",
+            "effort": "medium"
+          }
+        ]
+      }
+    ],
+    "deciders": {},
+    "prompts": [
+      {
+        "root": "comparisons/batches/03-packaged-ports/ported/prd-to-spec.quiet-choir/prompts",
+        "entries": [
+          {
+            "name": "Ground",
+            "file": "Ground.md",
+            "description": "Map the existing architecture the spec must fit; design nothing.",
+            "params": ["codebase", "prd"],
+            "variables": ["codebase"]
+          },
+          {
+            "name": "Lens",
+            "file": "Lens.md",
+            "description": "Draft one technical lens of the spec and record what it cannot settle.",
+            "params": ["grounding", "lens", "prd"],
+            "variables": ["grounding", "lens"]
+          },
+          {
+            "name": "Merge",
+            "file": "Merge.md",
+            "description": "Merge the lens drafts into one spec and decide every contested item by ID.",
+            "params": ["decisions", "grounding", "headings", "ids", "prd", "sections", "settled"],
+            "variables": ["decisions", "sections", "settled"]
+          },
+          {
+            "name": "Audit",
+            "file": "Audit.md",
+            "description": "Audit the spec for implementability, or for fidelity to the PRD both ways.",
+            "params": ["audit", "prd", "spec"],
+            "variables": ["audit", "prd", "spec"]
+          },
+          {
+            "name": "Repair",
+            "file": "Repair.md",
+            "description": "Fix the audited gaps in place, deferring to open questions.",
+            "params": ["gaps", "headings", "ids", "prd", "settled", "spec"],
+            "variables": ["gaps", "settled", "spec"]
+          },
+          {
+            "name": "Brief",
+            "file": "Brief.md",
+            "description": "The design-tournament child's brief: the decision and its options.",
+            "params": ["decision"],
+            "variables": ["decision"]
+          },
+          {
+            "name": "Context",
+            "file": "Context.md",
+            "description": "The design-tournament child's context: the grounding map and the PRD.",
+            "params": ["grounding", "prd"],
+            "variables": []
+          }
+        ]
+      },
+      {
+        "root": "comparisons/batches/03-packaged-ports/ported/design-tournament.quiet-choir/prompts",
+        "entries": [
+          {
+            "name": "Propose",
+            "file": "Propose.md",
+            "description": "Design for the brief in character, as one assigned philosophy.",
+            "params": ["brief", "context", "philosophy"],
+            "variables": ["brief", "context", "philosophy"]
+          },
+          {
+            "name": "Judge",
+            "file": "Judge.md",
+            "description": "Score every anonymized proposal on the fixed rubric as one independent seat.",
+            "params": ["brief", "context", "judges", "proposals", "seat"],
+            "variables": ["brief", "context", "judges", "proposals", "seat"]
+          },
+          {
+            "name": "Synthesize",
+            "file": "Synthesize.md",
+            "description": "Build the design on the winner and decide every losing idea by its ID.",
+            "params": [
+              "brief",
+              "context",
+              "dissent",
+              "ideas",
+              "judges",
+              "proposal",
+              "scoreboard",
+              "winner"
+            ],
+            "variables": ["brief", "context", "dissent", "ideas", "judges", "scoreboard", "winner"]
+          }
+        ]
+      }
+    ],
+    "files": {
+      "count": 19,
+      "bytes": 41631,
+      "sha256": "9bc6d311c054e80da201596a02bcf784e2589ce626b5913c106341cf3b3830a6"
+    }
+  },
+  "refactor-campaign": {
+    "name": "refactor-campaign",
+    "version": "1",
+    "description": "Find refactoring targets by measurable pressure, pin each target's behavior with a characterization net that code proves green, and refactor only behind every net after a human approves the plan",
+    "whenToUse": "Behavior-preserving technical-debt paydown, where the safety net is the point, not an afterthought; report-only unless apply is set, and the checkout is untouched until then. Input: {testCommand (runs one test file appended as its last argument), scope?, goal?, maxTargets? (1 to 8), netRounds?, apply?, verifyCommands (at least one with apply)}.",
+    "entry": "refactor-campaign",
+    "workflows": [
+      {
+        "name": "refactor-campaign",
+        "version": "packaged-03",
+        "description": "Pin each ranked target with a code-verified characterization net, then refactor behind every net only after approval.",
+        "module": "workflows/refactor-campaign.ts",
+        "roster": [
+          {
+            "name": "NetWriter",
+            "harness": "claude",
+            "access": "write",
+            "model": "opus",
+            "description": "Adds characterization tests in an isolated checkout; code runs them.",
+            "effort": "high"
+          },
+          {
+            "name": "Ranker",
+            "harness": "claude",
+            "access": "none",
+            "model": "opus",
+            "description": "Ranks the surveyed targets by payoff against risk; uses no tools.",
+            "effort": "high"
+          },
+          {
+            "name": "Refactorer",
+            "harness": "claude",
+            "access": "write",
+            "model": "opus",
+            "description": "Applies one approved refactoring in an isolated checkout; code runs the nets.",
+            "effort": "high"
+          },
+          {
+            "name": "Reviewer",
+            "harness": "claude",
+            "access": "none",
+            "model": "opus",
+            "description": "Judges from the diff whether a refactoring is structural; uses no tools.",
+            "effort": "high"
+          },
+          {
+            "name": "Surveyor",
+            "harness": "claude",
+            "access": "read",
+            "model": "sonnet",
+            "description": "Finds refactoring targets by measurable pressure; never edits.",
+            "effort": "medium"
+          }
+        ]
+      }
+    ],
+    "deciders": {},
+    "prompts": [
+      {
+        "root": "comparisons/batches/03-packaged-ports/ported/refactor-campaign.quiet-choir/prompts",
+        "entries": [
+          {
+            "name": "Survey",
+            "file": "Survey.md",
+            "description": "Find targets by measurable pressure, with evidence and current testability.",
+            "params": ["goal", "scope"],
+            "variables": ["goal", "scope"]
+          },
+          {
+            "name": "Rank",
+            "file": "Rank.md",
+            "description": "Select the best payoff-for-risk targets and name each refactoring.",
+            "params": ["maxTargets", "targets"],
+            "variables": ["maxTargets", "targets"]
+          },
+          {
+            "name": "PinNet",
+            "file": "PinNet.md",
+            "description": "Write, or rewrite from its red output, one target characterization net.",
+            "params": ["command", "previous", "target"],
+            "variables": ["command", "previous", "target"]
+          },
+          {
+            "name": "Refactor",
+            "file": "Refactor.md",
+            "description": "Apply one approved refactoring behind the nets; the approved goal and plan JSON come last.",
+            "params": [
+              "approved",
+              "behaviors",
+              "digest",
+              "goal",
+              "netFile",
+              "protectedFiles",
+              "target"
+            ],
+            "variables": [
+              "approved",
+              "behaviors",
+              "digest",
+              "goal",
+              "netFile",
+              "protectedFiles",
+              "target"
+            ]
+          },
+          {
+            "name": "Review",
+            "file": "Review.md",
+            "description": "Judge from the diff and the net whether a refactoring is structural.",
+            "params": [
+              "behaviors",
+              "diff",
+              "files",
+              "goal",
+              "netFile",
+              "netShownBytes",
+              "netSource",
+              "shownBytes",
+              "target"
+            ],
+            "variables": [
+              "behaviors",
+              "diff",
+              "files",
+              "goal",
+              "netFile",
+              "netShownBytes",
+              "netSource",
+              "shownBytes",
+              "target"
+            ]
+          }
+        ]
+      }
+    ],
+    "files": {
+      "count": 14,
+      "bytes": 54645,
+      "sha256": "6255c1285afe4f41f6bb4f8de1b72373962b0d32eb1dfa5e7be2685c1b826774"
+    }
+  },
+  "release-gate": {
+    "name": "release-gate",
+    "version": "1",
+    "description": "Gate a release on six readiness dimensions with evidence: code runs the operator's tests and evidence commands, read-only assessors judge the pinned range, an independent Codex skeptic confirms each blocker, and the gatekeeper chooses only among the decisions a code-owned rule allows",
+    "whenToUse": "The go/no-go gate before shipping or promoting a release, decided from evidence rather than vibes. Run it on a checkout with no uncommitted or untracked files (ignored ones such as dependencies are fine) whose HEAD is the release; it gates since the previous tag by default, or since a given ancestor of HEAD. No agent edits the checkout, but the operator's commands run in it: one that moves HEAD or rewrites a tracked file refuses the gate, and an artifact that is not git-ignored refuses the next gate there; each pinned reader leaves a run-owned ref under refs/quiet-choir/ until workflow rm --refs. A go needs testCommands while tests is in blockOn: without them tests is cannot-check. Input: {since?, tagPattern?, policy?, blockOn?, testCommands?, evidenceCommands?, commandTimeoutMs?, maxRangeChars?}.",
+    "entry": "release-gate",
+    "workflows": [
+      {
+        "name": "release-gate",
+        "version": "packaged-03",
+        "description": "Gate a checkout that is exactly HEAD on code-run tests and evidence, settled pinned readers, and a code-owned rule.",
+        "module": "workflows/release-gate.ts",
+        "roster": [
+          {
+            "name": "Assessor",
+            "harness": "claude",
+            "access": "read",
+            "model": "opus",
+            "description": "Judges one readiness dimension from the range and command output; never edits.",
+            "effort": "high"
+          },
+          {
+            "name": "Confirmer",
+            "harness": "codex",
+            "access": "read",
+            "model": null,
+            "description": "Tries to downgrade one blocker against the code, on Codex; never edits.",
+            "effort": "high"
+          },
+          {
+            "name": "Gatekeeper",
+            "harness": "claude",
+            "access": "none",
+            "model": "opus",
+            "description": "Chooses among the decisions code allows and writes the rationale; uses no tools.",
+            "effort": "high"
+          }
+        ]
+      }
+    ],
+    "deciders": {},
+    "prompts": [
+      {
+        "root": "comparisons/batches/03-packaged-ports/ported/release-gate.quiet-choir/prompts",
+        "entries": [
+          {
+            "name": "Assess",
+            "file": "Assess.md",
+            "description": "Judge one readiness dimension from the range and its command output.",
+            "params": [
+              "commands",
+              "count",
+              "dimension",
+              "log",
+              "patch",
+              "policy",
+              "span",
+              "tested"
+            ],
+            "variables": ["commands", "dimension", "policy"]
+          },
+          {
+            "name": "Confirm",
+            "file": "Confirm.md",
+            "description": "Try to downgrade one reported blocker against the code, the range and its output.",
+            "params": [
+              "commands",
+              "count",
+              "dimension",
+              "evidence",
+              "findings",
+              "log",
+              "patch",
+              "policy",
+              "span",
+              "tested"
+            ],
+            "variables": ["commands", "dimension", "evidence", "findings", "policy"]
+          },
+          {
+            "name": "Decide",
+            "file": "Decide.md",
+            "description": "Choose among the decisions code allows and write a forwardable rationale.",
+            "params": [
+              "blockOn",
+              "blockers",
+              "concerns",
+              "others",
+              "policy",
+              "rule",
+              "span",
+              "unverified"
+            ],
+            "variables": [
+              "blockOn",
+              "blockers",
+              "concerns",
+              "others",
+              "policy",
+              "rule",
+              "span",
+              "unverified"
+            ]
+          }
+        ]
+      }
+    ],
+    "files": {
+      "count": 14,
+      "bytes": 50786,
+      "sha256": "f918bd34ae15196d1bb35de804f258871fd543c73532f9c8fa3fd7cd0230e5ee"
+    }
+  },
+  "requirements-to-prd": {
+    "name": "requirements-to-prd",
+    "version": "1",
+    "description": "Extract quoted findings from raw requirement material through four lenses, draft a PRD traced to them, attack it with ambiguity, scope and feasibility critics, revise once, and surface unknowns as open questions",
+    "whenToUse": "Turning meeting notes, briefs, transcripts or feedback piles into a PRD honest enough to build from, with unknowns surfaced rather than invented; answers come back as input (a re-run redoes an earlier PRD at out through replace) or through durable question rounds. Input: {input, product?, answers?, questionRounds?, out?, replace?, publication?, maxMaterialBytes?}.",
+    "entry": "requirements-to-prd",
+    "workflows": [
+      {
+        "name": "requirements-to-prd",
+        "version": "packaged-03",
+        "description": "Extract quoted findings through four lenses, draft a traced PRD, attack it with three critics, revise once, and surface unknowns as open questions.",
+        "module": "workflows/requirements-to-prd.ts",
+        "roster": [
+          {
+            "name": "Critic",
+            "harness": "claude",
+            "access": "none",
+            "model": "opus",
+            "description": "Attacks the draft through one charter with quoted issues and fixes; uses no tools.",
+            "effort": "high"
+          },
+          {
+            "name": "Extractor",
+            "harness": "claude",
+            "access": "none",
+            "model": "sonnet",
+            "description": "Extracts quoted findings, unknowns and conflicts through one lens; uses no tools.",
+            "effort": "medium"
+          },
+          {
+            "name": "Writer",
+            "harness": "claude",
+            "access": "none",
+            "model": "opus",
+            "description": "Drafts the structured PRD from the findings and revises it once; uses no tools.",
+            "effort": "high"
+          }
+        ]
+      }
+    ],
+    "deciders": {},
+    "prompts": [
+      {
+        "root": "comparisons/batches/03-packaged-ports/ported/requirements-to-prd.quiet-choir/prompts",
+        "entries": [
+          {
+            "name": "Extract",
+            "file": "Extract.md",
+            "description": "Extract quoted findings through one lens; three other readers own the rest.",
+            "params": ["answers", "caps", "documents", "lens", "product"],
+            "variables": ["answers", "caps", "documents", "lens", "product"]
+          },
+          {
+            "name": "Draft",
+            "file": "Draft.md",
+            "description": "Draft the PRD sections from the findings, presenting conflicts as decisions.",
+            "params": ["caps", "conflicts", "findings", "product", "unknowns", "unlisted"],
+            "variables": ["conflicts", "findings", "product", "unknowns", "unlisted"]
+          },
+          {
+            "name": "Attack",
+            "file": "Attack.md",
+            "description": "Attack the draft through one charter with quoted issues and concrete fixes.",
+            "params": ["critic", "maxIssues", "prd", "product"],
+            "variables": ["critic", "maxIssues", "product"]
+          },
+          {
+            "name": "Revise",
+            "file": "Revise.md",
+            "description": "Apply the fixes; a fix that needs the product owner becomes an open question.",
+            "params": ["caps", "issues", "prd"],
+            "variables": ["issues"]
+          }
+        ]
+      }
+    ],
+    "files": {
+      "count": 15,
+      "bytes": 54389,
+      "sha256": "a6652d5cb2b02cc68a98e4c7bbcb98e1530e6886f8f1583fbfcc5ef55a356afa"
+    }
+  },
+  "research-synthesis": {
+    "name": "research-synthesis",
+    "version": "1",
+    "description": "Multi-modal lead sweep, ranked deep reads into claim and support pairs, a synthesis whose citations code checks, and one critic-driven round of targeted hunts",
+    "whenToUse": "Technology decisions, state-of-the-art surveys and due-diligence questions that deserve cited evidence over a single search pass. Read-only: web roles have only WebSearch and WebFetch, and local roles only file tools on a snapshot of HEAD. A context enables the local sweep in a Git repository with a commit; elsewhere it only grounds the prompts and the unsearched local territory degrades the result. The context reaches every role, web ones included, so it must hold nothing that may not leave the machine. Input: {question, context?, depth?}.",
+    "entry": "research-synthesis",
+    "workflows": [
+      {
+        "name": "research-synthesis",
+        "version": "packaged-03",
+        "description": "Sweep for leads, deep-read the ranked top, synthesize with checked citations, and run one critic-driven hunt round.",
+        "module": "workflows/research-synthesis.ts",
+        "roster": [
+          {
+            "name": "Critic",
+            "harness": "claude",
+            "access": "none",
+            "model": "opus",
+            "description": "Finds the answer's gaps and writes a targeted hunt for each; uses no tools.",
+            "effort": "high"
+          },
+          {
+            "name": "Hunter",
+            "harness": "claude",
+            "access": "read",
+            "model": "sonnet",
+            "description": "Runs one targeted web hunt for a critic gap; no file tools.",
+            "effort": "medium"
+          },
+          {
+            "name": "LocalHunter",
+            "harness": "claude",
+            "access": "read",
+            "model": "sonnet",
+            "description": "Runs one targeted hunt in the pinned repository snapshot; no web tools.",
+            "effort": "medium"
+          },
+          {
+            "name": "LocalReader",
+            "harness": "claude",
+            "access": "read",
+            "model": "sonnet",
+            "description": "Deep-reads one repository file at the pinned commit; no web tools, never edits.",
+            "effort": "low"
+          },
+          {
+            "name": "LocalScout",
+            "harness": "claude",
+            "access": "read",
+            "model": "sonnet",
+            "description": "Finds leads in a snapshot of this repository; no web tools, never edits.",
+            "effort": "low"
+          },
+          {
+            "name": "Reader",
+            "harness": "claude",
+            "access": "read",
+            "model": "sonnet",
+            "description": "Deep-reads one remote lead into claim and support pairs; no file tools.",
+            "effort": "low"
+          },
+          {
+            "name": "Scout",
+            "harness": "claude",
+            "access": "read",
+            "model": "sonnet",
+            "description": "Finds leads through one web modality; reads nothing in depth, no file tools.",
+            "effort": "low"
+          },
+          {
+            "name": "Synthesizer",
+            "harness": "claude",
+            "access": "none",
+            "model": "opus",
+            "description": "Writes the cited answer from the keyed readings alone; uses no tools.",
+            "effort": "high"
+          }
+        ]
+      }
+    ],
+    "deciders": {},
+    "prompts": [
+      {
+        "root": "comparisons/batches/03-packaged-ports/ported/research-synthesis.quiet-choir/prompts",
+        "entries": [
+          {
+            "name": "Sweep",
+            "file": "Sweep.md",
+            "description": "Find leads, not answers, through one modality whose charter names its blind spot.",
+            "params": ["commit", "context", "maxLeads", "modality", "question"],
+            "variables": ["commit", "maxLeads", "modality"]
+          },
+          {
+            "name": "Read",
+            "file": "Read.md",
+            "description": "Deep-read one ranked lead, remote or local, into claim and support pairs.",
+            "params": ["commit", "context", "lead", "maxFindings", "question"],
+            "variables": ["commit", "lead"]
+          },
+          {
+            "name": "Synthesize",
+            "file": "Synthesize.md",
+            "description": "Write the cited answer from keyed sources; a revision also addresses the gaps.",
+            "params": ["context", "gaps", "question", "sources"],
+            "variables": ["context", "gaps", "question"]
+          },
+          {
+            "name": "Critique",
+            "file": "Critique.md",
+            "description": "Find gaps with targeted hunt instructions, given the facts code checked.",
+            "params": [
+              "answer",
+              "context",
+              "deferred",
+              "failed",
+              "huntCap",
+              "local",
+              "maxGaps",
+              "question",
+              "sources",
+              "unknown",
+              "unswept"
+            ],
+            "variables": [
+              "answer",
+              "deferred",
+              "failed",
+              "huntCap",
+              "local",
+              "maxGaps",
+              "unknown",
+              "unswept"
+            ]
+          },
+          {
+            "name": "Hunt",
+            "file": "Hunt.md",
+            "description": "Run one targeted hunt for one critic gap, on the web or in the repository.",
+            "params": ["commit", "context", "gap", "known", "maxFindings", "question"],
+            "variables": ["commit", "gap", "known"]
+          }
+        ]
+      }
+    ],
+    "files": {
+      "count": 18,
+      "bytes": 39002,
+      "sha256": "a7560147cf58c52a94506613e58293c807d8b36c63e8c7292cadbc48a562c473"
+    }
+  },
+  "roadmap-plan": {
+    "name": "roadmap-plan",
+    "version": "1",
+    "description": "Decompose a spec into capabilities with a dependency graph that code checks, sequence them under three competing strategies, pick one by scored panel, stress-test it against the code-computed critical path, and render the revised roadmap in code",
+    "whenToUse": "The milestone-altitude plan between spec and tickets: sequenced, gated, shippable phases with risks located, before prd-decompose or feature work per milestone. Input: {spec, horizon?, priorities?, out?, maxCapabilities?, maxSpecBytes?}.",
+    "entry": "roadmap-plan",
+    "workflows": [
+      {
+        "name": "roadmap-plan",
+        "version": "packaged-03",
+        "description": "Decompose a spec into a checked capability graph, sequence it under three strategies, pick and stress-test the winner, and render the revised roadmap in code.",
+        "module": "workflows/roadmap-plan.ts",
+        "roster": [
+          {
+            "name": "Critic",
+            "harness": "claude",
+            "access": "none",
+            "model": "opus",
+            "description": "Stress-tests the winning plan for the ways roadmaps fail.",
+            "effort": "high"
+          },
+          {
+            "name": "Decomposer",
+            "harness": "claude",
+            "access": "none",
+            "model": "opus",
+            "description": "Decomposes the spec into sized, rated capabilities and their dependency graph.",
+            "effort": "high"
+          },
+          {
+            "name": "Finalizer",
+            "harness": "claude",
+            "access": "none",
+            "model": "opus",
+            "description": "Revises the winning plan with the graft and resolves every stress-test problem.",
+            "effort": "high"
+          },
+          {
+            "name": "Judge",
+            "harness": "claude",
+            "access": "none",
+            "model": "opus",
+            "description": "Scores the competing plans against the priorities and picks the winner.",
+            "effort": "high"
+          },
+          {
+            "name": "Strategist",
+            "harness": "claude",
+            "access": "none",
+            "model": "opus",
+            "description": "Sequences the capabilities into gated milestones under one strategy.",
+            "effort": "high"
+          }
+        ]
+      }
+    ],
+    "deciders": {},
+    "prompts": [
+      {
+        "root": "comparisons/batches/03-packaged-ports/ported/roadmap-plan.quiet-choir/prompts",
+        "entries": [
+          {
+            "name": "Decompose",
+            "file": "Decompose.md",
+            "description": "Decompose the spec into capabilities with a size, risk, value and hard dependencies.",
+            "params": ["maxCapabilities", "path", "spec"],
+            "variables": ["maxCapabilities", "path", "spec"]
+          },
+          {
+            "name": "Sequence",
+            "file": "Sequence.md",
+            "description": "Group the capabilities into milestones under one sequencing philosophy.",
+            "params": ["capabilities", "horizon", "priorities", "strategy"],
+            "variables": ["horizon", "priorities", "strategy"]
+          },
+          {
+            "name": "Pick",
+            "file": "Pick.md",
+            "description": "Score the competing plans against the priorities, pick one and name a graft.",
+            "params": ["capabilities", "horizon", "plans", "priorities"],
+            "variables": ["horizon", "plans", "priorities"]
+          },
+          {
+            "name": "Stress",
+            "file": "Stress.md",
+            "description": "Hunt the ways the winning plan fails; the spec comes last.",
+            "params": [
+              "capabilities",
+              "criticalPath",
+              "deferred",
+              "milestones",
+              "spec",
+              "strategy"
+            ],
+            "variables": ["spec", "strategy"]
+          },
+          {
+            "name": "Finalize",
+            "file": "Finalize.md",
+            "description": "Revise the winning plan with the graft and resolve every stress-test problem.",
+            "params": [
+              "capabilities",
+              "criticalPath",
+              "deferred",
+              "graft",
+              "milestones",
+              "problems",
+              "strategy"
+            ],
+            "variables": ["graft", "problems", "strategy"]
+          }
+        ]
+      }
+    ],
+    "files": {
+      "count": 18,
+      "bytes": 44061,
+      "sha256": "db470bddd49d281071cdd1f3063be6bb216325774321a0d96a60c9f18b4432ef"
+    }
+  },
+  "security-audit": {
+    "name": "security-audit",
+    "version": "1",
+    "description": "Map the attack surface of a pinned revision, sweep it with up to six specialist lenses, refute each located finding with a severity-scaled skeptic panel, and write a remediation report",
+    "whenToUse": "Defensive security audit of code you own or are authorized to audit: before launch, after inheriting code, or as a periodic sweep of sensitive surfaces. Read-only and committed code only; also set --max-run-cost-usd. Input: {scope?, lenses?, revision?, maxFindingsPerLens?, crossHarness?}.",
+    "entry": "security-audit",
+    "workflows": [
+      {
+        "name": "security-audit",
+        "version": "packaged-03",
+        "description": "Map a pinned revision, sweep it per lens, refute each located finding with a severity-sized panel, and report the survivors.",
+        "module": "workflows/security-audit.ts",
+        "roster": [
+          {
+            "name": "Auditor",
+            "harness": "claude",
+            "access": "read",
+            "model": "sonnet",
+            "description": "Sweeps the snapshot through one security lens for attackable flaws; never edits.",
+            "effort": "medium"
+          },
+          {
+            "name": "CodexSkeptic",
+            "harness": "codex",
+            "access": "read",
+            "model": null,
+            "description": "A panel seat on the other harness, so a severe claim faces two models; never edits.",
+            "effort": "high"
+          },
+          {
+            "name": "Mapper",
+            "harness": "claude",
+            "access": "read",
+            "model": "sonnet",
+            "description": "Maps entry points, trust boundaries, secrets and dependencies; never edits.",
+            "effort": "medium"
+          },
+          {
+            "name": "Reporter",
+            "harness": "claude",
+            "access": "none",
+            "model": "sonnet",
+            "description": "Writes the remediation report from the confirmed findings alone; uses no tools.",
+            "effort": "low"
+          },
+          {
+            "name": "Skeptic",
+            "harness": "claude",
+            "access": "read",
+            "model": "opus",
+            "description": "Tries to refute one finding as one panel seat; never edits.",
+            "effort": "high"
+          }
+        ]
+      }
+    ],
+    "deciders": {},
+    "prompts": [
+      {
+        "root": "comparisons/batches/03-packaged-ports/ported/security-audit.quiet-choir/prompts",
+        "entries": [
+          {
+            "name": "Recon",
+            "file": "Recon.md",
+            "description": "Map the attack surface of the snapshot for the lenses that follow; no audit.",
+            "params": ["lenses", "revision", "scope"],
+            "variables": ["lenses", "scope"]
+          },
+          {
+            "name": "Sweep",
+            "file": "Sweep.md",
+            "description": "Audit the snapshot through one lens, armed with the recon map.",
+            "params": ["lens", "revision", "scope", "surface"],
+            "variables": ["lens", "scope", "surface"]
+          },
+          {
+            "name": "Refute",
+            "file": "Refute.md",
+            "description": "One independent panel seat trying to refute a located finding.",
+            "params": ["finding", "revision", "seat", "seats"],
+            "variables": ["finding", "seat", "seats"]
+          },
+          {
+            "name": "Report",
+            "file": "Report.md",
+            "description": "Write the remediation report from the confirmed findings and the gaps.",
+            "params": [
+              "confirmed",
+              "failedLenses",
+              "revision",
+              "scope",
+              "summary",
+              "unchecked",
+              "undecided"
+            ],
+            "variables": [
+              "confirmed",
+              "failedLenses",
+              "revision",
+              "scope",
+              "summary",
+              "unchecked",
+              "undecided"
+            ]
+          }
+        ]
+      }
+    ],
+    "files": {
+      "count": 14,
+      "bytes": 31825,
+      "sha256": "c7a3bca41cfb250dc7849eff744d15145a7b53dea4c62594b543403a1121d0e5"
+    }
   }
 }

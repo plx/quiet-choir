@@ -1,5 +1,5 @@
 {
-  "method": "The six Batch 02 fixture intents against the packages, with deterministic schema-valid replies. Counts are fixture path observations, not quality or billing savings. formattedLines is the workflow module alone; package lines are raw lines per part (manifest, workflows, contracts, roster, prompt index, templates, lib, resources). Pair with the Batch 02 metrics for the same workflow.",
+  "method": "Each package under its fixture intents (Batch 02's six reuse its intents), with deterministic schema-valid replies. Counts are fixture path observations, not quality or billing savings. formattedLines is the workflow module alone; package lines are raw lines per part (manifest, workflows, contracts, roster, prompt index, templates, lib, resources). Pair the six with the Batch 02 metrics for the same workflow.",
   "rows": [
     {
       "workflow": "release-notes",
@@ -424,6 +424,1529 @@
               "filesystem": { "targetPristine": true, "status": "" },
               "outputAdmitsDegradation": null,
               "reason": "Read-only intent: no prescribed write effect to kill"
+            },
+            "F4": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+            },
+            "F5": {
+              "finalStatus": "not-applicable",
+              "callsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": null,
+              "reason": "This port has no human question effect"
+            }
+          }
+        }
+      }
+    },
+    {
+      "workflow": "acceptance-qa-batch",
+      "batches": {
+        "3": {
+          "formattedLines": 204,
+          "package": {
+            "files": 15,
+            "lines": 1233,
+            "bytes": 51409,
+            "parts": {
+              "contracts": { "files": 1, "lines": 209 },
+              "lib": { "files": 5, "lines": 609 },
+              "manifest": { "files": 1, "lines": 19 },
+              "promptIndex": { "files": 1, "lines": 46 },
+              "templates": { "files": 5, "lines": 117 },
+              "roster": { "files": 1, "lines": 29 },
+              "workflows": { "files": 1, "lines": 204 }
+            }
+          },
+          "agentCalls": 4,
+          "writeToolCalls": 0,
+          "templatedCalls": 4,
+          "strictErrors": 0,
+          "faults": {
+            "F1": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "ingest",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F2": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "ingest",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F3": {
+              "initialStatus": "SIGKILL",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterKill": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "boundary": "after bytes, before terminal checkpoint append",
+              "writeLocation": "isolated-checkout",
+              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup."
+            },
+            "F4": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+            },
+            "F5": {
+              "initialStatus": "suspended",
+              "finalStatus": "completed",
+              "suspensions": 2,
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Real inbox answers and same-run replay in the success case"
+            }
+          }
+        }
+      }
+    },
+    {
+      "workflow": "acceptance-qa-deep",
+      "batches": {
+        "3": {
+          "formattedLines": 145,
+          "package": {
+            "files": 14,
+            "lines": 968,
+            "bytes": 35940,
+            "parts": {
+              "contracts": { "files": 1, "lines": 204 },
+              "lib": { "files": 3, "lines": 312 },
+              "manifest": { "files": 1, "lines": 18 },
+              "promptIndex": { "files": 1, "lines": 70 },
+              "templates": { "files": 6, "lines": 188 },
+              "roster": { "files": 1, "lines": 31 },
+              "workflows": { "files": 1, "lines": 145 }
+            }
+          },
+          "agentCalls": 8,
+          "writeToolCalls": 0,
+          "templatedCalls": 8,
+          "strictErrors": 0,
+          "faults": {
+            "F1": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "decompose",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": {
+                "targetPristine": true,
+                "status": "M greet.mjs\n?? greet.test.mjs"
+              },
+              "filesystem": { "targetPristine": true, "status": "M greet.mjs\n?? greet.test.mjs" },
+              "outputAdmitsDegradation": false
+            },
+            "F2": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "decompose",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": {
+                "targetPristine": true,
+                "status": "M greet.mjs\n?? greet.test.mjs"
+              },
+              "filesystem": { "targetPristine": true, "status": "M greet.mjs\n?? greet.test.mjs" },
+              "outputAdmitsDegradation": false
+            },
+            "F3": {
+              "finalStatus": "not-applicable",
+              "callsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "M greet.mjs\n?? greet.test.mjs" },
+              "outputAdmitsDegradation": null,
+              "reason": "Read-only gate: agents and commands read a pinned snapshot in runtime-owned checkouts; the source checkout, its index and branches are never written"
+            },
+            "F4": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "M greet.mjs\n?? greet.test.mjs" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+            },
+            "F5": {
+              "finalStatus": "not-applicable",
+              "callsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "M greet.mjs\n?? greet.test.mjs" },
+              "outputAdmitsDegradation": null,
+              "reason": "This port has no human question effect"
+            }
+          }
+        }
+      }
+    },
+    {
+      "workflow": "api-migration",
+      "batches": {
+        "3": {
+          "formattedLines": 208,
+          "package": {
+            "files": 13,
+            "lines": 1057,
+            "bytes": 40808,
+            "parts": {
+              "contracts": { "files": 1, "lines": 168 },
+              "lib": { "files": 3, "lines": 425 },
+              "manifest": { "files": 1, "lines": 18 },
+              "promptIndex": { "files": 1, "lines": 52 },
+              "templates": { "files": 5, "lines": 157 },
+              "roster": { "files": 1, "lines": 29 },
+              "workflows": { "files": 1, "lines": 208 }
+            }
+          },
+          "agentCalls": 3,
+          "writeToolCalls": 2,
+          "templatedCalls": 3,
+          "strictErrors": 0,
+          "faults": {
+            "F1": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "discover",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F2": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "discover",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F3": {
+              "initialStatus": "SIGKILL",
+              "finalStatus": "completed",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterKill": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "boundary": "before harness response",
+              "writeLocation": "isolated-checkout",
+              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup."
+            },
+            "F4": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+            },
+            "F5": {
+              "initialStatus": "suspended",
+              "finalStatus": "completed",
+              "suspensions": 1,
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Real inbox answers and same-run replay in the success case"
+            }
+          }
+        }
+      }
+    },
+    {
+      "workflow": "codebase-atlas",
+      "batches": {
+        "3": {
+          "formattedLines": 194,
+          "package": {
+            "files": 15,
+            "lines": 1017,
+            "bytes": 38967,
+            "parts": {
+              "contracts": { "files": 1, "lines": 167 },
+              "lib": { "files": 3, "lines": 402 },
+              "manifest": { "files": 1, "lines": 18 },
+              "promptIndex": { "files": 1, "lines": 67 },
+              "templates": { "files": 7, "lines": 140 },
+              "roster": { "files": 1, "lines": 29 },
+              "workflows": { "files": 1, "lines": 194 }
+            }
+          },
+          "agentCalls": 9,
+          "writeToolCalls": 0,
+          "templatedCalls": 9,
+          "strictErrors": 0,
+          "faults": {
+            "F1": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "survey",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "?? docs/atlas.md" },
+              "outputAdmitsDegradation": false
+            },
+            "F2": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "survey",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "?? docs/atlas.md" },
+              "outputAdmitsDegradation": false
+            },
+            "F3": {
+              "initialStatus": "SIGKILL",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterKill": { "targetPristine": true, "status": "?? docs/atlas.md" },
+              "filesystem": { "targetPristine": true, "status": "?? docs/atlas.md" },
+              "outputAdmitsDegradation": false,
+              "boundary": "after bytes, before terminal checkpoint append",
+              "writeLocation": "source-checkout",
+              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup."
+            },
+            "F4": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "?? docs/atlas.md" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+            },
+            "F5": {
+              "finalStatus": "not-applicable",
+              "callsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "?? docs/atlas.md" },
+              "outputAdmitsDegradation": null,
+              "reason": "This port has no human question effect"
+            }
+          }
+        }
+      }
+    },
+    {
+      "workflow": "dead-code-sweep",
+      "batches": {
+        "3": {
+          "formattedLines": 115,
+          "package": {
+            "files": 10,
+            "lines": 382,
+            "bytes": 16476,
+            "parts": {
+              "contracts": { "files": 1, "lines": 80 },
+              "lib": { "files": 2, "lines": 82 },
+              "manifest": { "files": 1, "lines": 18 },
+              "promptIndex": { "files": 1, "lines": 21 },
+              "templates": { "files": 3, "lines": 42 },
+              "roster": { "files": 1, "lines": 24 },
+              "workflows": { "files": 1, "lines": 115 }
+            }
+          },
+          "agentCalls": 5,
+          "writeToolCalls": 1,
+          "templatedCalls": 5,
+          "strictErrors": 0,
+          "faults": {
+            "F1": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "remove",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F2": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "remove",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F3": {
+              "initialStatus": "SIGKILL",
+              "finalStatus": "completed",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterKill": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "boundary": "before harness response",
+              "writeLocation": "isolated-checkout",
+              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup."
+            },
+            "F4": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+            },
+            "F5": {
+              "initialStatus": "suspended",
+              "finalStatus": "completed",
+              "suspensions": 1,
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Real inbox answers and same-run replay in the success case"
+            }
+          }
+        }
+      }
+    },
+    {
+      "workflow": "deep-code-review",
+      "batches": {
+        "3": {
+          "formattedLines": 130,
+          "package": {
+            "files": 14,
+            "lines": 751,
+            "bytes": 29634,
+            "parts": {
+              "contracts": { "files": 1, "lines": 137 },
+              "lib": { "files": 2, "lines": 251 },
+              "manifest": { "files": 1, "lines": 18 },
+              "promptIndex": { "files": 1, "lines": 44 },
+              "templates": { "files": 7, "lines": 141 },
+              "roster": { "files": 1, "lines": 30 },
+              "workflows": { "files": 1, "lines": 130 }
+            }
+          },
+          "agentCalls": 10,
+          "writeToolCalls": 0,
+          "templatedCalls": 10,
+          "strictErrors": 0,
+          "faults": {
+            "F1": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "scope",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F2": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "scope",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F3": {
+              "finalStatus": "not-applicable",
+              "callsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": null,
+              "reason": "Read-only review: reviewers and skeptics read unchanged per-call snapshots of the pinned head"
+            },
+            "F4": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+            },
+            "F5": {
+              "finalStatus": "not-applicable",
+              "callsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": null,
+              "reason": "This port has no human question effect"
+            }
+          }
+        }
+      }
+    },
+    {
+      "workflow": "dependency-upgrade",
+      "batches": {
+        "3": {
+          "formattedLines": 261,
+          "package": {
+            "files": 18,
+            "lines": 1148,
+            "bytes": 45289,
+            "parts": {
+              "contracts": { "files": 1, "lines": 194 },
+              "lib": { "files": 4, "lines": 357 },
+              "manifest": { "files": 1, "lines": 18 },
+              "promptIndex": { "files": 1, "lines": 80 },
+              "templates": { "files": 9, "lines": 198 },
+              "roster": { "files": 1, "lines": 40 },
+              "workflows": { "files": 1, "lines": 261 }
+            }
+          },
+          "agentCalls": 6,
+          "writeToolCalls": 2,
+          "templatedCalls": 6,
+          "strictErrors": 0,
+          "faults": {
+            "F1": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "research",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F2": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "research",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F3": {
+              "initialStatus": "SIGKILL",
+              "finalStatus": "completed",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterKill": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "boundary": "before harness response",
+              "writeLocation": "isolated-checkout",
+              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup."
+            },
+            "F4": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+            },
+            "F5": {
+              "initialStatus": "suspended",
+              "finalStatus": "completed",
+              "suspensions": 1,
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Real inbox answers and same-run replay in the success case"
+            }
+          }
+        }
+      }
+    },
+    {
+      "workflow": "design-tournament",
+      "batches": {
+        "3": {
+          "formattedLines": 147,
+          "package": {
+            "files": 12,
+            "lines": 838,
+            "bytes": 32026,
+            "parts": {
+              "contracts": { "files": 1, "lines": 215 },
+              "lib": { "files": 2, "lines": 211 },
+              "manifest": { "files": 1, "lines": 18 },
+              "promptIndex": { "files": 1, "lines": 37 },
+              "templates": { "files": 5, "lines": 175 },
+              "roster": { "files": 1, "lines": 35 },
+              "workflows": { "files": 1, "lines": 147 }
+            }
+          },
+          "agentCalls": 8,
+          "writeToolCalls": 0,
+          "templatedCalls": 8,
+          "strictErrors": 0,
+          "faults": {
+            "F1": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "synthesize",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "?? docs/design.md" },
+              "outputAdmitsDegradation": false
+            },
+            "F2": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "synthesize",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "?? docs/design.md" },
+              "outputAdmitsDegradation": false
+            },
+            "F3": {
+              "initialStatus": "SIGKILL",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterKill": { "targetPristine": true, "status": "?? docs/design.md" },
+              "filesystem": { "targetPristine": true, "status": "?? docs/design.md" },
+              "outputAdmitsDegradation": false,
+              "boundary": "after bytes, before terminal checkpoint append",
+              "writeLocation": "source-checkout",
+              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup."
+            },
+            "F4": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "?? docs/design.md" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+            },
+            "F5": {
+              "finalStatus": "not-applicable",
+              "callsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "?? docs/design.md" },
+              "outputAdmitsDegradation": null,
+              "reason": "This port has no human question effect"
+            }
+          }
+        }
+      }
+    },
+    {
+      "workflow": "docs-drift-audit",
+      "batches": {
+        "3": {
+          "formattedLines": 225,
+          "package": {
+            "files": 12,
+            "lines": 1264,
+            "bytes": 50270,
+            "parts": {
+              "contracts": { "files": 1, "lines": 297 },
+              "lib": { "files": 3, "lines": 551 },
+              "manifest": { "files": 1, "lines": 18 },
+              "promptIndex": { "files": 1, "lines": 36 },
+              "templates": { "files": 4, "lines": 106 },
+              "roster": { "files": 1, "lines": 31 },
+              "workflows": { "files": 1, "lines": 225 }
+            }
+          },
+          "agentCalls": 6,
+          "writeToolCalls": 1,
+          "templatedCalls": 6,
+          "strictErrors": 0,
+          "faults": {
+            "F1": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "classify",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F2": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "classify",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F3": {
+              "initialStatus": "SIGKILL",
+              "finalStatus": "completed",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterKill": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "boundary": "before harness response",
+              "writeLocation": "isolated-checkout",
+              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup."
+            },
+            "F4": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+            },
+            "F5": {
+              "initialStatus": "suspended",
+              "finalStatus": "completed",
+              "suspensions": 1,
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Real inbox answers and same-run replay in the success case"
+            }
+          }
+        }
+      }
+    },
+    {
+      "workflow": "feature-factory",
+      "batches": {
+        "3": {
+          "formattedLines": 226,
+          "package": {
+            "files": 14,
+            "lines": 1153,
+            "bytes": 45957,
+            "parts": {
+              "contracts": { "files": 1, "lines": 234 },
+              "lib": { "files": 4, "lines": 484 },
+              "manifest": { "files": 1, "lines": 19 },
+              "promptIndex": { "files": 1, "lines": 51 },
+              "templates": { "files": 5, "lines": 110 },
+              "roster": { "files": 1, "lines": 29 },
+              "workflows": { "files": 1, "lines": 226 }
+            }
+          },
+          "agentCalls": 20,
+          "writeToolCalls": 4,
+          "templatedCalls": 20,
+          "strictErrors": 0,
+          "faults": {
+            "F1": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "plan",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F2": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "plan",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F3": {
+              "initialStatus": "SIGKILL",
+              "finalStatus": "completed",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterKill": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "boundary": "before harness response",
+              "writeLocation": "isolated-checkout",
+              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup."
+            },
+            "F4": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+            },
+            "F5": {
+              "initialStatus": "suspended",
+              "finalStatus": "completed",
+              "suspensions": 1,
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Real inbox answers and same-run replay in the success case"
+            }
+          }
+        }
+      }
+    },
+    {
+      "workflow": "feedback-synthesis",
+      "batches": {
+        "3": {
+          "formattedLines": 146,
+          "package": {
+            "files": 15,
+            "lines": 1356,
+            "bytes": 50175,
+            "parts": {
+              "contracts": { "files": 1, "lines": 257 },
+              "lib": { "files": 3, "lines": 699 },
+              "manifest": { "files": 1, "lines": 18 },
+              "promptIndex": { "files": 1, "lines": 52 },
+              "templates": { "files": 7, "lines": 154 },
+              "roster": { "files": 1, "lines": 30 },
+              "workflows": { "files": 1, "lines": 146 }
+            }
+          },
+          "agentCalls": 9,
+          "writeToolCalls": 0,
+          "templatedCalls": 9,
+          "strictErrors": 0,
+          "faults": {
+            "F1": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "calibrate",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F2": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "calibrate",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F3": {
+              "finalStatus": "not-applicable",
+              "callsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": null,
+              "reason": "Read-only: code reads the corpus, no role has a tool and nothing is written"
+            },
+            "F4": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+            },
+            "F5": {
+              "finalStatus": "not-applicable",
+              "callsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": null,
+              "reason": "This port has no human question effect"
+            }
+          }
+        }
+      }
+    },
+    {
+      "workflow": "flaky-test-hunt",
+      "batches": {
+        "3": {
+          "formattedLines": 250,
+          "package": {
+            "files": 12,
+            "lines": 1398,
+            "bytes": 55821,
+            "parts": {
+              "contracts": { "files": 1, "lines": 338 },
+              "lib": { "files": 3, "lines": 556 },
+              "manifest": { "files": 1, "lines": 19 },
+              "promptIndex": { "files": 1, "lines": 40 },
+              "templates": { "files": 4, "lines": 171 },
+              "roster": { "files": 1, "lines": 24 },
+              "workflows": { "files": 1, "lines": 250 }
+            }
+          },
+          "agentCalls": 5,
+          "writeToolCalls": 1,
+          "templatedCalls": 5,
+          "strictErrors": 0,
+          "faults": {
+            "F1": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "fix",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F2": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "fix",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F3": {
+              "initialStatus": "SIGKILL",
+              "finalStatus": "completed",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterKill": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "boundary": "before harness response",
+              "writeLocation": "isolated-checkout",
+              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup."
+            },
+            "F4": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+            },
+            "F5": {
+              "initialStatus": "suspended",
+              "finalStatus": "completed",
+              "suspensions": 1,
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Real inbox answers and same-run replay in the success case"
+            }
+          }
+        }
+      }
+    },
+    {
+      "workflow": "prd-decompose",
+      "batches": {
+        "3": {
+          "formattedLines": 163,
+          "package": {
+            "files": 17,
+            "lines": 1016,
+            "bytes": 39265,
+            "parts": {
+              "contracts": { "files": 1, "lines": 320 },
+              "lib": { "files": 4, "lines": 279 },
+              "manifest": { "files": 1, "lines": 18 },
+              "promptIndex": { "files": 1, "lines": 42 },
+              "templates": { "files": 8, "lines": 155 },
+              "roster": { "files": 1, "lines": 39 },
+              "workflows": { "files": 1, "lines": 163 }
+            }
+          },
+          "agentCalls": 9,
+          "writeToolCalls": 0,
+          "templatedCalls": 9,
+          "strictErrors": 0,
+          "faults": {
+            "F1": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "merge",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "?? docs/backlog.md" },
+              "outputAdmitsDegradation": false
+            },
+            "F2": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "merge",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "?? docs/backlog.md" },
+              "outputAdmitsDegradation": false
+            },
+            "F3": {
+              "initialStatus": "SIGKILL",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterKill": { "targetPristine": true, "status": "?? docs/backlog.md" },
+              "filesystem": { "targetPristine": true, "status": "?? docs/backlog.md" },
+              "outputAdmitsDegradation": false,
+              "boundary": "after bytes, before terminal checkpoint append",
+              "writeLocation": "source-checkout",
+              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup."
+            },
+            "F4": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "?? docs/backlog.md" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+            },
+            "F5": {
+              "finalStatus": "not-applicable",
+              "callsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "?? docs/backlog.md" },
+              "outputAdmitsDegradation": null,
+              "reason": "This port has no human question effect"
+            }
+          }
+        }
+      }
+    },
+    {
+      "workflow": "prd-to-spec",
+      "batches": {
+        "3": {
+          "formattedLines": 197,
+          "package": {
+            "files": 19,
+            "lines": 1108,
+            "bytes": 41631,
+            "parts": {
+              "contracts": { "files": 1, "lines": 260 },
+              "lib": { "files": 3, "lines": 277 },
+              "manifest": { "files": 1, "lines": 19 },
+              "promptIndex": { "files": 1, "lines": 68 },
+              "templates": { "files": 11, "lines": 233 },
+              "roster": { "files": 1, "lines": 54 },
+              "workflows": { "files": 1, "lines": 197 }
+            }
+          },
+          "agentCalls": 18,
+          "writeToolCalls": 0,
+          "templatedCalls": 18,
+          "strictErrors": 0,
+          "faults": {
+            "F1": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "ground",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "?? docs/spec.md" },
+              "outputAdmitsDegradation": false
+            },
+            "F2": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "ground",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "?? docs/spec.md" },
+              "outputAdmitsDegradation": false
+            },
+            "F3": {
+              "initialStatus": "SIGKILL",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterKill": { "targetPristine": true, "status": "?? docs/spec.md" },
+              "filesystem": { "targetPristine": true, "status": "?? docs/spec.md" },
+              "outputAdmitsDegradation": false,
+              "boundary": "after bytes, before terminal checkpoint append",
+              "writeLocation": "source-checkout",
+              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup."
+            },
+            "F4": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "?? docs/spec.md" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+            },
+            "F5": {
+              "finalStatus": "not-applicable",
+              "callsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "?? docs/spec.md" },
+              "outputAdmitsDegradation": null,
+              "reason": "This port has no human question effect"
+            }
+          }
+        }
+      }
+    },
+    {
+      "workflow": "refactor-campaign",
+      "batches": {
+        "3": {
+          "formattedLines": 237,
+          "package": {
+            "files": 14,
+            "lines": 1328,
+            "bytes": 54645,
+            "parts": {
+              "contracts": { "files": 1, "lines": 220 },
+              "lib": { "files": 3, "lines": 564 },
+              "manifest": { "files": 1, "lines": 19 },
+              "promptIndex": { "files": 1, "lines": 74 },
+              "templates": { "files": 6, "lines": 178 },
+              "roster": { "files": 1, "lines": 36 },
+              "workflows": { "files": 1, "lines": 237 }
+            }
+          },
+          "agentCalls": 6,
+          "writeToolCalls": 3,
+          "templatedCalls": 6,
+          "strictErrors": 0,
+          "faults": {
+            "F1": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "survey",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F2": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "survey",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F3": {
+              "initialStatus": "SIGKILL",
+              "finalStatus": "completed",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterKill": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "boundary": "before harness response",
+              "writeLocation": "isolated-checkout",
+              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup."
+            },
+            "F4": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+            },
+            "F5": {
+              "initialStatus": "suspended",
+              "finalStatus": "completed",
+              "suspensions": 1,
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Real inbox answers and same-run replay in the success case"
+            }
+          }
+        }
+      }
+    },
+    {
+      "workflow": "release-gate",
+      "batches": {
+        "3": {
+          "formattedLines": 166,
+          "package": {
+            "files": 14,
+            "lines": 1309,
+            "bytes": 50786,
+            "parts": {
+              "contracts": { "files": 1, "lines": 194 },
+              "lib": { "files": 3, "lines": 664 },
+              "manifest": { "files": 1, "lines": 18 },
+              "promptIndex": { "files": 1, "lines": 61 },
+              "templates": { "files": 6, "lines": 181 },
+              "roster": { "files": 1, "lines": 25 },
+              "workflows": { "files": 1, "lines": 166 }
+            }
+          },
+          "agentCalls": 7,
+          "writeToolCalls": 0,
+          "templatedCalls": 7,
+          "strictErrors": 0,
+          "faults": {
+            "F1": {
+              "initialStatus": "completed",
+              "finalStatus": "completed",
+              "faultedStep": "dimensions/security/assess",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F2": {
+              "initialStatus": "completed",
+              "finalStatus": "completed",
+              "faultedStep": "dimensions/security/assess",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": true
+            },
+            "F3": {
+              "finalStatus": "not-applicable",
+              "callsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": null,
+              "reason": "Read-only gate: agents only read and code runs the operator's commands; no prescribed write effect to kill"
+            },
+            "F4": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+            },
+            "F5": {
+              "finalStatus": "not-applicable",
+              "callsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": null,
+              "reason": "This port has no human question effect"
+            }
+          }
+        }
+      }
+    },
+    {
+      "workflow": "requirements-to-prd",
+      "batches": {
+        "3": {
+          "formattedLines": 234,
+          "package": {
+            "files": 15,
+            "lines": 1400,
+            "bytes": 54389,
+            "parts": {
+              "contracts": { "files": 1, "lines": 355 },
+              "lib": { "files": 4, "lines": 526 },
+              "manifest": { "files": 1, "lines": 18 },
+              "promptIndex": { "files": 1, "lines": 63 },
+              "templates": { "files": 6, "lines": 169 },
+              "roster": { "files": 1, "lines": 35 },
+              "workflows": { "files": 1, "lines": 234 }
+            }
+          },
+          "agentCalls": 18,
+          "writeToolCalls": 0,
+          "templatedCalls": 18,
+          "strictErrors": 0,
+          "faults": {
+            "F1": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "draft",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "?? docs/prd.md" },
+              "outputAdmitsDegradation": false
+            },
+            "F2": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "draft",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "?? docs/prd.md" },
+              "outputAdmitsDegradation": false
+            },
+            "F3": {
+              "initialStatus": "SIGKILL",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterKill": { "targetPristine": true, "status": "?? docs/prd.md" },
+              "filesystem": { "targetPristine": true, "status": "?? docs/prd.md" },
+              "outputAdmitsDegradation": false,
+              "boundary": "after bytes, before terminal checkpoint append",
+              "writeLocation": "source-checkout",
+              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup."
+            },
+            "F4": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "?? docs/prd.md" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+            },
+            "F5": {
+              "initialStatus": "suspended",
+              "finalStatus": "completed",
+              "suspensions": 1,
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "?? docs/prd.md" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Real inbox answers and same-run replay in the success case"
+            }
+          }
+        }
+      }
+    },
+    {
+      "workflow": "research-synthesis",
+      "batches": {
+        "3": {
+          "formattedLines": 159,
+          "package": {
+            "files": 18,
+            "lines": 951,
+            "bytes": 39002,
+            "parts": {
+              "contracts": { "files": 1, "lines": 166 },
+              "lib": { "files": 2, "lines": 278 },
+              "manifest": { "files": 1, "lines": 18 },
+              "promptIndex": { "files": 1, "lines": 62 },
+              "templates": { "files": 11, "lines": 207 },
+              "roster": { "files": 1, "lines": 61 },
+              "workflows": { "files": 1, "lines": 159 }
+            }
+          },
+          "agentCalls": 14,
+          "writeToolCalls": 0,
+          "templatedCalls": 14,
+          "strictErrors": 0,
+          "faults": {
+            "F1": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "synthesize",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": false, "status": "M target.mjs" },
+              "filesystem": { "targetPristine": false, "status": "M target.mjs" },
+              "outputAdmitsDegradation": true
+            },
+            "F2": {
+              "initialStatus": "completed",
+              "finalStatus": "completed",
+              "faultedStep": "critic",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": false, "status": "M target.mjs" },
+              "filesystem": { "targetPristine": false, "status": "M target.mjs" },
+              "outputAdmitsDegradation": true
+            },
+            "F3": {
+              "finalStatus": "not-applicable",
+              "callsPaidAgain": 0,
+              "filesystem": { "targetPristine": false, "status": "M target.mjs" },
+              "outputAdmitsDegradation": null,
+              "reason": "Read-only: every role reads and the workflow writes nothing"
+            },
+            "F4": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": false, "status": "M target.mjs" },
+              "outputAdmitsDegradation": true,
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+            },
+            "F5": {
+              "finalStatus": "not-applicable",
+              "callsPaidAgain": 0,
+              "filesystem": { "targetPristine": false, "status": "M target.mjs" },
+              "outputAdmitsDegradation": null,
+              "reason": "This port has no human question effect"
+            }
+          }
+        }
+      }
+    },
+    {
+      "workflow": "roadmap-plan",
+      "batches": {
+        "3": {
+          "formattedLines": 127,
+          "package": {
+            "files": 18,
+            "lines": 1102,
+            "bytes": 44061,
+            "parts": {
+              "contracts": { "files": 1, "lines": 300 },
+              "lib": { "files": 4, "lines": 365 },
+              "manifest": { "files": 1, "lines": 18 },
+              "promptIndex": { "files": 1, "lines": 59 },
+              "templates": { "files": 9, "lines": 186 },
+              "roster": { "files": 1, "lines": 47 },
+              "workflows": { "files": 1, "lines": 127 }
+            }
+          },
+          "agentCalls": 7,
+          "writeToolCalls": 0,
+          "templatedCalls": 7,
+          "strictErrors": 0,
+          "faults": {
+            "F1": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "decompose",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "?? docs/roadmap.md" },
+              "outputAdmitsDegradation": false
+            },
+            "F2": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "decompose",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "?? docs/roadmap.md" },
+              "outputAdmitsDegradation": false
+            },
+            "F3": {
+              "initialStatus": "SIGKILL",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterKill": { "targetPristine": true, "status": "?? docs/roadmap.md" },
+              "filesystem": { "targetPristine": true, "status": "?? docs/roadmap.md" },
+              "outputAdmitsDegradation": false,
+              "boundary": "after bytes, before terminal checkpoint append",
+              "writeLocation": "source-checkout",
+              "evidence": "Real filesystem write and actual SIGKILL before terminal checkpoint; resume with identity-checked orphan cleanup."
+            },
+            "F4": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "callsPaidAgain": 0,
+              "completedCallsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "?? docs/roadmap.md" },
+              "outputAdmitsDegradation": false,
+              "evidence": "Actual one-statement wrapper fix; source fingerprint refused until acceptCodeChange. Embedded API, not a CLI edit."
+            },
+            "F5": {
+              "finalStatus": "not-applicable",
+              "callsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "?? docs/roadmap.md" },
+              "outputAdmitsDegradation": null,
+              "reason": "This port has no human question effect"
+            }
+          }
+        }
+      }
+    },
+    {
+      "workflow": "security-audit",
+      "batches": {
+        "3": {
+          "formattedLines": 126,
+          "package": {
+            "files": 14,
+            "lines": 790,
+            "bytes": 31825,
+            "parts": {
+              "contracts": { "files": 1, "lines": 157 },
+              "lib": { "files": 2, "lines": 276 },
+              "manifest": { "files": 1, "lines": 18 },
+              "promptIndex": { "files": 1, "lines": 42 },
+              "templates": { "files": 7, "lines": 134 },
+              "roster": { "files": 1, "lines": 37 },
+              "workflows": { "files": 1, "lines": 126 }
+            }
+          },
+          "agentCalls": 16,
+          "writeToolCalls": 0,
+          "templatedCalls": 16,
+          "strictErrors": 0,
+          "faults": {
+            "F1": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "recon",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F2": {
+              "initialStatus": "failed",
+              "finalStatus": "completed",
+              "faultedStep": "recon",
+              "callsPaidAgain": 1,
+              "completedCallsPaidAgain": 0,
+              "filesystemAfterFault": { "targetPristine": true, "status": "" },
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": false
+            },
+            "F3": {
+              "finalStatus": "not-applicable",
+              "callsPaidAgain": 0,
+              "filesystem": { "targetPristine": true, "status": "" },
+              "outputAdmitsDegradation": null,
+              "reason": "Read-only audit: every reader works in an unchanged per-call snapshot of the pinned revision"
             },
             "F4": {
               "initialStatus": "failed",

@@ -74,6 +74,9 @@ export const kill = {
   writeLocation: 'isolated-checkout',
 };
 
+/** The sweeps and the skeptics are settled fan-outs; the remover is the one call that throws. */
+export const faults = { F1: '^remove$', F2: '^remove$' };
+
 export const modes = [
   {
     mode: 'report-only',
