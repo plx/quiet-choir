@@ -404,6 +404,9 @@ export const MergeDownResult = z.object({
     )
     .optional(),
   flakyChecks: z.array(z.string()).optional(),
+  alsoClosed: z
+    .array(z.object({ number: z.int(), state: z.string(), closedManually: z.boolean() }))
+    .optional(),
   prepared: z.json().optional(),
   check: Check.optional(),
   plannedWork: z.object({ fix: z.array(workItem), followup: z.array(workItem) }).optional(),

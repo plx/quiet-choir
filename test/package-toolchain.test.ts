@@ -135,6 +135,7 @@ describe('toolchain prompts', () => {
     branch: 'b',
     dir: '/d',
     upstreamDelta: false,
+    alsoCloses: [],
   };
   const item = {
     key: 'k',

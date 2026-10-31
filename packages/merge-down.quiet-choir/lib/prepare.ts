@@ -70,6 +70,8 @@ export interface Prepared {
   readonly info: GithubRepoInfo;
   readonly pr: GithubPullRequest;
   readonly issue: Issue | null;
+  /** The other same-repository issues the PR closes (#736), read like the primary one. */
+  readonly also: readonly { number: number; title: string; state: string; url: string }[];
   readonly parent: { readonly number: number | null; readonly state: string | null } | null;
   readonly children: readonly GithubPullRequestSummary[];
   readonly open: readonly GithubPullRequestSummary[];
@@ -99,29 +101,45 @@ export async function preparePr(
   const link = linkedIssue(pr, info.nameWithOwner);
   let issue: Issue | null = null;
   let issueDoc: GithubIssueWithComments | null = null;
-  if (link !== null) {
-    // A number from a body keyword or a branch name may name a pull request, which issue.view rejects.
+  // A number from a body keyword or a branch name may name a pull request, which issue.view rejects.
+  const readIssue = async (n: number): Promise<GithubIssueWithComments | null> => {
     const kind = await ctx.exec.json(
-      ctx.id('issue-kind', link.number),
+      ctx.id('issue-kind', n),
       [
         'gh',
         'api',
-        `repos/${info.nameWithOwner}/issues/${String(link.number)}`,
+        `repos/${info.nameWithOwner}/issues/${String(n)}`,
         '--jq',
         '{pullRequest: (.pull_request != null)}',
       ],
       { schema: z.object({ pullRequest: z.boolean() }), ...policy },
     );
-    if (!kind.pullRequest) {
-      issueDoc = await gh.issue.view(
-        ctx.id('issue', link.number),
-        { number: link.number, comments: true },
-        policy,
-      );
+    if (kind.pullRequest) return null;
+    return gh.issue.view(ctx.id('issue', n), { number: n, comments: true }, policy);
+  };
+  if (link !== null) {
+    issueDoc = await readIssue(link.number);
+    if (issueDoc !== null)
       issue = { ...link, title: issueDoc.title, state: issueDoc.state, url: issueDoc.url };
-    }
   }
-  await write('issue.md', renderIssue(issueDoc));
+  // Every other issue of this repository it closes is reviewed too (#736): issue.md holds them all.
+  const alsoDocs: GithubIssueWithComments[] = [];
+  if (issue !== null)
+    for (const n of issue.alsoCloses) {
+      if (typeof n !== 'number') continue;
+      const doc = await readIssue(n);
+      if (doc !== null) alsoDocs.push(doc);
+    }
+  await write(
+    'issue.md',
+    [issueDoc, ...alsoDocs].map((doc) => renderIssue(doc)).join('\n\n---\n\n'),
+  );
+  const also = alsoDocs.map((d) => ({
+    number: d.number,
+    title: d.title,
+    state: d.state,
+    url: d.url,
+  }));
 
   let parent: Prepared['parent'] = null;
   if (pr.baseRefName !== info.defaultBranch) {
@@ -149,7 +167,7 @@ export async function preparePr(
     paths,
     key: pr.headRefOid,
   });
-  return { info, pr, issue, parent, children, open, later, threads, alerts };
+  return { info, pr, issue, also, parent, children, open, later, threads, alerts };
 }
 
 /**
