@@ -307,6 +307,12 @@ export const modes = [
       assert.equal(output.strategy, 'de-risk-first');
       assert.equal(output.pick.scores.length, 2);
       assert.equal(output.graft.from, 'foundation-first');
+      // The register follows the finalizer's milestones, not the winner's: de-risk-first puts
+      // C3 in 'Spike co-editing' and C5 in 'Billing'.
+      assert.deepEqual(output.risks, [
+        { capability: 'C3', name: 'Real-time co-editing', milestone: 'Share live' },
+        { capability: 'C5', name: 'Seat billing', milestone: null },
+      ]);
       assert.deepEqual(output.stress, { sound: true, problems: [] });
       assert.ok(prompt(calls, 'finalize').includes('The stress test found no problems'));
       const document = await readFile(join(env.cwd, 'docs/roadmap.md'), 'utf8');

@@ -275,22 +275,41 @@ async function replied(replyErrors, label, run) {
   }
 }
 
-const firstLine = (text) => String(text ?? '').split('\n', 1)[0];
+// A node:assert generated message opens with a line that names no value (after any prefix such as
+// `Step x failed: `); the values, or a `+ actual - expected` diff, follow it.
+const assertOpener =
+  /(?:^|: )(?:Expected values to be (?:strictly |loosely )?(?:deep-)?equal:|The expression evaluated to a falsy value:|The input (?:did not match|was expected to not match) the regular expression .*\. Input:)$/u;
+const diffHeader = /^(?:\+ actual - expected|\.\.\. Skipped lines)$/u;
+/**
+ * The line of a message that says what failed: its first line, unless that is a generic node:assert
+ * opener. Then the opener is followed by the first line that carries a value: for a diff, its first
+ * actual (`+`) and expected (`-`) lines, whitespace collapsed, so `'applied' !== 'moved'` or the
+ * changed field shows without the `cause`.
+ */
+export function headline(text) {
+  const lines = String(text ?? '').split('\n');
+  if (!assertOpener.test(lines[0])) return lines[0];
+  const values = lines.slice(1).filter((line) => line.trim() && !diffHeader.test(line));
+  const shown = lines.includes('+ actual - expected')
+    ? ['+', '-'].flatMap((sign) => values.find((line) => line.startsWith(`${sign} `)) ?? [])
+    : values.slice(0, 1);
+  return [lines[0], ...shown.map((line) => line.trim().replace(/\s+/gu, ' '))].join(' ');
+}
 /**
  * What failed in a saved run, for a check's error: the run's status and error, then one line per
- * failed or settled-failed step (its ID, status, error kind and first message line) and per failed
- * item of a settled map (the map ID, the item's index and the step it failed at).
+ * failed or settled-failed step (its ID, status, error kind and the `headline` of its message) and
+ * per failed item of a settled map (the map ID, the item's index and the step it failed at).
  */
 export function failureSummary(record) {
   if (!record) return 'No run record: the run was refused before it saved one.';
   const lines = [
-    `Run ${record.id} ${record.status}${record.error ? `: ${firstLine(record.error)}` : ''}`,
+    `Run ${record.id} ${record.status}${record.error ? `: ${headline(record.error)}` : ''}`,
   ];
   for (const [id, step] of Object.entries(record.steps)) {
     if (step.status !== 'failed' && step.status !== 'settled-failed') continue;
     const kind = step.settledError?.kind ?? step.attemptHistory?.at(-1)?.errorKind ?? 'unknown';
     const message = step.settledError?.message ?? step.error;
-    lines.push(`  ${id} (${step.status}, ${kind}): ${firstLine(message)}`);
+    lines.push(`  ${id} (${step.status}, ${kind}): ${headline(message)}`);
   }
   for (const [id, map] of Object.entries(record.maps ?? {}))
     for (const [index, item] of (map.items ?? []).entries()) {
@@ -298,17 +317,19 @@ export function failureSummary(record) {
       const { kind, message, stepId } = item.outcome.error;
       const at = stepId ? ` at ${stepId}` : '';
       lines.push(
-        `  ${id} item ${String(index)} (settled-failed${at}, ${kind}): ${firstLine(message)}`,
+        `  ${id} item ${String(index)} (settled-failed${at}, ${kind}): ${headline(message)}`,
       );
     }
   if (lines.length === 1) lines.push('  No failed or settled-failed step.');
   return lines.join('\n');
 }
 /**
- * Run a check of the run that `opts` names; when it throws, rethrow with the error as `cause` and
- * the saved record's `failureSummary`, so a failed assertion names the steps that failed.
+ * Run the check `label` of the run that `opts` names; when it throws, rethrow with the error as
+ * `cause` and the saved record's `failureSummary`, so a failed assertion names the steps that
+ * failed. The error's `headline` follows the label once: a leading `<label>: ` or `<name>: ` of
+ * its own is dropped.
  */
-async function explained(label, opts, check) {
+async function explained(name, label, opts, check) {
   try {
     return await check();
   } catch (error) {
@@ -319,11 +340,11 @@ async function explained(label, opts, check) {
       summary =
         unread?.code === 'ENOENT'
           ? failureSummary(null)
-          : `The run record could not be read: ${firstLine(unread?.message ?? unread)}`;
+          : `The run record could not be read: ${headline(unread?.message ?? unread)}`;
     }
-    throw new Error(`${label}: ${firstLine(error?.message ?? error)}\n${summary}`, {
-      cause: error,
-    });
+    const line = headline(error?.message ?? error);
+    const prefix = [`${label}: `, `${name}: `].find((own) => line.startsWith(own)) ?? '';
+    throw new Error(`${label}: ${line.slice(prefix.length)}\n${summary}`, { cause: error });
   }
 }
 
@@ -333,7 +354,7 @@ export async function checkSuccess(name, { setup }) {
     definition = await load(3, name);
   const { harness, calls, replyErrors } = harnessFor(3, name, env),
     opts = await options(env, 3, name, harness);
-  return explained(`${name} success`, opts, () =>
+  return explained(name, `${name} success`, opts, () =>
     successRun(name, { env, definition, calls, replyErrors, opts }),
   );
 }
@@ -379,12 +400,28 @@ async function successRun(name, { env, definition, calls, replyErrors, opts }) {
 }
 
 /**
+ * The Git objects of a run's fixture repository as setup made them: every object reachable from the
+ * commits `env` names (`since`, `until` and any a module's `setup` adds, such as `base`). Fixture
+ * commits have fixed dates, so every run of one intent has the same IDs.
+ */
+function fixtureObjects(env) {
+  const commits = Object.values(env).filter(
+    (value) => typeof value === 'string' && /^[0-9a-f]{40}$/u.test(value),
+  );
+  if (!commits.length) return [];
+  return command(env.cwd, 'rev-list', '--objects', ...commits, '--')
+    .split('\n')
+    .map((line) => line.slice(0, 40));
+}
+
+/**
  * An output as JSON that another run of the same intent can equal: the run's checkout, scratch root
  * and run ID, every UUID (worktree directories carry one) and every number under a key ending in
- * `Ms` (a duration) are replaced, and Git object IDs, which commits dated at run time change, are
- * renamed in order of first appearance, so only where each one recurs is compared.
+ * `Ms` (a duration) are replaced. A Git object ID in `literal` (the fixture repository's own, see
+ * `fixtureObjects`) stays as it is; any other, such as a commit dated at run time, is renamed in
+ * order of first appearance, so only where each one recurs is compared.
  */
-function portable(output, env, runId) {
+function portable(output, env, runId, literal) {
   const ids = new Map();
   return JSON.stringify(stable(output ?? null), (key, value) =>
     key.endsWith('Ms') && typeof value === 'number' ? '<ms>' : value,
@@ -394,6 +431,7 @@ function portable(output, env, runId) {
     .replaceAll(runId, '<run>')
     .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gu, '<uuid>')
     .replace(/\b[0-9a-f]{40}\b/gu, (id) => {
+      if (literal.has(id)) return id;
       if (!ids.has(id)) ids.set(id, `<oid:${String(ids.size)}>`);
       return ids.get(id);
     });
@@ -408,9 +446,12 @@ export async function checkPort(name, { setup, root }) {
   const { row, env, result, suspended, calls, shape, runId } = await checkSuccess(name, { setup });
   const writes = module ? killSpec(3, name) : !readOnlySix.includes(name);
   // A fixture module's F3 and F4 cells say whether the resumed output is the success run's, once
-  // each run's own paths and run ID are replaced; `faultCheck: true` makes a difference fail.
-  const expected = portable(result.output, env, runId);
-  const compared = (fault, cell, actual) => {
+  // each run's own paths and run ID are replaced (see `portable`); `faultCheck: true` makes a
+  // difference fail.
+  const compared = (fault, cell, output, resumedEnv, resumedRunId) => {
+    const literal = new Set([...fixtureObjects(env), ...fixtureObjects(resumedEnv)]);
+    const expected = portable(result.output, env, runId, literal),
+      actual = portable(output, resumedEnv, resumedRunId, literal);
     if (module.faultCheck)
       assert.deepEqual(
         JSON.parse(actual),
@@ -425,16 +466,17 @@ export async function checkPort(name, { setup, root }) {
     if (!module) return cell;
     const killed = JSON.parse(await readFile(join(killRoot, 'worker.json'), 'utf8'));
     const { output } = JSON.parse(await readFile(join(killRoot, 'result.json'), 'utf8'));
-    return compared('F3', cell, portable(output, killed, 'kill-case'));
+    return compared('F3', cell, output, killed, 'kill-case');
   };
   const fix = async () => {
-    let actual;
+    let output, fixed;
     const cell = await fixResume(setup, 3, name, {
-      onResult: (resumed, fixed) => {
-        actual = portable(resumed.output, fixed, runId);
+      onResult: (resumed, resumedEnv) => {
+        ({ output } = resumed);
+        fixed = resumedEnv;
       },
     });
-    return module ? compared('F4', cell, actual) : cell;
+    return module ? compared('F4', cell, output, fixed, runId) : cell;
   };
   const metric = {
     workflow: name,
@@ -574,7 +616,7 @@ export async function modeContracts(name, { setup, only }) {
     const opts = mode.options ? mode.options(base, env) : base;
     const label = `${name} ${mode.mode}`;
     rows.push(
-      await explained(label, opts, () =>
+      await explained(name, label, opts, () =>
         modeRun(name, mode, { env, definition, calls, replyErrors, opts, label }),
       ),
     );
@@ -623,7 +665,7 @@ async function modeRun(name, mode, { env, definition, calls, replyErrors, opts, 
   await mode.check({ result, env, calls, record, suspended, questions });
   const before = calls.length;
   await replied(checked, label, drive(definition, { ...opts, resume: true }, driven));
-  assert.equal(calls.length, before, `${mode.mode}: resume must not call an agent again`);
+  assert.equal(calls.length, before, `${label}: resume must not call an agent again`);
   return {
     workflow: name,
     fixture: mode.mode,
