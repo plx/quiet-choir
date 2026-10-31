@@ -68,7 +68,8 @@ resume does not follow a moved ref. For a per-call checkout it also pins the res
 run-owned ref in `refs/quiet-choir/<run>/<namespace>/`: one base pin per step, shared by its
 retries, created before invocation and kept when the call fails or leaves the tree unchanged.
 Logical options enter the effect identity. Disposable attempt paths do not. Relative `cwd` retains
-its position within the source repository, including when the run starts in a monorepo subdirectory.
+its position within the source repository, including when the run starts in a monorepo subdirectory,
+so an isolated call in a subdirectory run starts in the same subdirectory of its checkout.
 
 Every attempt receives a fresh directory. Failed, timed-out, and cancelled attempts are retained
 according to policy, never reused for a later per-call attempt. Only a validated successful result
@@ -85,6 +86,18 @@ reported in the receipt. File statuses are added, modified, deleted, or renamed;
 renamed entry recorded before `from` existed has none and should be refused. Ordinary and legacy
 results omit `worktree`, keeping their existing schema and replay identities. `value()` returns only
 the output; use a result method or a shared handle when later integration needs the captured change.
+
+Receipt `files` paths, like merge `conflicts[].files` and `captureExclude` patterns, are relative to
+the repository root, not to the call's `cwd`, while [file effects](commands-files.md#files) resolve
+paths against `ctx.cwd`. In a run started in `pkg/`, an edit to `<cwd>/x.ts` is reported as
+`pkg/x.ts`. Before comparing a receipt with cwd-relative paths, prepend the run's prefix to them,
+read once with `std.exec.git(ctx, 'prefix', ['rev-parse', '--show-prefix'])` (trimmed, `pkg/` here
+and empty at the root). To start a call at its checkout root, pass the trimmed
+`git rev-parse --show-cdup` output as its `cwd`, or `'.'` when it is empty, since `ctx.exec` refuses
+an empty `cwd`. In a subdirectory, Git's `ls-files` and `grep` search only that subdirectory and
+print cwd-relative paths: `--full-name` prints root-relative paths, a `:(top)` pathspec searches
+from the root, and `ls-tree --full-tree` does both. `git diff` and `git status --porcelain` already
+print root-relative paths.
 
 Concurrent readers that must judge one exact commit take `worktree: { base: { commit } }` per call,
 because effects on one handle serialize. Each call costs a checkout and a base pin. No option
@@ -137,6 +150,17 @@ caches such as `node_modules` remain. Missing directories rebuild from the saved
 write cannot become the next effect's baseline. Local `StepContext.cwd` is the mapped execution
 directory; the handle's `path` is the repository root. Write through managed effects, not body code
 using `handle.path`: body code reruns and bypasses serialization.
+
+An agent call on a handle reports the handle's cumulative change: the receipt's `base` is
+`handle.base`, not the snapshot the call started from, and `files` lists every change since then,
+including earlier agents', steps' and execs' changes. After earlier changes, a call that changed
+nothing still returns a new, non-null `commit` with the earlier files, and `commit: null` means the
+handle's tree is back at its base, not that the call made no change. For one call's own change, diff
+the previous receipt's `commit` against this one's (`git diff --name-status <previous> <commit>`,
+with `handle.base` for a null commit) outside the handle, since an exec on the handle adds a
+snapshot of its own. `ctx.exec` and `ctx.step` results carry no receipt, so that diff also holds the
+changes of any exec or step in between. `ctx.merge` of a handle integrates its net change since
+`handle.base`.
 
 Handles belong to one run. Forks create new handles; immutable `WorktreeChange` results can be
 reused from the source run. Cleaning a fork never removes source-owned caches or pins.

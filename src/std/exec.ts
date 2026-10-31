@@ -70,7 +70,7 @@ export async function git(
 }
 
 /**
- * The repository-relative path rule: not absolute on POSIX or Windows, no drive-letter prefix
+ * The rule for a path under `ctx.cwd`: not absolute on POSIX or Windows, no drive-letter prefix
  * (`C:/x`, `C:x`), no backslash or NUL, and no `.`, `..`, empty or `.git` segment.
  */
 function checkPath(path: string): void {
@@ -112,7 +112,8 @@ function checkPath(path: string): void {
  * call it on `ctx.within(prefix)`.
  *
  * @param ctx - The workflow context.
- * @param path - The repository-relative target path.
+ * @param path - The target path, relative to `ctx.cwd` (a repository subdirectory when the run
+ * starts in one), not to the repository root.
  * @param content - The UTF-8 file content.
  * @returns A receipt: the absolute target under `ctx.cwd`, the content's SHA-256 and byte length,
  * and `previousSha256: null`, since the file did not exist.

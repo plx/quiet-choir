@@ -20,18 +20,27 @@ export interface WorktreeHandle {
 
 /** A captured change remains usable after its cache directory has been removed. */
 export interface WorktreeChange {
-  /** Commit from which this change was captured. */
+  /**
+   * Commit from which this change was captured: the per-call attempt's pinned base, or the handle's
+   * base (not the call's starting snapshot) for an effect on a shared handle.
+   */
   readonly base: string;
-  /** Snapshot commit, or null when the tree is unchanged. */
+  /**
+   * Snapshot commit, or null when the tree equals base; on a handle that earlier effects changed, a
+   * call that changed nothing still gets a new snapshot.
+   */
   readonly commit: string | null;
   /**
    * Run-owned ref keeping the snapshot reachable, or null for an unchanged tree; the base pin of
    * the step or handle is separate.
    */
   readonly ref: string | null;
-  /** Changes relative to base; a renamed entry's `path` is the destination and `from` the source. */
+  /**
+   * Changes relative to base, so cumulative across a handle's effects; a renamed entry's `path` is
+   * the destination and `from` the source.
+   */
   readonly files: readonly {
-    /** Repository-relative path. */
+    /** Path relative to the repository root, even when the run or call cwd is a subdirectory. */
     readonly path: string;
     /** Git change category. */
     readonly status: 'added' | 'modified' | 'deleted' | 'renamed';

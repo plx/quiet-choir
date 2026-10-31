@@ -226,6 +226,24 @@ it('committedArtifact accepts a parent whose name only begins with two dots', as
   expect(await readFile(join(repo, '..generated/out.md'), 'utf8')).toBe('x');
 });
 
+it("committedArtifact resolves its path against a subdirectory run's cwd", async () => {
+  await mkdir(join(repo, 'sub'));
+  await writeFile(join(repo, 'sub', 'kept.md'), 'kept\n');
+  await git('add', '--all');
+  await git('commit', '--quiet', '-m', 'sub');
+  const publish = workflow(z.object({ path: z.string(), cwd: z.string() }), async (ctx) => {
+    const receipt = await std.exec.committedArtifact(ctx, 'notes.md', 'sub\n');
+    return { path: receipt.path, cwd: ctx.cwd };
+  });
+  const result = await runWorkflow(publish, { ...options('subdirectory'), cwd: join(repo, 'sub') });
+  expect(result.output).toEqual({
+    path: join(repo, 'sub', 'notes.md'),
+    cwd: join(repo, 'sub'),
+  });
+  expect(await git('show', 'HEAD:sub/notes.md')).toBe('sub\n');
+  await expect(git('cat-file', '-e', 'HEAD:notes.md')).rejects.toThrow();
+});
+
 it.each(['../x.md', '.git/x.md', '/abs/x.md', 'a\\b.md', 'a//b.md', './x.md', ''])(
   'committedArtifact refuses the path %j before any effect',
   async (path) => {

@@ -209,6 +209,45 @@ it('maps monorepo cwd, warns about dirty source files, and snapshots only commit
   expect(run.steps['edit']?.worktree?.files).toEqual([{ path: 'packages/a/new', status: 'added' }]);
 });
 
+it("keeps a subdirectory run's position in isolated calls and reports root-relative paths", async () => {
+  await mkdir(join(repo, 'packages', 'a'), { recursive: true });
+  await writeFile(join(repo, 'packages', 'a', 'source'), 'tracked');
+  await commit('package');
+  const directories = new Map<string, string>();
+  const harness: Harness = {
+    invoke: async (request) => {
+      directories.set(request.options.prompt, request.cwd);
+      await writeFile(join(request.cwd, 'new'), 'new file');
+      return response;
+    },
+  };
+  const definition = defineWorkflow({
+    version: '1',
+    name: 'subdirectory',
+    input: z.null(),
+    output: z.null(),
+    async run(ctx) {
+      await ctx.codex.text('nested', { prompt: 'nested', worktree: true });
+      // `git rev-parse --show-cdup` in packages/a prints this.
+      await ctx.codex.text('rooted', { prompt: 'rooted', worktree: true, cwd: '../../' });
+      return null;
+    },
+  });
+  const run = await runWorkflow(definition, {
+    ...options('subdirectory'),
+    cwd: join(repo, 'packages', 'a'),
+    input: null,
+    harness,
+  });
+  const nested = run.steps['nested']?.worktree,
+    rooted = run.steps['rooted']?.worktree;
+  assert(nested && rooted);
+  expect(directories.get('nested')).toBe(join(nested.path, 'packages', 'a'));
+  expect(nested.files).toEqual([{ path: 'packages/a/new', status: 'added' }]);
+  expect(directories.get('rooted')).toBe(rooted.path);
+  expect(rooted.files).toEqual([{ path: 'new', status: 'added' }]);
+});
+
 it('names the source of a renamed entry, merges it, and replays a receipt recorded without it', async () => {
   const invoke = vi.fn<Harness['invoke']>(async (request) => {
     await mkdir(join(request.cwd, 'moved'));
@@ -488,6 +527,57 @@ it('serializes shared effects, resets failed attempts, retains ignored dependenc
   expect(setups).toBe(6);
   expect(await readFile(join(repo, 'file.txt'), 'utf8')).toBe('base\n');
   expect((await command('worktree', 'list', '--porcelain')).match(/^worktree /gmu)).toHaveLength(1);
+});
+
+it('reports shared-handle receipts cumulatively from the handle base', async () => {
+  const harness: Harness = {
+    invoke: async (request) => {
+      if (request.options.prompt === 'one') await writeFile(join(request.cwd, 'one.txt'), 'one\n');
+      if (request.options.prompt === 'revert')
+        for (const file of ['one.txt', 'lock.json']) await rm(join(request.cwd, file));
+      return response;
+    },
+  };
+  let tree: WorktreeHandle | undefined, installed: object | undefined;
+  const receipts = new Map<string, WorktreeChange | undefined>();
+  const definition = defineWorkflow({
+    version: '1',
+    name: 'cumulative',
+    input: z.null(),
+    output: z.null(),
+    async run(ctx) {
+      tree = await ctx.worktree('workspace');
+      receipts.set(
+        'one',
+        (await ctx.codex.text('one', { prompt: 'one', worktree: tree })).worktree,
+      );
+      installed = await ctx.exec(
+        'install',
+        [process.execPath, '-e', "require('fs').writeFileSync('lock.json', '{}\\n')"],
+        { worktree: tree },
+      );
+      for (const prompt of ['noop', 'revert'])
+        receipts.set(prompt, (await ctx.codex.text(prompt, { prompt, worktree: tree })).worktree);
+      return null;
+    },
+  });
+  const run = await runWorkflow(definition, { ...options('cumulative'), input: null, harness });
+  expect(run.status).toBe('completed');
+  assert(tree);
+  const one = receipts.get('one'),
+    noop = receipts.get('noop');
+  expect(one).toMatchObject({ base: tree.base, files: [{ path: 'one.txt', status: 'added' }] });
+  // A call that changed nothing reports the earlier agent's and command's files, in a new snapshot.
+  expect(noop?.base).toBe(tree.base);
+  expect(noop?.commit).toEqual(expect.any(String));
+  expect(noop?.commit).not.toBe(one?.commit);
+  expect(noop?.files).toEqual([
+    { path: 'lock.json', status: 'added' },
+    { path: 'one.txt', status: 'added' },
+  ]);
+  // Deleting both files returns the tree to its base, so the call that changed it reports nothing.
+  expect(receipts.get('revert')).toEqual({ base: tree.base, commit: null, ref: null, files: [] });
+  expect(installed).not.toHaveProperty('worktree');
 });
 
 it('does not advance a shared baseline when capture fails before effect completion', async () => {
