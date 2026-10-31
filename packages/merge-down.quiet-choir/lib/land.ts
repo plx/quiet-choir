@@ -288,6 +288,9 @@ export function landMerge(ctx: WorkflowContext, id: string, input: LandInput): P
           { schema: AsyncMerge, okExitCodes: [0, 1] },
         );
         const uuid = result.details?.uuid ?? null;
+        // 409: a request for this PR is already pending (a retry's, say); poll that one.
+        if (String(result.status ?? '') === '409' && uuid !== null)
+          result = { ...result, status: 'pending' };
         for (let poll = 1; result.status === 'pending' && poll <= ASYNC_POLLS; poll++) {
           if (uuid === null) break;
           if (poll > 1) await delay(ASYNC_DELAY_MS, undefined, { signal: context.signal });
@@ -303,8 +306,14 @@ export function landMerge(ctx: WorkflowContext, id: string, input: LandInput): P
           const after = await readPull();
           if (after.merged && after.head.sha === input.head)
             return { merged: true, mergeCommit: after.merge_commit_sha, acted: false };
-          return refuse(
-            `GitHub's asynchronous merge ended ${String(result.status ?? 'without a status')}: ${result.details?.message ?? result.message ?? ''}`.trim(),
+          const why = `${String(result.status ?? 'no status')}: ${result.details?.message ?? result.message ?? ''}`;
+          // Only GitHub's own verdicts settle the step; an HTTP error (a 500, a 422) or an unknown
+          // answer throws, so a retry or a resume asks again instead of replaying a refusal.
+          if (result.status === 'failed' || result.status === 'enqueued')
+            return refuse(`GitHub's asynchronous merge ended ${why}`.trim());
+          if (after.state !== 'open') return refuse(`PR is ${after.state.toUpperCase()}`);
+          throw new Error(
+            `GitHub did not accept the asynchronous merge of #${String(input.pr)} (${why.trim()}); a retry asks again`,
           );
         }
         for (let read = 1; read <= CONFIRM_READS; read++) {
