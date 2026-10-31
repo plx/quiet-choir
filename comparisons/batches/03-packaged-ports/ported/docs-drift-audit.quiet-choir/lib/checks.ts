@@ -32,7 +32,7 @@ async function run(
         truncated: result.value.truncated,
         failure: null,
         // A signal is a settled failure, so a completed run always has its exit code.
-        ok: result.value.code !== null && okExitCodes.includes(result.value.code),
+        ok: okExitCodes.includes(result.value.code),
       }
     : {
         argv,

@@ -147,7 +147,7 @@ export async function refactorTarget(
     return { kept: false, why: `refactorer declined: ${output.summary}`, failed: false };
   if (!worktree?.commit) return { kept: false, why: 'refactorer made no change', failed: false };
   const change = { ...worktree, commit: worktree.commit };
-  // A receipt names only a rename's destination, so code lists both sides itself.
+  // List both sides of every rename as plain paths, the form the net ownership check compares.
   const touched = (
     await std.exec.git(ctx, 'touched', [
       'diff',

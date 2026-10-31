@@ -891,14 +891,14 @@ export const modes = [
     mode: 'rename',
     async check({ result, env, record }) {
       // The plan approves a new fixture file, and the fixer moved the clock test onto it. The
-      // receipt names only the destination, so a check of paths alone would accept the move and
-      // delete the clock test unseen: every rename is refused.
+      // receipt names the clock test as the rename's `from`, so a check of changed paths alone
+      // would accept the move and delete the clock test: every rename is refused.
       const { output } = result;
       assert.equal(output.status, 'refused');
       assert.deepEqual(
         record.steps.fix.worktree.files.toSorted((a, b) => a.path.localeCompare(b.path)),
         [
-          { path: renamedTo, status: 'renamed' },
+          { path: renamedTo, status: 'renamed', from: tests.clock.file },
           { path: tests.cache.file, status: 'modified' },
         ],
       );

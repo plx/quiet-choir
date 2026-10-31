@@ -145,9 +145,8 @@ export function unbuildable(
 }
 
 /**
- * A writer's receipt against its module's areas: the files it changed outside them (a rename
- * counts as outside, because the receipt names only its destination), and the change, null when
- * the tree is unchanged.
+ * A writer's receipt against its module's areas: the files it changed outside them (every rename
+ * counts as outside, whichever paths it names), and the change, null when the tree is unchanged.
  */
 export function owned(change: WorktreeChange | undefined, areas: readonly string[]) {
   if (!change) throw new Error('A writer did not produce an isolated receipt');

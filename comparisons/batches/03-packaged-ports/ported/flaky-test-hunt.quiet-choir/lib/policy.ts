@@ -261,10 +261,10 @@ export const planDigest = (plan: string): string => createHash('sha256').update(
 
 /**
  * The fixer's change, with the files it touched outside the approved plan and the approved fixes
- * it left untouched: an unchanged tree can pass a re-stress by chance. Every rename is refused: a
- * receipt names only a rename's destination, so a file moved onto an approved path would otherwise
- * delete its unapproved source unseen. Plan paths are relative to the working directory, while
- * receipt paths are repository-relative, so `prefix` (the working directory's
+ * it left untouched: an unchanged tree can pass a re-stress by chance. Every rename is refused, as
+ * the fix prompt says: a fix edits approved files in place, and a rename deletes its source (the
+ * receipt's `from`) even when its destination is approved. Plan paths are relative to the working
+ * directory, while receipt paths are repository-relative, so `prefix` (the working directory's
  * `git rev-parse --show-prefix`) joins the two.
  */
 export function owned(change: WorktreeChange | undefined, plan: PlanItem[], prefix: string) {
