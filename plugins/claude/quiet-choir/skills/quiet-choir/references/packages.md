@@ -328,14 +328,14 @@ selected. The top-level `workflow` is the selected workflow's compact document, 
 module (its `name` is what the default run ID in `/quiet-choir:run` uses). Beside it, `package`
 describes the whole package:
 
-| Field                | Meaning                                                                                                                            |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `root`               | The package's real root; with `name` and `version`, what the run records as `launch.package`                                       |
-| `entry`              | The entry workflow's name, or null                                                                                                 |
-| `workflows[]`        | Every declared workflow in declaration order: `name`, `version`, `description`, `whenToUse`, `entrypoint`, `inputSchema`, `roster` |
-| `workflows[].roster` | The workflow's roster entries in key order, each with `name`, `harness`, `access`, `model` (null when unset) and `description`     |
-| `prompts[]`          | One per prompt root: `root` and `entries` with `name`, `file`, `description`, `params` (sorted keys) and `variables`               |
-| `files`              | `count`, `bytes` and a `sha256` over root-relative paths and contents, so a copy at another path has the same digest               |
+| Field                | Meaning                                                                                                                                                                |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `root`               | The package's real root; with `name` and `version`, what the run records as `launch.package`                                                                           |
+| `entry`              | The entry workflow's name, or null                                                                                                                                     |
+| `workflows[]`        | Every declared workflow in declaration order: `name`, `version`, `description`, `whenToUse`, `entrypoint`, `inputSchema`, `roster`                                     |
+| `workflows[].roster` | The workflow's roster entries in key order, each with `name`, `harness`, `access`, `model` (null when unset) and `description`                                         |
+| `prompts[]`          | One per prompt root: `root` and `entries` with `name`, `file`, `description`, `params` (sorted keys) and `variables` (read by the entry file itself, not its includes) |
+| `files`              | `count`, `bytes` and a `sha256` over root-relative paths and contents, so a copy at another path has the same digest                                                   |
 
 The human line reads `Validated merge-down/merge-down-pr@1 (package merge-down@1, <module>).`
 

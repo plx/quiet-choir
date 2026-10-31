@@ -70,7 +70,10 @@ export interface PackagePromptSet {
     readonly description: string | null;
     /** The keys of the entry's params schema, sorted. */
     readonly params: readonly string[];
-    /** Top-level variables the template reads, sorted. */
+    /**
+     * Top-level variables the entry file itself reads, sorted; variables read only by its includes,
+     * extends parents or imported macros are not listed (the unused-parameter warning counts them).
+     */
     readonly variables: readonly string[];
   }[];
 }

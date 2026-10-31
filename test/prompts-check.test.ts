@@ -269,7 +269,7 @@ describe('checkPromptSets errors', () => {
 });
 
 describe('checkPromptSets results', () => {
-  it('reports variables and description, and warns on an unused key but not one a fragment reads', async () => {
+  it("reports the entry file's own variables and description, and warns on an unused key but not one a fragment reads", async () => {
     const { errors, entry } = await check(
       {
         'Main.md':
@@ -294,6 +294,22 @@ describe('checkPromptSets results', () => {
         'Prompt Main (Main.md): parameter unused is never read by the template or its includes',
       ],
     });
+  });
+
+  it('leaves a key read only through an include out of variables, and does not warn on it', async () => {
+    const { directory, errors, entry } = await check(
+      { 'Main.md': '{% include "_fragments/p.md" %}', '_fragments/p.md': 'PRD: {{ prd }}' },
+      z.object({ prd: z.string(), tickets: z.string().optional() }),
+    );
+    expect(errors).toEqual([]);
+    expect(entry?.variables).toEqual([]);
+    expect(entry?.warnings).toEqual([
+      'Prompt Main (Main.md): parameter tickets is never read by the template or its includes',
+    ]);
+    const set = definePrompts(directory, {
+      Main: { file: 'Main.md', params: z.object({ prd: z.string() }) },
+    });
+    expect(set.Main({ prd: 'P' }).text).toBe('PRD: P');
   });
 
   it('prefers the entry description, and counts an extends parent and its imported macro', async () => {

@@ -100,8 +100,9 @@ description: Review a diff against the issue it claims to close.
 | `params` key nothing in the entry, its includes or imports reads | Warning |
 
 `workflow validate --json` lists each node's checked sets under `workflow.prompts` (`[]` without
-any): `{ root, entries: [{ name, file, description, variables, warnings }] }`. Errors fail
-validation with exit 4 and name the prompt, file and line, for example
+any): `{ root, entries: [{ name, file, description, variables, warnings }] }` (`variables`: the
+top-level variables the entry file itself reads, not those of its includes). Errors fail validation
+with exit 4 and name the prompt, file and line, for example
 `Prompt Review (Review.md): reads variable autor, which its params schema does not declare`.
 Warnings print as `[warn]` lines on stderr and appear in the JSON; `list-defs` reports the same
 section and revalidates when a template changes. Fragments are not held to the schema (they may read

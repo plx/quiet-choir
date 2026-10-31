@@ -194,9 +194,11 @@ module. Beside it, `package` describes the whole package and is not compacted:
   `access` and the entry's `model` for that harness (null when it sets none).
 - `prompts` lists the package's prompt sets and every set in each workflow's static tree, one per
   root, first seen first (package sets before workflow sets). `params` are the sorted keys of the
-  entry's params schema, and `variables` the top-level variables the template reads. An entry that
-  repeats exactly (same name, file, params and variables) is listed once; differing declarations
-  under the same name, from two sets on one root, are each listed.
+  entry's params schema, and `variables` the top-level variables the entry file itself reads. A
+  parameter read only through an include, extends parent or imported macro is in `params` but not
+  `variables`, and draws no unused-parameter warning. An entry that repeats exactly (same name,
+  file, params and variables) is listed once; differing declarations under the same name, from two
+  sets on one root, are each listed.
 - `files` covers the [fingerprinted files](#fingerprinting) under the root: their count, total bytes
   and a SHA-256 digest over their root-relative paths and contents, so a copy of the package at
   another path has the same digest. Files outside the root are not counted.

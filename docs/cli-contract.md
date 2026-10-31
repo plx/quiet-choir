@@ -144,15 +144,15 @@ its module and `roster` lists its roster entries in key order as
 `{name, harness, access, model, description}` (`model` is the entry's model for its harness, or
 null). `prompts` lists `{root, entries: [{name, file, description, params, variables}]}` once per
 prompt root, package sets first, then each workflow's static tree; `params` are the sorted keys of
-the entry's params schema. `files` is `{count, bytes, sha256}` over every regular file under the
-root except `node_modules/` and `.git/`, with `sha256` a digest of root-relative paths and contents
-that does not depend on where the package sits. `validate` describes every declared workflow, so a
-failure in any one of them (such as a broken template) fails it as `load.definition`. A package
-run's `launch.sources` holds those same files with the compiler's dependencies and prompt roots
-outside the root, so editing any of them between execute and resume is a code change
-(`run.incompatible` with `details.changed: ["code"]`, accepted by `--accept-code-change`).
-`validate` and `execute` log one warning when the files total more than 10 MiB, naming the five
-largest.
+the entry's params schema and `variables` the top-level variables the entry file itself reads (not
+its includes). `files` is `{count, bytes, sha256}` over every regular file under the root except
+`node_modules/` and `.git/`, with `sha256` a digest of root-relative paths and contents that does
+not depend on where the package sits. `validate` describes every declared workflow, so a failure in
+any one of them (such as a broken template) fails it as `load.definition`. A package run's
+`launch.sources` holds those same files with the compiler's dependencies and prompt roots outside
+the root, so editing any of them between execute and resume is a code change (`run.incompatible`
+with `details.changed: ["code"]`, accepted by `--accept-code-change`). `validate` and `execute` log
+one warning when the files total more than 10 MiB, naming the five largest.
 
 `list-defs` lists each workflow of a `*.quiet-choir` package as `<package>/<workflow>` and does not
 scan a package for loose definition files; a package directory without `package.ts`, or with a

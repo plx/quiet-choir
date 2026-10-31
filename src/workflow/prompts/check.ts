@@ -20,7 +20,10 @@ export interface PromptEntryCheck {
   readonly file: string;
   /** The entry's description, else the template's front matter description, else null. */
   readonly description: string | null;
-  /** Top-level variables the template reads, sorted. */
+  /**
+   * Top-level variables the entry file itself reads, sorted; variables read only by its includes,
+   * extends parents or imported macros are not listed (the unused-parameter warning counts them).
+   */
   readonly variables: readonly string[];
   /** Non-fatal findings, such as an unused parameter. */
   readonly warnings: readonly string[];
@@ -240,7 +243,8 @@ function checkEntry(
  * `random`, `randrange` or `lipsum`; the entry's undeclared variables are schema keys, and dotted
  * paths match plain object schemas (best effort). A schema key that neither the entry nor its
  * include/extends/import closure reads is a warning. Fragments are parsed but not held to the schema,
- * since they may read the loop variables of the template that includes them. @internal
+ * since they may read the loop variables of the template that includes them, so each result's
+ * `variables` reports the entry file's own reads, the set held to the schema. @internal
  */
 export function checkPromptSets(descriptors: readonly PromptSetDescriptor[]): PromptChecks {
   const errors: string[] = [];

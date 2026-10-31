@@ -240,7 +240,10 @@ export interface WorkflowPromptSet {
     readonly file: string;
     /** The entry's description, else its front matter description, else null. */
     readonly description: string | null;
-    /** Top-level variables the template reads, sorted. */
+    /**
+     * Top-level variables the entry file itself reads, sorted; variables read only by its includes,
+     * extends parents or imported macros are not listed (the unused-parameter warning counts them).
+     */
     readonly variables: readonly string[];
     /** Non-fatal findings, such as a parameter the template never reads. */
     readonly warnings: readonly string[];

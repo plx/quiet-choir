@@ -370,6 +370,10 @@ field is `[]` when a node declares no prompt sets:
 }
 ```
 
+`variables` lists, sorted, the top-level variables the entry file itself reads: the set held to
+`params`. What its includes, extends parent and imported macros read is not listed. It shows only as
+the absence of an unused-parameter warning for those keys.
+
 `validate` and `execute` also log each warning at `warn` level on stderr. The `list-defs` cache
 treats every file under a declared prompt root as a source, including a file symlink (hashed by its
 target's real path and contents) and the files under a directory symlink that stays inside the root
