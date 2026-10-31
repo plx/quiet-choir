@@ -4,9 +4,11 @@
  * `Mechanic: { ...std.codex.Edit, description: 'Applies the fix.' }`. Each entry is frozen data
  * with a short `description` that a spread entry overrides.
  *
- * Codex has no tool-less mode: every Codex call runs in a sandbox that reads, and can run read-only
- * commands over, its working directory, so `Text` differs from `ReadOnly` only in its shorter time
- * limit.
+ * Codex has no tool-less mode: `Text` differs from `ReadOnly` only in its shorter time limit. Codex's
+ * read-only sandbox blocks writes and network access, not reads: the agent can read, and run
+ * read-only commands over, any file the OS user can read, so a `cwd` or runtime worktree places a
+ * call without confining it. Use `std.claude.Text` for prompt-only roles, and a restricted Claude
+ * reader where confinement matters.
  *
  * The entries carry no `maxTurns` or `maxBudgetUsd`: those are Claude-only limits that Codex
  * options do not have, so a Codex roster entry cannot set them.
@@ -15,9 +17,9 @@
  */
 
 /**
- * A Codex agent for text answers. It is not tool-less: it has the same read-only sandbox as
- * `ReadOnly`, which reads, and runs read-only commands over, its working directory, with the `text`
- * preset's time limit.
+ * A Codex agent for text answers. It is not tool-less: it has `ReadOnly`'s read-only sandbox, which
+ * can read any file the user can read, not only its working directory, and the `text` preset's time
+ * limit.
  */
 export const Text: {
   /** Pinned to Codex. */
@@ -30,12 +32,15 @@ export const Text: {
   readonly timeoutMs: 300_000;
 } = Object.freeze({
   harness: 'codex',
-  description: 'Answers in text; still reads its working directory through a read-only sandbox.',
+  description: 'Answers in text; can still read any file through a read-only sandbox.',
   sandbox: 'read-only',
   timeoutMs: 300_000,
 });
 
-/** A read-only Codex agent: a read-only sandbox and the `readonly` preset's time limit. */
+/**
+ * A read-only Codex agent: a sandbox that blocks writes but not reads outside its working
+ * directory, and the `readonly` preset's time limit.
+ */
 export const ReadOnly: {
   /** Pinned to Codex. */
   readonly harness: 'codex';

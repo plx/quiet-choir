@@ -29,7 +29,12 @@ their changing filesystem contents are not snapshotted. Settings and MCP configu
 code/configuration, not inert descriptions.
 
 Claude's file tools are confined to the working directories, including `addDirs`. Naming `Bash` in
-`tools` makes it available again; this does not confine arbitrary shell commands. Writes to
+`tools` makes it available again; this does not confine arbitrary shell commands. Codex has no
+equivalent read boundary. Its `read-only` and `workspace-write` sandboxes restrict writes and
+network access, not reads: Codex 0.160.0 maps `--sandbox read-only` to read access from the
+filesystem root. A Codex call can therefore read, and run commands that read, any file the OS user
+can read unless a managed policy narrows it. Codex `addDirs` add writable roots, not readable ones.
+For Codex, `cwd` and `worktree` choose where a call starts, not what it can read. Writes to
 protected settings, Git, and tool-configuration files require a human or permission handler;
 `dontAsk` does not supply one. A writer may therefore need a different task design. Runtime-owned
 worktree snapshotting runs outside the agent and does not require the agent to commit.

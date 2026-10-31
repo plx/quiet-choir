@@ -53,10 +53,12 @@ const integration = await ctx.merge('integrate', [edit.worktree]);
 
 Declare the editing entry in the roster (and grant it under `requireGrants`). Isolation does not
 grant tools or filesystem access. It is not a sandbox: a command can still write outside its
-directory. Native configuration defaults to restricted mode;
-[harness isolation](harness-isolation.md) explains explicit opt-ins and remaining managed-policy
-dependencies. `worktree` is the only checkout selector and `isolation` is only that configuration
-mode, so `worktree: true` or a handle combines with an inherited role.
+directory, and a Codex call can still read outside it, the source checkout and its uncommitted edits
+included, because Codex's sandboxes restrict writes, not reads (see
+[harness isolation](harness-isolation.md#native-boundary)). Native configuration defaults to
+restricted mode; [harness isolation](harness-isolation.md) explains explicit opt-ins and remaining
+managed-policy dependencies. `worktree` is the only checkout selector and `isolation` is only that
+configuration mode, so `worktree: true` or a handle combines with an inherited role.
 
 ## Attempt lifecycle
 
