@@ -43,6 +43,10 @@ map, markdown templates replace the prompt literals and durable steps replace th
 - **Null on failure needs `onError: 'return'`.** A native `agent()`, `parallel` thunk or `pipeline`
   stage turns a terminal failure into `null`. A quiet-choir call or map throws unless it is settled.
   A caught throw is not a durable decision: the call can heal on resume and take the other branch.
+- **A precondition is a step, not a read.** A native script's check runs again on every launch. In
+  quiet-choir a completed `git status` (or any read) replays its value, so a body throw on a dirty
+  checkout fails every resume. Throw from a `ctx.step` callback that runs the command through
+  `context.exec` ([commands and files](commands-files.md)).
 - **The text baseline is far narrower than a native agent.** A raw call has no Claude tools, 10
   turns, $0.50 and 5 minutes. A call that reads, edits or runs commands needs a roster entry or a
   bound agent, and under `requireGrants` every write or exec entry needs `--grant` at launch.

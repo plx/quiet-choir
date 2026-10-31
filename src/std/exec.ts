@@ -44,6 +44,11 @@ export function json(value: unknown): string {
  * `maxOutputBytes`, because the cap is policy. Size `maxOutputBytes` for the largest expected read
  * before the first run; after a truncation, read under a new ID or in a new run (#ISSUE-C11-1).
  *
+ * A completed read also replays its saved stdout on resume, so do not decide a precondition the
+ * operator can fix (a clean checkout, say) on it in the workflow body: the replayed value fails
+ * every resume, even after the fix. Throw from a `ctx.step` callback that runs the command through
+ * `context.exec` instead, so the failed step runs again.
+ *
  * @param ctx - The workflow context.
  * @param id - The command's step ID, scoped like any `ctx.exec` call.
  * @param args - The Git arguments, without `git`.

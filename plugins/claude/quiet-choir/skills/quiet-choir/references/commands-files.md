@@ -83,6 +83,13 @@ existing explicit redefinition/history behavior; completed identity changes requ
 appropriate fork. Repeated observations need fresh IDs or a read-only `ctx.poll`: a command poll
 runs one command per check, and an observer can run its commands through `context.exec`.
 
+A completed read also replays on resume. A precondition the operator can fix, such as a clean
+checkout, must fail inside an effect, not in the body after a completed read. A `throw` on a
+replayed `git status` repeats on every resume, even after the checkout is cleaned, and only a new
+run or a fork that invalidates the read recovers. Check it in a `ctx.step` callback through
+`context.exec`, or as a command whose nonzero exit makes `ctx.exec` throw. The failed step then runs
+again on resume, and once it passes it replays as passed.
+
 `meta` attaches JSON labels to the step record, like `StepDefinition.meta`. It is neither identity
 nor policy, so relabelling never refuses a resume. `inspect` shows a step with a string
 `integration` label as `integration.op`; integration helpers such as

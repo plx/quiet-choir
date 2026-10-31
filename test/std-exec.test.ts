@@ -146,6 +146,44 @@ it('git always throws a failure, even when the options were widened to onError r
   expect(result.output?.trim()).toBe(head);
 });
 
+it('a clean-checkout check decided after a git read fails every resume, but one thrown in a step recovers', async () => {
+  const status = ['status', '--porcelain=v1', '--untracked-files=all'] as const;
+  // The completed read replays the dirty listing, so the body throws again after the fix.
+  const afterRead = workflow(z.literal('clean'), async (ctx) => {
+    const dirty = await std.exec.git(ctx, 'status', status);
+    if (dirty !== '') throw new Error(`Expected a clean checkout: ${dirty}`);
+    return 'clean';
+  });
+  // The failed step is not completed, so the resume runs its command again.
+  const inStep = workflow(z.literal('clean'), async (ctx) => {
+    await ctx.step('clean', {
+      input: null,
+      schema: z.null(),
+      async run(context) {
+        const { stdout } = await context.exec(['git', ...status]);
+        if (stdout !== '') throw new Error(`Expected a clean checkout: ${stdout}`);
+        return null;
+      },
+    });
+    return 'clean';
+  });
+  for (const [runId, definition] of [
+    ['after-read', afterRead],
+    ['in-step', inStep],
+  ] as const) {
+    await writeFile(join(repo, 'stray.txt'), 'left behind\n');
+    await expect(runWorkflow(definition, options(runId))).rejects.toThrow('?? stray.txt');
+    await rm(join(repo, 'stray.txt'));
+  }
+  expect(await git('status', '--porcelain=v1', '--untracked-files=all')).toBe('');
+  await expect(runWorkflow(afterRead, { ...options('after-read'), resume: true })).rejects.toThrow(
+    'Expected a clean checkout: ?? stray.txt',
+  );
+  const recovered = await runWorkflow(inStep, { ...options('in-step'), resume: true });
+  expect(recovered.status).toBe('completed');
+  expect(recovered.output).toBe('clean');
+});
+
 it('committedArtifact writes a nested file, merges it into the checkout and returns the receipt', async () => {
   const content = '# Notes\n';
   const publish = workflow(
