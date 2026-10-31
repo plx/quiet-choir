@@ -86,16 +86,16 @@ experimental, so quiet-choir pins its version exactly and uses it only through
 `src/workflow/prompts/engine.ts`. The engine loads on the first render or check, not on
 `import 'quiet-choir'`. The environment's settings are fixed:
 
-| Setting                         | Value         | Effect                                                                 |
-| ------------------------------- | ------------- | ---------------------------------------------------------------------- |
-| `undefinedBehavior`             | `strict`      | Reading a missing variable or attribute is an error                    |
-| auto-escaping                   | none          | `<b>` renders as `<b>`; prompts are markdown, not HTML                 |
-| `trimBlocks`, `lstripBlocks`    | `true`        | A line holding only a block tag leaves no blank line                   |
-| `keepTrailingNewline`           | `false`       | One final newline is dropped, from every template, including fragments |
-| `fuel`                          | 5,000,000     | A runaway loop fails with `OutOfFuel` in well under a second           |
-| custom filters and globals      | none          | A render depends only on its parameters                                |
-| `random`, `randrange`, `lipsum` | removed       | A template that uses one fails with an unknown filter or function      |
-| date-time module, `pycompat`    | never enabled | No clock, and no Python-style methods such as `dict.items()`           |
+| Setting                         | Value         | Effect                                                                                                                                |
+| ------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `undefinedBehavior`             | `strict`      | Reading a missing variable or attribute is an error                                                                                   |
+| auto-escaping                   | none          | `<b>` renders as `<b>`; prompts are markdown, not HTML                                                                                |
+| `trimBlocks`, `lstripBlocks`    | `true`        | Removes the newline after every block tag and comment, and indentation before a tag that starts a line; see [Whitespace](#whitespace) |
+| `keepTrailingNewline`           | `false`       | One final newline is dropped from the end of every template file, including fragments                                                 |
+| `fuel`                          | 5,000,000     | A runaway loop fails with `OutOfFuel` in well under a second                                                                          |
+| custom filters and globals      | none          | A render depends only on its parameters                                                                                               |
+| `random`, `randrange`, `lipsum` | removed       | A template that uses one fails with an unknown filter or function                                                                     |
+| date-time module, `pycompat`    | never enabled | No clock, and no Python-style methods such as `dict.items()`                                                                          |
 
 The other built-in filters are available, such as `tojson`, `indent`, `trim`, `join`, `default`,
 `upper` and `length`. MiniJinja's `tojson` escapes `<`, `>`, `&` and `'` as `<`-style sequences. The
@@ -106,6 +106,192 @@ Rendered text is step identity. An engine upgrade or settings change that change
 existing template changes the identity of every step that uses it. `test/prompts.test.ts` pins
 golden renders as a gate, like the schema-identity goldens. Do not run a formatter such as Prettier
 over template directories, because reformatting changes the rendered text.
+
+## Whitespace
+
+`trimBlocks` removes the first newline after every `{% %}` tag and `{# #}` comment, whether it is
+alone on its line or ends a line of text. `lstripBlocks` removes the spaces and tabs before a tag
+that starts a line. So a line holding only tags vanishes: read a template as if its tag-only lines
+were deleted. `{{ }}` expressions are never trimmed. `+%}` keeps the newline after a tag. `{%-` and
+`-%}` strip all whitespace on that side, newlines and blank lines included.
+
+The recipes below show a template, then its render. `test/prompts.test.ts` pins each render.
+
+A compact list puts `for` and `endfor` on lines of their own:
+
+```text
+Acceptance criteria:
+{% for c in criteria %}
+- {{ c }}
+{% endfor %}
+
+After.
+```
+
+```text
+Acceptance criteria:
+- Download works
+- Headers
+
+After.
+```
+
+Blocks separated by blank lines end the loop body with a blank line:
+
+```text
+Intro paragraph.
+
+{% for e in evidence %}
+<evidence>{{ e }}</evidence>
+
+{% endfor %}
+After.
+```
+
+```text
+Intro paragraph.
+
+<evidence>1</evidence>
+
+<evidence>2</evidence>
+
+After.
+```
+
+A conditional paragraph puts its blank line before `{% endif %}`, so both appear or vanish together:
+
+```text
+Intro.
+
+{% if extra %}
+Optional paragraph.
+
+{% endif %}
+After.
+```
+
+```text
+Intro.
+
+Optional paragraph.
+
+After.
+```
+
+When `extra` is false, the render is `Intro.`, a blank line and `After.`.
+
+A tag that ends a line of text eats that line's newline. End it with `+%}`:
+
+```text
+Location: {{ file }}{% if line %}:{{ line }}{% endif +%}
+Evidence: {{ evidence }}
+```
+
+```text
+Location: a.ts:5
+Evidence: x
+```
+
+With a plain `{% endif %}` the render is `Location: a.ts:5Evidence: x`, and `A{# note #}` followed
+by a line `B` renders `AB`. An inline expression has no tag to trim, so prefer `{{ a if c else b }}`
+to a one-line `{% if %}`:
+
+```text
+Dims: {{ dims | join(', ') if dims else 'none' }}
+
+Next paragraph.
+```
+
+```text
+Dims: tests
+
+Next paragraph.
+```
+
+The same line written `Dims: {% if dims %}{{ dims | join(', ') }}{% else %}none{% endif %}` loses
+the blank line, and `Next paragraph.` follows on the next line.
+
+An include line loses both the fragment's final newline and its own. Write
+`{% include "_fragments/X.md" +%}` when the fragment file ends with a text line, so the include line
+behaves like the fragment's lines pasted in. With `_fragments/note.md` holding the line
+`Fragment paragraph.`:
+
+```text
+Intro.
+
+{% include "_fragments/note.md" +%}
+
+Next paragraph.
+```
+
+```text
+Intro.
+
+Fragment paragraph.
+
+Next paragraph.
+```
+
+With a plain `%}`, `Next paragraph.` follows on the line after the fragment's, and without the blank
+line it joins the fragment's line: `Fragment paragraph.Next paragraph.`. Inside a loop, the same
+form gives a compact list of fragments. With `_fragments/thread.md` holding `- {{ t }}`:
+
+```text
+## Threads
+
+{% for t in threads %}
+{% include "_fragments/thread.md" +%}
+{% endfor %}
+
+## Next
+```
+
+```text
+## Threads
+
+- a
+- b
+
+## Next
+```
+
+A fragment whose last line is a block tag, such as `{% endfor %}`, already ends with its last text
+line's newline, so include it without `+`. With `_fragments/criteria.md` holding the compact list
+above, from `Acceptance criteria:` to `{% endfor %}`:
+
+```text
+Intro.
+
+{% include "_fragments/criteria.md" %}
+
+Next.
+```
+
+```text
+Intro.
+
+Acceptance criteria:
+- Download works
+- Headers
+
+Next.
+```
+
+With `+%}` there, two blank lines precede `Next.`.
+
+Prefer tag-only lines to `{%-` and `-%}`. A dash also strips the newlines and blank lines on its
+side, so this loop glues every item to the line before it:
+
+```text
+Acceptance criteria:
+{%- for c in criteria %}
+- {{ c }}
+{%- endfor %}
+```
+
+```text
+Acceptance criteria:- Download works- Headers
+```
 
 ## Paths, includes and the root
 
@@ -122,8 +308,8 @@ over template directories, because reformatting changes the rendered text.
   ancestor directory (such as `sub/up/A.md` with `sub/up -> ..`), which the fingerprint walk below
   skips. Any other symlink that stays inside the root is followed.
 - By convention, shared fragments live under `root/_fragments/`. A fragment sees its includer's
-  context, including loop variables. It loses its own final newline, so leave a blank line after the
-  `include` tag where the output needs one.
+  context, including loop variables. Its include line loses both the fragment's final newline and
+  its own; see [Whitespace](#whitespace) for `+%}`.
 
 ## Front matter
 
@@ -155,11 +341,12 @@ known, the file and line of the problem. Checks fail when:
   unions, other schemas, and objects with a catchall or passthrough.
 
 A `params` key that neither the entry nor anything it includes, extends or imports reads is a
-warning, not an error. Variables read inside imported macros count: MiniJinja gives a macro the
-render's context whatever the `import` or `from` tag's context clause says. Fragments are not held
-to the schema, because a fragment may read its includer's loop variables. A misspelled variable in a
-fragment is therefore caught only at render, where strict undefined still makes it a fatal
-`PromptError`.
+warning, not an error. A `params` key named like an engine global (`range`, `dict`, `namespace`)
+shadows it, and reading it counts as reading the key. Variables read inside imported macros count:
+MiniJinja gives a macro the render's context whatever the `import` or `from` tag's context clause
+says. Fragments are not held to the schema, because a fragment may read its includer's loop
+variables. A misspelled variable in a fragment is therefore caught only at render, where strict
+undefined still makes it a fatal `PromptError`.
 
 `workflow validate --json` and `list-defs --json` publish the results as `prompts` on each node. The
 field is `[]` when a node declares no prompt sets:

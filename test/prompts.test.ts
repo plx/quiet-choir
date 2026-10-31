@@ -183,6 +183,161 @@ describe('rendering (ADR 0064 section 1)', () => {
   });
 });
 
+// The recipes of docs/prompts.md#whitespace, rendered. Like the goldens above, they gate an engine
+// upgrade or settings change: a render that moves needs an explicit decision and a docs update.
+describe('whitespace recipes (docs/prompts.md)', () => {
+  const criteria = z.object({ criteria: z.array(z.string()) });
+  const listed = { criteria: ['Download works', 'Headers'] };
+  const compactList = 'Acceptance criteria:\n{% for c in criteria %}\n- {{ c }}\n{% endfor %}\n';
+  const conditional = 'Intro.\n\n{% if extra %}\nOptional paragraph.\n\n{% endif %}\nAfter.\n';
+  const location = z.object({ file: z.string(), line: z.number(), evidence: z.string() });
+  const at = { file: 'a.ts', line: 5, evidence: 'x' };
+  const dims = z.object({ dims: z.array(z.string()) });
+  const note = 'Fragment paragraph.\n';
+  it.for([
+    [
+      'a compact list',
+      { 'Main.md': `${compactList}\nAfter.\n` },
+      criteria,
+      listed,
+      'Acceptance criteria:\n- Download works\n- Headers\n\nAfter.',
+    ],
+    [
+      'blank-separated blocks',
+      {
+        'Main.md':
+          'Intro paragraph.\n\n{% for e in evidence %}\n<evidence>{{ e }}</evidence>\n\n{% endfor %}\nAfter.\n',
+      },
+      z.object({ evidence: z.array(z.string()) }),
+      { evidence: ['1', '2'] },
+      'Intro paragraph.\n\n<evidence>1</evidence>\n\n<evidence>2</evidence>\n\nAfter.',
+    ],
+    [
+      'a conditional paragraph that is present',
+      { 'Main.md': conditional },
+      z.object({ extra: z.boolean() }),
+      { extra: true },
+      'Intro.\n\nOptional paragraph.\n\nAfter.',
+    ],
+    [
+      'a conditional paragraph that is absent',
+      { 'Main.md': conditional },
+      z.object({ extra: z.boolean() }),
+      { extra: false },
+      'Intro.\n\nAfter.',
+    ],
+    [
+      'a tag that ends a line',
+      {
+        'Main.md':
+          'Location: {{ file }}{% if line %}:{{ line }}{% endif %}\nEvidence: {{ evidence }}\n',
+      },
+      location,
+      at,
+      'Location: a.ts:5Evidence: x',
+    ],
+    [
+      'a tag that ends a line with +%}',
+      {
+        'Main.md':
+          'Location: {{ file }}{% if line %}:{{ line }}{% endif +%}\nEvidence: {{ evidence }}\n',
+      },
+      location,
+      at,
+      'Location: a.ts:5\nEvidence: x',
+    ],
+    ['a comment that ends a line', { 'Main.md': 'A{# note #}\nB\n' }, z.object({}), {}, 'AB'],
+    [
+      'a one-line if',
+      {
+        'Main.md':
+          "Dims: {% if dims %}{{ dims | join(', ') }}{% else %}none{% endif %}\n\nNext paragraph.\n",
+      },
+      dims,
+      { dims: ['tests'] },
+      'Dims: tests\nNext paragraph.',
+    ],
+    [
+      'an inline if expression',
+      { 'Main.md': "Dims: {{ dims | join(', ') if dims else 'none' }}\n\nNext paragraph.\n" },
+      dims,
+      { dims: ['tests'] },
+      'Dims: tests\n\nNext paragraph.',
+    ],
+    [
+      'an include with no blank line after it',
+      {
+        'Main.md': 'Intro.\n\n{% include "_fragments/note.md" %}\nNext paragraph.\n',
+        '_fragments/note.md': note,
+      },
+      z.object({}),
+      {},
+      'Intro.\n\nFragment paragraph.Next paragraph.',
+    ],
+    [
+      'a plain include',
+      {
+        'Main.md': 'Intro.\n\n{% include "_fragments/note.md" %}\n\nNext paragraph.\n',
+        '_fragments/note.md': note,
+      },
+      z.object({}),
+      {},
+      'Intro.\n\nFragment paragraph.\nNext paragraph.',
+    ],
+    [
+      'an include with +%}',
+      {
+        'Main.md': 'Intro.\n\n{% include "_fragments/note.md" +%}\n\nNext paragraph.\n',
+        '_fragments/note.md': note,
+      },
+      z.object({}),
+      {},
+      'Intro.\n\nFragment paragraph.\n\nNext paragraph.',
+    ],
+    [
+      'an include with +%} in a loop',
+      {
+        'Main.md':
+          '## Threads\n\n{% for t in threads %}\n{% include "_fragments/thread.md" +%}\n{% endfor %}\n\n## Next\n',
+        '_fragments/thread.md': '- {{ t }}\n',
+      },
+      z.object({ threads: z.array(z.string()) }),
+      { threads: ['a', 'b'] },
+      '## Threads\n\n- a\n- b\n\n## Next',
+    ],
+    [
+      'a plain include of a fragment ending in a block tag',
+      {
+        'Main.md': 'Intro.\n\n{% include "_fragments/criteria.md" %}\n\nNext.\n',
+        '_fragments/criteria.md': compactList,
+      },
+      criteria,
+      listed,
+      'Intro.\n\nAcceptance criteria:\n- Download works\n- Headers\n\nNext.',
+    ],
+    [
+      'an include with +%} of a fragment ending in a block tag',
+      {
+        'Main.md': 'Intro.\n\n{% include "_fragments/criteria.md" +%}\n\nNext.\n',
+        '_fragments/criteria.md': compactList,
+      },
+      criteria,
+      listed,
+      'Intro.\n\nAcceptance criteria:\n- Download works\n- Headers\n\n\nNext.',
+    ],
+    [
+      'a dashed loop',
+      { 'Main.md': 'Acceptance criteria:\n{%- for c in criteria %}\n- {{ c }}\n{%- endfor %}\n' },
+      criteria,
+      listed,
+      'Acceptance criteria:- Download works- Headers',
+    ],
+  ] as const)('renders %s', async ([, files, params, values, expected]) => {
+    const prompts = definePrompts(await root(files), { Main: { file: 'Main.md', params } });
+    expect(prompts.Main(values as never).text).toBe(expected);
+  });
+});
+
 describe('authoring errors (ADR 0064 section 2)', () => {
   it('rejects an unknown parameter key and an invalid value before rendering', () => {
     const prompts = definePrompts(fixtures, entries);

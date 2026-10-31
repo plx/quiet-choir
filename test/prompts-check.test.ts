@@ -361,6 +361,21 @@ describe('checkPromptSets results', () => {
     expect(entry?.variables).toEqual(['issue', 'meta', 'open']);
   });
 
+  it('treats a params key named like an engine global as the key it shadows', async () => {
+    const { errors, entry } = await check(
+      {
+        'Main.md': '{{ range }} {{ dict.a }} {{ dict.b }}{% include "_fragments/n.md" %}',
+        '_fragments/n.md': '{{ namespace }}',
+      },
+      z.object({ range: z.string(), dict: z.object({ a: z.string() }), namespace: z.string() }),
+    );
+    expect(errors).toEqual([
+      'Prompt Main (Main.md): reads dict.b, which its params schema does not declare (parsing drops unknown keys, so the render would fail)',
+    ]);
+    expect(entry?.variables).toEqual(['dict', 'range']);
+    expect(entry?.warnings).toEqual([]);
+  });
+
   it('accepts literal include, import and from forms with context clauses', async () => {
     const { errors } = await check(
       {

@@ -44,7 +44,7 @@ description: Review a diff against the issue it claims to close.
 ---
 # Review #{{ issue.number }}: {{ issue.title }}
 
-{% include "_fragments/rules.md" %}
+{% include "_fragments/rules.md" +%}
 
     {{ diff | indent(4) }}
 ```
@@ -68,10 +68,14 @@ description: Review a diff against the issue it claims to close.
 ## Template rules
 
 - MiniJinja with fixed settings: strict undefined (a missing variable fails), no HTML escaping,
-  `trimBlocks` and `lstripBlocks` (block-tag lines leave no blank line), one final newline dropped
-  from every template including fragments, bounded fuel (a runaway loop fails with `OutOfFuel`).
-  Built-in filters such as `tojson`, `indent`, `trim`, `join` and `default` work; there are no
-  custom filters or globals, no date-time functions and no `dict.items()`.
+  `trimBlocks` and `lstripBlocks` (a tag-only line vanishes; any block tag or comment also eats the
+  newline after it), one final newline dropped from every template including fragments, bounded fuel
+  (a runaway loop fails with `OutOfFuel`). Built-in filters such as `tojson`, `indent`, `trim`,
+  `join` and `default` work; there are no custom filters or globals, no date-time functions and no
+  `dict.items()`.
+- End a tag that closes a line of text with `+%}`. Write `{% include "x.md" +%}` for a fragment that
+  ends in text. Prefer tag-only lines to `{%-`/`-%}`, which also strip blank lines.
+  `docs/prompts.md#whitespace` in the repository has rendered recipes.
 - `random`, `randrange` and `lipsum` are removed, and any tag that names them fails the check.
 - `include`, `extends`, `import` and `from` take exactly one string literal, resolved relative to
   the including file and confined to the root (no `..`, absolute path, escaping symlink, or path

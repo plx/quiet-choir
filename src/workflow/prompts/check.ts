@@ -180,14 +180,18 @@ function checkEntry(
     }
   }
 
-  // Parse every template in the closure, and collect the variables they read.
+  // Parse every template in the closure, and collect the variables they read. A params key named
+  // like an engine global (`range`, `dict`) shadows it at render, so reading it reads the key.
+  const shape = entry.params.shape as Readonly<Record<string, unknown>>;
   const undeclared = (file: string, nested: boolean): string[] | undefined => {
     if (failed.has(file)) return undefined;
     try {
-      return environment
-        .undeclared(file, nested)
-        .filter((variable) => !refusedNames.has(variable.split('.')[0] ?? variable))
-        .filter((variable) => !environment.isGlobal(variable.split('.')[0] ?? variable));
+      return environment.undeclared(file, nested).filter((variable) => {
+        const head = variable.split('.')[0] ?? variable;
+        return (
+          !refusedNames.has(head) && (Object.hasOwn(shape, head) || !environment.isGlobal(head))
+        );
+      });
     } catch (cause) {
       const failure = engineFailure(cause);
       failed.add(file);
@@ -199,7 +203,6 @@ function checkEntry(
       return undefined;
     }
   };
-  const shape = entry.params.shape as Readonly<Record<string, unknown>>;
   const keys = Object.keys(shape);
   const variables = (undeclared(entry.file, false) ?? []).sort();
   const used = new Set(variables);
