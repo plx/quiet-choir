@@ -1,17 +1,28 @@
-// Git facts as durable commands: the clean-checkout check, the pinned commit, the files and the
+// Git facts as durable effects: the clean-checkout check, the pinned commit, the files and the
 // manifest lines that name the package, and the files an integrated tree changed.
-import type { WorkflowContext } from 'quiet-choir';
+import { z, type WorkflowContext } from 'quiet-choir';
 import * as std from 'quiet-choir/std';
 import { Sha } from '../contracts.js';
 
 // Listings are complete or fail (std.exec.git refuses truncated output), so allow large ones.
 const listing = { maxOutputBytes: 16 * 1024 * 1024 };
 
-/** Fail unless the checkout has no tracked or untracked change: publication needs a clean tree. */
-export async function assertClean(ctx: WorkflowContext, id: string) {
-  const status = await std.exec.git(ctx, id, ['status', '--porcelain=v1', '--untracked-files=all']);
-  if (status !== '') throw new Error(`Expected a clean repository (${id}): ${status}`);
-}
+/**
+ * Fail unless the checkout has no tracked or untracked change: publication needs a clean tree.
+ * This is a local step that throws, not a completed `git status` read: a completed read would
+ * replay its dirty output on every resume, so cleaning the checkout and resuming could never pass.
+ */
+export const assertClean = (ctx: WorkflowContext, id: string) =>
+  ctx.step(id, {
+    input: null,
+    schema: z.null(),
+    async run({ exec }) {
+      const status = await exec(['git', 'status', '--porcelain=v1', '--untracked-files=all']);
+      if (status.stdout !== '' || status.truncated)
+        throw new Error(`Expected a clean repository (${id}): ${status.stdout}`);
+      return null;
+    },
+  });
 
 /** The commit the checkout's HEAD names now. */
 export const headCommit = async (ctx: WorkflowContext, id: string) =>

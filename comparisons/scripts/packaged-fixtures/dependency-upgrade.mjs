@@ -3,12 +3,12 @@
 // refreshes the lockfile in each verification checkout and the verification command fails while
 // any caller still uses now(). A triager clusters the red output, one fixer repairs the other
 // caller in its own worktree of the integrated commit, the second verification is green, and code
-// publishes the manifest, the install's lockfile and both callers. Modes cover the exits: nothing
-// attempted, declined, refused writers and installs, a failed fixer, a failed triage, the
-// fix-round cap and a checkout that moves before or during the loop.
+// publishes the manifest, the install's lockfile and both callers. Modes cover the exits: a dirty
+// checkout, nothing attempted, declined, refused writers and installs, a failed fixer, a failed
+// triage, the fix-round cap and a checkout that moves before or during the loop.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { commitAll, git, leaf, writeFiles } from './_support.mjs';
@@ -306,6 +306,23 @@ function movedOnly(env) {
 }
 
 export const modes = [
+  {
+    mode: 'dirty',
+    setup: (env) => writeFileSync(join(env.cwd, 'stray.txt'), 'uncommitted\n'),
+    rejects: /Expected a clean repository \(clean\): \?\? stray\.txt/u,
+    check({ result, calls }) {
+      // Publication needs a clean checkout, so a dirty one stops the run before any agent call.
+      assert.equal(result.status, 'failed');
+      assert.equal(calls.length, 0);
+    },
+    // Removing the stray file heals the precondition: the clean step reruns, and every agent call
+    // of the upgrade is paid, since none completed. The resumed run ends where the success run does.
+    repair: {
+      run: (env) => rmSync(join(env.cwd, 'stray.txt')),
+      paid: ['research', 'impact', 'plan', 'apply', 'round/0/triage', 'round/0/fixes/0/fix'],
+    },
+    resumeCheck: check,
+  },
   {
     mode: 'reconsider',
     check({ result, env, calls, suspended }) {
