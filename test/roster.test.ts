@@ -467,7 +467,7 @@ describe('ctx.roster calls', () => {
     });
   });
 
-  it('prefixes only calls through a ctx.within view, not roster agents passed beside it', async ({
+  it('prefixes calls through a ctx.within view or its scopes, not agents passed beside it', async ({
     stateDir,
     runs,
   }) => {
@@ -487,6 +487,9 @@ describe('ctx.roster calls', () => {
         const view = ctx.within('view');
         await helper(view, view.roster.Reviewer);
         await ctx.scope('scope', () => helper(ctx, ctx.roster.Reviewer));
+        // Inside the view's own scope, the root agent's call takes the view's prefix too.
+        const outer = ctx.within('outer');
+        await outer.scope('inner', () => helper(outer, ctx.roster.Reviewer));
         return null;
       },
     });
@@ -499,12 +502,22 @@ describe('ctx.roster calls', () => {
     });
     const record = await readRun({ stateDir, runId: 'within-helper' });
     expect(Object.keys(record.steps).sort()).toEqual(
-      ['root/local', 'work', 'view/local', 'view/work', 'scope/local', 'scope/work'].sort(),
+      [
+        'root/local',
+        'work',
+        'view/local',
+        'view/work',
+        'scope/local',
+        'scope/work',
+        'outer/inner/local',
+        'outer/inner/work',
+      ].sort(),
     );
     expect(fake.requests.map((request) => request.stepId)).toEqual([
       'work',
       'view/work',
       'scope/work',
+      'outer/inner/work',
     ]);
   });
 

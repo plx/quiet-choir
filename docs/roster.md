@@ -189,9 +189,10 @@ the prompt, the schema, placement (`cwd`, `addDirs`, `worktree`) and policy (`on
   fails with `Roster entry Reviewer is pinned to harness claude; it cannot run on codex.`
 - **Prefixes.** Each read of `ctx.roster` gives agents bound over that context, so
   `ctx.within('p').roster.Reviewer` keeps the `p/` prefix, and an agent called inside `ctx.scope` or
-  `ctx.map` takes the IDs a raw call there would. A view prefixes only the calls made through it: an
-  agent read from `ctx.roster` (or bound from `ctx.claude`) and called in a helper that was given
-  `ctx.within('p')` keeps the prefix of the scope or map it is called in, not `p/`.
+  `ctx.map` takes the IDs a raw call there would. A view prefixes only the calls made through it and
+  the calls inside its own `scope` or `map`: an agent read from `ctx.roster` (or bound from
+  `ctx.claude`) and called in a helper that was given `ctx.within('p')` keeps the prefix of the
+  scope or map it is called in, which is under `p/` only when that scope or map is the view's.
 - **Children.** Inside an inline child, `ctx.roster` is the child's own roster. An agent resolves
   its entry by name against the definition whose body is running when it is called, so an agent read
   in a parent and called from a child body through shared closure state resolves against the child's
@@ -356,9 +357,9 @@ be created early and reused. A call takes its step ID prefix where it is invoked
 before `ctx.scope` or `ctx.map` and called inside gets the same qualified IDs as a raw call there,
 and an agent bound from `ctx.within('w').claude` keeps the `w/` prefix. An agent bound from the root
 client does not take a `ctx.within` view's prefix just because it is called beside the view, such as
-in a helper given the view: only calls through the view, and agents bound from it, take that prefix.
-`bind` needs a harness client, so it is called inside the body; declaring agents at module load is
-the [roster's](#the-roster) job.
+in a helper given the view: only calls through the view, agents bound from it, and calls inside the
+view's own `scope` or `map` take that prefix. `bind` needs a harness client, so it is called inside
+the body; declaring agents at module load is the [roster's](#the-roster) job.
 
 `Agent<C>` is generic over the harness's capabilities, like `RegisteredAgentClient`. The default is
 `NativeHarnessCapabilities`, the built-in harnesses' capabilities (the ADR's `BuiltInCapabilities`).
@@ -403,8 +404,10 @@ ordinary function that takes the context and an options object holding the team 
 bound agent carries its own context and takes its step ID prefix where it is called, so calls
 through a slot claim the same IDs, fingerprints and records as calls through the agent that fills
 it. Slot agents take the prefix of the `ctx.scope` or `ctx.map` they run inside, or of the view they
-were read from. A `ctx.within('p')` view passed as the pattern's context does not apply to slots
-filled from `ctx.roster`: the pattern's own effects through the view land under `p/`, its slot calls
+were read from. A `ctx.within('p')` view passed as the pattern's context reaches slots filled from
+`ctx.roster` (or a root `bind`) only when the pattern calls them inside its own `scope` or `map` on
+that view: `tolerantPanel` always maps, so its answers land under `p/`, and `reviewRevise` scopes
+only with `id`. Otherwise the pattern's own effects through the view land under `p/`, its slot calls
 at the caller's ambient prefix, and calling it again with another view collides with
 `Duplicate step ID`. Either have the pattern scope its slot calls (`ctx.scope(id, …)`, as
 `reviewRevise` does with `id`, or `ctx.map`), or fill the slots from the same view

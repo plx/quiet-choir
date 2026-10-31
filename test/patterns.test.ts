@@ -719,6 +719,35 @@ it('std reviewRevise leaves a ctx.within view out of its IDs unless id scopes th
   ).rejects.toThrow('Duplicate step ID: "review/0"');
 });
 
+it('std tolerantPanel maps on a ctx.within view, so a root panelist takes its prefix', async () => {
+  const workflow = defineWorkflow({
+    name: 'viewed-panel',
+    version: '1',
+    input: z.null(),
+    output: z.null(),
+    async run(ctx) {
+      const team = { panelist: ctx.claude.bind({}) };
+      for (const view of ['a', 'b'])
+        await std.patterns.tolerantPanel(ctx.within(view), {
+          id: 'panel',
+          team,
+          items: ['x'],
+          prompt: (item) => item,
+          concurrency: 1,
+        });
+      return null;
+    },
+  });
+  const harness = new Fake(() => 'yes');
+  const result = await runWorkflow(workflow, { ...options(), input: null, harness });
+  assertCompleted(result);
+  // A second view separates the panels, so they claim distinct step IDs.
+  expect(harness.calls.map((request) => request.call.stepId)).toEqual([
+    'a/panel/0/answer',
+    'b/panel/0/answer',
+  ]);
+});
+
 it('std reviewRevise returns the last feedback and review count, and replays them', async () => {
   const workflow = defineWorkflow({
     name: 'exhausted-review',
