@@ -401,14 +401,17 @@ not relocate an existing run's caches and handles: the run keeps its root and re
 warning naming both paths. Each run has a unique namespace, including runs with the same ID in
 different state containers.
 
-`keep: 'failed'` is the default: remove completed caches after draining, retain failed attempts for
-inspection until the whole run completes, then remove all caches. `'all'` keeps every cache;
-`'none'` removes all caches after draining even on failure. Pins remain in all three cases: one base
-pin per handle and per isolated step outside a handle, one snapshot pin per capture that differs
-from its base, and for each merge a pin of its starting commit and of its result, plus the published
-ref of a `target: 'ref'` merge. N isolated calls on one base therefore leave N pins at that commit
-until `workflow clean --refs` or `workflow rm --refs` deletes them. Cleanup failures are warnings
-and do not repeat validated agent work.
+The runtime removes caches only when an execution ends (it completes, suspends, fails or is
+cancelled), after its work drains. Until then every checkout the execution created stays on disk
+with whatever `setup` installed in it, including completed per-call attempts and handles that no
+later effect uses (#795). `keep: 'failed'` is the default: at that point remove completed caches,
+retain failed attempts for inspection until the whole run completes, then remove all caches. `'all'`
+keeps every cache; `'none'` removes all caches after draining even on failure. Pins remain in all
+three cases: one base pin per handle and per isolated step outside a handle, one snapshot pin per
+capture that differs from its base, and for each merge a pin of its starting commit and of its
+result, plus the published ref of a `target: 'ref'` merge. N isolated calls on one base therefore
+leave N pins at that commit until `workflow clean --refs` or `workflow rm --refs` deletes them.
+Cleanup failures are warnings and do not repeat validated agent work.
 
 `setup(context)` provisions dependencies after creation/reset, for per-call attempts and for shared
 handles (at `ctx.worktree` and before each effect on the handle). Its context includes `path`,
