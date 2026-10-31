@@ -180,9 +180,10 @@ await ctx.exec('retract', ['git', 'rm', '-q', '--', ...stale], { worktree: tree 
 ```
 
 The handle's change then lists each path as `deleted`, or drops it when an earlier effect on the
-handle added it, and `ctx.merge` carries the deletion. `git rm` fails on a path that no earlier
-effect captured; add `--ignore-unmatch` when the list may hold one. Scratch paths known in advance
-can instead stay out of every snapshot through `worktrees.captureExclude` (see
+handle added it, and `ctx.merge` carries the deletion. `git rm` fails on a path that is not in the
+handle's latest snapshot (its base plus the changes earlier effects captured), such as an ignored
+file or one that capture left out; add `--ignore-unmatch` when the list may hold one. Scratch paths
+known in advance can instead stay out of every snapshot through `worktrees.captureExclude` (see
 [what capture leaves out](#what-capture-leaves-out)).
 
 Handles belong to one run. Forks create new handles; immutable `WorktreeChange` results can be
