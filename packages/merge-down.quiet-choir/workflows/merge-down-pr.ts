@@ -3,7 +3,13 @@
 // lib/. Stages: Prepare, Rebase (only on conflicts), Review, Fix, Gate (publish, wait, triage, loop),
 // Land, Report. Dependabot PRs take a dependency review (merge, fix, close or defer) and no Codex.
 import { defineWorkflow, z, type JsonValue } from 'quiet-choir';
-import { codeqlReviewer, codexReviewer, github, type GithubReviewThread } from 'quiet-choir/github';
+import {
+  codeqlReviewer,
+  codexReviewer,
+  github,
+  type GithubReviewThread,
+  type WaitChecksResult,
+} from 'quiet-choir/github';
 import * as std from 'quiet-choir/std';
 import {
   CodexTriage,
@@ -49,7 +55,14 @@ import {
   type ThreadDecision,
   type WorkItem,
 } from '../lib/policy.js';
-import { preparePr, readThreads, resolvePaths, resolveRepo, summary } from '../lib/prepare.js';
+import {
+  CI_IGNORED_REVIEWER,
+  preparePr,
+  readThreads,
+  resolvePaths,
+  resolveRepo,
+  summary,
+} from '../lib/prepare.js';
 import { FixTeam, ResolveTeam } from '../lib/teams.js';
 import { prompts, type Situation } from '../prompts.js';
 import { roster, toolchainAgents, type Staff } from '../roster.js';
@@ -97,6 +110,17 @@ export default defineWorkflow({
   async run(ctx, A) {
     const LOCAL = A.codexMode === 'local';
     const publishing = A.until === 'merge';
+    // ci: 'ignore' (#738): GitHub CI is never read; the local suite and the reviewers gate the merge.
+    const IGNORE_CI = A.ci === 'ignore';
+    // The code-scanning reviewer waits for an analysis check, which CI publishes: without CI it
+    // would wait out its deadline. The reviewer wait still reads the open threads and alerts.
+    const scanner = () => (IGNORE_CI ? CI_IGNORED_REVIEWER : codeqlReviewer());
+    const ciNotConsulted = (sha: string): WaitChecksResult => ({
+      status: 'success',
+      headRefOid: sha,
+      failed: [],
+      pending: [],
+    });
     // The review summary the ledger keeps; a stop short of merge replaces it with the whole review.
     const reviewSummary: ReviewSummary = { escalated: false, alignment: null, findings: [] };
     const record: Ledger = {
@@ -330,7 +354,8 @@ export default defineWorkflow({
               prompt: prompts.ReviewDependency({
                 situation,
                 rebase,
-                failedChecks: PR.checks.state === 'failure' ? [...PR.checks.failed] : [],
+                failedChecks:
+                  PR.checks.state === 'failure' && !IGNORE_CI ? [...PR.checks.failed] : [],
               }),
               schema: DependencyReview,
             })
@@ -865,6 +890,10 @@ export default defineWorkflow({
     let head = SYNC.origHead ?? PR.headRefOid;
     let base = PR.baseRefName;
     let codexRequests = 0;
+    if (IGNORE_CI && publishing)
+      record.notes.push(
+        "GitHub CI was not consulted (ci: 'ignore'); the local check suite and the reviewers gated the merge",
+      );
 
     // Retarget, push, confirm GitHub sees the head, fix the closing keyword, reply to threads.
     const publishRound = async (r: number): Promise<{ since: number } | { error: string }> => {
@@ -1026,7 +1055,9 @@ export default defineWorkflow({
       const required = A.requiredChecks.length ? { requiredChecks: A.requiredChecks } : {};
       const waitAll = (tag: string, reviewers: Parameters<typeof gh.waitReview>[1]['reviewers']) =>
         Promise.all([
-          gh.waitChecks(ctx.id('gate', r, tag, 'ci'), { ...bound, ...required }),
+          IGNORE_CI
+            ? Promise.resolve(ciNotConsulted(bound.sha))
+            : gh.waitChecks(ctx.id('gate', r, tag, 'ci'), { ...bound, ...required }),
           gh.waitReview(ctx.id('gate', r, tag, 'review'), {
             ...bound,
             since: published.since,
@@ -1034,7 +1065,7 @@ export default defineWorkflow({
           }),
         ]);
       const [[ci0, reviewed0], localReview] = await Promise.all([
-        waitAll('wait', githubCodex ? [codexReviewer(), codeqlReviewer()] : [codeqlReviewer()]),
+        waitAll('wait', githubCodex ? [codexReviewer(), scanner()] : [scanner()]),
         wantCodex && LOCAL ? reviewAt(`r${String(r)}`, head) : Promise.resolve(null),
       ]);
       const early =
@@ -1044,7 +1075,7 @@ export default defineWorkflow({
       // Either the local review or CI can outlast the reviewer wait, so threads and alerts can
       // arrive meanwhile: read the gate again, which costs only the settle delay now that both are
       // done.
-      const [ci, reviewed] = await waitAll('refresh', [codeqlReviewer()]);
+      const [ci, reviewed] = await waitAll('refresh', [scanner()]);
       const late =
         blockedIf([ci, reviewed], 'the refreshed gate') ??
         unregisteredRequired(ci, A.requiredChecks);
@@ -1079,7 +1110,7 @@ export default defineWorkflow({
         // Wait whatever the rerun did: when it found the failed jobs already re-run (a reconciled
         // rerun), the CI it left behind may have passed since the gate read it, and when nothing
         // changed the wait returns at once with the same failure.
-        const [again, againReview] = await waitAll('rerun', [codeqlReviewer()]);
+        const [again, againReview] = await waitAll('rerun', [scanner()]);
         const stuck =
           blockedIf([again, againReview], 'the re-run CI') ??
           unregisteredRequired(again, A.requiredChecks);
@@ -1199,13 +1230,15 @@ export default defineWorkflow({
     ctx.phase('Land');
     // The gate's CI success can be hours old (review waits and fix rounds run after it), and a
     // re-run, a new required check or a base update may have turned it red since: read CI again.
-    const landCi = await gh.waitChecks(ctx.id('land', 'ci', head), {
-      pr: A.pr,
-      sha: head,
-      timeoutMs: 2 * HOUR,
-      staleGraceMs: 90_000,
-      ...(A.requiredChecks.length ? { requiredChecks: A.requiredChecks } : {}),
-    });
+    const landCi = IGNORE_CI
+      ? ciNotConsulted(head)
+      : await gh.waitChecks(ctx.id('land', 'ci', head), {
+          pr: A.pr,
+          sha: head,
+          timeoutMs: 2 * HOUR,
+          staleGraceMs: 90_000,
+          ...(A.requiredChecks.length ? { requiredChecks: A.requiredChecks } : {}),
+        });
     const landCiBlock =
       blockedIf([landCi], 'CI before landing') ?? unregisteredRequired(landCi, A.requiredChecks);
     if (landCiBlock) return blocked('land', landCiBlock);
@@ -1226,6 +1259,7 @@ export default defineWorkflow({
       viewer: info.viewer,
       requiredChecks: A.requiredChecks,
       ...(A.mergeMethod === 'squash' ? {} : { method: A.mergeMethod }),
+      ...(IGNORE_CI ? { ignoreCi: true as const } : {}),
     });
     if (!landed.merged) return blocked('land', landed.reason);
     const mergeCommit = landed.mergeCommit ?? 'unknown';

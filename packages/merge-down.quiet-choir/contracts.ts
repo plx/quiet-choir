@@ -67,6 +67,12 @@ export const MergeDownInput = z.object({
   standingNotes: z.array(z.string()).default([]),
   checkCommand: z.string().min(1).default('npm run check'),
   requiredChecks: z.array(z.string().min(1)).default([]),
+  ci: z
+    .enum(['require', 'ignore'])
+    .default('require')
+    .describe(
+      'require: gate and land on GitHub CI; ignore: never consult it (a repository whose CI cannot run).',
+    ),
   mergeMethod: z
     .enum(['squash', 'merge', 'rebase'])
     .default('squash')

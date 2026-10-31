@@ -137,27 +137,28 @@ Tags are counted in pure code.
 
 ## Input
 
-| Field                | Default                              | Meaning                                                                                              |
-| -------------------- | ------------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| `pr`                 | required                             | The PR to land.                                                                                      |
-| `repo`               | the checkout's GitHub repository     | `OWNER/REPO`.                                                                                        |
-| `root`               | `<main checkout>-merge-down-package` | Directory for `worktree/` and `state/`.                                                              |
-| `until`              | `merge`                              | `prepare`, `review`, `fix` or `merge`. Anything before `merge` publishes nothing.                    |
-| `codex`              | `auto`                               | `auto`, `always` or `never`, as natively.                                                            |
-| `codexMode`          | `local`                              | `local` (`codex review`) or `github` (comment `@codex review` and wait for the Codex app).           |
-| `codexModel`         | `gpt-6-astra`                        | Model of the local review (`model` and `review_model`).                                              |
-| `codexEffort`        | Codex's configuration                | Reasoning effort of the local review.                                                                |
-| `maxCodexRounds`     | 3                                    | Base number of Codex re-reviews; past it only while the latest round found a valid major or blocker. |
-| `codexRoundsHardCap` | 5                                    | Upper bound on Codex re-reviews; the gate also stops after `codexRoundsHardCap + 3` rounds.          |
-| `maxCiRepairs`       | 2                                    | CI repair attempts.                                                                                  |
-| `followupEpic`       | none                                 | Epic that follow-ups attach to; created on first use.                                                |
-| `followupEpicTitle`  | `Epic: initial enhancements, wave 2` | Title of a new follow-up epic.                                                                       |
-| `parentEpic`         | none                                 | Epic the landed issues belong to.                                                                    |
-| `standingNotes`      | `[]`                                 | Decisions every reviewer, resolver and fixer applies without re-litigating.                          |
-| `checkCommand`       | `npm run check`                      | The local check suite.                                                                               |
-| `requiredChecks`     | `[]`                                 | CI check names that must register before a green rollup counts; one that never does blocks the gate. |
-| `mergeMethod`        | `squash`                             | `squash`, `merge` (a merge commit, keeping the PR's commits) or `rebase`.                            |
-| `toolchain`          | none (npm)                           | The agents' toolchain: `read` and `edit` shell rules and `guidance`; see [Toolchain](#toolchain).    |
+| Field                | Default                              | Meaning                                                                                                                                                                                                             |
+| -------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pr`                 | required                             | The PR to land.                                                                                                                                                                                                     |
+| `repo`               | the checkout's GitHub repository     | `OWNER/REPO`.                                                                                                                                                                                                       |
+| `root`               | `<main checkout>-merge-down-package` | Directory for `worktree/` and `state/`.                                                                                                                                                                             |
+| `until`              | `merge`                              | `prepare`, `review`, `fix` or `merge`. Anything before `merge` publishes nothing.                                                                                                                                   |
+| `codex`              | `auto`                               | `auto`, `always` or `never`, as natively.                                                                                                                                                                           |
+| `codexMode`          | `local`                              | `local` (`codex review`) or `github` (comment `@codex review` and wait for the Codex app).                                                                                                                          |
+| `codexModel`         | `gpt-6-astra`                        | Model of the local review (`model` and `review_model`).                                                                                                                                                             |
+| `codexEffort`        | Codex's configuration                | Reasoning effort of the local review.                                                                                                                                                                               |
+| `maxCodexRounds`     | 3                                    | Base number of Codex re-reviews; past it only while the latest round found a valid major or blocker.                                                                                                                |
+| `codexRoundsHardCap` | 5                                    | Upper bound on Codex re-reviews; the gate also stops after `codexRoundsHardCap + 3` rounds.                                                                                                                         |
+| `maxCiRepairs`       | 2                                    | CI repair attempts.                                                                                                                                                                                                 |
+| `followupEpic`       | none                                 | Epic that follow-ups attach to; created on first use.                                                                                                                                                               |
+| `followupEpicTitle`  | `Epic: initial enhancements, wave 2` | Title of a new follow-up epic.                                                                                                                                                                                      |
+| `parentEpic`         | none                                 | Epic the landed issues belong to.                                                                                                                                                                                   |
+| `standingNotes`      | `[]`                                 | Decisions every reviewer, resolver and fixer applies without re-litigating.                                                                                                                                         |
+| `checkCommand`       | `npm run check`                      | The local check suite.                                                                                                                                                                                              |
+| `requiredChecks`     | `[]`                                 | CI check names that must register before a green rollup counts; one that never does blocks the gate.                                                                                                                |
+| `mergeMethod`        | `squash`                             | `squash`, `merge` (a merge commit, keeping the PR's commits) or `rebase`.                                                                                                                                           |
+| `ci`                 | `require`                            | `ignore` never reads GitHub CI: the gate and land skip the CI waits and the land guard's rollup check, and the ledger notes it. For a repository whose CI cannot run; the local suite and the reviewers still gate. |
+| `toolchain`          | none (npm)                           | The agents' toolchain: `read` and `edit` shell rules and `guidance`; see [Toolchain](#toolchain).                                                                                                                   |
 
 ## Toolchain
 

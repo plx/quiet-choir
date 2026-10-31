@@ -59,6 +59,7 @@ const { landMerge } = await lib<{
       viewer: string;
       requiredChecks: readonly string[];
       method?: 'merge' | 'rebase';
+      ignoreCi?: true;
     },
   ) => Promise<unknown>;
 }>('land');
@@ -307,7 +308,11 @@ describe('landMerge', () => {
   };
 
   /** A fake `gh` that answers the landing reads and counts merge PUTs in `<real>/puts`. */
-  async function fakeGh(rollup: { oid: string; checks: readonly string[] }): Promise<string> {
+  async function fakeGh(rollup: {
+    oid: string;
+    checks: readonly string[];
+    failed?: readonly string[];
+  }): Promise<string> {
     const bin = join(real, 'bin');
     await mkdir(bin);
     const pull = (merged: boolean) =>
@@ -318,11 +323,11 @@ describe('landMerge', () => {
         head: { sha: head },
         base: { ref: 'main' },
       });
-    const run = (name: string) => ({
+    const run = (name: string, conclusion = 'SUCCESS') => ({
       __typename: 'CheckRun',
       name,
       status: 'COMPLETED',
-      conclusion: 'SUCCESS',
+      conclusion,
       detailsUrl: null,
       checkSuite: null,
     });
@@ -342,7 +347,10 @@ describe('landMerge', () => {
                       state: 'SUCCESS',
                       contexts: {
                         pageInfo: { hasNextPage: false },
-                        nodes: rollup.checks.map(run),
+                        nodes: [
+                          ...rollup.checks.map((name) => run(name)),
+                          ...(rollup.failed ?? []).map((name) => run(name, 'FAILURE')),
+                        ],
                       },
                     },
                   },
@@ -413,6 +421,18 @@ describe('landMerge', () => {
     );
     expect(merged.output).toMatchObject({ merged: true, mergeCommit: 'mmm' });
     expect(await puts(`${file}.args`)).toContain('merge_method=merge');
+  });
+
+  it('refuses red CI at landing unless CI is ignored (#738)', async () => {
+    const file = await fakeGh({ oid: head, checks: [], failed: ['macos'] });
+    expect(await land([])).toEqual({ merged: false, reason: 'CI is failure at landing: macos' });
+    expect(await puts(file)).toBe('');
+    const ignored = await runWorkflow(
+      definition((ctx) => landMerge(ctx, 'land-ignore', { ...input, ignoreCi: true })),
+      { ...setup(), runId: 'test-ignore' },
+    );
+    expect(ignored.output).toMatchObject({ merged: true, mergeCommit: 'mmm' });
+    expect(await puts(file)).toBe('put\n');
   });
 
   it('refuses a required check that is absent at landing, without merging', async () => {
@@ -565,5 +585,20 @@ describe('localCodexReview', () => {
     expect(resumed.status).toBe('completed');
     expect(resumed.output).toMatchObject({ sha, deps: 'none', findings: 0, error: null });
     expect(await readFile(calls, 'utf8')).toBe('run\n');
+  });
+});
+
+describe('the ci: ignore gate reviewer (#738)', () => {
+  it('is clean at once and reads nothing of its own, so no analysis check is awaited', async () => {
+    const { CI_IGNORED_REVIEWER } = await lib<{
+      CI_IGNORED_REVIEWER: {
+        name: string;
+        reads: readonly string[];
+        observe: (activity: unknown, context: unknown) => { status: string };
+      };
+    }>('prepare');
+    expect(CI_IGNORED_REVIEWER.reads).toEqual([]);
+    expect(CI_IGNORED_REVIEWER.observe({}, {})).toEqual({ status: 'clean' });
+    expect(CI_IGNORED_REVIEWER.name).not.toBe('codeql');
   });
 });

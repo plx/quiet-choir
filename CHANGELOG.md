@@ -2,6 +2,10 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- merge-down takes `ci: 'ignore'` (#738), also as an execute-epic-ticket `mergeDown` override, for a
+  repository whose GitHub CI cannot run: the gate and land skip the CI waits and the land guard's
+  rollup check, and the ledger notes it; the local check suite and the reviewers still gate. The
+  default `require` keeps every step's identity.
 - merge-down takes `mergeMethod` (`squash` by default, `merge` or `rebase`; #737), also as an
   execute-epic-ticket `mergeDown` override, so a repository that keeps a PR's commits can land it
   with a merge commit. A squash run's land step keeps its identity.

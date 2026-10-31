@@ -118,6 +118,8 @@ export interface LandInput {
   readonly requiredChecks: readonly string[];
   /** How GitHub merges (#737); omitted is `squash`, so a squash run keeps its step identity. */
   readonly method?: 'merge' | 'rebase';
+  /** Skip the CI rollup guard (#738, `ci: 'ignore'`); omitted keeps the step identity. */
+  readonly ignoreCi?: true;
 }
 
 /**
@@ -172,27 +174,31 @@ export function landMerge(ctx: WorkflowContext, id: string, input: LandInput): P
       if (pull.base.ref !== input.base)
         return refuse(`base is ${pull.base.ref}, expected ${input.base}`);
 
-      const rollup = (
-        await context.exec.json(graphql(PR_HEAD_QUERY, false), {
-          schema: pullRequestHeadResponseSchema,
-        })
-      ).data.repository.pullRequest;
-      if (rollup.headRefOid !== input.head) return refuse(`head moved to ${rollup.headRefOid}`);
-      // The rollup belongs to the PR's last commit; a lagging read may still show another commit.
-      const last = rollup.commits.nodes.at(-1)?.commit;
-      if (last?.oid !== input.head)
-        return refuse(
-          `CI rollup is for ${last?.oid ?? 'no commit'}, not the gated head ${input.head}`,
-        );
-      const checks = summarizeChecks(last.statusCheckRollup?.contexts.nodes ?? []);
-      if (checks.state === 'failure' || checks.state === 'pending')
-        return refuse(
-          `CI is ${checks.state} at landing: ${(checks.state === 'failure' ? checks.failed : checks.pending).join(', ')}`,
-        );
-      const registered = new Set(checks.items.map((item) => item.name));
-      const missing = input.requiredChecks.filter((name) => !registered.has(name));
-      if (missing.length || (checks.state === 'none' && input.requiredChecks.length))
-        return refuse(`required checks missing at landing: ${missing.join(', ')}`);
+      const rollup = input.ignoreCi
+        ? null
+        : (
+            await context.exec.json(graphql(PR_HEAD_QUERY, false), {
+              schema: pullRequestHeadResponseSchema,
+            })
+          ).data.repository.pullRequest;
+      if (rollup !== null) {
+        if (rollup.headRefOid !== input.head) return refuse(`head moved to ${rollup.headRefOid}`);
+        // The rollup belongs to the PR's last commit; a lagging read may still show another commit.
+        const last = rollup.commits.nodes.at(-1)?.commit;
+        if (last?.oid !== input.head)
+          return refuse(
+            `CI rollup is for ${last?.oid ?? 'no commit'}, not the gated head ${input.head}`,
+          );
+        const checks = summarizeChecks(last.statusCheckRollup?.contexts.nodes ?? []);
+        if (checks.state === 'failure' || checks.state === 'pending')
+          return refuse(
+            `CI is ${checks.state} at landing: ${(checks.state === 'failure' ? checks.failed : checks.pending).join(', ')}`,
+          );
+        const registered = new Set(checks.items.map((item) => item.name));
+        const missing = input.requiredChecks.filter((name) => !registered.has(name));
+        if (missing.length || (checks.state === 'none' && input.requiredChecks.length))
+          return refuse(`required checks missing at landing: ${missing.join(', ')}`);
+      }
 
       const pages = await context.exec.json(graphql(REVIEW_THREADS_QUERY, true), {
         schema: reviewThreadsResponseSchema,
