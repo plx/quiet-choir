@@ -100,8 +100,8 @@ export default defineWorkflow({
 - Inside an inline child, `ctx.roster` is the child's own roster, so read it where you call it
   rather than carrying a parent's agent through shared state.
 - A [package](packages.md#roster) keeps one `roster.ts` at its root, which its workflows import.
-  Each workflow's `roster` field lists only the entries it calls, and `workflow validate --json`
-  reports each workflow's roster in the `package` section.
+  Each workflow's `roster` field is a `defineRoster` of only the entries it calls, and
+  `workflow validate --json` reports each workflow's roster in the `package` section.
 
 A decider entry, `{ decider, model?, description? }`, names one of the workflow's `decisions`
 instead of a harness (checked when the workflow loads). `ctx.roster.Name` is then `{ decide }`:

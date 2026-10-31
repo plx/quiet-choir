@@ -363,6 +363,34 @@ it('accepts only a defineRoster result as a workflow roster', () => {
   expect(inline.name).toBe('inline');
 });
 
+it('subsets a shared roster with a second defineRoster', () => {
+  const shared = defineRoster({
+    Reviewer: { harness: 'claude', tools: ['Read'] },
+    Writer: { harness: 'claude' },
+  });
+  const picked = defineWorkflow({
+    ...base,
+    name: 'picked',
+    roster: defineRoster({ Reviewer: shared.Reviewer }),
+    run(ctx) {
+      expectTypeOf(ctx.roster.Reviewer).toEqualTypeOf<Agent>();
+      // @ts-expect-error -- Writer was not picked.
+      expectTypeOf(ctx.roster.Writer).toBeUnknown();
+      return Promise.resolve(null);
+    },
+  });
+  const copied = defineWorkflow({
+    ...base,
+    name: 'copied',
+    // @ts-expect-error -- shared entries in a plain object are not a roster.
+    roster: { Reviewer: shared.Reviewer },
+    run: () => Promise.resolve(null),
+  });
+  expect([picked.name, copied.name]).toEqual(['picked', 'copied']);
+  // defineRoster takes a frozen stored entry and keeps only the picked names.
+  expect(picked.roster).toEqual({ Reviewer: shared.Reviewer });
+});
+
 it('types a decider entry as ctx.decide with the provider and model fixed', () => {
   const jev = defineDecisionProvider({
     name: 'jev',

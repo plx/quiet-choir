@@ -78,7 +78,9 @@ deep-frozen copy. The option values themselves are checked against the harness w
 uses the roster is validated or run.
 
 `defineWorkflow` accepts only a `defineRoster` result as `roster` (an inline object literal fails
-typecheck) and infers its entry names.
+typecheck) and infers its entry names. To use part of a shared roster, pass the picked entries to
+`defineRoster` again, as in `roster: defineRoster({ Reviewer: shared.Reviewer })`; `ctx.roster` then
+has only those names.
 
 Roster entries are the only declared roles (#726). The removed workflow `profiles` field (with its
 `extends` and the `readonly`/`edit` presets), `defaults.profile` and the `profile` call option fail

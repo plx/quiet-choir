@@ -164,19 +164,21 @@ sibling modules such as `../roster.js`, never from the manifest.
 Keep one `roster.ts` at the package root, a data-only `defineRoster` module, and let every workflow
 import it. A workflow's `roster` field lists only the entries it calls, so the shared module can be
 wider than any one workflow (under `--require-grants`, every write-capable entry in a workflow's
-roster needs a grant, so a narrow field matters there). Pick the entries with a spread of the shared
-roster:
+roster needs a grant, so a narrow field matters there). `defineWorkflow` accepts only a
+`defineRoster` result, so a plain object of shared entries fails typecheck, and a spread or rest
+copy of the shared roster keeps every shared entry in the type of `ctx.roster`, even one it leaves
+out. Pick the entries by passing them to `defineRoster` again in the workflow:
 
 <!-- skills-check: fragment; reason: Sibling-module imports in a workflow file of a package; ../roster.js is the package's own roster.ts. -->
 
 ```ts
-import { defineWorkflow, z } from 'quiet-choir';
+import { defineRoster, defineWorkflow, z } from 'quiet-choir';
 import { roster } from '../roster.js';
 
 export default defineWorkflow({
   name: 'review-only',
   version: '1',
-  roster: { Reviewer: roster.Reviewer },
+  roster: defineRoster({ Reviewer: roster.Reviewer }),
   input: z.object({ diff: z.string() }),
   output: z.string(),
   run: (ctx, { diff }) => ctx.roster.Reviewer.value('review', { prompt: diff }),
