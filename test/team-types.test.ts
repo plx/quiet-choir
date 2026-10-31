@@ -9,9 +9,11 @@ import {
   defineWorkflow,
   z,
   type Agent,
+  type MapStepError,
   type Team,
   type TeamOf,
 } from '../src/index.js';
+import * as std from '../src/std/index.js';
 
 const plain = defineHarness({
   name: 'plain',
@@ -86,6 +88,51 @@ export const named = defineWorkflow({
   },
 });
 
+const Vote = z.object({ score: z.number() });
+
+export const panel = defineWorkflow({
+  name: 'team-panel',
+  version: '1',
+  input: z.null(),
+  output: z.null(),
+  async run(ctx) {
+    const team = { panelist: ctx.claude.bind({}) };
+    const scored = await std.patterns.tolerantPanel(ctx, {
+      id: 'scored',
+      team,
+      items: [{ lens: 'security' }, { lens: 'perf' }],
+      key: (item) => item.lens,
+      prompt: (item) => item.lens,
+      concurrency: 2,
+      schema: Vote,
+      retry: { maxAttempts: 2, on: ['schema'] },
+    });
+    expectTypeOf(scored).toEqualTypeOf<
+      std.patterns.TolerantPanelResult<{ score: number }, { lens: string }>
+    >();
+    for (const outcome of scored.outcomes) {
+      // Each outcome carries its item, typed as the panel's items.
+      expectTypeOf(outcome.item).toEqualTypeOf<{ lens: string }>();
+      expectTypeOf(outcome.index).toEqualTypeOf<number>();
+      // The answer and the failure are reachable only after narrowing on `ok`.
+      expectTypeOf(outcome).not.toHaveProperty('value');
+      expectTypeOf(outcome).not.toHaveProperty('error');
+      if (outcome.ok) expectTypeOf(outcome.value).toEqualTypeOf<{ score: number }>();
+      else expectTypeOf(outcome.error).toEqualTypeOf<MapStepError>();
+    }
+    // A text panel still assigns to the bare result type, whose items are unknown.
+    const text: std.patterns.TolerantPanelResult = await std.patterns.tolerantPanel(ctx, {
+      id: 'text',
+      team,
+      items: ['a', 'b'],
+      prompt: (item) => item,
+      concurrency: 2,
+    });
+    expectTypeOf(text.outcomes).items.toHaveProperty('item').toEqualTypeOf<unknown>();
+    return null;
+  },
+});
+
 it('derives the team record from the definition', () => {
   expectTypeOf<T>().toEqualTypeOf<{ readonly actor: Agent; readonly critic: Agent }>();
   expectTypeOf<T>().toEqualTypeOf<Team<'actor' | 'critic'>>();
@@ -98,4 +145,5 @@ it('derives the team record from the definition', () => {
 it('keeps the typed definitions assignable to unparameterized definition parameters', () => {
   expect(typed.name).toBe('team-types');
   expect(named.name).toBe('team-named');
+  expect(panel.name).toBe('team-panel');
 });

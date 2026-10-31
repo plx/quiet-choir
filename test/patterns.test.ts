@@ -26,6 +26,7 @@ import {
   type HarnessInvocation,
   type HarnessRequest,
   type HarnessResponse,
+  type RetryPolicy,
   type WorkflowClock,
   type WorkflowDefinition,
 } from '../src/index.js';
@@ -670,13 +671,49 @@ it('std reviewRevise scopes its IDs under id and uses custom prompts', async () 
   ]);
 });
 
-it('std tolerantPanel parses answers with a schema and counts failed items', async () => {
+it('std reviewRevise retries its critic and actor calls under its retry policy', async () => {
+  const workflow = defineWorkflow({
+    name: 'retried-review',
+    version: '1',
+    input: z.null(),
+    output: z.object({ approved: z.boolean(), draft: z.string() }),
+    run: (ctx) =>
+      std.patterns.reviewRevise(ctx, {
+        team: { actor: ctx.claude.bind({}), critic: ctx.codex.bind({}) },
+        draft: 'one',
+        rounds: 2,
+        retry: { maxAttempts: 2, delayMs: 1 },
+      }),
+  });
+  // Each first attempt slips: the critic's answer fails its schema and the actor's call throws.
+  const harness = new Fake((request) => {
+    if (request.call.attempt === 1 && request.call.stepId !== 'review/1')
+      return request.harness === 'codex' ? 'not json' : Promise.reject(new Error('Actor blip'));
+    return request.harness === 'codex'
+      ? JSON.stringify({ approved: request.options.prompt.endsWith('two'), feedback: 'more' })
+      : 'two';
+  });
+  const result = await runWorkflow(workflow, { ...options(), input: null, harness });
+  expect(result.output).toEqual({ approved: true, draft: 'two' });
+  expect(harness.count('review/0')).toBe(2);
+  expect(harness.count('revise/0')).toBe(2);
+  expect(harness.count('review/1')).toBe(1);
+});
+
+it('std tolerantPanel parses answers with a schema and pairs every outcome with its item', async () => {
   const Vote = z.object({ score: z.number() });
   const workflow = defineWorkflow({
     name: 'scored-panel',
     version: '1',
     input: z.null(),
-    output: z.object({ quorum: z.boolean(), scores: z.array(z.number()), failed: z.number() }),
+    output: z.object({
+      quorum: z.boolean(),
+      scores: z.array(z.number()),
+      failed: z.number(),
+      outcomes: z.array(z.object({ item: z.string(), index: z.number(), ok: z.boolean() })),
+      missing: z.array(z.string()),
+      failedAt: z.array(z.string().nullable()),
+    }),
     async run(ctx) {
       const panel = await std.patterns.tolerantPanel(ctx, {
         id: 'votes',
@@ -686,10 +723,14 @@ it('std tolerantPanel parses answers with a schema and counts failed items', asy
         concurrency: 4,
         schema: Vote,
       });
+      const failures = panel.outcomes.flatMap((outcome) => (outcome.ok ? [] : [outcome]));
       return {
         quorum: panel.quorum,
         scores: panel.answers.map((vote) => vote.score),
         failed: panel.failed,
+        outcomes: panel.outcomes.map(({ item, index, ok }) => ({ item, index, ok })),
+        missing: failures.map((outcome) => outcome.item),
+        failedAt: failures.map((outcome) => outcome.error.stepId),
       };
     },
   });
@@ -698,14 +739,113 @@ it('std tolerantPanel parses answers with a schema and counts failed items', asy
       throw new Error('No vote');
     return JSON.stringify({ score: request.options.prompt.length });
   });
-  const result = await runWorkflow(workflow, { ...options(), input: null, harness });
-  expect(result.output).toEqual({ quorum: false, scores: [3, 3], failed: 2 });
+  const result = await replayAfterTail(workflow, null, harness);
+  expect(result.output).toEqual({
+    quorum: false,
+    scores: [3, 3],
+    failed: 2,
+    outcomes: [
+      { item: 'a', index: 0, ok: true },
+      { item: 'b', index: 1, ok: false },
+      { item: 'c', index: 2, ok: true },
+      { item: 'd', index: 3, ok: false },
+    ],
+    missing: ['b', 'd'],
+    failedAt: ['votes/1/answer', 'votes/3/answer'],
+  });
   expect(harness.calls.map((request) => request.options.prompt).sort()).toEqual([
     'a#0',
     'b#1',
     'c#2',
     'd#3',
   ]);
+});
+
+it('std tolerantPanel names each answer by its key', async () => {
+  const workflow = defineWorkflow({
+    name: 'keyed-panel',
+    version: '1',
+    input: z.null(),
+    output: z.array(z.object({ item: z.string(), answer: z.string().nullable() })),
+    async run(ctx) {
+      const panel = await std.patterns.tolerantPanel(ctx, {
+        id: 'lenses',
+        team: { panelist: ctx.claude.bind({}) },
+        items: ['security', 'perf', 'api'],
+        key: (lens) => lens,
+        prompt: (lens) => lens,
+        concurrency: 3,
+      });
+      return panel.outcomes.map((outcome) => ({
+        item: outcome.item,
+        answer: outcome.ok ? outcome.value : null,
+      }));
+    },
+  });
+  const harness = new Fake((request) => {
+    if (request.options.prompt === 'perf') throw new Error('No vote');
+    return `re:${request.options.prompt}`;
+  });
+  const result = await replayAfterTail(workflow, null, harness);
+  expect(result.output).toEqual([
+    { item: 'security', answer: 're:security' },
+    { item: 'perf', answer: null },
+    { item: 'api', answer: 're:api' },
+  ]);
+  expect(harness.calls.map((request) => request.call.stepId).sort()).toEqual([
+    'lenses/api/answer',
+    'lenses/perf/answer',
+    'lenses/security/answer',
+  ]);
+});
+
+it('std tolerantPanel retries a schema slip before settling the vote, as policy', async () => {
+  const Vote = z.object({ score: z.number() });
+  let retry: RetryPolicy | undefined = { maxAttempts: 2, delayMs: 1, on: ['schema'] };
+  const panel = defineWorkflow({
+    name: 'retried-panel',
+    version: '1',
+    input: z.null(),
+    output: z.object({ failed: z.number(), scores: z.array(z.number()) }),
+    async run(ctx) {
+      const { failed, answers } = await std.patterns.tolerantPanel(ctx, {
+        id: 'votes',
+        team: { panelist: ctx.claude.bind({}) },
+        items: ['a', 'b'],
+        prompt: (item) => item,
+        concurrency: 2,
+        schema: Vote,
+        retry,
+      });
+      return { failed, scores: answers.map((vote) => vote.score) };
+    },
+  });
+  // 'b' slips its schema on its first attempt only.
+  const reply = (request: HarnessRequest) =>
+    request.options.prompt === 'b' && request.call.attempt === 1
+      ? 'not json'
+      : JSON.stringify({ score: 1 });
+  const harness = new Fake(reply);
+  const workflow = tailFailure(panel);
+  await expect(runWorkflow(workflow, { ...options(), input: null, harness })).rejects.toThrow(
+    'Injected tail failure',
+  );
+  expect(harness.count('votes/1/answer')).toBe(2);
+  // Retry is policy outside identity: changing it still replays the settled votes.
+  retry = undefined;
+  const result = await runWorkflow(workflow, { ...options(), resume: true, harness });
+  expect(result.output).toEqual({ failed: 0, scores: [1, 1] });
+  expect(harness.calls).toHaveLength(3);
+  // Without a retry, the same slip is a saved failed vote.
+  const once = new Fake(reply);
+  const plain = await runWorkflow(panel, {
+    ...options(),
+    runId: 'once',
+    input: null,
+    harness: once,
+  });
+  expect(plain.output).toEqual({ failed: 1, scores: [1] });
+  expect(once.count('votes/1/answer')).toBe(1);
 });
 
 it('std tolerantPanel accepts a value typed as the exported options', async () => {

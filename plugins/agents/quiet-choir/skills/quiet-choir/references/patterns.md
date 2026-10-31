@@ -204,10 +204,17 @@ cancellation rather than catching every mapper.
 checkpoint failures, and authoring guards still reject instead of becoming votes. Use the preceding
 drain recipe when failed reviewers should be retried on resume. `std.patterns.tolerantPanel` from
 `quiet-choir/std` is that map: it fills a one-slot `PanelTeam` (`panelist`), names each call
-`<id>/<index>/answer`, takes an optional `schema` for typed answers, and returns
-`{ quorum, answers, failed }`. The settled map fingerprints the items and the mapper source but not
-the `prompt` function or the `schema`, so set the optional `version` string and change it when
-either changes in a way that should not reuse the saved votes.
+`<id>/<key>/answer` with an optional `key` (`<id>/<index>/answer` without one), takes an optional
+`schema` for typed answers, and returns `{ quorum, answers, failed, outcomes }`. `outcomes` keeps
+every item's settled outcome in item order, failures included, each with its `item` and `index`, so
+a failed member can be named and an answer attributed without pairing results by index. The settled
+map fingerprints the items, keys and mapper source but not the `prompt` function or the `schema`, so
+set the optional `version` string and change it when either changes in a way that should not reuse
+the saved votes. The optional `retry` is the panelist call's retry policy, outside identity. A
+settled failure is saved only after the call's retries are spent, so give agent calls inside an
+`onError: 'return'` map an explicit retry, such as
+`{ maxAttempts: 2, on: ['schema', 'process', 'transient'] }`, when a blip should not become a
+permanent vote.
 
 <!-- skills-check: example pattern-tolerant-panel -->
 
@@ -318,9 +325,9 @@ declares the slots (`actor`, `critic`) with one-line descriptions, plain data re
 running a body, and `TeamOf` derives the record type. `quiet-choir/std` ships that team and loop as
 `std.patterns.ReviewTeam` and `std.patterns.reviewRevise(ctx, { team, draft, rounds })`, with step
 IDs `review/<n>` and `revise/<n>`; `id` runs the loop under `ctx.scope(id, ...)` so two loops do not
-collide, and `prompts` replaces the default review and revise prompts. The workflow fills the team
-explicitly at the call site, from its roster. Where roster names equal slot names,
-`ReviewTeam.from(ctx.roster)` fills it, and
+collide, `prompts` replaces the default review and revise prompts, and `retry` is the retry policy
+of every review and revise call. The workflow fills the team explicitly at the call site, from its
+roster. Where roster names equal slot names, `ReviewTeam.from(ctx.roster)` fills it, and
 `ReviewTeam.from({ ...ctx.roster, critic: ctx.roster.Skeptic })` overrides one slot: `from` keeps
 only the slot keys and throws if one is missing. A team registers nothing, checks no capability (put
 expectations in the slot description) and is not listed by `workflow validate`; a text-only agent

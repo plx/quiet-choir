@@ -403,13 +403,20 @@ const { approved, draft: final } = await std.patterns.reviewRevise(ctx, {
 `std.patterns.reviewRevise` (team `std.patterns.ReviewTeam`) reviews up to `rounds` times as
 `review/<n>` and revises after each rejection as `revise/<n>`, without an unreviewed revision after
 the last round, and returns `{ approved, draft }`. `id` runs the loop under `ctx.scope(id, ...)`, so
-two loops in one workflow do not collide, and `prompts` replaces the default review and revise
-prompts. `std.patterns.tolerantPanel` (team `std.patterns.PanelTeam`, one `panelist` slot) asks the
-panelist about each item under `ctx.map(id, items, { concurrency, onError: 'return' })` as
-`<id>/<index>/answer`, optionally with a `schema`, and returns `{ quorum, answers, failed }`: a
-failed vote is journaled, so a resume does not retry it into a different quorum. Its optional
-`version` is the map's `version`, a revision for the `prompt` function and `schema`, which the
-settled map's fingerprint does not show.
+two loops in one workflow do not collide, `prompts` replaces the default review and revise prompts,
+and `retry` is the retry policy of every review and revise call. `std.patterns.tolerantPanel` (team
+`std.patterns.PanelTeam`, one `panelist` slot) asks the panelist about each item under
+`ctx.map(id, items, { concurrency, key, onError: 'return' })` as `<id>/<key>/answer`, or
+`<id>/<index>/answer` without a `key`, optionally with a `schema`, and returns
+`{ quorum, answers, failed, outcomes }`: a failed vote is journaled, so a resume does not retry it
+into a different quorum. `outcomes` keeps every item's settled outcome in item order, failures
+included, each with its `item` and `index`, so a caller can name a failed member or attribute an
+answer without pairing results by index. Its optional `version` is the map's `version`, a revision
+for the `prompt` function and `schema`, which the settled map's fingerprint does not show, and its
+optional `retry` is the panelist call's retry policy, outside identity. A settled failure is saved
+only after the call's retries are spent, so give agent calls inside an `onError: 'return'` map an
+explicit retry, such as `{ maxAttempts: 2, on: ['schema', 'process', 'transient'] }`, when a blip
+should not become a permanent vote.
 
 `ReviewTeam.from(record)` is the one convenience. It picks the slot keys from any record that has
 them, so `ReviewTeam.from(ctx.roster)` fills a team whose roster entries use the slot names, and

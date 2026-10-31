@@ -12,6 +12,7 @@ import {
   z,
   type MapStepError,
   type Prompt,
+  type RetryPolicy,
   type Settled,
   type TeamOf,
   type WorkflowContext,
@@ -47,6 +48,11 @@ export interface ReviewReviseOptions {
     /** The actor's prompt to revise `draft` with `feedback`. Default: `Revise <draft> using this feedback: <feedback>`. */
     readonly revise?: (draft: string, feedback: string) => string | Prompt;
   };
+  /**
+   * The retry policy of the critic's `review/<n>` and the actor's `revise/<n>` calls, as an agent
+   * call's `retry`: policy outside step identity. Omitted, each call makes one attempt.
+   */
+  readonly retry?: RetryPolicy | undefined;
 }
 
 /** Result of {@link reviewRevise}. */
@@ -65,14 +71,15 @@ export interface ReviewReviseResult {
  * rather than throwing.
  *
  * @param ctx - The workflow context; with `id`, the loop runs under `ctx.scope(id, ...)`.
- * @param options - The team, the first draft, the round limit, an optional scope and prompts.
+ * @param options - The team, the first draft, the round limit, an optional scope, prompts and retry
+ * policy.
  * @returns Whether a draft was approved, and that draft or the last reviewed one.
  */
 export async function reviewRevise(
   ctx: WorkflowContext,
   options: ReviewReviseOptions,
 ): Promise<ReviewReviseResult> {
-  const { team, rounds, id } = options;
+  const { team, rounds, id, retry } = options;
   const review = options.prompts?.review ?? ((draft) => `Review this draft: ${draft}`);
   const revise =
     options.prompts?.revise ??
@@ -83,11 +90,13 @@ export async function reviewRevise(
       const verdict = await team.critic.value(`review/${String(round)}`, {
         prompt: review(draft),
         schema: Review,
+        retry,
       });
       if (verdict.approved) return { approved: true, draft };
       if (round + 1 < rounds) {
         draft = await team.actor.value(`revise/${String(round)}`, {
           prompt: revise(draft, verdict.feedback),
+          retry,
         });
       }
     }
@@ -105,18 +114,29 @@ export type PanelTeam = TeamOf<typeof PanelTeam>;
 
 /** Options of {@link tolerantPanel}. */
 export interface TolerantPanelOptions<T, O = string> {
-  /** The map ID; each item's answer is step `<id>/<index>/answer`. */
+  /** The map ID; each item's answer is step `<id>/<key or index>/answer`. */
   readonly id: string;
   /** The agent filling the panel slot. */
   readonly team: PanelTeam;
   /** The panel items, one call each. */
   readonly items: readonly T[];
+  /**
+   * The map's `key`: a stable ID for each item, valid and unique in this panel, so each answer is
+   * step `<id>/<key>/answer`. Omitted, items are keyed by index as `<id>/<index>/answer`.
+   */
+  readonly key?: ((item: T, index: number) => string) | undefined;
   /** The panelist's prompt for one item. */
   readonly prompt: (item: T, index: number) => string | Prompt;
   /** The local mapper bound, as for `ctx.map`. */
   readonly concurrency: number;
   /** A schema for each answer; omitted, answers are text. */
   readonly schema?: z.ZodType<O>;
+  /**
+   * The panelist call's retry policy, as an agent call's `retry`: policy outside step identity and
+   * the map's fingerprint. A vote settles failed only after its retries are spent; omitted, each
+   * call makes one attempt, so one transient or schema failure is a saved failed vote.
+   */
+  readonly retry?: RetryPolicy | undefined;
   /**
    * A revision for dependencies the items and the mapper source do not show, such as the `prompt`
    * function or the `schema`, as `MapOptions.version` for `ctx.map`. Change it when such a
@@ -125,45 +145,62 @@ export interface TolerantPanelOptions<T, O = string> {
   readonly version?: string | undefined;
 }
 
+/**
+ * One item's outcome in {@link TolerantPanelResult.outcomes}: the settled answer or saved failure,
+ * with the item it belongs to. Narrow on `ok` to read `value` or `error`.
+ */
+export type TolerantPanelOutcome<T, O = string> = Settled<O, MapStepError> & {
+  /** The panel item. */
+  readonly item: T;
+  /** The item's index in `items`. */
+  readonly index: number;
+};
+
 /** Result of {@link tolerantPanel}. */
-export interface TolerantPanelResult<O = string> {
+export interface TolerantPanelResult<O = string, T = unknown> {
   /** Whether more than half of the items were answered. */
   readonly quorum: boolean;
   /** The successful answers, in item order. */
   readonly answers: O[];
   /** How many items failed; their failures are saved, so a resume does not retry them. */
   readonly failed: number;
+  /**
+   * Every item's settled outcome, failures included, in item order, so each answer and failure
+   * names the item it belongs to.
+   */
+  readonly outcomes: readonly TolerantPanelOutcome<T, O>[];
 }
 
 /**
  * Ask `team.panelist` about every item and decide a quorum over the answers that succeeded. The
- * calls run under `ctx.map(id, items, { concurrency, onError: 'return' })`, so each whole item
- * outcome, failure included, is journaled: a failed vote stays failed on resume instead of being
- * retried into a different quorum. Cancellation, configuration and checkpoint failures still
- * reject rather than becoming votes. The settled map fingerprints the items and the mapper source
- * but not the `prompt` function or the `schema`; set `version` to refuse replay after changing them.
+ * calls run under `ctx.map(id, items, { concurrency, key, onError: 'return' })`, so each whole item
+ * outcome, failure included, is journaled once the call's `retry` policy is spent: a failed vote
+ * stays failed on resume instead of being retried into a different quorum. Cancellation,
+ * configuration and checkpoint failures still reject rather than becoming votes. The settled map
+ * fingerprints the items, keys and mapper source but not the `prompt` function or the `schema`; set
+ * `version` to refuse replay after changing them.
  *
  * @param ctx - The workflow context.
  * @param options - The map ID, the team, the items, the prompt, the map's concurrency and an
- * optional `version`.
- * @returns The quorum, the text answers in item order and the failed count.
+ * optional `key`, `retry` and `version`.
+ * @returns The quorum, the text answers in item order, the failed count and every item's outcome.
  */
 export function tolerantPanel<T>(
   ctx: WorkflowContext,
   options: TolerantPanelOptions<T> & { readonly schema?: undefined },
-): Promise<TolerantPanelResult>;
+): Promise<TolerantPanelResult<string, T>>;
 /**
  * Ask `team.panelist` about every item with a schema for each answer, and decide a quorum over the
  * answers that succeeded; see the text overload for the journaling.
  *
  * @param ctx - The workflow context.
  * @param options - The map ID, the team, the items, the prompt, the concurrency and the schema.
- * @returns The quorum, the parsed answers in item order and the failed count.
+ * @returns The quorum, the parsed answers in item order, the failed count and every item's outcome.
  */
 export function tolerantPanel<T, O>(
   ctx: WorkflowContext,
   options: TolerantPanelOptions<T, O> & { readonly schema: z.ZodType<O> },
-): Promise<TolerantPanelResult<O>>;
+): Promise<TolerantPanelResult<O, T>>;
 /**
  * Ask `team.panelist` about every item with options whose `schema` may or may not be set, such as a
  * value typed as {@link TolerantPanelOptions}; see the text overload for the journaling. The two
@@ -171,33 +208,36 @@ export function tolerantPanel<T, O>(
  *
  * @param ctx - The workflow context.
  * @param options - The map ID, the team, the items, the prompt, the concurrency and an optional schema.
- * @returns The quorum, the answers in item order (parsed when `schema` is set, else text) and the
- * failed count.
+ * @returns The quorum, the answers in item order (parsed when `schema` is set, else text), the
+ * failed count and every item's outcome.
  */
 export function tolerantPanel<T, O>(
   ctx: WorkflowContext,
   options: TolerantPanelOptions<T, O>,
-): Promise<TolerantPanelResult<O | string>>;
+): Promise<TolerantPanelResult<O | string, T>>;
 export async function tolerantPanel<T, O>(
   ctx: WorkflowContext,
   options: TolerantPanelOptions<T, O>,
-): Promise<TolerantPanelResult<O | string>> {
-  const { id, team, items, prompt, concurrency, schema, version } = options;
+): Promise<TolerantPanelResult<O | string, T>> {
+  const { id, team, prompt, concurrency, key, schema, retry, version } = options;
+  // Map and pair outcomes over a copy, not `items`, which the caller may mutate while the map runs.
+  const list = [...options.items];
   const answer = (item: T, index: number): Promise<O | string> =>
     schema === undefined
-      ? team.panelist.value('answer', { prompt: prompt(item, index) })
-      : team.panelist.value('answer', { prompt: prompt(item, index), schema });
+      ? team.panelist.value('answer', { prompt: prompt(item, index), retry })
+      : team.panelist.value('answer', { prompt: prompt(item, index), schema, retry });
   const results: Settled<O | string, MapStepError>[] = await ctx.map(
     id,
-    items,
-    { concurrency, onError: 'return', version },
+    list,
+    { concurrency, key, onError: 'return', version },
     answer,
   );
+  const outcomes = results.map((result, index) => ({ ...result, item: list[index] as T, index }));
   const answers = results.flatMap((result) => (result.ok ? [result.value] : []));
   return {
-    // Count the settled results, not `items`, which the caller may mutate while the map runs.
     quorum: answers.length > results.length / 2,
     answers,
     failed: results.length - answers.length,
+    outcomes,
   };
 }
