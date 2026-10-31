@@ -374,8 +374,9 @@ it('subsets a shared roster with a second defineRoster', () => {
     roster: defineRoster({ Reviewer: shared.Reviewer }),
     run(ctx) {
       expectTypeOf(ctx.roster.Reviewer).toEqualTypeOf<Agent>();
-      // @ts-expect-error -- Writer was not picked.
-      expectTypeOf(ctx.roster.Writer).toBeUnknown();
+      expectTypeOf<keyof typeof ctx.roster>().toEqualTypeOf<'Reviewer'>();
+      // @ts-expect-error -- Writer was not picked, so it is not a key of ctx.roster.
+      expectTypeOf(ctx.roster).toHaveProperty('Writer');
       return Promise.resolve(null);
     },
   });
