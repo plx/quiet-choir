@@ -35,11 +35,11 @@ must honor the resolved request itself. Native binaries/configuration still dete
 
 An agent receives only the call schema's draft-7 JSON Schema (re-encoded for Codex compat).
 Representable checks (lengths, `regex`, enums, literals, numeric bounds) and `.describe()` or
-`.meta({ description })` text are sent. Zod refinements (`refine`, `superRefine`, `check`) are not:
-they run only when the reply is validated locally, so even Claude's in-session `--json-schema` check
-accepts a reply that local validation refuses. State such a rule in the prompt or the field's
-`.describe()`. Where one bad item must not fail the whole step, keep the agent schema permissive and
-check the rule in code after the call.
+`.meta({ description })` text are sent. Zod refinements (`refine`, `superRefine`, or a custom
+`check` function) are not: they run only when the reply is validated locally, so even Claude's
+in-session `--json-schema` check accepts a reply that local validation refuses. State such a rule in
+the prompt or the field's `.describe()`. Where one bad item must not fail the whole step, keep the
+agent schema permissive and check the rule in code after the call.
 
 `prompt`, and Claude's `systemPrompt` and `appendSystemPrompt`, also accept a `Prompt` rendered by
 `definePrompts`; the runtime sends and fingerprints its text exactly as the equal string (see
