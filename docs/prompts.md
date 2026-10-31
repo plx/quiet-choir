@@ -422,11 +422,11 @@ workflow, so `workflow validate --json` (`workflow.identity.files`), `workflow c
   in `codeChanges`. A completed step that the resumed body renders again still fails its own
   fingerprint check when its rendered prompt changed, because the prompt text is step identity: the
   accepted-change preflight refuses with `Step <id>: prompt changed on a completed step` and the
-  `--fork-from ... --invalidate <id>` command to run instead, and the run is left unchanged. An item
-  of a committed `onError: 'return'` map and a settled child frame whose body ended replay their
-  saved outcome without running the mapper or body, so their prompts are never rendered again: a
-  template or fragment edit that only such items render is accepted under the flag and they keep the
-  outputs of the old prompt; the run-level `codeChanges` entry still lists the file, with no map
+  `--fork-from ... --invalidate <id>` command to run instead, and the run is left unchanged. A
+  committed item of an `onError: 'return'` map and a settled child frame whose body ended replay
+  their saved outcome without running the mapper or body, so their prompts are never rendered again:
+  a template or fragment edit that only such items render is accepted under the flag and they keep
+  the outputs of the old prompt; the run-level `codeChanges` entry still lists the file, with no map
   entry. To make such an edit refuse, bump the map's `version` (or the settled child's `version`,
   which a settled frame refuses to change) in the same edit; after a commit that means a fork. An
   edit that changes the prompt of no completed step the body re-renders, such as an unused fragment

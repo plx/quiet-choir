@@ -133,7 +133,7 @@ every file a render reads is hashed.
   the resumed body renders again still fails its own fingerprint check when its rendered prompt
   changed: the preflight refuses with `Step <id>: prompt changed on a completed step` and a
   `--fork-from ... --invalidate <id>` command, and changes nothing. An edit no such step renders (an
-  unused fragment) resumes under the flag. Items of a committed `onError: 'return'` map and settled
+  unused fragment) resumes under the flag. Committed items of an `onError: 'return'` map and settled
   child frames whose body ended replay their saved outcome without rendering, so an edit only they
   render is accepted and keeps the old outputs; bump the map's or settled child's `version` in the
   same edit to refuse it (after a commit, a fork).
