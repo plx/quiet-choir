@@ -12,6 +12,7 @@ import {
   type Command,
   type CommandPollOptions,
   type CommandPollSource,
+  type CompletedExecResult,
   type DeadlineOutcome,
   type ExecOptions,
   type ExecResult,
@@ -96,17 +97,23 @@ describe('types', () => {
       void ctx.step('typed', {
         input: null,
         schema: z.null(),
-        run: (context) => {
+        run: async (context) => {
           expectTypeOf(context.exec.json(['gh', 'pr', 'view'], { schema })).toEqualTypeOf<
             Promise<Pr>
           >();
           expectTypeOf(
             context.exec.json(['gh', 'pr', 'view'], { schema, onError: 'return' }),
           ).toEqualTypeOf<Promise<Settled<Pr, ExecStepError>>>();
-          expectTypeOf(context.exec(['gh', 'pr', 'view'])).toEqualTypeOf<Promise<ExecResult>>();
-          expectTypeOf(context.exec(['gh'], { onError: 'return' })).toEqualTypeOf<
-            Promise<Settled<ExecResult, ExecStepError>>
+          expectTypeOf(context.exec(['gh', 'pr', 'view'])).toEqualTypeOf<
+            Promise<CompletedExecResult>
           >();
+          expectTypeOf(context.exec(['gh'], { onError: 'return' })).toEqualTypeOf<
+            Promise<Settled<CompletedExecResult, ExecStepError>>
+          >();
+          // A completed command exited with an accepted code; a signal or a null code always fails.
+          const completed = await context.exec(['gh'], { okExitCodes: 'any' });
+          expectTypeOf(completed.code).toEqualTypeOf<number>();
+          expectTypeOf(completed.signal).toEqualTypeOf<null>();
           // @ts-expect-error live is accepted only by poll observers.
           void context.exec(['gh'], { live: true });
           // @ts-expect-error live is accepted only by poll observers.
@@ -131,7 +138,7 @@ describe('types', () => {
           Promise<Pr>
         >();
         expectTypeOf(context.exec(['gh'], { live: true, onError: 'return' })).toEqualTypeOf<
-          Promise<Settled<ExecResult, ExecStepError>>
+          Promise<Settled<CompletedExecResult, ExecStepError>>
         >();
         // @ts-expect-error inner commands cannot select a worktree.
         void context.exec(['gh'], { worktree: handle });

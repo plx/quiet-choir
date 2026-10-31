@@ -87,7 +87,7 @@ import { ExecError } from './exec-error.js';
 import type {
   Command,
   ExecOptions,
-  ExecResult,
+  CompletedExecResult,
   ExecFunction,
   ExecStepError,
   ExecSummary,
@@ -2798,7 +2798,8 @@ export async function runWorkflow<
           policy,
           matchedPolicy,
         );
-        // Plain exec is called with T = ExecResult and no schema.
+        // Plain exec is called with T = CompletedExecResult and no schema. Its runtime schema stays
+        // the nullable execResultSchema, whose JSON Schema is part of the step identity.
         const outputSchema = (schema ?? execResultSchema) as z.ZodType<T>;
         const jsonSchema = schemaJson(outputSchema);
         options.rehearsal?.onSchema?.(id, outputSchema);
@@ -4017,7 +4018,7 @@ export async function runWorkflow<
           id: string,
           command: Command,
           settings: ExecOptions & { readonly onError?: TMode | undefined } = {},
-        ) => exec<ExecResult, TMode>(id, command, settings, null),
+        ) => exec<CompletedExecResult, TMode>(id, command, settings, null),
         {
           json: <T, TMode extends ErrorMode = 'throw'>(
             id: string,

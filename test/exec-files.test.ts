@@ -1492,6 +1492,39 @@ describe("settled commands and files (onError: 'return')", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
+  it("completes exit 3 under okExitCodes 'any' with a numeric code, settles a signal as process, and replays both", async () => {
+    const any = { okExitCodes: 'any', onError: 'return' } as const;
+    const workflow = definition(async (ctx) => [
+      await ctx.exec('exit', node('process.exit(3)'), any),
+      await ctx.exec('killed', node("process.kill(process.pid, 'SIGTERM')"), any),
+    ]);
+    const expected = [
+      { ok: true, value: expect.objectContaining({ code: 3, signal: null }) as unknown },
+      {
+        ok: false,
+        error: expect.objectContaining({
+          message: 'Command exited with SIGTERM.',
+          kind: 'process',
+          code: null,
+          signal: 'SIGTERM',
+        }) as unknown,
+      },
+    ];
+    const first = await runWorkflow(workflow, { ...setup(), processRunner: native });
+    expect(first.output).toEqual(expected);
+    const steps = (await readRun(setup())).steps;
+    expect(steps['exit']?.status).toBe('completed');
+    expect(steps['killed']?.status).toBe('settled-failed');
+    const run = vi.fn<ProcessRunner['run']>();
+    const resumed = await runWorkflow(workflow, {
+      ...setup(),
+      processRunner: { run },
+      resume: true,
+    });
+    expect(resumed.output).toEqual(first.output);
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("completes a red command with its full output under okExitCodes 'any', still settles a timeout, and replays both", async () => {
     const stderr = 'FIRST FAILURE\n' + 'e'.repeat(3000) + 'END';
     const red = { ...reply, code: 1, stdout: 'FAIL a.test.ts', stderr };

@@ -31,7 +31,7 @@ export interface Paths {
 const LARGE = 64 * 1024 * 1024;
 
 /** Run a command and return its result whatever its exit code; a signal or timeout still throws. */
-export async function run(
+export function run(
   context: StepContext,
   argv: readonly [string, ...string[]],
   options: {
@@ -41,14 +41,11 @@ export async function run(
     readonly maxOutputBytes?: number;
   } = {},
 ): Promise<ExecResult> {
-  const result = await context.exec([...argv], {
+  return context.exec([...argv], {
     ...options,
     ...(options.env === undefined ? {} : { env: { ...options.env } }),
     okExitCodes: 'any',
   });
-  if (result.code === null)
-    throw new Error(`${argv.join(' ')} ended by ${result.signal ?? 'a signal'}`);
-  return result;
 }
 
 /** Run git in `cwd` and return its trimmed stdout; a nonzero exit throws with the output's tail. */

@@ -16,32 +16,34 @@ not restrict them. Bind agent-proposed commands to a saved plan and `ctx.approve
 argv protects argument boundaries, not the meaning of the selected program. Do not put secrets in
 arguments or shell source: command descriptions are recorded and visible in inspection.
 
-`ExecResult` contains `code`, `signal`, `stdout`, `stderr`, `truncated`, and `durationMs`. By
-default, only exit 0 succeeds. Non-ok exits throw `ExecError`; attempt history preserves the exit
-code, signal, classification, and the last 1024 characters of each output stream. `ctx.exec.json`
-parses stdout with its required Zod schema and checkpoints that value instead of raw output.
-Truncated JSON output fails with kind `output-limit`. Stdout that is not JSON after an accepted
-nonzero exit (in `okExitCodes`, or `'any'`) fails with kind `process`, because the command failed
-without a body; any other invalid JSON or schema mismatch fails with kind `schema`.
+A completed command returns `CompletedExecResult`: `code` (a number), `signal` (null), `stdout`,
+`stderr`, `truncated`, and `durationMs`. `ExecResult` is the raw shape a `ProcessRunner` returns and
+an `ExecError` carries, with `code` null and `signal` set for a signalled process. By default, only
+exit 0 succeeds. Non-ok exits throw `ExecError`; attempt history preserves the exit code, signal,
+classification, and the last 1024 characters of each output stream. `ctx.exec.json` parses stdout
+with its required Zod schema and checkpoints that value instead of raw output. Truncated JSON output
+fails with kind `output-limit`. Stdout that is not JSON after an accepted nonzero exit (in
+`okExitCodes`, or `'any'`) fails with kind `process`, because the command failed without a body; any
+other invalid JSON or schema mismatch fails with kind `schema`.
 
 A `try/catch` around a command is not a durable decision: resume runs the command again and can take
 the other branch. To branch on a failure, pass `onError: 'return'`, as every effect that can fail
-allows. `ctx.exec` then returns `Settled<ExecResult, ExecStepError>` and `ctx.exec.json` returns
-`Settled<T, ExecStepError>`. The final failure, after retries, is saved as `settled-failed` and
-replays on resume without running the command. `ExecStepError` adds the exit `code`, `signal`, and
-the last 1024 characters of stdout and stderr (`stdoutTail`, `stderrTail`) to `message`, `kind`, and
-`attempts`. A timeout settles with kind `timeout` and whatever partial output the runner reported.
-With `NodeProcessRunner`, a command that cannot start (a missing executable, a `cwd` that does not
-exist, a permission error) settles with kind `process`, `code` and `signal` null, empty tails and
-its `Cannot start <binary>…` message. That is the same kind as a nonzero exit or a signal kill, and
-it still fails under `okExitCodes: 'any'`. For `ctx.exec.json`, `parsed` holds stdout as JSON when
-the output was complete, valid JSON, and at most 16384 UTF-8 bytes; it is not checked against the
-success schema, so a failing tool's JSON report stays usable. The process fields are absent when the
-runner's error is not an `ExecError`, such as a custom `ProcessRunner`'s plain error. Cancellation
-and a missing process adapter still reject and leave the step unfinished.
+allows. `ctx.exec` then returns `Settled<CompletedExecResult, ExecStepError>` and `ctx.exec.json`
+returns `Settled<T, ExecStepError>`. The final failure, after retries, is saved as `settled-failed`
+and replays on resume without running the command. `ExecStepError` adds the exit `code`, `signal`,
+and the last 1024 characters of stdout and stderr (`stdoutTail`, `stderrTail`) to `message`, `kind`,
+and `attempts`. A timeout settles with kind `timeout` and whatever partial output the runner
+reported. With `NodeProcessRunner`, a command that cannot start (a missing executable, a `cwd` that
+does not exist, a permission error) settles with kind `process`, `code` and `signal` null, empty
+tails and its `Cannot start <binary>…` message. That is the same kind as a nonzero exit or a signal
+kill, and it still fails under `okExitCodes: 'any'`. For `ctx.exec.json`, `parsed` holds stdout as
+JSON when the output was complete, valid JSON, and at most 16384 UTF-8 bytes; it is not checked
+against the success schema, so a failing tool's JSON report stays usable. The process fields are
+absent when the runner's error is not an `ExecError`, such as a custom `ProcessRunner`'s plain
+error. Cancellation and a missing process adapter still reject and leave the step unfinished.
 
 `okExitCodes: 'any'` instead records ordinary nonzero exits as completed results. Prefer it when the
-exit code and the output are the data: the completed `ExecResult` keeps both streams up to
+exit code and the output are the data: the `CompletedExecResult` keeps both streams up to
 `maxOutputBytes` (head and tail), `truncated` and `durationMs`, while a settled `ExecStepError`
 keeps only the 1024-character tails and has no duration or truncation flag. Signals, timeouts and
 launch failures still fail under it, and `ctx.exec.json` keeps only the parsed value, not the exit

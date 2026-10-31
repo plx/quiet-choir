@@ -91,7 +91,10 @@ export interface ExecStepError extends StepError {
   readonly parsed?: JsonValue;
 }
 
-/** Captured command result, checkpointed by plain exec. */
+/**
+ * Raw process result that a {@link ProcessRunner} returns and an `ExecError` carries: a signalled
+ * process has a null code and its signal. A completed exec returns {@link CompletedExecResult}.
+ */
 export interface ExecResult {
   /** Exit code, or null when terminated by a signal. */
   readonly code: number | null;
@@ -107,6 +110,19 @@ export interface ExecResult {
   readonly durationMs: number;
 }
 
+/**
+ * Result of a completed `ctx.exec` or `context.exec`, checkpointed by plain exec. The exit code was
+ * accepted (by `okExitCodes`, or `'any'`), so `code` is a number and `signal` is null: a signal, a
+ * null code or a rejected exit always fails as an `ExecError`, or settles as an
+ * {@link ExecStepError} under `onError: 'return'`.
+ */
+export interface CompletedExecResult extends ExecResult {
+  /** Accepted exit code. */
+  readonly code: number;
+  /** Always null: a signalled process fails. */
+  readonly signal: null;
+}
+
 /** Callable durable command API. */
 export interface ExecFunction {
   /** Run once per durable ID and settle a failure; the saved outcome replays without the adapter. */
@@ -114,13 +130,13 @@ export interface ExecFunction {
     id: string,
     command: Command,
     options: ExecOptions & { readonly onError: 'return' },
-  ): Promise<Settled<ExecResult, ExecStepError>>;
+  ): Promise<Settled<CompletedExecResult, ExecStepError>>;
   /** Run once per durable ID; completed results replay without invoking the adapter. */
   <TMode extends ErrorMode = 'throw'>(
     id: string,
     command: Command,
     options?: ExecOptions & { readonly onError?: TMode | undefined },
-  ): Promise<EffectResult<ExecResult, TMode, ExecStepError>>;
+  ): Promise<EffectResult<CompletedExecResult, TMode, ExecStepError>>;
   /** Parse and validate stdout, settling a failure as an {@link ExecStepError}. */
   json<T>(
     id: string,
@@ -175,12 +191,12 @@ export interface StepExecFunction<TOptions extends StepExecOptions = StepExecOpt
   (
     command: Command,
     options: TOptions & { readonly onError: 'return' },
-  ): Promise<Settled<ExecResult, ExecStepError>>;
+  ): Promise<Settled<CompletedExecResult, ExecStepError>>;
   /** Run a command; a failure throws an `ExecError` into the parent attempt. */
   <TMode extends ErrorMode = 'throw'>(
     command: Command,
     options?: TOptions & { readonly onError?: TMode | undefined },
-  ): Promise<EffectResult<ExecResult, TMode, ExecStepError>>;
+  ): Promise<EffectResult<CompletedExecResult, TMode, ExecStepError>>;
   /** Parse and validate stdout, returning a failure as a value. The raw stdout is still recorded. */
   json<T>(
     command: Command,

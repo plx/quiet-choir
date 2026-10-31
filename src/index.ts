@@ -333,6 +333,7 @@ export type {
   Command,
   ExecOptions,
   ExecResult,
+  CompletedExecResult,
   ExecFunction,
   StepExecFunction,
   StepExecOptions,

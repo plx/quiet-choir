@@ -13,6 +13,7 @@ import {
   runWorkflow,
   z,
   type AgentResult,
+  type CompletedExecResult,
   type ErrorKind,
   type ErrorMode,
   type ExecResult,
@@ -509,17 +510,29 @@ it('reuses settled exec and readFile outcomes in a fork and reruns an invalidate
 
 it('types settled exec, exec.json, readFile and writeFile results by error mode', () => {
   // Compile-time checks: typecheck rejects a wrong overload; the body is never run.
-  const check = (ctx: WorkflowContext, mode: ErrorMode) => {
+  const check = async (ctx: WorkflowContext, mode: ErrorMode) => {
     const schema = z.object({ passed: z.boolean() });
     expectTypeOf(ctx.exec('a', ['x'], { onError: 'return' })).toEqualTypeOf<
-      Promise<Settled<ExecResult, ExecStepError>>
+      Promise<Settled<CompletedExecResult, ExecStepError>>
     >();
-    expectTypeOf(ctx.exec('a', ['x'])).toEqualTypeOf<Promise<ExecResult>>();
-    expectTypeOf(ctx.exec('a', ['x'], { onError: 'throw' })).toEqualTypeOf<Promise<ExecResult>>();
-    expectTypeOf(ctx.exec('a', ['x'], { okExitCodes: 'any' })).toEqualTypeOf<Promise<ExecResult>>();
+    expectTypeOf(ctx.exec('a', ['x'])).toEqualTypeOf<Promise<CompletedExecResult>>();
+    expectTypeOf(ctx.exec('a', ['x'], { onError: 'throw' })).toEqualTypeOf<
+      Promise<CompletedExecResult>
+    >();
+    expectTypeOf(ctx.exec('a', ['x'], { okExitCodes: 'any' })).toEqualTypeOf<
+      Promise<CompletedExecResult>
+    >();
     expectTypeOf(ctx.exec('a', ['x'], { onError: mode })).toEqualTypeOf<
-      Promise<ExecResult | Settled<ExecResult, ExecStepError>>
+      Promise<CompletedExecResult | Settled<CompletedExecResult, ExecStepError>>
     >();
+    // A completed command exited with an accepted code; a signal or a null code always fails.
+    const any = await ctx.exec('a', ['x'], { okExitCodes: 'any', onError: 'return' });
+    if (any.ok) {
+      expectTypeOf(any.value.code).toEqualTypeOf<number>();
+      expectTypeOf(any.value.signal).toEqualTypeOf<null>();
+    } else expectTypeOf(any.error.code).toEqualTypeOf<number | null | undefined>();
+    // Helpers annotated with the raw ExecResult still accept a completed result.
+    expectTypeOf<CompletedExecResult>().toExtend<ExecResult>();
     expectTypeOf(ctx.exec.json('j', ['x'], { schema, onError: 'return' })).toEqualTypeOf<
       Promise<Settled<{ passed: boolean }, ExecStepError>>
     >();
