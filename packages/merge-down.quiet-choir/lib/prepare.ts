@@ -11,6 +11,7 @@ import type {
   GithubPullRequestSummary,
   GithubRepoInfo,
   GithubReviewThread,
+  ReviewerBot,
 } from 'quiet-choir/github';
 import type { Paths } from './git.js';
 import {
@@ -250,3 +251,16 @@ export function summary(prepared: Prepared, paths: Paths): PrSummary {
     },
   };
 }
+
+/**
+ * The reviewer a `ci: 'ignore'` gate waits for in place of `codeqlReviewer()` (#738): clean at once,
+ * since no code-scanning analysis can be published without CI. The reviewer wait itself still reads
+ * the unresolved threads and the open alerts, which the gate and land keep guarding.
+ */
+export const CI_IGNORED_REVIEWER: ReviewerBot = Object.freeze({
+  name: 'ci-ignored',
+  login: 'quiet-choir[ci-ignored]',
+  reads: [],
+  identity: { ciIgnored: 1 },
+  observe: () => ({ status: 'clean' as const }),
+});

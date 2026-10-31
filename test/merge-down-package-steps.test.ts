@@ -587,3 +587,18 @@ describe('localCodexReview', () => {
     expect(await readFile(calls, 'utf8')).toBe('run\n');
   });
 });
+
+describe('the ci: ignore gate reviewer (#738)', () => {
+  it('is clean at once and reads nothing of its own, so no analysis check is awaited', async () => {
+    const { CI_IGNORED_REVIEWER } = await lib<{
+      CI_IGNORED_REVIEWER: {
+        name: string;
+        reads: readonly string[];
+        observe: (activity: unknown, context: unknown) => { status: string };
+      };
+    }>('prepare');
+    expect(CI_IGNORED_REVIEWER.reads).toEqual([]);
+    expect(CI_IGNORED_REVIEWER.observe({}, {})).toEqual({ status: 'clean' });
+    expect(CI_IGNORED_REVIEWER.name).not.toBe('codeql');
+  });
+});

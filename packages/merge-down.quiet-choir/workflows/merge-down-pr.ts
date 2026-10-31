@@ -55,7 +55,14 @@ import {
   type ThreadDecision,
   type WorkItem,
 } from '../lib/policy.js';
-import { preparePr, readThreads, resolvePaths, resolveRepo, summary } from '../lib/prepare.js';
+import {
+  CI_IGNORED_REVIEWER,
+  preparePr,
+  readThreads,
+  resolvePaths,
+  resolveRepo,
+  summary,
+} from '../lib/prepare.js';
 import { FixTeam, ResolveTeam } from '../lib/teams.js';
 import { prompts, type Situation } from '../prompts.js';
 import { roster, toolchainAgents, type Staff } from '../roster.js';
@@ -105,6 +112,9 @@ export default defineWorkflow({
     const publishing = A.until === 'merge';
     // ci: 'ignore' (#738): GitHub CI is never read; the local suite and the reviewers gate the merge.
     const IGNORE_CI = A.ci === 'ignore';
+    // The code-scanning reviewer waits for an analysis check, which CI publishes: without CI it
+    // would wait out its deadline. The reviewer wait still reads the open threads and alerts.
+    const scanner = () => (IGNORE_CI ? CI_IGNORED_REVIEWER : codeqlReviewer());
     const ciNotConsulted = (sha: string): WaitChecksResult => ({
       status: 'success',
       headRefOid: sha,
@@ -1055,7 +1065,7 @@ export default defineWorkflow({
           }),
         ]);
       const [[ci0, reviewed0], localReview] = await Promise.all([
-        waitAll('wait', githubCodex ? [codexReviewer(), codeqlReviewer()] : [codeqlReviewer()]),
+        waitAll('wait', githubCodex ? [codexReviewer(), scanner()] : [scanner()]),
         wantCodex && LOCAL ? reviewAt(`r${String(r)}`, head) : Promise.resolve(null),
       ]);
       const early =
@@ -1065,7 +1075,7 @@ export default defineWorkflow({
       // Either the local review or CI can outlast the reviewer wait, so threads and alerts can
       // arrive meanwhile: read the gate again, which costs only the settle delay now that both are
       // done.
-      const [ci, reviewed] = await waitAll('refresh', [codeqlReviewer()]);
+      const [ci, reviewed] = await waitAll('refresh', [scanner()]);
       const late =
         blockedIf([ci, reviewed], 'the refreshed gate') ??
         unregisteredRequired(ci, A.requiredChecks);
@@ -1100,7 +1110,7 @@ export default defineWorkflow({
         // Wait whatever the rerun did: when it found the failed jobs already re-run (a reconciled
         // rerun), the CI it left behind may have passed since the gate read it, and when nothing
         // changed the wait returns at once with the same failure.
-        const [again, againReview] = await waitAll('rerun', [codeqlReviewer()]);
+        const [again, againReview] = await waitAll('rerun', [scanner()]);
         const stuck =
           blockedIf([again, againReview], 'the re-run CI') ??
           unregisteredRequired(again, A.requiredChecks);
