@@ -900,6 +900,151 @@ it('refuses dirty checkout targets, then fast-forwards the explicit checkout on 
   expect(await readFile(join(repo, 'file.txt'), 'utf8')).toBe('integrated\n');
 });
 
+it('a checkout merge integrates onto the HEAD current when it is prepared', async () => {
+  const workflow = defineWorkflow({
+    name: 'moved-checkout',
+    version: '1',
+    input: z.null(),
+    output: z.object({ verified: z.string(), external: z.string() }),
+    async run(ctx) {
+      const handle = await ctx.worktree('cache');
+      await ctx.step('edit', {
+        worktree: handle,
+        input: null,
+        schema: z.null(),
+        async run({ cwd }) {
+          await writeFile(join(cwd, 'file.txt'), 'verified\n');
+          return null;
+        },
+      });
+      const verified = await ctx.merge('integrate', [handle]);
+      // Someone commits to the checkout between the verified integration and its publication.
+      const external = await ctx.step('external', {
+        input: null,
+        schema: z.string(),
+        async run() {
+          await writeFile(join(repo, 'later'), 'unverified\n');
+          return commit('external');
+        },
+      });
+      await ctx.merge('publish', [handle], { target: 'checkout' });
+      return { verified: verified.commit, external };
+    },
+  });
+  const run = await runWorkflow(workflow, { ...options('moved-checkout'), input: null });
+  expect(run.status).toBe('completed');
+  assert(run.output);
+  expect(await command('rev-parse', 'HEAD^1')).toBe(run.output.external);
+  expect(await command('rev-parse', 'HEAD^{tree}')).not.toBe(
+    await command('rev-parse', `${run.output.verified}^{tree}`),
+  );
+  expect(await command('show', 'HEAD:later')).toBe('unverified');
+});
+
+it("a ref merge starts from the checkout HEAD, not a handle's pinned base", async () => {
+  const base = await command('rev-parse', 'HEAD');
+  const workflow = defineWorkflow({
+    name: 'pinned-base',
+    version: '1',
+    input: z.null(),
+    output: z.object({ integrated: z.string(), external: z.string() }),
+    async run(ctx) {
+      const handle = await ctx.worktree('cache', { base: { commit: base } });
+      await ctx.step('edit', {
+        worktree: handle,
+        input: null,
+        schema: z.null(),
+        async run({ cwd }) {
+          await writeFile(join(cwd, 'file.txt'), 'verified\n');
+          return null;
+        },
+      });
+      const external = await ctx.step('external', {
+        input: null,
+        schema: z.string(),
+        async run() {
+          await writeFile(join(repo, 'later'), 'unverified\n');
+          return commit('external');
+        },
+      });
+      return { integrated: (await ctx.merge('integrate', [handle])).commit, external };
+    },
+  });
+  const run = await runWorkflow(workflow, { ...options('pinned-base'), input: null });
+  assert(run.output);
+  expect(run.steps['integrate']?.merge?.base).toBe(run.output.external);
+  expect(await command('rev-parse', `${run.output.integrated}^1`)).toBe(run.output.external);
+  expect(await command('show', `${run.output.integrated}:later`)).toBe('unverified');
+  expect(await command('show', `${run.output.integrated}:file.txt`)).toBe('verified');
+  expect(await command('rev-parse', 'HEAD')).toBe(run.output.external);
+});
+
+it('the ff-only publication recipe refuses a moved HEAD', async () => {
+  let move = true;
+  const workflow = defineWorkflow({
+    name: 'recipe',
+    version: '1',
+    input: z.null(),
+    output: z.object({
+      integrated: z.string(),
+      external: z.string().nullable(),
+      exit: z.number().nullable(),
+    }),
+    async run(ctx) {
+      const handle = await ctx.worktree('cache');
+      await ctx.step('edit', {
+        worktree: handle,
+        input: null,
+        schema: z.null(),
+        async run({ cwd }) {
+          await writeFile(join(cwd, 'file.txt'), 'verified\n');
+          return null;
+        },
+      });
+      const integrated = await ctx.merge('integrate', [handle]);
+      const external = move
+        ? await ctx.step('external', {
+            input: null,
+            schema: z.string(),
+            async run() {
+              await writeFile(join(repo, 'later'), 'unverified\n');
+              return commit('external');
+            },
+          })
+        : null;
+      const published = await ctx.exec(
+        'publish',
+        [
+          'git',
+          '-c',
+          'merge.autoStash=false',
+          'merge',
+          '--ff-only',
+          '--no-overwrite-ignore',
+          integrated.commit,
+        ],
+        { onError: 'return' },
+      );
+      return {
+        integrated: integrated.commit,
+        external,
+        exit: published.ok ? 0 : (published.error.code ?? null),
+      };
+    },
+  });
+  const moved = await runWorkflow(workflow, { ...options('moved'), input: null });
+  assert(moved.output);
+  expect(moved.output.exit).toBe(128);
+  expect(moved.steps['publish']?.status).toBe('settled-failed');
+  expect(await command('rev-parse', 'HEAD')).toBe(moved.output.external);
+  // Without movement, the checkout is fast-forwarded to exactly the integrated commit.
+  move = false;
+  const published = await runWorkflow(workflow, { ...options('published'), input: null });
+  assert(published.output);
+  expect(published.output.exit).toBe(0);
+  expect(await command('rev-parse', 'HEAD')).toBe(published.output.integrated);
+});
+
 it('does not publish any integration result when onConflict is fail', async () => {
   const harness: Harness = {
     invoke: async (request) => {

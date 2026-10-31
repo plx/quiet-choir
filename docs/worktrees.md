@@ -124,19 +124,19 @@ reused from the source run. Cleaning a fork never removes source-owned caches or
 `ctx.merge(id, changes, options?)` integrates changes or shared handles in input order. Shared
 handles are resolved to saved snapshots under their locks before integration starts. Options are:
 
-| Option                 | Behavior                                                                                |
-| ---------------------- | --------------------------------------------------------------------------------------- |
-| `strategy: 'rebase'`   | Default: apply each snapshot's net change onto the preceding clean result               |
-| `strategy: 'merge'`    | Preserve source commits as merge parents                                                |
-| `strategy: 'squash'`   | Publish one final commit parented on the starting commit                                |
-| `onConflict: 'report'` | Default: record conflicting inputs, skip them, and continue with other inputs           |
-| `onConflict: 'fail'`   | Reject without publishing the integration target                                        |
-| `target: 'ref'`        | Default: publish a run-owned ref; leave the source checkout unchanged                   |
-| `target: { branch }`   | Create/update an unoccupied local branch; refuse a branch checked out anywhere          |
-| `target: 'checkout'`   | Explicitly fast-forward the source checkout; refuse dirty state or a changed target     |
-| `commit: { message }`  | Message of the final commit; intermediate commits keep generated messages               |
-| `commit.author`        | `'quiet-choir'` (default), `'git-config'` or `{ name, email }` for every created commit |
-| `onError: 'return'`    | Save a merge failure and return `Settled<MergeResult>`; resume replays it without Git   |
+| Option                 | Behavior                                                                                                          |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `strategy: 'rebase'`   | Default: apply each snapshot's net change onto the preceding clean result                                         |
+| `strategy: 'merge'`    | Preserve source commits as merge parents                                                                          |
+| `strategy: 'squash'`   | Publish one final commit parented on the starting commit                                                          |
+| `onConflict: 'report'` | Default: record conflicting inputs, skip them, and continue with other inputs                                     |
+| `onConflict: 'fail'`   | Reject without publishing the integration target                                                                  |
+| `target: 'ref'`        | Default: publish a run-owned ref; leave the source checkout unchanged                                             |
+| `target: { branch }`   | Create/update an unoccupied local branch; refuse a branch checked out anywhere                                    |
+| `target: 'checkout'`   | Explicitly fast-forward the source checkout; refuse dirty state, or a HEAD that moves after the merge is prepared |
+| `commit: { message }`  | Message of the final commit; intermediate commits keep generated messages                                         |
+| `commit.author`        | `'quiet-choir'` (default), `'git-config'` or `{ name, email }` for every created commit                           |
+| `onError: 'return'`    | Save a merge failure and return `Settled<MergeResult>`; resume replays it without Git                             |
 
 `onError: 'return'` makes a failed merge a durable branch decision: an `onConflict: 'fail'`
 conflict, a dirty checkout target or a target that moved is saved as a settled failure and returned
@@ -153,6 +153,17 @@ repair call on `result.commit`. An unchanged source is a no-op. The target's ini
 resolved inputs, and computed result are checkpointed so retries do not silently rebase onto a moved
 `HEAD`. Publishing a branch compares its old value; a resumed publication recognizes its
 already-published result. External repository writers still need coordination.
+
+Each merge starts from its target's value when the merge is first prepared: the branch tip for
+`{ branch }` (`HEAD` when the branch does not exist yet), and the source checkout's `HEAD` for
+`'checkout'` and for the default `'ref'`, whose run-owned ref does not exist yet. That starting
+commit is never taken from the inputs' bases, even for a handle created with `base: { commit }`:
+inputs captured at an older commit are rebased onto it. The moved-target refusal covers only
+movement after that preparation, and no option pins an earlier starting commit (#ISSUE-C06-1). So a
+later checkout merge of inputs that an earlier integration verified integrates them onto whatever
+`HEAD` is then: if someone committed in between, it publishes a tree no check ran on, without an
+error. To publish exactly the verified commit, see
+[publish exactly a verified integration](#publish-exactly-a-verified-integration).
 
 `commit` gives the integration commits a message and identity, so a published branch can back a pull
 request. The message replaces the generated one on the final commit: the squash commit, or the last
@@ -173,6 +184,43 @@ isolated attempts always keep the fixed `quiet-choir` identity.
 Git's [merge-tree protocol](https://git-scm.com/docs/git-merge-tree/2.38.0) computes integration
 without an index or worktree. Explicit checkout publication uses a fast-forward-only merge with
 [ignored-file overwrite disabled](https://git-scm.com/docs/git-merge/2.38.0#Documentation/git-merge.txt---no-overwrite-ignore).
+
+### Publish exactly a verified integration
+
+Integrate to the default ref, verify the integrated commit in its own checkout, then fast-forward
+the source checkout to that commit with one `ctx.exec`:
+
+```ts
+const integrated = await ctx.merge('integrate', [tree]);
+const verify = await ctx.worktree('verify', { base: { commit: integrated.commit } });
+const check = await ctx.exec('check', ['npm', 'test'], { worktree: verify, onError: 'return' });
+if (check.ok)
+  await ctx.exec(
+    'publish',
+    [
+      'git',
+      '-c',
+      'merge.autoStash=false',
+      'merge',
+      '--ff-only',
+      '--no-overwrite-ignore',
+      integrated.commit,
+    ],
+    { onError: 'return' },
+  );
+```
+
+The fast-forward moves `HEAD` to exactly the verified `integrated.commit`. If someone committed to
+the checkout after the integration was prepared, the verified commit no longer descends from `HEAD`:
+Git refuses with exit code 128, the checkout is left as it was, and `publish` settles as
+`{ ok: false, error }` for a later step to branch on. Like every `ctx.exec` it is at least once; a
+rerun after it succeeded prints `Already up to date.` and exits 0. Unlike a `target: 'checkout'`
+merge, it does not refuse unrelated uncommitted edits, which Git carries across the fast-forward, or
+a checkout switched to another branch, and inspection lists it as a command rather than an
+integration. To publish the verified commit to a branch instead,
+`git update-ref refs/heads/<branch> <integrated.commit> <expected-old>` refuses a branch that no
+longer holds `<expected-old>`; as with `{ branch }` targets, use it only for a branch no worktree
+has checked out.
 
 ### Open a PR from an isolated change
 

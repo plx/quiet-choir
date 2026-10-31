@@ -128,7 +128,12 @@ export interface MergeOptions {
   readonly strategy?: 'rebase' | 'merge' | 'squash';
   /** Return conflict data (default), or reject without publishing the integration target. */
   readonly onConflict?: 'report' | 'fail';
-  /** Publish a run-owned ref by default, an unoccupied branch, or the explicitly selected checkout. */
+  /**
+   * Publish a run-owned ref by default, an unoccupied branch, or the explicitly selected checkout.
+   * The merge integrates onto the target's value when it is first prepared (the checkout's `HEAD`
+   * for `'ref'`, `'checkout'` and a new branch), never onto an input's base, and refuses only a
+   * target that moves after that.
+   */
   readonly target?:
     | 'ref'
     | 'checkout'
