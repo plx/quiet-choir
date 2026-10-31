@@ -152,7 +152,10 @@ through its own context instead: `context.exec(argv, options)` and
 `context.exec.json(argv, { schema })` take the same command and options as `ctx.exec`, without an
 ID, `worktree`, `retry` or `meta`. They go through the same runner as `ctx.exec`
 (`RunOptions.execRunner`, or `processRunner`), with the same five-minute and 1 MiB defaults,
-environment overlay, opt-in `scrubEnv`, reserved `QUIET_CHOIR_` prefix, exit-code and JSON rules.
+environment overlay, opt-in `scrubEnv`, reserved `QUIET_CHOIR_` prefix, exit-code and JSON rules. In
+a step bound to a worktree handle they run in the mapped checkout (`context.cwd`), which is how one
+effect provisions a checkout and uses it; see
+[provision from run input](worktrees.md#provision-from-run-input).
 
 These commands are **not durable effects**. They are never replayed or reused, and they run again
 whenever the parent reruns: on a retry, on a resume of an unfinished step, and on every poll check.

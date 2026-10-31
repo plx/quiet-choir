@@ -529,6 +529,96 @@ it('serializes shared effects, resets failed attempts, retains ignored dependenc
   expect((await command('worktree', 'list', '--porcelain')).match(/^worktree /gmu)).toHaveLength(1);
 });
 
+/** Installs an ignored dependency into the command's directory, which capture never saves. */
+const installIgnored = [
+  process.execPath,
+  '-e',
+  "require('fs').mkdirSync('node_modules/x', { recursive: true })",
+] as const;
+const probeIgnored = ['test', '-e', 'node_modules/x'] as const;
+
+it('replays a completed handle exec that wrote ignored files over a checkout rebuilt after a failed execution', async () => {
+  let handle: WorktreeHandle | undefined;
+  let fail = true;
+  const definition = defineWorkflow({
+    version: '1',
+    name: 'provision-exec',
+    input: z.null(),
+    output: z.number().nullable(),
+    async run(ctx) {
+      const tree = await ctx.worktree('workspace');
+      handle = tree;
+      await ctx.exec('install', installIgnored, { worktree: tree });
+      await ctx.step('gate', {
+        input: null,
+        schema: z.null(),
+        run: () => {
+          if (fail) throw new Error('stop after install');
+          return null;
+        },
+      });
+      return (await ctx.exec('probe', probeIgnored, { worktree: tree, okExitCodes: 'any' })).code;
+    },
+  });
+  await expect(
+    runWorkflow(definition, { ...options('provision-exec'), input: null }),
+  ).rejects.toThrow('stop after install');
+  assert(handle);
+  // The default keep: 'failed' removes a cache whose last effect completed.
+  expect(await exists(handle.path)).toBe(false);
+  fail = false;
+  const resumed = await runWorkflow(definition, { ...options('provision-exec'), resume: true });
+  // The install replays without running, so the rebuilt checkout lacks its ignored output.
+  expect(resumed.output).toBe(1);
+  expect(resumed.steps['install']?.attempts).toBe(1);
+  expect(await exists(join(repo, 'node_modules'))).toBe(false);
+});
+
+it('provisions and runs a command together in a handle-bound step through context.exec', async () => {
+  let handle: WorktreeHandle | undefined;
+  let fail = true;
+  const definition = defineWorkflow({
+    version: '1',
+    name: 'provision-step',
+    input: z.null(),
+    output: z.number().nullable(),
+    async run(ctx) {
+      const tree = await ctx.worktree('workspace');
+      handle = tree;
+      const code = await ctx.step('test', {
+        input: null,
+        worktree: tree,
+        schema: z.number().nullable(),
+        run: async ({ exec }) => {
+          await exec(installIgnored);
+          return (await exec(probeIgnored, { okExitCodes: 'any' })).code;
+        },
+      });
+      await ctx.step('gate', {
+        input: null,
+        schema: z.null(),
+        run: () => {
+          if (fail) throw new Error('stop after test');
+          return null;
+        },
+      });
+      return code;
+    },
+  });
+  await expect(
+    runWorkflow(definition, { ...options('provision-step'), input: null }),
+  ).rejects.toThrow('stop after test');
+  assert(handle);
+  expect(await exists(handle.path)).toBe(false);
+  fail = false;
+  const resumed = await runWorkflow(definition, { ...options('provision-step'), resume: true });
+  // The step ran both commands in the mapped checkout, not the source checkout, and replays.
+  expect(resumed.status).toBe('completed');
+  expect(resumed.output).toBe(0);
+  expect(resumed.steps['test']?.attempts).toBe(1);
+  expect(await exists(join(repo, 'node_modules'))).toBe(false);
+});
+
 it('reports shared-handle receipts cumulatively from the handle base', async () => {
   const harness: Harness = {
     invoke: async (request) => {

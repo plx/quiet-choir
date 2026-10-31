@@ -152,10 +152,15 @@ Effects on one handle serialize through result validation, snapshot capture, and
 effect adds a snapshot pin when its captured tree differs from the handle's base, so once one effect
 has changed the tree, every later effect adds one, even a command that edits nothing. Before each
 live attempt the cache resets to its latest completed snapshot and cleans untracked files; ignored
-caches such as `node_modules` remain. Missing directories rebuild from the saved commit. A failed
-write cannot become the next effect's baseline. Local `StepContext.cwd` is the mapped execution
-directory; the handle's `path` is the repository root. Write through managed effects, not body code
-using `handle.path`: body code reruns and bypasses serialization.
+caches such as `node_modules` remain between the effects of one execution. Missing directories
+rebuild from the saved commit, without ignored files. A failed write cannot become the next effect's
+baseline. The checkout is still a cache: when an execution suspends, fails or is interrupted, the
+default `keep: 'failed'` (and `'none'`) removes each cache whose last effect completed. A resume
+then rebuilds the checkout from the saved snapshot while completed effects replay without running,
+so an earlier effect that installed ignored dependencies does not provision the rebuilt checkout;
+[provision in the effect that needs it](#provision-from-run-input). Local `StepContext.cwd` is the
+mapped execution directory; the handle's `path` is the repository root. Write through managed
+effects, not body code using `handle.path`: body code reruns and bypasses serialization.
 
 An agent call on a handle reports the handle's cumulative change: the receipt's `base` is
 `handle.base`, not the snapshot the call started from, and `files` lists every change since then,
@@ -369,7 +374,9 @@ resolves against the invocation's directory. Like `--wait-mode`, both are record
 launch policy and inherited, field by field, by a later `workflow resume`, `execute --resume`,
 `answer --resume` or `workflow tick` that does not repeat them; emitted resume commands include
 them. Tick has no worktree flags of its own. `setup` and `captureExclude` have no flags: declare
-them in code.
+them in code. An operator therefore cannot yet provision runtime-owned worktrees at launch
+(#ISSUE-C13-2); a workflow whose checkouts need dependencies declares `setup` or
+[provisions from run input](#provision-from-run-input).
 
 The default root is project-specific XDG state outside the checkout; an explicit root must also be
 outside it. The canonical root is pinned on first use, so a different root on a later execution does
@@ -440,3 +447,49 @@ and not ignored, and plain `git add --all` would commit it. Two recipes:
 - Install per checkout with `npm ci --prefer-offline` from setup (through your own process call;
   setup has no `exec`). The installed `node_modules/` directory is ignored and never captured, and
   `--prefer-offline` installs from npm's local cache when it can.
+
+### Provision from run input
+
+Prefer `setup` when the workflow knows how its checkouts are provisioned. When provisioning depends
+on run input, such as an install or build command the operator supplies, run it in the same effect
+as the command that needs it: a `ctx.step` on the handle whose callback runs both through
+[`context.exec`](commands-files.md#commands-inside-a-callback-or-observer), which runs in the mapped
+checkout `context.cwd`:
+
+```ts
+import { defineWorkflow, z } from 'quiet-choir';
+
+const argv = z.tuple([z.string()], z.string());
+
+export default defineWorkflow({
+  name: 'verify',
+  version: '1',
+  input: z.object({ install: argv, test: argv }),
+  output: z.number().nullable(),
+  async run(ctx, input) {
+    const tree = await ctx.worktree('workspace');
+    return ctx.step('test', {
+      input,
+      worktree: tree,
+      schema: z.number().nullable(),
+      run: async ({ exec }) => {
+        await exec(input.install);
+        return (await exec(input.test, { okExitCodes: 'any' })).code;
+      },
+    });
+  },
+});
+```
+
+The install and the command rerun together whenever the step runs again (a retry, or a resume before
+the step completed), so every live attempt provisions the checkout it runs in. The install's tracked
+or untracked, non-ignored writes, such as a refreshed lockfile, are captured into the handle's
+snapshot like any effect's writes; ignored output is not. Do not provision with a separate, earlier
+`ctx.exec` on the handle: that works within one execution, but after a resume over a
+[rebuilt checkout](#shared-write-test-fix-sequences) the completed install replays without running,
+and the checkout lacks its ignored output.
+
+Parallel isolated agent calls that need what a handle's effects committed, such as that lockfile,
+start from it: `ctx.merge` the handle, then pass each call
+`worktree: { base: { commit: result.commit } }`. A `setup` that runs `npm ci` then installs from
+that commit's lockfile in each fresh checkout.
