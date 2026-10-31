@@ -148,20 +148,30 @@ lossy snapshot; use binary-specific local callbacks for binary content.
 `ctx.writeFile(id, path, content, options)` writes exact UTF-8 bytes and records only
 `{ path, sha256, bytes, previousSha256 }`. Content hashes participate in identity; content is not
 stored by the write effect. Workflow inputs or an earlier read may separately contain the content.
-Missing parent directories are created privately; new files use mode 0600 and existing file modes
-are preserved. Publication uses a same-directory temporary file, file fsync, rename, and directory
-fsync. File effects accept regular files only, not devices, FIFOs, or directories.
+Each missing parent directory is created with mode 0700 and a new file with mode 0600, whatever the
+umask; an existing file keeps its mode and existing directories are left unchanged. A Git checkout,
+and so `std.exec.committedArtifact`, uses the umask instead (0644 and 0755 under umask 022). Git
+commits the 0600 file as `100644`, so a clone does not keep it private, but a 0700 directory stays
+0700 for files later checked out under it. For a document other local users should read, create its
+parents in a local step first, or `chmod` it after the write (#798). Publication uses a
+same-directory temporary file, file fsync, rename, and directory fsync. File effects accept regular
+files only, not devices, FIFOs, or directories.
 
 `ifMatch: null` creates exclusively. A SHA-256 requires that baseline, checked again immediately
-before publication. If the desired bytes are already present, either form succeeds without writing.
-An `ifMatch` failure names the path as the workflow passed it and what it found there: an existing
-file and its SHA-256, a missing file, or content with another SHA-256. `previousSha256` is the hash
-observed on that attempt, so an idempotent retry can report the desired hash rather than the
-original baseline. A hash check plus rename is an **optimistic check**, not an atomic content
-transaction against unrelated writers. It does not replace worktree isolation or coordination.
-Paths, including existing symlink targets and missing-file parents, resolve against cwd;
-`allowOutsideCwd: true` is required to escape it on both reads and writes. This is a path guard, not
-a sandbox against hostile processes racing directory replacements.
+before publication. If the desired bytes are already present, either form succeeds without writing
+and without checking the baseline, since no other content would be replaced. An `ifMatch` failure
+names the path as the workflow passed it and what it found there: an existing file and its SHA-256,
+a missing file, or content with another SHA-256. `previousSha256` is the hash observed on that
+attempt. When it equals `sha256`, the attempt found the desired bytes and wrote nothing, whether
+they came from an earlier attempt killed before its checkpoint or from another writer. A re-executed
+write therefore reports the desired hash rather than the original baseline, so an uninterrupted run
+and a resumed one can return different receipts. A workflow that reports the baseline it replaced
+should take it from its own `ifMatch`, or from the journaled read that chose it, rather than from
+the receipt. A hash check plus rename is an **optimistic check**, not an atomic content transaction
+against unrelated writers. It does not replace worktree isolation or coordination. Paths, including
+existing symlink targets and missing-file parents, resolve against cwd; `allowOutsideCwd: true` is
+required to escape it on both reads and writes. This is a path guard, not a sandbox against hostile
+processes racing directory replacements.
 
 Both file effects accept `onError: 'return'` and then return `Settled<ReadFileResult>` or
 `Settled<WriteFileResult>`. An oversized snapshot, an `ifMatch` conflict, or another final failure

@@ -26,7 +26,10 @@ export interface WriteFileResult {
   readonly sha256: string;
   /** Byte length of the written content. */
   readonly bytes: number;
-  /** Hash observed by this attempt before writing, or null for a missing file. */
+  /**
+   * Hash observed by this attempt before writing, or null for a missing file; equals `sha256` when
+   * the desired bytes were already present, including on a re-executed write.
+   */
   readonly previousSha256: string | null;
 }
 /** Saved text snapshot and the digest of its original bytes. */
