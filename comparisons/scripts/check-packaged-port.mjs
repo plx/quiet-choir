@@ -1,6 +1,7 @@
 // Check one Batch 03 package while authoring it, with the checks verify-packaged-ports.mjs runs
 // for every package: hygiene and CLI validation, the success run with completed replay and its
-// fixture module's `check`, the F1–F5 matrix and the module's extra modes. It writes no report.
+// fixture module's `check`, the F1–F5 matrix and the module's extra modes (for Batch 02's six,
+// which have no fixture module, the `sixModes` table in packaged-checks.mjs). It writes no report.
 //
 //   node --import tsx comparisons/scripts/check-packaged-port.mjs <name> [--no-faults]
 //     [--no-success] [--mode <mode>]... [--root <dir>] [--mutant <file>]

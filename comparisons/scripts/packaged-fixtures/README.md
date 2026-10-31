@@ -5,7 +5,9 @@ the package's workflow. `idiomatic-fixtures.mjs` loads every module at import (f
 `_` are support, not fixtures), and the per-package checks in `../packaged-checks.mjs` run it:
 `verify-packaged-ports.mjs` for every package, and `check-packaged-port.mjs <name>` for one while
 you author it (see [Checking one package](#checking-one-package)). The modules live outside the
-package roots because every file under a root is fingerprinted.
+package roots because every file under a root is fingerprinted. Batch 02's six have no module here:
+they reuse Batch 02's fixture intents, and any modes they declare, in the form [Modes](#modes)
+describes, sit in the `sixModes` table of `../packaged-checks.mjs`.
 
 A module imports only Node built-ins, `./_support.mjs` and sibling fixture modules, never
 `../idiomatic-fixtures.mjs`, which loads it with top-level await. A sibling imports only the same,

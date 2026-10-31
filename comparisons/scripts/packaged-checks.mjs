@@ -4,7 +4,7 @@
 // F1–F5 fault matrix and its fixture module's extra modes.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { format } from 'prettier';
@@ -253,6 +253,32 @@ async function checkSix(name, { result, env, calls, opts, approvedPlan }) {
   if (name !== 'project-bootstrap')
     assert.ok(calls.every((call) => !(call.options.tools ?? []).includes('Write')));
 }
+// The modes of Batch 02's six, in the fixture-module form (see packaged-fixtures/README.md).
+const sixModes = {
+  'project-bootstrap': [
+    {
+      mode: 'dirty',
+      setup: (env) => writeFile(join(env.cwd, 'stray.txt'), 'uncommitted\n'),
+      rejects: /Expected a clean repository \(clean\): \?\? stray\.txt/u,
+      check({ result, calls }) {
+        // A dirty checkout stops the run before any agent call.
+        assert.equal(result.status, 'failed');
+        assert.equal(calls.length, 0);
+      },
+      // Removing the stray file heals the precondition: the clean step reruns, and every agent
+      // call is paid for the first time.
+      repair: {
+        run: (env) => rm(join(env.cwd, 'stray.txt')),
+        paid: ['detect', 'plan', 'setters/foundation/apply', 'setters/tests/apply'],
+      },
+      async resumeCheck({ result, env, calls, suspended, questions }) {
+        assert.equal(suspended, 1);
+        const approvedPlan = questions[0].question.subject;
+        await checkSix('project-bootstrap', { result, env, calls, approvedPlan });
+      },
+    },
+  ],
+};
 
 const notApplicable = async (env, reason) => ({
   finalStatus: 'not-applicable',
@@ -589,10 +615,11 @@ async function repairAndResume(name, definition, opts, context) {
 
 /**
  * The modes of `name` that `only` names, in the module's order, or every mode without `only`; a
- * name the module does not declare fails.
+ * name the module does not declare fails. Batch 02's six, which have no fixture module, take their
+ * modes from `sixModes`.
  */
 export function selectModes(name, only) {
-  const modes = packagedFixtures[name]?.modes ?? [];
+  const modes = packagedFixtures[name]?.modes ?? sixModes[name] ?? [];
   if (!only) return modes;
   const known = modes.map((mode) => mode.mode);
   const unknown = only.filter((wanted) => !known.includes(wanted));
