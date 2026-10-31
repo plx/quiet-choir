@@ -2,6 +2,10 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- execute-epic-ticket takes `branchPrefix` and `holdLabels` (#739): an epic whose PRs are named
+  `<prefix><N>-…` (say `plx/issue-5-slug`) is surveyed with them in flight, new ticket branches
+  follow the prefix, and a repository's own hold labels replace `blocked`, `needs-decision` and
+  `on-hold`. The defaults keep every step's identity.
 - merge-down lands a pull request that closes several issues instead of blocking it at prepare
   (#736): every other issue of the repository is reviewed with the primary one (issue.md holds them
   all), land confirms or performs each close, and the ledger lists them in `alsoClosed`.

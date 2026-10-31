@@ -76,6 +76,18 @@ export const EpicTicketInput = z
       .optional()
       .describe("OWNER/REPO; default: the current checkout's GitHub repository."),
     checkCommand: z.string().min(1).default('npm run check'),
+    branchPrefix: z
+      .string()
+      .min(1)
+      .regex(/^[^\s~^:?*[\\]*[^\s~^:?*[\\0-9]$/u, 'a branch prefix that does not end in a digit')
+      .optional()
+      .describe(
+        'Head-branch prefix before the ticket number (#739), e.g. "plx/issue-" for plx/issue-5-slug; default epic-<E>/.',
+      ),
+    holdLabels: z
+      .array(z.string().min(1))
+      .optional()
+      .describe('Labels that hold a ticket (#739); default blocked, needs-decision, on-hold.'),
     toolchain: md.toolchain.describe(
       "The agents' toolchain (#735): shell rules and guidance in place of npm's; passed to the landing child.",
     ),

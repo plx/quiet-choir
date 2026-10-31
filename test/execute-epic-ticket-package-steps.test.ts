@@ -62,6 +62,7 @@ const { start, verify, publish } = await lib<{
       epic: number;
       ticket: number;
       title: string;
+      prefix?: string;
     },
   ) => Promise<Started>;
   verify: (
@@ -293,6 +294,32 @@ describe('start', () => {
       resumed: true,
       ahead: 1,
       remoteSha: pushed,
+    });
+  });
+
+  it('adopts a remote branch under a configured prefix, and names new ones by it (#739)', async () => {
+    const { checkout } = await origin();
+    sh(checkout, 'checkout', '-q', '-b', 'plx/issue-9-an-older-title');
+    const pushed = await commit(checkout, 'widget.ts', 'export {};\n', 'Add the widget');
+    sh(checkout, 'push', '-q', 'origin', 'plx/issue-9-an-older-title');
+    sh(checkout, 'checkout', '-q', 'main');
+    sh(checkout, 'branch', '-q', '-D', 'plx/issue-9-an-older-title');
+    const paths = pathsAt(join(real, 'root'));
+    const input = { ...startInput(paths), prefix: 'plx/issue-' };
+    const started = await inWorkflow(checkout, (ctx) => start(ctx, 'start', input));
+    expect(started).toMatchObject({
+      refused: null,
+      branch: 'plx/issue-9-an-older-title',
+      source: 'remote',
+      remoteSha: pushed,
+    });
+    const fresh = await inWorkflow(checkout, (ctx) =>
+      start(ctx, 'start-10', { ...input, ticket: 10, dir: join(paths.epicDir, 'issue-10') }),
+    );
+    expect(fresh).toMatchObject({
+      refused: null,
+      branch: 'plx/issue-10-add-a-widget',
+      source: 'new',
     });
   });
 

@@ -274,9 +274,19 @@ export function branchPrefix(epic: number): string {
   return `epic-${String(epic)}`;
 }
 
-/** The branch a new ticket gets: `epic-E/N-<slug of its title>`, as the native helper names it. */
-export function branchName(epic: number, number: number, title: string): string {
-  return `${branchPrefix(epic)}/${String(number)}-${slugify(title)}`;
+/**
+ * The head-branch prefix the ticket number follows: input `branchPrefix` (#739), else `epic-E/`.
+ */
+export function ticketPrefix(epic: number, configured?: string): string {
+  return configured ?? `${branchPrefix(epic)}/`;
+}
+
+/**
+ * The branch a new ticket gets: `epic-E/N-<slug of its title>`, as the native helper names it, or
+ * `<prefix>N-<slug>` with a configured prefix (#739).
+ */
+export function branchName(epic: number, number: number, title: string, prefix?: string): string {
+  return `${ticketPrefix(epic, prefix)}${String(number)}-${slugify(title)}`;
 }
 
 /** Which implementer slot a plan gets: the override, else the surgeon for subtle or large work. */

@@ -298,6 +298,12 @@ describe('slugify and branchName', () => {
       ),
     ).toBe('epic-576/590-port-execute-epic-ticket-from-a-native');
   });
+
+  it('names it <prefix>N-slug with a configured branch prefix (#739)', () => {
+    expect(branchName(4, 5, 'Fix the runtime lease', 'plx/issue-')).toBe(
+      'plx/issue-5-fix-the-runtime-lease',
+    );
+  });
 });
 
 describe('implementerSlot', () => {
