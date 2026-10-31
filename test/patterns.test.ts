@@ -982,13 +982,18 @@ it('std tolerantPanel accepts a value typed as the exported options', async () =
   expect(result.output).toEqual({ quorum: true, answers: ['re:a', 're:b'] });
 });
 
-it('std tolerantPanel decides the quorum over the settled results, not the live items array', async () => {
+it('std tolerantPanel decides the quorum and pairs outcome items over a copy, not the live items array', async () => {
   const items = ['a', 'b', 'c'];
   const workflow = defineWorkflow({
     name: 'mutated-items-panel',
     version: '1',
     input: z.null(),
-    output: z.object({ quorum: z.boolean(), answers: z.number(), failed: z.number() }),
+    output: z.object({
+      quorum: z.boolean(),
+      answers: z.number(),
+      failed: z.number(),
+      items: z.array(z.string()),
+    }),
     async run(ctx) {
       const panel = await std.patterns.tolerantPanel(ctx, {
         id: 'mutated',
@@ -1000,12 +1005,17 @@ it('std tolerantPanel decides the quorum over the settled results, not the live 
         },
         concurrency: 3,
       });
-      return { quorum: panel.quorum, answers: panel.answers.length, failed: panel.failed };
+      return {
+        quorum: panel.quorum,
+        answers: panel.answers.length,
+        failed: panel.failed,
+        items: panel.outcomes.map((outcome) => outcome.item),
+      };
     },
   });
   const harness = new Fake(() => 'vote');
   const result = await runWorkflow(workflow, { ...options(), input: null, harness });
-  expect(result.output).toEqual({ quorum: true, answers: 3, failed: 0 });
+  expect(result.output).toEqual({ quorum: true, answers: 3, failed: 0, items: ['a', 'b', 'c'] });
 });
 
 it('std tolerantPanel refuses to replay its settled votes after a version change', async () => {
