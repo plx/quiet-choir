@@ -18,7 +18,7 @@ same configuration error as a real run. A rehearsal runs only read-only Git: `re
 `worktree list` and `symbolic-ref -q`, configuration reads, and a merge preview's quarantined
 commands (below). Git older than 2.38, an invalid branch name, a `branch` target that is checked out
 in any worktree (the current checkout included) or is a symbolic ref, and a dirty `checkout` target
-fail as in a real run, and a dirty source checkout records the real uncommitted-changes warning.
+fail as in a real run, and a call on a dirty source checkout's `HEAD` records the real warning.
 Outside a Git working tree a placeholder of forty zeros stands in, with a warning that the real run
 would fail. `ctx.merge` over unchanged changes returns the real no-op result
 `{ commit, merged: [], conflicts: [] }`, where `commit` is the existing target branch or `HEAD`. A
@@ -35,10 +35,16 @@ and effects isolated on a handle still fail with a configuration error before Gi
 invocation. Rehearse them with a fixture harness in a temporary repository; Git, commands, and local
 callbacks remain real, while agent responses incur no model calls.
 
-The source directory must belong to a Git working tree with committed history. Dirty source files
-produce a warning: isolated calls start from committed files only. Unmet prerequisites (Git version,
-repository, cache root, isolated `cwd`, or a foreign handle) are configuration failures: they are
-never retried or settled as data, so correcting them and resuming runs the call live.
+The source directory must belong to a Git working tree with committed history. An isolated checkout
+holds only its base commit's files, so the source checkout's uncommitted and untracked files never
+reach it. If the source checkout has such changes when the run's worktree ledger is created (by its
+first isolated call, handle or merge), each isolated call or `ctx.worktree` handle whose base
+resolves to the source checkout's `HEAD` commit (the default, or a branch at it) records a warning
+in `worktreeWarnings`; a base that already holds the changes, such as a snapshot commit of the
+working tree, or any other commit records none. A resumed run that already has a ledger does not
+check again. Unmet prerequisites (Git version, repository, cache root, isolated `cwd`, or a foreign
+handle) are configuration failures: they are never retried or settled as data, so correcting them
+and resuming runs the call live.
 
 ```ts
 // roster: { Editor: { harness: 'codex', sandbox: 'workspace-write' } }

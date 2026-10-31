@@ -7,16 +7,17 @@
  * before it reaches the process runner. Before a run has a worktree ledger, the first isolation or
  * merge also makes the real ledger's checks through it, with the real messages: Git older than 2.38
  * fails, a cache root inside the checkout (once existing symlinks are resolved) fails, and a
- * checkout with uncommitted changes records the real warning. Every merge first makes the real
- * merge's target checks (`checkMergeTarget`): an invalid branch name, a branch checked out in a
- * worktree or a symbolic-ref branch, and a dirty `checkout` target fail as in a real run. The
- * worktree listing they need waits only for the in-process administration queue, never the
- * repository's lock file. Neither `status` read (the source checkout's, or a `checkout` target's)
- * runs in a partial clone, or with a populated submodule (which `status` recurses into and
- * which can itself be a partial clone), on Git older than 2.44, which ignores `GIT_NO_LAZY_FETCH`:
- * the rehearsal refuses instead. A fresh isolated agent call is planned in an absolute placeholder
- * directory that is never created and returns an unchanged change; a merge whose inputs are all
- * unchanged changes returns the real no-op integration (`commit` is the target's current commit).
+ * checkout with uncommitted changes makes each fresh isolation based on its HEAD commit record the
+ * real warning. Every merge first makes the real merge's target checks (`checkMergeTarget`): an
+ * invalid branch name, a branch checked out in a worktree or a symbolic-ref branch, and a dirty
+ * `checkout` target fail as in a real run. The worktree listing they need waits only for the
+ * in-process administration queue, never the repository's lock file. Neither `status` read (the
+ * source checkout's, or a `checkout` target's) runs in a partial clone, or with a populated
+ * submodule (which `status` recurses into and which can itself be a partial clone), on Git older
+ * than 2.44, which ignores `GIT_NO_LAZY_FETCH`: the rehearsal refuses instead. A fresh isolated
+ * agent call is planned in an absolute placeholder directory that is never created and returns an
+ * unchanged change; a merge whose inputs are all unchanged changes returns the real no-op
+ * integration (`commit` is the target's current commit).
  *
  * A merge over captured commits (a completed isolated step replayed by a dry-run resume or reused
  * by a dry-run fork, or a replayed `ctx.worktree` handle from the copied ledger) is previewed with
@@ -183,6 +184,8 @@ export class WorktreeRehearsal {
   private repository: Promise<string | null> | undefined;
   /** The real ledger's initialization checks (see {@link initialize}), memoized once they pass. */
   private initialization: Promise<void> | undefined;
+  /** Whether those checks found uncommitted or untracked changes in the source checkout. */
+  private dirty = false;
   /** The canonical cache root (see {@link canonicalRoot}). */
   private canonical: Promise<string> | undefined;
   /** The canonical common Git directory, which keys the in-process administration queue. */
@@ -262,8 +265,9 @@ export class WorktreeRehearsal {
   /**
    * The checks the real `RunWorktrees.ledger()` makes when it creates a run's ledger, in its order:
    * the Git version (with the shared {@link gitVersionRefusal}), the cache root (outside the
-   * checkout) and the source checkout's status (any output records the shared
-   * {@link uncommittedSourceWarning}). Only a run without a ledger makes them, since a real run with
+   * checkout) and the source checkout's status (any output marks it dirty, so a fresh isolation
+   * based on its HEAD commit records the shared {@link uncommittedSourceWarning}, as a real one
+   * does; see {@link isolate}). Only a run without a ledger makes them, since a real run with
    * one recovers it instead. An empty `--version` answer (a synthesizing runner) skips the version
    * check, and a failure to run it is left to the placeholder path that a missing Git already
    * takes. The status read is refused instead in a partial clone or with a populated submodule
@@ -291,12 +295,7 @@ export class WorktreeRehearsal {
         ['status', '--porcelain', '--untracked-files=normal', '--no-renames'],
         shared,
       );
-      if (status) {
-        this.record.worktreeWarnings = [
-          ...new Set([...(this.record.worktreeWarnings ?? []), uncommittedSourceWarning]),
-        ];
-        await this.save();
-      }
+      this.dirty = status !== '';
     })().catch((error: unknown) => {
       this.initialization = undefined;
       throw error;
@@ -564,6 +563,11 @@ export class WorktreeRehearsal {
     } else {
       base = await this.base(repo, parsed.base, invocation);
       baseSource = 'resolved';
+      // As in a real run, only a checkout of the dirty source checkout's HEAD misses its changes.
+      if (this.dirty && base === (await this.revision(repo, 'HEAD', invocation)))
+        this.record.worktreeWarnings = [
+          ...new Set([...(this.record.worktreeWarnings ?? []), uncommittedSourceWarning]),
+        ];
     }
     let inside = '';
     if (repo !== null) {

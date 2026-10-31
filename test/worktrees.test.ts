@@ -873,34 +873,43 @@ it('treats an unresolvable isolation base as a configuration failure that settle
   expect(invoke).not.toHaveBeenCalled();
 });
 
-it('names a missing committed HEAD when no isolation base is given', async () => {
-  const empty = join(directory, 'empty');
-  await mkdir(empty);
-  await git.text(empty, ['init', '-q'], invocation);
-  const invoke = vi.fn<Harness['invoke']>(() => Promise.resolve(response));
-  const harness: Harness = { invoke };
-  const definition = defineWorkflow({
-    version: '1',
-    name: 'no-head',
-    input: z.null(),
-    output: z.string(),
-    async run(ctx) {
-      return (await ctx.claude.text('edit', { prompt: 'edit', worktree: true })).output;
-    },
-  });
-  const headless: unknown = await runWorkflow(definition, {
-    ...options('no-head'),
-    cwd: empty,
-    input: null,
-    harness,
-  }).catch((error: unknown) => error);
-  expect(headless).toBeInstanceOf(Error);
-  expect((headless as Error).cause).toBeInstanceOf(ConfigurationError);
-  expect((headless as Error).message).toContain(
-    'cannot resolve base HEAD to a commit; the repository has no committed HEAD',
-  );
-  expect(invoke).not.toHaveBeenCalled();
-});
+it.each([
+  ['clean', false],
+  ['dirty', true],
+] as const)(
+  'names a missing committed HEAD in a %s checkout when no isolation base is given',
+  async (_name, dirty) => {
+    const empty = join(directory, 'empty');
+    await mkdir(empty);
+    await git.text(empty, ['init', '-q'], invocation);
+    // A dirty checkout has no HEAD commit to remember for the uncommitted-changes warning.
+    if (dirty) await writeFile(join(empty, 'untracked.txt'), 'untracked\n');
+    const invoke = vi.fn<Harness['invoke']>(() => Promise.resolve(response));
+    const harness: Harness = { invoke };
+    const definition = defineWorkflow({
+      version: '1',
+      name: 'no-head',
+      input: z.null(),
+      output: z.string(),
+      async run(ctx) {
+        return (await ctx.claude.text('edit', { prompt: 'edit', worktree: true })).output;
+      },
+    });
+    const headless: unknown = await runWorkflow(definition, {
+      ...options('no-head'),
+      cwd: empty,
+      input: null,
+      harness,
+    }).catch((error: unknown) => error);
+    expect(headless).toBeInstanceOf(Error);
+    expect((headless as Error).cause).toBeInstanceOf(ConfigurationError);
+    expect((headless as Error).message).toContain(
+      'cannot resolve base HEAD to a commit; the repository has no committed HEAD',
+    );
+    expect(invoke).not.toHaveBeenCalled();
+    expect((await readRun({ stateDir, runId: 'no-head' })).worktreeWarnings).toBeUndefined();
+  },
+);
 
 it('rejects a cache root symlinked into the checkout before creating directories or invoking agents', async () => {
   const linked = join(directory, 'linked');
@@ -3252,41 +3261,107 @@ it('skips the ledger checks on a dry-run resume with a copied ledger, as the rea
   expect(real.worktreeWarnings ?? []).not.toContain(uncommittedSourceWarning);
 });
 
-it.each([
-  [
-    'an isolated call',
-    (ctx: WorkflowContext) => ctx.codex.text('edit', { prompt: 'edit', worktree: true }),
-  ],
-  ['a merge', (ctx: WorkflowContext) => ctx.merge('publish', [])],
-] as const)(
-  'records the real uncommitted-changes warning for %s under dry-run, and none when clean',
-  async (_name, body) => {
+/** The bases a dirty-source case can start from besides HEAD. */
+interface SourceBases {
+  /** The checked-out branch, which points at HEAD. */
+  branch: string;
+  /** A commit of the working tree on HEAD, the uncommitted changes included. */
+  snapshot: string;
+}
+/**
+ * A commit of the source checkout's working tree on HEAD, uncommitted and untracked files included,
+ * built in a temporary index so the checkout's own index is untouched.
+ */
+async function workingTreeSnapshot(): Promise<string> {
+  const env = { GIT_INDEX_FILE: join(directory, 'snapshot-index') };
+  const run = async (...args: string[]) =>
+    (await git.run(repo, args, invocation, { env })).stdout.trim();
+  await run('read-tree', 'HEAD');
+  await run('add', '--all');
+  const tree = await run('write-tree');
+  const identity = ['-c', 'user.name=test', '-c', 'user.email=test@localhost'];
+  return run(...identity, 'commit-tree', tree, '-p', 'HEAD', '-m', 'snapshot');
+}
+
+it.each<{
+  name: string;
+  body: (ctx: WorkflowContext, bases: SourceBases) => Promise<unknown>;
+  warned: boolean;
+  /** Dry-run refuses `ctx.worktree`, so only the real run creates a handle. */
+  rehearsed: boolean;
+}>([
+  {
+    name: 'an isolated call on HEAD',
+    body: (ctx) => ctx.codex.text('edit', { prompt: 'edit', worktree: true }),
+    warned: true,
+    rehearsed: true,
+  },
+  {
+    name: 'an isolated call on the branch at HEAD',
+    body: (ctx, { branch }) =>
+      ctx.codex.text('edit', { prompt: 'edit', worktree: { base: branch } }),
+    warned: true,
+    rehearsed: true,
+  },
+  {
+    name: 'an isolated call on a snapshot',
+    body: (ctx, { snapshot }) =>
+      ctx.codex.text('edit', { prompt: 'edit', worktree: { base: { commit: snapshot } } }),
+    warned: false,
+    rehearsed: true,
+  },
+  {
+    name: 'a handle on HEAD',
+    body: (ctx) => ctx.worktree('tree'),
+    warned: true,
+    rehearsed: false,
+  },
+  {
+    name: 'a handle on a snapshot',
+    body: (ctx, { snapshot }) => ctx.worktree('tree', { base: { commit: snapshot } }),
+    warned: false,
+    rehearsed: false,
+  },
+  { name: 'a merge', body: (ctx) => ctx.merge('publish', []), warned: false, rehearsed: true },
+])(
+  'records the uncommitted-changes warning for $name only when it starts from the dirty HEAD, under dry-run as in a real run',
+  async ({ body, warned, rehearsed }) => {
+    const bases: SourceBases = {
+      branch: await command('symbolic-ref', '--short', 'HEAD'),
+      snapshot: await workingTreeSnapshot(),
+    };
     const workflow = defineWorkflow({
       name: 'dirty-source',
       version: '1',
       input: z.null(),
       output: z.null(),
       async run(ctx) {
-        await body(ctx);
+        await body(ctx, bases);
         return null;
       },
     });
-    const clean = await runWorkflow(workflow, freshDryRun('clean', processRunner));
-    expect(clean.worktreeWarnings ?? []).not.toContain(uncommittedSourceWarning);
+    if (rehearsed) {
+      const clean = await runWorkflow(workflow, freshDryRun('clean', processRunner));
+      expect(clean.worktreeWarnings ?? []).not.toContain(uncommittedSourceWarning);
+    }
     await writeFile(join(repo, 'untracked.txt'), 'untracked\n');
-    const before = await repositoryState();
-    const index = await indexState();
-    const dry = await runWorkflow(workflow, freshDryRun('dirty', processRunner));
-    expect(dry.worktreeWarnings).toEqual([uncommittedSourceWarning]);
-    expect(await repositoryState()).toEqual(before);
-    expect(await indexState()).toEqual(index);
-    expect(await exists(worktreeAdminLockPath(join(repo, '.git')))).toBe(false);
+    bases.snapshot = await workingTreeSnapshot();
+    const expected = warned ? [uncommittedSourceWarning] : [];
+    if (rehearsed) {
+      const before = await repositoryState();
+      const index = await indexState();
+      const dry = await runWorkflow(workflow, freshDryRun('dirty', processRunner));
+      expect(dry.worktreeWarnings ?? []).toEqual(expected);
+      expect(await repositoryState()).toEqual(before);
+      expect(await indexState()).toEqual(index);
+      expect(await exists(worktreeAdminLockPath(join(repo, '.git')))).toBe(false);
+    }
     const real = await runWorkflow(workflow, {
       ...options('dirty'),
       input: null,
       harness: { invoke: () => Promise.resolve(response) },
     });
-    expect(real.worktreeWarnings).toEqual(dry.worktreeWarnings);
+    expect(real.worktreeWarnings ?? []).toEqual(expected);
   },
 );
 

@@ -50,11 +50,14 @@ export const isolatedCwdOutsideMessage = 'Isolated cwd must be inside the source
 export const rootInsideCheckoutMessage = 'worktrees.root must be outside the source checkout.';
 
 /**
- * The warning a run records when the source checkout has uncommitted or untracked changes as its
- * worktree ledger is created. Shared with dry-run rehearsal, which records the same text. @internal
+ * The warning a run records when an isolated call or handle starts from the source checkout's HEAD
+ * commit while that checkout had uncommitted or untracked changes as the worktree ledger was
+ * created, since the checkout holds only its base commit's files. A base that already holds the
+ * changes (a snapshot commit) or any other commit records none. Shared with dry-run rehearsal,
+ * which records the same text for the same calls. @internal
  */
 export const uncommittedSourceWarning =
-  'Worktree isolation sees committed files only; the source checkout has uncommitted changes.';
+  'An isolated checkout based on HEAD sees committed files only; the source checkout has uncommitted changes.';
 
 /**
  * The configuration error message for `git --version` output older than Git 2.38 (or output that
@@ -240,6 +243,12 @@ export class RunWorktrees {
   private recovery: Promise<void> | undefined;
   private readonly locks = new HandleLocks();
   private readonly git: WorktreeGit | undefined;
+  /**
+   * The source checkout's HEAD commit when it had uncommitted or untracked changes as this
+   * execution created the ledger (null for an unborn HEAD), otherwise undefined: an execution that
+   * resumes a ledger reads no status (see {@link warnDirtyBase}).
+   */
+  private dirtyHead: string | null | undefined;
 
   public constructor(
     private readonly record: RunRecord,
@@ -360,7 +369,18 @@ export class RunWorktrees {
         ['status', '--porcelain', '--untracked-files=normal', '--no-renames'],
         sharedInvocation,
       );
-      if (status) this.warn(uncommittedSourceWarning);
+      // Only a checkout of this HEAD is the source checkout without its changes, so the warning
+      // waits for one (see warnDirtyBase). An unborn HEAD is no base; resolveBase reports it.
+      let dirtyHead: string | null | undefined;
+      if (status) {
+        const head = await git.run(
+          repo,
+          ['rev-parse', '--verify', '--quiet', '--end-of-options', 'HEAD^{commit}'],
+          sharedInvocation,
+          { codes: [0, 1] },
+        );
+        dirtyHead = head.code === 0 ? commitId(head.stdout.trim()) : null;
+      }
       const ledger: WorktreeLedger = {
         namespace: randomUUID(),
         repo,
@@ -370,6 +390,7 @@ export class RunWorktrees {
         refs: {},
       };
       this.record.worktrees = ledger;
+      this.dirtyHead = dirtyHead;
       this.recovery = Promise.resolve(); // No preceding attempt exists in a new ledger.
       await this.save();
       return ledger;
@@ -453,6 +474,14 @@ export class RunWorktrees {
 
   private warn(message: string): void {
     this.record.worktreeWarnings = [...new Set([...(this.record.worktreeWarnings ?? []), message])];
+  }
+
+  /**
+   * Warn that a freshly resolved base misses the source checkout's uncommitted changes, which it
+   * does only when it is the dirty source checkout's HEAD commit. The caller saves next.
+   */
+  private warnDirtyBase(commit: string): void {
+    if (commit === this.dirtyHead) this.warn(uncommittedSourceWarning);
   }
 
   private async resolveBase(
@@ -608,6 +637,7 @@ export class RunWorktrees {
     let saved = ledger.handles[handleId];
     if (!saved) {
       const pinned = await this.resolveBase(base, ledger, invocation);
+      this.warnDirtyBase(pinned);
       const handle = {
         id: handleId,
         path: this.path(ledger, `handle:${id}:${step.fingerprint}`),
@@ -660,10 +690,12 @@ export class RunWorktrees {
       const invocation = this.invocation(id, context),
         ledger = await this.ledger(invocation);
       const saved = shared ? this.handle(shared, ledger) : undefined;
+      const recorded = saved?.handle.base ?? step.worktree?.base;
       const base =
-        saved?.handle.base ??
-        step.worktree?.base ??
+        recorded ??
         (await this.resolveBase('id' in parsed ? undefined : parsed.base, ledger, invocation));
+      // A handle's or an earlier attempt's base was checked when it was first resolved.
+      if (recorded === undefined) this.warnDirtyBase(base);
       const start = saved?.latest ?? base;
       const path =
         saved?.handle.path ?? this.path(ledger, `attempt:${id}:${String(context.attempt)}`);

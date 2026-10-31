@@ -481,7 +481,8 @@ attempt reuses its recorded base.
 Before the run has a worktree ledger, the first isolated call or merge makes the checks a real run
 makes when it creates one: Git older than 2.38 and a cache root inside the checkout (after existing
 symlinks are resolved, as a real run resolves them) fail with the real configuration error, and a
-source checkout with uncommitted or untracked changes records the real warning in
+source checkout with uncommitted or untracked changes makes each isolated call whose base resolves
+to its `HEAD` commit, but no merge or call on another commit, record the real warning in
 `worktreeWarnings`. A dry-run resume of a run that already has a ledger skips them and keeps the
 cache root the ledger pinned, whatever `worktrees.root` now says, as the real resume does. Every
 merge, a no-op included, first makes the real merge's target checks: a `branch` target with an

@@ -102,3 +102,11 @@ before any commit is made, so retries and resumes reproduce the same commit IDs;
 from git config. The message goes on the final commit only. The requested form enters step identity
 only when supplied, so existing merge digests are unchanged. Snapshot commits keep the fixed
 `quiet-choir` identity.
+
+## Amendment: the dirty-source warning follows the base (2026-10-31)
+
+Dirty files are still excluded from every base, and the source checkout's status is still read once,
+when the ledger is created, but the warning is recorded only for an isolated call or handle whose
+freshly resolved base is the source checkout's `HEAD` commit at that point, the one base that
+silently lacks the changes; a snapshot commit that holds them, or any other commit, records none,
+and dry-run rehearsal matches.
