@@ -7,8 +7,8 @@
   [0011](0011-harness-controls-and-contracts.md) (role prompts travel as private files) and
   [0063](0063-bound-agents-and-typed-rosters.md) (roster standing prompts)
 - Clarified: settled maps and settled frames replay committed outcomes without re-rendering, so §4's
-  prompt check reaches only the steps a resumed body renders again; #ISSUE-C21-1 proposes refusing
-  such replays.
+  prompt check reaches only the steps a resumed body renders again; #758 proposes refusing such
+  replays.
 
 ## Context
 

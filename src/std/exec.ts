@@ -44,7 +44,7 @@ export function json(value: unknown): string {
  * The read is one plain `ctx.exec` effect, so a truncated read is saved as a completed command
  * before this helper throws. A resume replays it and throws again, even with a larger
  * `maxOutputBytes`, because the cap is policy. Size `maxOutputBytes` for the largest expected read
- * before the first run; after a truncation, read under a new ID or in a new run (#ISSUE-C11-1).
+ * before the first run; after a truncation, read under a new ID or in a new run (#790).
  *
  * A completed read also replays its saved stdout on resume, so do not decide a precondition the
  * operator can fix (a clean checkout, say) on it in the workflow body: the replayed value fails

@@ -25,7 +25,7 @@
   ],
   "apiSnapshot": {
     "package": "quiet-choir 0.0.0",
-    "sha256": "30d7871faaecfc20bbfab9d0ceb14bb514c404fa57eaba63ce62c87ba8775ad6",
+    "sha256": "7f6de18da1faebfc4c0a8faa65ac7b9247725755aa4108bf3f2e2b3fae587970",
     "file": "src/workflow/runtime/model.ts",
     "description": "Validated against the quiet-choir API whose model file has this hash, with workflow packages, prompt templates, roster-only roles, std fragments, tiers and patterns, teams and decision providers. This model-file hash is provenance for that file, not the entire runtime; the ports import the built checkout."
   }

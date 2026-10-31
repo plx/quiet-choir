@@ -109,8 +109,8 @@ Overlay values enter identity through their hash, and exported
 host-specific values such as `process.env.PATH` or `HOME` into `env`, for example to give an
 `inheritEnv: false` command a usable `PATH`. A resume from a shell where they differ refuses the
 completed step (`envSha256 changed on a completed step`), and the exported rule matches only on a
-host with the same values. No option passes named host variables through yet (#ISSUE-C31-1). To give
-a command only a few of them today, either run it from a `ctx.step` callback through `context.exec`
+host with the same values. No option passes named host variables through yet (#792). To give a
+command only a few of them today, either run it from a `ctx.step` callback through `context.exec`
 with `inheritEnv: false`, reading the values from `process.env` inside the callback and putting only
 their names in the step's `input`, or keep the inherited environment and narrow it inside the
 command, such as `['sh', '-c', 'exec env -i PATH="$PATH" HOME="$HOME" "$@"', 'sh', ...argv]` on
@@ -227,12 +227,12 @@ processes racing directory replacements.
 Both file effects accept `onError: 'return'` and then return `Settled<ReadFileResult>` or
 `Settled<WriteFileResult>`. An oversized snapshot, an `ifMatch` conflict, or another final failure
 is saved with `message`, `kind`, and `attempts` and replays on resume even after the file changes. A
-settled file failure carries no file-specific reason yet (#ISSUE-C03-1): an `ifMatch` conflict or an
+settled file failure carries no file-specific reason yet (#755): an `ifMatch` conflict or an
 oversized snapshot is `unknown`, and a missing `readFile` target is `process` with Node's `ENOENT`
 message. Invalid options, paths outside cwd, and paths that cannot be resolved still reject before
 the effect starts, even with `onError: 'return'`, and fail the run without recording the step: a
 parent that is a regular file (`ENOTDIR`), another `realpath` error such as `EACCES` or `ELOOP`, or
-a dangling symlink (#ISSUE-C03-2). Like commands, only `onError: 'return'` enters identity.
+a dangling symlink (#756). Like commands, only `onError: 'return'` enters identity.
 
 To learn only whether a file exists, or its baseline for `ifMatch`, probe it in a local `ctx.step`
 that returns `{ sha256, bytes } | null`, with the path in `input`. Resolve the path against

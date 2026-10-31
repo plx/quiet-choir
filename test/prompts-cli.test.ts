@@ -456,7 +456,7 @@ describe('prompt templates as execution dependencies (#582)', { timeout: 60_000 
   });
 
   // A committed settled-map item replays its saved outcome without running the mapper, so the
-  // edited template is never rendered for it and no step check sees the edit; #ISSUE-C21-1 proposes
+  // edited template is never rendered for it and no step check sees the edit; #758 proposes
   // refusing it, which would flip this case.
   it('accepts a template edit only a committed settled-map item renders, keeping its output', async () => {
     const made = await resumable(true);

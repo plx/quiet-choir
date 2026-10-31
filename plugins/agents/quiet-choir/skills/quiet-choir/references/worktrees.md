@@ -225,9 +225,9 @@ That means no staged or unstaged change to a tracked file and no untracked path 
 (an untracked directory counts as one path). Ignored files do not count. The merge checks when it
 prepares the integration and again just before it fast-forwards, so the refusal comes only when the
 body reaches `ctx.merge`, after the effects before it have run. The same rule gives the dirty-source
-warning in `worktreeWarnings`, which only warns. No built-in check refuses earlier (#ISSUE-C07-1).
-To refuse before paying for agent calls, check up front with a command that itself fails when the
-checkout is dirty, such as
+warning in `worktreeWarnings`, which only warns. No built-in check refuses earlier (#759). To refuse
+before paying for agent calls, check up front with a command that itself fails when the checkout is
+dirty, such as
 `ctx.exec('clean', ['sh', '-c', 'test -z "$(git status --porcelain --untracked-files=normal --no-renames)"'])`.
 A failed command runs again on resume, so cleaning the checkout and resuming continues the run. A
 status read that completed (a `std.exec.git` status followed by a throw on its output) replays its
@@ -247,10 +247,10 @@ Each merge starts from its target's value when the merge is first prepared: the 
 `'checkout'` and for the default `'ref'`, whose run-owned ref does not exist yet. That starting
 commit is never taken from the inputs' bases, even for a handle created with `base: { commit }`:
 inputs captured at an older commit are integrated onto it. The moved-target refusal covers only
-movement after that preparation, and no option pins an earlier starting commit (#ISSUE-C06-1). So a
-later checkout merge of inputs that an earlier integration verified integrates them onto whatever
-`HEAD` is then: if someone committed in between, it publishes a tree no check ran on, without an
-error. To publish exactly the verified commit, see
+movement after that preparation, and no option pins an earlier starting commit (#768). So a later
+checkout merge of inputs that an earlier integration verified integrates them onto whatever `HEAD`
+is then: if someone committed in between, it publishes a tree no check ran on, without an error. To
+publish exactly the verified commit, see
 [publish exactly a verified integration](#publish-exactly-a-verified-integration).
 
 `commit` gives the integration commits a message and identity, so a published branch can back a pull
@@ -391,8 +391,8 @@ resolves against the invocation's directory. Like `--wait-mode`, both are record
 launch policy and inherited, field by field, by a later `workflow resume`, `execute --resume`,
 `answer --resume` or `workflow tick` that does not repeat them; emitted resume commands include
 them. Tick has no worktree flags of its own. `setup` and `captureExclude` have no flags: declare
-them in code. An operator therefore cannot yet provision runtime-owned worktrees at launch
-(#ISSUE-C13-2); a workflow whose checkouts need dependencies declares `setup` or
+them in code. An operator therefore cannot yet provision runtime-owned worktrees at launch (#773); a
+workflow whose checkouts need dependencies declares `setup` or
 [provisions from run input](#provision-from-run-input).
 
 The default root is project-specific XDG state outside the checkout; an explicit root must also be

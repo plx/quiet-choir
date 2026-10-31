@@ -156,7 +156,7 @@ snapshot with `worktree: { base: { commit } }`; see [worktrees](worktrees.md#att
 in a scratch `cwd` (with `skipGitRepoCheck: true` when it is outside Git). Those choose the tree the
 agent starts in, not a read boundary: the read-only sandbox does not confine reads to that
 directory, so other paths, the source checkout included, can still be read. quiet-choir sets no
-Codex web-search control, so the installed Codex's default applies (#ISSUE-C25-3).
+Codex web-search control, so the installed Codex's default applies (#781).
 
 `std.claude.Edit` changes files only through Edit and Write. Its agent can create and rewrite files
 but cannot delete, rename or change the mode of one (an empty Write still leaves the file in place),

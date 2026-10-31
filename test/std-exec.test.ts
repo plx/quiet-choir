@@ -119,7 +119,7 @@ it('git saves a truncated read as a completed command, so a resume with a larger
   expect(run.steps['head']?.status).toBe('completed');
   expect(run.steps['head']?.output).toMatchObject({ truncated: true });
   // The cap is policy, so the resume replays the truncated read instead of running Git again.
-  // #ISSUE-C11-1 tracks a recoverable read; resolving it flips these assertions.
+  // #790 tracks a recoverable read; resolving it flips these assertions.
   maxOutputBytes = 1_048_576;
   await expect(runWorkflow(read, { ...options('git-sticky'), resume: true })).rejects.toThrow(
     'Incomplete Git output: head',
