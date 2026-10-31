@@ -64,6 +64,18 @@ const fixerWorkflow = (requireGrants?: boolean) =>
     },
   });
 
+/** {@link fixerWorkflow} with a second write entry, Builder, that the body never calls. */
+const pairWorkflow = (requireGrants?: boolean) =>
+  defineWorkflow({
+    ...base,
+    ...(requireGrants === undefined ? {} : { requireGrants }),
+    roster: defineRoster({ Builder: fixer, Fixer: fixer }),
+    async run(ctx) {
+      await ctx.now('prepare');
+      return (await ctx.roster.Fixer.text('fix', { prompt })).output;
+    },
+  });
+
 /** The first GrantRequiredError on an error's cause chain. */
 function grantCause(error: unknown): unknown {
   let cause = error;
@@ -360,6 +372,67 @@ describe('launch grants on named entries', () => {
     expect((error as Error).message).toBe(
       'Role Runner requires exec access. Retry with --grant Runner, --grant exec, or --grant all.',
     );
+  });
+
+  // The preflight checks every declared elevated entry, called or not, and one refusal names all
+  // that lack a grant, so a single retry can grant them.
+  it('names every ungranted entry in one refusal', async ({ stateDir, runs }) => {
+    const { invoke, harness } = fake();
+    const options = { stateDir, runId, input: null, harness };
+    const error: unknown = await runs
+      .run(pairWorkflow(true), options)
+      .catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(GrantRequiredError);
+    expect(error).toMatchObject({
+      profile: 'Builder',
+      access: 'write',
+      missing: [
+        { profile: 'Builder', access: 'write' },
+        { profile: 'Fixer', access: 'write' },
+      ],
+    });
+    expect((error as Error).message).toBe(
+      'Roles Builder and Fixer require write access. Retry with --grant Builder --grant Fixer, --grant write, or --grant all.',
+    );
+    // With one of them granted, the refusal is the single-entry one.
+    await expect(
+      runs.run(pairWorkflow(true), { ...options, grants: ['Builder'] }),
+    ).rejects.toMatchObject({ message: fixerMessage, profile: 'Fixer' });
+    expect(invoke).not.toHaveBeenCalled();
+    await expect(
+      runs.run(pairWorkflow(true), { ...options, grants: ['Builder', 'Fixer'] }),
+    ).resolves.toMatchObject({ status: 'completed' });
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+
+  // write does not cover exec, so only the highest class named admits every missing entry.
+  it('names exec as the class grant when the missing entries need write and exec', async ({
+    stateDir,
+    runs,
+  }) => {
+    const { invoke, harness } = fake();
+    const definition = defineWorkflow({
+      ...base,
+      requireGrants: true,
+      roster: defineRoster({ Builder: fixer, Runner: { harness: 'claude', tools: ['Bash'] } }),
+      async run(ctx) {
+        return (await ctx.roster.Builder.text('build', { prompt })).output;
+      },
+    });
+    const options = { stateDir, runId, input: null, harness };
+    const error: unknown = await runs.run(definition, options).catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(GrantRequiredError);
+    expect((error as Error).message).toBe(
+      'Role Builder requires write access and role Runner requires exec access. Retry with --grant Builder --grant Runner, --grant exec, or --grant all.',
+    );
+    await expect(runs.run(definition, { ...options, grants: ['write'] })).rejects.toMatchObject({
+      message:
+        'Role Runner requires exec access. Retry with --grant Runner, --grant exec, or --grant all.',
+    });
+    expect(invoke).not.toHaveBeenCalled();
+    await expect(runs.run(definition, { ...options, grants: ['exec'] })).resolves.toMatchObject({
+      status: 'completed',
+    });
   });
 
   // Refused at launch: --grant write does not cover an exec entry.
@@ -852,51 +925,62 @@ describe('requireGrants opt-in on entries (#577)', () => {
     expect(completed.capabilities?.requiredGrants).toEqual(['Fixer']);
   });
 
-  it('repeats --require-grants in the retry text when the refusal cannot save the flag', async ({
-    stateDir,
-    runs,
-  }) => {
-    const definition = fixerWorkflow();
-    const { invoke, harness } = fake();
-    invoke.mockRejectedValueOnce(new Error('offline'));
-    await expect(runs.run(definition, { stateDir, runId, input: null, harness })).rejects.toThrow(
-      'offline',
-    );
-    const file = new FileRunStore(stateDir);
-    const store: RunStore = {
-      stateDir: file.stateDir,
-      read: (id) => file.read(id),
-      list: () => file.list(),
-      open: async (id, openOptions): Promise<OwnedRunStore> => {
-        const owned = await file.open(id, openOptions);
-        return {
-          read: () => owned.read(),
-          append: () => Promise.reject(new Error('disk full')),
-          compact: () => owned.compact(),
-          artifacts: (stepId, attempt) => owned.artifacts(stepId, attempt),
-          trackProcess: (invocation, process) => owned.trackProcess(invocation, process),
-          release: () => owned.release(),
-        };
-      },
-    };
-    const refused: unknown = await runs
-      .run(definition, {
-        stateDir,
-        runId,
-        input: null,
-        harness,
-        store,
-        resume: true,
-        requireGrants: true,
-      })
-      .catch((cause: unknown) => cause);
-    expect(refused).toBeInstanceOf(AggregateError);
-    const grant = (refused as AggregateError).errors[0] as unknown;
-    expect(grant).toBeInstanceOf(GrantRequiredError);
-    expect((grant as Error).message).toBe(
-      'Role Fixer requires write access. Retry with --require-grants and --grant Fixer, --grant write, or --grant all.',
-    );
-    expect((refused as Error).message).toContain('disk full');
-    expect(await readRun({ stateDir, runId })).not.toHaveProperty('requireGrants');
-  });
+  it.for([
+    {
+      entries: 'one entry',
+      workflow: fixerWorkflow,
+      message:
+        'Role Fixer requires write access. Retry with --require-grants and --grant Fixer, --grant write, or --grant all.',
+    },
+    {
+      entries: 'every missing entry',
+      workflow: pairWorkflow,
+      message:
+        'Roles Builder and Fixer require write access. Retry with --require-grants and --grant Builder --grant Fixer, --grant write, or --grant all.',
+    },
+  ])(
+    'repeats --require-grants in the retry text for $entries when the refusal cannot save the flag',
+    async ({ workflow, message }, { stateDir, runs }) => {
+      const definition = workflow();
+      const { invoke, harness } = fake();
+      invoke.mockRejectedValueOnce(new Error('offline'));
+      await expect(runs.run(definition, { stateDir, runId, input: null, harness })).rejects.toThrow(
+        'offline',
+      );
+      const file = new FileRunStore(stateDir);
+      const store: RunStore = {
+        stateDir: file.stateDir,
+        read: (id) => file.read(id),
+        list: () => file.list(),
+        open: async (id, openOptions): Promise<OwnedRunStore> => {
+          const owned = await file.open(id, openOptions);
+          return {
+            read: () => owned.read(),
+            append: () => Promise.reject(new Error('disk full')),
+            compact: () => owned.compact(),
+            artifacts: (stepId, attempt) => owned.artifacts(stepId, attempt),
+            trackProcess: (invocation, process) => owned.trackProcess(invocation, process),
+            release: () => owned.release(),
+          };
+        },
+      };
+      const refused: unknown = await runs
+        .run(definition, {
+          stateDir,
+          runId,
+          input: null,
+          harness,
+          store,
+          resume: true,
+          requireGrants: true,
+        })
+        .catch((cause: unknown) => cause);
+      expect(refused).toBeInstanceOf(AggregateError);
+      const grant = (refused as AggregateError).errors[0] as unknown;
+      expect(grant).toBeInstanceOf(GrantRequiredError);
+      expect((grant as Error).message).toBe(message);
+      expect((refused as Error).message).toContain('disk full');
+      expect(await readRun({ stateDir, runId })).not.toHaveProperty('requireGrants');
+    },
+  );
 });

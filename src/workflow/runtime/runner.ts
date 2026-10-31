@@ -1131,50 +1131,72 @@ export async function runWorkflow<
       if (Object.hasOwn(capabilities.profiles, grant) && role)
         grantedProfiles[grant] = profileGrantDigest(role);
     }
+    // Every ungranted elevated role is named in one refusal, so a single retry can grant them all.
+    const missingGrants: GrantRequiredError[] = [];
     for (const name of capabilities.requiredGrants) {
       const role = capabilities.profiles[name];
       if (!role) continue;
       try {
         requireGrant(role, grants, grantedProfiles);
       } catch (error) {
-        // The refusal ends this execution before either later save of the sticky flag. A run that
-        // opts in here keeps it, so the printed retry (`--resume --grant P`, without
-        // --require-grants) still enforces. Only the flag (with the format stamps any save carries)
-        // is saved; grants, policy and the rest of the record stay as they were. A rehearsal or an
-        // accepted-replay probe owns a disposable copy, and a fork has no record yet.
-        if (
-          !(error instanceof GrantRequiredError) ||
-          !existing ||
-          !runRequiresGrants ||
-          existing.requireGrants === true ||
-          options.rehearsal !== undefined
-        )
-          throw error;
-        // A legacy (format 1) record cannot be saved without the replay migration, and a failed
-        // save keeps nothing, so the retry text then repeats --require-grants instead.
-        let kept = false;
-        if (existing.formatVersion !== 1) {
-          const context = `Could not save run ${existing.id}`;
-          existing.formatVersion = 7;
-          existing.seq ??= 0;
-          existing.engine = recordedEngine();
-          existing.schemaRevision = SUPPORTED_SCHEMA_REVISION;
-          existing.requireGrants = true;
-          existing.updatedAt = new Date().toISOString();
-          try {
-            await storage.append(existing, { context });
-            kept = true;
-          } catch (cause) {
-            checkpointProblems.push(
-              cause instanceof CheckpointError
-                ? cause
-                : await checkpointError('save', stateDir, existing.id, cause, context),
-            );
-          }
-        }
-        if (kept) throw error;
-        throw new GrantRequiredError(error.profile, error.access, error.classOnly, true);
+        if (!(error instanceof GrantRequiredError)) throw error;
+        missingGrants.push(error);
       }
+    }
+    const [firstMissing, ...otherMissing] = missingGrants;
+    if (firstMissing) {
+      const error =
+        otherMissing.length === 0
+          ? firstMissing
+          : new GrantRequiredError(
+              firstMissing.profile,
+              firstMissing.access,
+              false,
+              false,
+              otherMissing.map(({ profile, access }) => ({ profile, access })),
+            );
+      // The refusal ends this execution before either later save of the sticky flag. A run that
+      // opts in here keeps it, so the printed retry (`--resume --grant P`, without
+      // --require-grants) still enforces. Only the flag (with the format stamps any save carries)
+      // is saved; grants, policy and the rest of the record stay as they were. A rehearsal or an
+      // accepted-replay probe owns a disposable copy, and a fork has no record yet.
+      if (
+        !existing ||
+        !runRequiresGrants ||
+        existing.requireGrants === true ||
+        options.rehearsal !== undefined
+      )
+        throw error;
+      // A legacy (format 1) record cannot be saved without the replay migration, and a failed
+      // save keeps nothing, so the retry text then repeats --require-grants instead.
+      let kept = false;
+      if (existing.formatVersion !== 1) {
+        const context = `Could not save run ${existing.id}`;
+        existing.formatVersion = 7;
+        existing.seq ??= 0;
+        existing.engine = recordedEngine();
+        existing.schemaRevision = SUPPORTED_SCHEMA_REVISION;
+        existing.requireGrants = true;
+        existing.updatedAt = new Date().toISOString();
+        try {
+          await storage.append(existing, { context });
+          kept = true;
+        } catch (cause) {
+          checkpointProblems.push(
+            cause instanceof CheckpointError
+              ? cause
+              : await checkpointError('save', stateDir, existing.id, cause, context),
+          );
+        }
+      }
+      if (kept) throw error;
+      throw new GrantRequiredError(
+        error.profile,
+        error.access,
+        error.classOnly,
+        true,
+        error.missing.slice(1),
+      );
     }
     const matchedPolicy = new Set<number>();
     const input =

@@ -1,9 +1,13 @@
 # Child workflows and discovery
 
 `ctx.workflow(id, definition, input, options?)` runs a typed child inside the current run. The child
-validates input before effects and output before returning. Its effects share the root's agent
-concurrency, cost/attempt budgets, cancellation, storage and working directory. It creates no extra
-agent session merely by entering a frame. See the runnable
+validates input before effects and output before returning. The input has the child schema's input
+type (`z.input`), by definition or by name, so fields with schema defaults may be omitted: the
+child's validation fills them, and the frame's input digest is taken from the validated value. A
+child typed only by its parsed input, such as `WorkflowDefinition<Input, Output>` or one defined
+with explicit `defineWorkflow` type arguments, takes that parsed type. Its effects share the root's
+agent concurrency, cost/attempt budgets, cancellation, storage and working directory. It creates no
+extra agent session merely by entering a frame. See the runnable
 [reusable review recipe](../examples/patterns/reusable-helper.workflow.ts).
 
 Declare `children: [reviewWorkflow]` on the parent to enable

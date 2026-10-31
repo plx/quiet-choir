@@ -582,7 +582,10 @@ class grant), and its named grant pins its capabilities. `--grant write` authori
 `--grant` flags accumulate. Elevated raw call-site controls need a class or `all` grant (see
 [raw call-site capabilities](#raw-call-site-capabilities)). Declaring an elevated entry makes this
 check happen before **any** workflow effects, and `--grant` hints and `next` commands name the
-missing grant.
+missing grant. One refusal names every missing elevated entry, so one retry can grant them all
+(`Roles Builder and Fixer require write access. Retry with --grant Builder --grant Fixer, …`); when
+they need different access, it offers the highest class (`--grant exec`), since `--grant write` does
+not cover an exec entry.
 
 Grants persist on resume. Named grants are pinned to exact tools, allowed rules, sandbox, the other
 declared capability controls and an entry's pinned harness; after those change (including repinning

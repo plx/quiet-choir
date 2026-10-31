@@ -583,6 +583,53 @@ export const erasedParent = defineWorkflow({
     return null;
   },
 });
+// A child call takes the child schema's input type: fields with schema defaults may be omitted, and
+// the child fills them when it validates the input.
+const defaulted = defineWorkflow({
+  name: 'defaulted',
+  version: '1',
+  input: z.object({
+    brief: z.string(),
+    judges: z.number().default(3),
+    out: z.string().nullable().default(null),
+  }),
+  output: z.number(),
+  run: (_ctx, input) => Promise.resolve(input.judges),
+});
+// Typed by its parsed input alone, the same child takes the parsed type.
+const parsedDefaulted: WorkflowDefinition<
+  { brief: string; judges: number; out: string | null },
+  number
+> = defaulted;
+export const defaultsParent = defineWorkflow({
+  ...base,
+  name: 'defaults-parent',
+  children: [defaulted],
+  async run(ctx) {
+    expectTypeOf(await ctx.workflow('a', defaulted, { brief: 'x' })).toEqualTypeOf<number>();
+    expectTypeOf(await ctx.workflow('b', 'defaulted', { brief: 'x' })).toEqualTypeOf<number>();
+    expectTypeOf(
+      await ctx.workflow('c', defaulted, { brief: 'x' }, { onError: 'return' }),
+    ).toEqualTypeOf<Settled<number, MapStepError>>();
+    expectTypeOf(
+      await ctx.workflow('d', 'defaulted', { brief: 'x', judges: 5 }, { onError: 'return' }),
+    ).toEqualTypeOf<Settled<number, MapStepError>>();
+    // @ts-expect-error -- judges is a number.
+    await ctx.workflow('e', defaulted, { brief: 'x', judges: 'three' });
+    // @ts-expect-error -- brief has no default.
+    await ctx.workflow('f', defaulted, { judges: 3 });
+    // @ts-expect-error -- brief has no default, with onError: 'return' too.
+    await ctx.workflow('g', defaulted, { out: null }, { onError: 'return' });
+    // @ts-expect-error -- by name, judges is a number.
+    await ctx.workflow('h', 'defaulted', { brief: 'x', judges: 'three' });
+    // @ts-expect-error -- by name, brief has no default.
+    await ctx.workflow('i', 'defaulted', {});
+    await ctx.workflow('j', parsedDefaulted, { brief: 'x', judges: 3, out: null });
+    // @ts-expect-error -- typed by its parsed input, the child needs every field.
+    await ctx.workflow('k', parsedDefaulted, { brief: 'x' });
+    return null;
+  },
+});
 // The typed-definition overload accepts strict and typed-children definitions.
 export const grandparent = defineWorkflow({
   ...base,
@@ -811,12 +858,31 @@ function genericFactoryTypos<D extends AgentDefaults>(defaults: D) {
 }
 
 it('infers literal and generic defaults through one defineWorkflow signature', () => {
-  // TRoster is WorkflowDefinition's seventh parameter (#707, #726).
+  // TRoster is WorkflowDefinition's seventh parameter (#707, #726), and the input schema's input
+  // type its eighth.
   expectTypeOf(constDefaults).toEqualTypeOf<
-    WorkflowDefinition<null, null, readonly [], true, readonly [], 'const-defaults', EmptyRoster>
+    WorkflowDefinition<
+      null,
+      null,
+      readonly [],
+      true,
+      readonly [],
+      'const-defaults',
+      EmptyRoster,
+      null
+    >
   >();
   expectTypeOf(genericDefaultsFactory({})).toEqualTypeOf<
-    WorkflowDefinition<null, null, readonly [], true, readonly [], 'generic-defaults', EmptyRoster>
+    WorkflowDefinition<
+      null,
+      null,
+      readonly [],
+      true,
+      readonly [],
+      'generic-defaults',
+      EmptyRoster,
+      null
+    >
   >();
   expect(genericFactoryTypos({})).toHaveLength(3);
 });

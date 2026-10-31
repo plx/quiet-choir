@@ -730,22 +730,26 @@ export type ChildNamesOf<TChildren> = 0 extends 1 & TChildren
     : string;
 
 /**
- * Input of declared child `N`: the parsed type of its input schema, or {@link JsonValue} when the
- * children are not known precisely (see {@link ChildNamesOf}).
+ * Input of declared child `N`: the input type of its input schema (`z.input`), so fields with
+ * schema defaults may be omitted and the child fills them, or the parsed type (`z.output`) when the
+ * schema's input type is `unknown`; {@link JsonValue} when the children are not known precisely
+ * (see {@link ChildNamesOf}).
  */
 export type ChildInputOf<TChildren, N extends string> =
   string extends ChildNamesOf<TChildren>
     ? JsonValue
     : TChildren extends readonly WorkflowDeclaration[]
-      ? z.output<
-          Extract<
-            TChildren[number],
-            {
-              /** Declared child name. */
-              readonly name: N;
-            }
-          >['input']
-        >
+      ? Extract<
+          TChildren[number],
+          {
+            /** Declared child name. */
+            readonly name: N;
+          }
+        >['input'] extends infer S extends z.ZodType
+        ? unknown extends z.input<S>
+          ? z.output<S>
+          : z.input<S>
+        : never
       : JsonValue;
 
 /**
@@ -798,7 +802,9 @@ export interface WorkflowContext<
   ): RegisteredAgentClient<CallOptions<K, R[K], TStrict>, CapabilitiesOf<R[K]>>;
   /**
    * Run a typed child inline with validated I/O, recorded identity, and a scoped effect namespace.
-   * With `onError: 'return'`, the frame's outcome is saved and returned as
+   * The input has the child schema's input type, so fields with schema defaults may be omitted and
+   * the child fills them; a definition typed without one (such as `WorkflowDefinition<I, O>`) takes
+   * the parsed type. With `onError: 'return'`, the frame's outcome is saved and returned as
    * `Settled<O, MapStepError>`; resume replays it without running the child body again.
    */
   workflow<
@@ -808,10 +814,12 @@ export interface WorkflowContext<
     S extends boolean,
     C extends readonly WorkflowDeclaration[],
     M extends string,
+    Ro extends AnyRoster,
+    In,
   >(
     id: string,
-    child: WorkflowDefinition<I, O, H, S, C, M>,
-    input: NoInfer<I>,
+    child: WorkflowDefinition<I, O, H, S, C, M, Ro, In>,
+    input: NoInfer<unknown extends In ? I : In>,
     options: ChildOptions & { readonly onError: 'return' },
   ): Promise<Settled<O, MapStepError>>;
   /** Run a typed child inline with an inferred or dynamic error mode. */
@@ -822,11 +830,13 @@ export interface WorkflowContext<
     S extends boolean,
     C extends readonly WorkflowDeclaration[],
     M extends string,
+    Ro extends AnyRoster,
+    In,
     TMode extends ErrorMode = 'throw',
   >(
     id: string,
-    child: WorkflowDefinition<I, O, H, S, C, M>,
-    input: NoInfer<I>,
+    child: WorkflowDefinition<I, O, H, S, C, M, Ro, In>,
+    input: NoInfer<unknown extends In ? I : In>,
     options?: ChildOptions & { readonly onError?: TMode | undefined },
   ): Promise<EffectResult<O, TMode, MapStepError>>;
   /**
@@ -1053,9 +1063,11 @@ export interface WorkflowContext<
 /**
  * Definition of a typed workflow; plain JavaScript controls branching, loops, and composition.
  * `TStrict`, `TChildren` and `TName` carry the literal `strictProfiles`, `children` and `name` that
- * `defineWorkflow` infers into the context type, and `TRoster` is the `roster` (a `defineRoster`
- * result) that types `ctx.roster`. Their defaults keep an unparameterized `WorkflowDefinition<I, O>`
- * parameter assignable from any typed definition.
+ * `defineWorkflow` infers into the context type, `TRoster` is the `roster` (a `defineRoster`
+ * result) that types `ctx.roster`, and `TInputIn` is the input schema's input type (`z.input`),
+ * which types a parent's typed `ctx.workflow` call. Their defaults keep an unparameterized
+ * `WorkflowDefinition<I, O>` parameter assignable from any typed definition; its `unknown`
+ * `TInputIn` makes a typed child call take the parsed input type.
  */
 export interface WorkflowDefinition<
   TInput,
@@ -1070,6 +1082,7 @@ export interface WorkflowDefinition<
   // `any` for the same reason as TChildren.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   TRoster extends AnyRoster = any,
+  TInputIn = unknown,
 > {
   /** Explicit agent registrations; Claude and Codex remain implicitly available. */
   readonly harnesses?: H;
@@ -1142,8 +1155,8 @@ export interface WorkflowDefinition<
   readonly name: TName;
   /** Explicit compatibility version; bump whenever code or dependencies change semantics. */
   readonly version: string;
-  /** Input validator and source of the inferred input type. */
-  readonly input: z.ZodType<TInput>;
+  /** Input validator and source of the inferred input type and of the accepted child-call input. */
+  readonly input: z.ZodType<TInput, TInputIn>;
   /** Output validator and source of the inferred output type. */
   readonly output: z.ZodType<TOutput>;
   /** Workflow body. It replays from the beginning when resuming. */
@@ -1167,7 +1180,8 @@ export interface WorkflowDefinition<
  * type level. An inline `defaults` literal gets TypeScript's ordinary excess-property checks, so
  * the removed `profiles` field and `defaults.profile` (#726) fail typecheck. The `roster`
  * (`TRoster`) is inferred as the `defineRoster` result's type, which types `ctx.roster`; without
- * one the context has no roster entries.
+ * one the context has no roster entries. `TInputIn` is inferred as the input schema's input type,
+ * so a parent's typed `ctx.workflow` call may omit fields with schema defaults.
  */
 export function defineWorkflow<
   TInput,
@@ -1177,9 +1191,10 @@ export function defineWorkflow<
   const TChildren extends readonly WorkflowDeclaration[] = readonly [],
   const TName extends string = string,
   TRoster extends AnyRoster = EmptyRoster,
+  TInputIn = unknown,
 >(
-  definition: WorkflowDefinition<TInput, TOutput, H, TStrict, TChildren, TName, TRoster>,
-): WorkflowDefinition<TInput, TOutput, H, TStrict, TChildren, TName, TRoster> {
+  definition: WorkflowDefinition<TInput, TOutput, H, TStrict, TChildren, TName, TRoster, TInputIn>,
+): WorkflowDefinition<TInput, TOutput, H, TStrict, TChildren, TName, TRoster, TInputIn> {
   if (!definition.name.trim() || !definition.version.trim()) {
     throw new Error('Workflow name and version must be nonempty.');
   }

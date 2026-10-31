@@ -70,7 +70,9 @@ export function setsOwnKey(value: unknown, key: string): boolean {
  * A call's role needs an access grant this run does not hold; raised only under `requireGrants`
  * (ADR 0063 §5). It is operator configuration, so it keeps {@link ConfigurationError}'s
  * never-settled, never-retried semantics; the runner reads its role (the `profile` field) and
- * access to choose a `--grant` recovery hint instead of parsing the message.
+ * access to choose a `--grant` recovery hint instead of parsing the message. The launch preflight
+ * raises one error for every ungranted elevated role: `profile` and `access` are the first, and
+ * `missing` lists them all.
  * @internal
  */
 export class GrantRequiredError extends ConfigurationError {
@@ -83,7 +85,10 @@ export class GrantRequiredError extends ConfigurationError {
     return isBranded(this, value);
   }
 
-  /** Name the role and the access it requires. */
+  /** Every role this refusal names with the access it requires, starting with `profile`. */
+  public readonly missing: readonly { readonly profile: string; readonly access: string }[];
+
+  /** Name the role and the access it requires, and any other roles the same refusal names. */
   public constructor(
     /** Role (`text` or a roster entry) whose access is not granted. */
     public readonly profile: string,
@@ -99,13 +104,46 @@ export class GrantRequiredError extends ConfigurationError {
      * and the run record could not keep it.
      */
     repeatRequireGrants = false,
+    /**
+     * The other ungranted roles the launch preflight found, in manifest order; a call-time refusal
+     * names only its own role.
+     */
+    others: readonly { readonly profile: string; readonly access: string }[] = [],
   ) {
     const retry = repeatRequireGrants ? 'Retry with --require-grants and' : 'Retry with';
+    const missing = [{ profile, access }, ...others];
     super(
       classOnly
         ? `Role ${profile} requires ${access} access for call-site capability overrides, which roster entry grants do not cover. ${retry} --grant ${access} or --grant all.`
-        : `Role ${profile} requires ${access} access. ${retry} --grant ${profile}, --grant ${access}, or --grant all.`,
+        : missing.length === 1
+          ? `Role ${profile} requires ${access} access. ${retry} --grant ${profile}, --grant ${access}, or --grant all.`
+          : missingGrantsMessage(missing, retry),
     );
     this.name = 'GrantRequiredError';
+    this.missing = missing;
   }
+}
+
+/**
+ * The refusal text for several ungranted roles, grouped by access in first-seen order. Only write
+ * and exec roles need a grant, and write does not cover exec, so the class grant it offers is the
+ * highest class named.
+ */
+function missingGrantsMessage(
+  missing: readonly { readonly profile: string; readonly access: string }[],
+  retry: string,
+): string {
+  const byAccess = new Map<string, string[]>();
+  for (const { profile, access } of missing)
+    byAccess.set(access, [...(byAccess.get(access) ?? []), profile]);
+  const clauses = [...byAccess].map(([access, names]) => {
+    const last = names.pop() ?? '';
+    return names.length
+      ? `roles ${names.join(', ')} and ${last} require ${access} access`
+      : `role ${last} requires ${access} access`;
+  });
+  const sentence = clauses.join(' and ');
+  const level = byAccess.has('exec') ? 'exec' : 'write';
+  const grants = missing.map(({ profile }) => `--grant ${profile}`).join(' ');
+  return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}. ${retry} ${grants}, --grant ${level}, or --grant all.`;
 }
