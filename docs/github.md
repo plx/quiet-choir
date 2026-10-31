@@ -710,8 +710,10 @@ every 5 seconds, up to 120 polls) and confirms the merge with the reads above, s
 same shape. An asynchronous merge of a stacked pull request also merges the open pull requests below
 it: pass `base` (the default branch), and the step refuses any but the lowest open one, the only one
 that targets it. A `failed` or `enqueued` result is `merged: false` with `reason: 'not-mergeable'`
-and GitHub's message, unless the read finds the pull request merged, closed, moved or retargeted; a
-request still pending after the polls throws, and the retry's first read finds the merge.
+and GitHub's message, unless the read finds the pull request merged, closed, moved or retargeted.
+Any other answer (an HTTP error, an unknown status) throws after that read, as does a request still
+pending after the polls, so the step's retry asks again; a 409 that names a pending request polls
+that request.
 
 Readiness is the caller's policy: check the base branch with `pr.view`, and the review threads, open
 alerts and checks with [`waitChecks` and `waitReview`](#waits) (or `pr.reviewThreads` and
