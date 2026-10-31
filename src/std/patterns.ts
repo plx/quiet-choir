@@ -52,7 +52,8 @@ export interface ReviewReviseOptions {
   };
   /**
    * The retry policy of the critic's `review/<n>` and the actor's `revise/<n>` calls, as an agent
-   * call's `retry`: policy outside step identity. Omitted, each call makes one attempt.
+   * call's `retry`: policy outside step identity. Omitted, the calls keep the default policy: one
+   * attempt unless an adapter default or a run policy rule sets `retry`.
    */
   readonly retry?: RetryPolicy | undefined;
 }
@@ -149,8 +150,9 @@ export interface TolerantPanelOptions<T, O = string> {
   readonly schema?: z.ZodType<O>;
   /**
    * The panelist call's retry policy, as an agent call's `retry`: policy outside step identity and
-   * the map's fingerprint. A vote settles failed only after its retries are spent; omitted, each
-   * call makes one attempt, so one transient or schema failure is a saved failed vote.
+   * the map's fingerprint. A vote settles failed only after its retries are spent. Omitted, the call
+   * keeps the default policy: one attempt unless an adapter default or a run policy rule sets
+   * `retry`, so by default one transient or schema failure is a saved failed vote.
    */
   readonly retry?: RetryPolicy | undefined;
   /**
