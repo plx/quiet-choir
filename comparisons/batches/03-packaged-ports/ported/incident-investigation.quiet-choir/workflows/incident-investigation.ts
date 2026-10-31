@@ -2,7 +2,7 @@
 // failed member is recorded and accounted for; the confidence is derived in lib/policy.ts.
 import { defineWorkflow } from 'quiet-choir';
 import { Facts, Hypotheses, IncidentInput, IncidentOutput, Verdict } from '../contracts.js';
-import { assertClean, changeLog, gitWindow } from '../lib/git.js';
+import { assertClean, assertUnchanged, changeLog, gitWindow } from '../lib/git.js';
 import { rootCause, structuralConfidence } from '../lib/policy.js';
 import { prompts } from '../prompts.js';
 import { roster } from '../roster.js';
@@ -32,8 +32,9 @@ export default defineWorkflow({
           prompt: prompts.Collect({ incident, domain, artifacts, log }),
         }),
     );
-    // Check immediately after collection as well as after the remaining read-only calls.
-    await assertClean(ctx, 'after-collection');
+    // Check immediately after collection as well as after the remaining read-only calls. Unlike
+    // the precondition, these refusals are permanent: evidence from a changed checkout is suspect.
+    await assertUnchanged(ctx, 'after-collection');
     const evidence = domains.flatMap((domain, index) => {
       const result = collected[index];
       return result?.ok ? result.value.facts.map((fact) => ({ ...fact, domain })) : [];
@@ -75,7 +76,7 @@ export default defineWorkflow({
     const report = await ctx.roster.Reporter.value('report', {
       prompt: prompts.Report({ incident, evidence, judged, confidence }),
     });
-    await assertClean(ctx, 'after-investigation');
+    await assertUnchanged(ctx, 'after-investigation');
     return { ...base, hypotheses: judged, confidence, rootCause: rootCause(judged), report };
   },
 });

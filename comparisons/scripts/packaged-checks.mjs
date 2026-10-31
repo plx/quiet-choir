@@ -255,6 +255,36 @@ async function checkSix(name, { result, env, calls, opts, approvedPlan }) {
 }
 // The modes of Batch 02's six, in the fixture-module form (see packaged-fixtures/README.md).
 const sixModes = {
+  'incident-investigation': [
+    {
+      // An operator's stray file, unlike the `dirty` contract's collector that writes one.
+      mode: 'dirty-start',
+      setup: (env) => writeFile(join(env.cwd, 'stray.txt'), 'uncommitted\n'),
+      rejects: /Expected a clean repository \(before\): \?\? stray\.txt/u,
+      check({ result, calls }) {
+        // A dirty checkout stops the run before any agent call.
+        assert.equal(result.status, 'failed');
+        assert.equal(calls.length, 0);
+      },
+      // Removing the stray file heals the precondition: the before step reruns, and every agent
+      // call is paid for the first time.
+      repair: {
+        run: (env) => rm(join(env.cwd, 'stray.txt')),
+        paid: [
+          'collectors/0/collect',
+          'collectors/1/collect',
+          'collectors/2/collect',
+          'collectors/3/collect',
+          'hypotheses',
+          'falsifiers/0/falsify',
+          'falsifiers/1/falsify',
+          'report',
+        ],
+      },
+      resumeCheck: ({ result, env, calls }) =>
+        checkSix('incident-investigation', { result, env, calls }),
+    },
+  ],
   'project-bootstrap': [
     {
       mode: 'dirty',
