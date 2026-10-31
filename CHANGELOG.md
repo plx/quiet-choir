@@ -2,6 +2,77 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Repair what porting the last 20 Workflow Lab Batch 03 packages surfaced in std (#753–#798 track
+  the design-level rest on #594). `std.patterns.tolerantPanel` returns `outcomes`, every item's
+  settled outcome in item order with its `item` and `index` (`TolerantPanelOutcome<T, O>`, narrowing
+  on `ok`; the result type is now `TolerantPanelResult<O = string, T = unknown>`), and takes an
+  optional `key` (answers become `<id>/<key>/answer`; without it the IDs and keys digest are
+  unchanged) and `retry`, the panelist call's policy, outside identity, so a vote settles failed
+  only after its retries are spent. `std.patterns.reviewRevise` takes `retry` for its `review/<n>`
+  and `revise/<n>` calls and also returns `feedback`, the last review's feedback about the returned
+  draft (null when no review ran), and `reviews`, the number of reviews; its IDs and replay are
+  unchanged. Forwarding `retry` changes the std `answer` mapper's source, which a settled map
+  fingerprints, so a run with completed tolerantPanel items resumed on this build needs
+  `--accept-code-change` once (#663). `std.exec.committedArtifact` refuses a file already at HEAD
+  with `Artifact <path> already exists at HEAD; committedArtifact only creates files` instead of a
+  raw `EEXIST` naming the run's private worktree (its `write` step's version and identity are
+  unchanged), and its TSDoc states the clean-checkout precondition and that `path` is relative to
+  `ctx.cwd`.
+- Make failures name what failed. A schema failure reads one `path: message` line per Zod issue
+  (`tickets[0].id: T9 should be numbered T1`), keeping nested record-key and element messages and
+  every union option, instead of Zod's multi-line JSON, wherever the runtime prints an error:
+  settled `error.message` (agent, local and command calls, settled-map `MapStepError` items, child
+  input and failed child frames), `step.error`, `attemptHistory[].error`, `run.error`,
+  `run.rootCause.error`, `WorkflowRunError`, `FanOutError` and the `exec.json` schema detail; kinds,
+  identity and `validationIssues` are unchanged, and saved records replay their old text. A workflow
+  output that fails its schema reads `Workflow <name> output failed its output schema: …` with the
+  ZodError as `cause`. A duplicate step ID's label names the colliding call's effect and adds
+  `already used by an earlier <kind> effect`, and reusing a caught failed step's ID is classified as
+  `authoring`, so its hint no longer advises a resume that would collide again. `isValidRunId`
+  accepts `unknown` and is a type guard, so a missing or numeric `runId` fails before any state I/O.
+  A `ctx.step` without `input` says `Step "<id>" input is required`. Under `requireGrants` the
+  launch refusal names every ungranted write or exec entry at once
+  (`Roles Builder and Fixer require write access. Retry with --grant Builder --grant Fixer, --grant write, or --grant all.`,
+  or `--grant exec` for mixed access); a single entry keeps its message. A `writeFile` `ifMatch`
+  refusal names the path as passed and what it found (an existing file and its sha256, a missing
+  file, or other content), keeping the `File ifMatch failed` prefix and kind `unknown`.
+- Tighten types and records. `CompletedExecResult` is the success type of plain `ctx.exec` and of
+  `context.exec` (`code` a number, `signal` null); `ExecResult` stays the raw `ProcessRunner`
+  result, and `execResultSchema` and identity are unchanged. Typed `ctx.workflow` calls take the
+  child schema's input type, so defaulted fields may be omitted; `WorkflowDefinition` gains an
+  eighth type parameter, `TInputIn` (default `unknown`), which `defineWorkflow` infers. A renamed
+  `WorktreeChange.files` entry carries `from`, the source path the rename removed, so an ownership
+  check can test both paths; `workflow inspect` prints `renamed "from" -> "path"`, and isolated
+  agent identity still hashes the frozen receipt schema. Record schema revision 22 is nested-only
+  (`from` in step and attempt `worktree.files` and in `merge.changes`): revision-21 records read and
+  resume unchanged, and a revision-21 build refuses a record holding `from` as `run.incompatible`.
+  The uncommitted-source worktree warning is recorded only when an isolated call or handle starts
+  from the dirty checkout's freshly resolved `HEAD` (real runs and rehearsal alike), not for
+  snapshot bases, other commits or merges (amending ADR 0022). The prompt load-time check counts a
+  `params` key named like an engine global (`range`, `dict`, `namespace`) as read, lists it in
+  `variables` and reports a misspelled nested path such as `dict.b`.
+- Correct and extend the docs and both skill copies where the ports went wrong. Commands: how a
+  launch failure settles; `okExitCodes: 'any'` with `onError: 'return'` as the recipe for red output
+  an agent repairs from; that overflow never fails a plain command; how much output a checkpoint
+  keeps; that a truncated `std.exec.git` read replays and throws again (#790); that an
+  operator-fixable precondition must fail inside an effect, not after a completed read; and why host
+  values do not belong in an `env` overlay (#792). Files: a digest probe for `ifMatch` baselines;
+  what a no-op write reports; the fixed 0600/0700 modes (#798); and which path failures still reject
+  before the effect (#755, #756). Worktrees: base and snapshot pins and what each keep policy
+  leaves; cumulative handle receipts and root-relative paths; which commit a merge integrates onto,
+  with an ff-only recipe that publishes exactly a verified integration (#768); when a checkout
+  target is dirty, with a preflight that reruns on resume (#759); provisioning a handle across a
+  resume (#773); retracting files a shell-less writer cannot delete; that caches live until the
+  execution ends (#795); and that Codex sandboxes confine writes, not reads, so a worktree or `cwd`
+  only places a Codex call (`std.codex.Text` is not tool-less). Prompts: a Whitespace section with
+  rendered recipes for `trimBlocks` and includes (the old include advice was wrong), what
+  `variables` reports, how `null` prints and how to fence untrusted values, and that settled maps
+  and frames replay without re-rendering an edited template (#758; ADR 0064 clarified). Agents and
+  rosters: what of a call schema reaches the agent and that a `schema` retry resends the identical
+  request (#757); that a settled mapper gets JSON copies of the items and returns sorted-key copies;
+  that a `ctx.within` view prefixes the calls made through it and its own scopes and maps, not a
+  roster or root-bound agent called beside it; and subsetting a shared package roster with a second
+  `defineRoster` (#794).
 - Add Workflow Lab Batch 03, `03-packaged-ports`: the six Batch 02 rewrites as one
   `<name>.quiet-choir` package each (ADR 0065), now the reader default and the active primitive
   acceptance suite, with Batch 02 kept compiled and checked as its `baseline`. Every agent prompt is
