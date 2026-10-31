@@ -194,5 +194,7 @@ describe('toolchain prompts', () => {
     expect(text).not.toMatch(/\bnpx\b|\bnpm\b|TypeDoc|CHANGELOG/);
     expect(text).toContain(swift.guidance);
     expect(text).toContain('(`just check`)');
+    // A criterion only the full suite can show is reported done, not partial.
+    expect(text).toContain('"`just check` passes") is done once your focused checks pass');
   });
 });

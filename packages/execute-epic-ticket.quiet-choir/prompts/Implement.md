@@ -74,5 +74,8 @@ evidence exactly what to check on the PR and what result counts as met. Use devi
 criterion is met in substance but its literal wording cannot be met within this ticket's scope (e.g.
 a size or count estimate that turns out to depend on another ticket's work): put the measured
 result, why the literal target is out of scope, and the follow-up (also listed in followups) in
-evidence. The landing review judges every deviation. Also return deviations from the plan,
+evidence. The landing review judges every deviation. A criterion that only the full check suite
+can show (such as "`{{ checkCommand }}` passes") is done once your focused checks pass: report it
+done with the evidence "verified by the workflow's check suite", since the workflow runs the suite
+before anything is published and sends a failure back to you. Also return deviations from the plan,
 followups, and notes. Plain text, no HTML entities.

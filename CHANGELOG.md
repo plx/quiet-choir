@@ -2,6 +2,10 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- execute-epic-ticket's implementer reports a criterion that only the full check suite can show
+  (such as "the check suite passes") as done once its focused checks pass, with the evidence
+  "verified by the workflow's check suite", instead of `partial`, which sent a finished
+  implementation to a follow-up round.
 - `quiet-choir/github`'s `pr.merge` merges a pull request in a GitHub-native stack (#747): when the
   synchronous merge answers GitHub's "use the asynchronous merge endpoint" 403, it requests an
   asynchronous direct merge with the same method and pinned SHA, polls it, and confirms the merge,
