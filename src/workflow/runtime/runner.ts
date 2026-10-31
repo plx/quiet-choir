@@ -3894,7 +3894,7 @@ export async function runWorkflow<
               const stub = options.rehearsal?.localStep?.(id, schemaJson(writeFileResultSchema));
               return stub
                 ? writeFileResultSchema.parse(stub.output)
-                : replaceFile(target, content, checked as WriteFileOptions, context.signal);
+                : replaceFile(target, content, checked as WriteFileOptions, context.signal, path);
             },
             identity: stepIdentity({
               kind: 'write-file',

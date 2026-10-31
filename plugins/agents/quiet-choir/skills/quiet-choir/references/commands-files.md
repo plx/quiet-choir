@@ -150,18 +150,24 @@ fsync. File effects accept regular files only, not devices, FIFOs, or directorie
 
 `ifMatch: null` creates exclusively. A SHA-256 requires that baseline, checked again immediately
 before publication. If the desired bytes are already present, either form succeeds without writing.
-`previousSha256` is the hash observed on that attempt, so an idempotent retry can report the desired
-hash rather than the original baseline. A hash check plus rename is an **optimistic check**, not an
-atomic content transaction against unrelated writers. It does not replace worktree isolation or
-coordination. Paths, including existing symlink targets and missing-file parents, resolve against
-cwd; `allowOutsideCwd: true` is required to escape it on both reads and writes. This is a path
-guard, not a sandbox against hostile processes racing directory replacements.
+An `ifMatch` failure names the path as the workflow passed it and what it found there: an existing
+file and its SHA-256, a missing file, or content with another SHA-256. `previousSha256` is the hash
+observed on that attempt, so an idempotent retry can report the desired hash rather than the
+original baseline. A hash check plus rename is an **optimistic check**, not an atomic content
+transaction against unrelated writers. It does not replace worktree isolation or coordination.
+Paths, including existing symlink targets and missing-file parents, resolve against cwd;
+`allowOutsideCwd: true` is required to escape it on both reads and writes. This is a path guard, not
+a sandbox against hostile processes racing directory replacements.
 
 Both file effects accept `onError: 'return'` and then return `Settled<ReadFileResult>` or
 `Settled<WriteFileResult>`. An oversized snapshot, an `ifMatch` conflict, or another final failure
-is saved with `message`, `kind`, and `attempts` and replays on resume even after the file changes.
-Invalid options and paths outside cwd still reject before the effect starts. Like commands, only
-`onError: 'return'` enters identity.
+is saved with `message`, `kind`, and `attempts` and replays on resume even after the file changes. A
+settled file failure carries no file-specific reason yet (#ISSUE-C03-1): an `ifMatch` conflict or an
+oversized snapshot is `unknown`, and a missing file is `process` with Node's `ENOENT` message.
+Invalid options, paths outside cwd, and paths that cannot be resolved still reject before the effect
+starts, even with `onError: 'return'`, and fail the run without recording the step: a parent that is
+a regular file (`ENOTDIR`), another `realpath` error such as `EACCES` or `ELOOP`, or a dangling
+symlink (#ISSUE-C03-2). Like commands, only `onError: 'return'` enters identity.
 
 ## Guarding a mutation
 

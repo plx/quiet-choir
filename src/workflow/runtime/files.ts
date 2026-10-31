@@ -156,23 +156,40 @@ async function parents(path: string): Promise<void> {
     } else if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) throw error;
   }
 }
-/** Atomic publication with an optimistic baseline check; not a lock against external writers. @internal */
+/** The case text of an ifMatch refusal: what the expected baseline met at `label`. */
+function ifMatchFailure(label: string, expected: string | null, found: string | null): string {
+  if (expected === null)
+    return `${label} already exists (sha256 ${String(found)}); ifMatch: null creates only a missing file.`;
+  if (found === null) return `${label} is missing; ifMatch expected sha256 ${expected}.`;
+  return `${label} has sha256 ${found}, not the expected ${expected}.`;
+}
+/**
+ * Atomic publication with an optimistic baseline check; not a lock against external writers.
+ * `label` names the file in refusals, as the workflow passed its path. @internal
+ */
 export async function replaceFile(
   path: string,
   content: string,
   options: WriteFileOptions,
   signal: AbortSignal,
+  label: string = path,
 ): Promise<WriteFileResult> {
   const bytes = Buffer.from(content);
   const sha256 = fileDigest(bytes);
   const before = await currentFile(path, signal);
   const receipt = { path, sha256, bytes: bytes.length, previousSha256: before?.sha256 ?? null };
   if (before?.sha256 === sha256) return receipt;
-  const match = (): void => {
-    if (options.ifMatch !== undefined && options.ifMatch !== (before?.sha256 ?? null))
-      throw new Error('File ifMatch failed: current content does not match the expected baseline.');
+  const changed = (found: string | null, cause?: unknown): Error => {
+    const failure = ifMatchFailure(label, options.ifMatch ?? null, found);
+    return new Error(
+      `File ifMatch failed before publication: baseline changed; ${failure}`,
+      cause === undefined ? undefined : { cause },
+    );
   };
-  match();
+  if (options.ifMatch !== undefined && options.ifMatch !== (before?.sha256 ?? null))
+    throw new Error(
+      `File ifMatch failed: ${ifMatchFailure(label, options.ifMatch, before?.sha256 ?? null)}`,
+    );
   await parents(dirname(path));
   const temporary = resolve(dirname(path), `.quiet-choir-${randomUUID()}.tmp`);
   try {
@@ -188,10 +205,15 @@ export async function replaceFile(
     if (options.ifMatch !== undefined) {
       const current = await currentFile(path, signal);
       if (current?.sha256 === sha256) return { ...receipt, previousSha256: current.sha256 };
-      if ((current?.sha256 ?? null) !== options.ifMatch)
-        throw new Error('File ifMatch failed before publication: baseline changed.');
+      if ((current?.sha256 ?? null) !== options.ifMatch) throw changed(current?.sha256 ?? null);
     }
-    if (options.ifMatch === null) await link(temporary, path);
+    if (options.ifMatch === null)
+      await link(temporary, path).catch(async (error: unknown) => {
+        // A creator raced the check above; name what it published rather than the temporary file.
+        if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) throw error;
+        const raced = await currentFile(path, signal).catch(() => null);
+        throw raced ? changed(raced.sha256, error) : error;
+      });
     else await rename(temporary, path);
     await syncDirectory(dirname(path));
     return receipt;

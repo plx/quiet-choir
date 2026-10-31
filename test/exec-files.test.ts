@@ -1101,8 +1101,13 @@ it.each(['fsync', 'conflict'] as const)(
           'replacement',
           { ifMatch: fileDigest('original') },
           new AbortController().signal,
+          'label/file',
         ),
-      ).rejects.toThrow(failure === 'fsync' ? 'injected sync failure' : 'baseline changed');
+      ).rejects.toThrow(
+        failure === 'fsync'
+          ? 'injected sync failure'
+          : `File ifMatch failed before publication: baseline changed; label/file has sha256 ${fileDigest('concurrent writer')}, not the expected ${fileDigest('original')}.`,
+      );
     } finally {
       vi.restoreAllMocks();
       syncBuiltinESMExports();
@@ -1113,6 +1118,31 @@ it.each(['fsync', 'conflict'] as const)(
     expect(await readdir(cwd)).toEqual(['file']);
   },
 );
+
+it('names a racing creator when an exclusive publication finds the file', async () => {
+  const fs = (await import('node:fs/promises')).default;
+  const { syncBuiltinESMExports } = await import('node:module');
+  const { replaceFile } = await import('../src/workflow/runtime/files.js');
+  const path = join(cwd, 'file');
+  const originalLink = fs.link;
+  vi.spyOn(fs, 'link').mockImplementation(async (...args) => {
+    await fs.writeFile(path, 'concurrent writer');
+    return originalLink(...args);
+  });
+  syncBuiltinESMExports();
+  try {
+    await expect(
+      replaceFile(path, 'replacement', { ifMatch: null }, new AbortController().signal, 'file'),
+    ).rejects.toThrow(
+      `File ifMatch failed before publication: baseline changed; file already exists (sha256 ${fileDigest('concurrent writer')}); ifMatch: null creates only a missing file.`,
+    );
+  } finally {
+    vi.restoreAllMocks();
+    syncBuiltinESMExports();
+  }
+  expect(await readFile(path, 'utf8')).toBe('concurrent writer');
+  expect(await readdir(cwd)).toEqual(['file']);
+});
 
 it('resumes a failed guard restore without rerunning its journaled body', async () => {
   let bodies = 0;
@@ -1428,6 +1458,49 @@ describe("settled commands and files (onError: 'return')", () => {
     expect(resumed.output).toMatchObject({ write: 'unknown' });
     expect((resumed.output as { read: string }).read).toContain('snapshot limit');
     expect(await readFile(join(cwd, 'target'), 'utf8')).toBe('expected');
+  });
+
+  it('names the path and what it found in settled ifMatch refusals', async () => {
+    await writeFile(join(cwd, 'existing'), 'present');
+    const run = await runWorkflow(
+      definition(async (ctx) => {
+        const writes = [
+          await ctx.writeFile('create', 'existing', 'desired', {
+            ifMatch: null,
+            onError: 'return',
+          }),
+          await ctx.writeFile('missing', 'docs/none.md', 'desired', {
+            ifMatch: fileDigest('x'),
+            onError: 'return',
+          }),
+          await ctx.writeFile('stale', 'existing', 'desired', {
+            ifMatch: fileDigest('expected'),
+            onError: 'return',
+          }),
+        ];
+        return writes.map((write) =>
+          write.ok ? null : { kind: write.error.kind, message: write.error.message },
+        );
+      }),
+      setup(),
+    );
+    const present = fileDigest('present');
+    expect(run.output).toEqual([
+      {
+        kind: 'unknown',
+        message: `File ifMatch failed: existing already exists (sha256 ${present}); ifMatch: null creates only a missing file.`,
+      },
+      {
+        kind: 'unknown',
+        message: `File ifMatch failed: docs/none.md is missing; ifMatch expected sha256 ${fileDigest('x')}.`,
+      },
+      {
+        kind: 'unknown',
+        message: `File ifMatch failed: existing has sha256 ${present}, not the expected ${fileDigest('expected')}.`,
+      },
+    ]);
+    expect(await readFile(join(cwd, 'existing'), 'utf8')).toBe('present');
+    await expect(stat(join(cwd, 'docs'))).rejects.toThrow('ENOENT');
   });
 
   it.each(['exec', 'readFile', 'writeFile'] as const)(
