@@ -1083,7 +1083,7 @@
           "package": {
             "files": 12,
             "lines": 1264,
-            "bytes": 50270,
+            "bytes": 50240,
             "parts": {
               "contracts": { "files": 1, "lines": 297 },
               "lib": { "files": 3, "lines": 551 },
@@ -1163,11 +1163,11 @@
           "formattedLines": 226,
           "package": {
             "files": 14,
-            "lines": 1153,
-            "bytes": 45957,
+            "lines": 1152,
+            "bytes": 45936,
             "parts": {
               "contracts": { "files": 1, "lines": 234 },
-              "lib": { "files": 4, "lines": 484 },
+              "lib": { "files": 4, "lines": 483 },
               "manifest": { "files": 1, "lines": 19 },
               "promptIndex": { "files": 1, "lines": 51 },
               "templates": { "files": 5, "lines": 110 },
@@ -1317,7 +1317,7 @@
           "package": {
             "files": 12,
             "lines": 1398,
-            "bytes": 55821,
+            "bytes": 55840,
             "parts": {
               "contracts": { "files": 1, "lines": 338 },
               "lib": { "files": 3, "lines": 556 },
@@ -1554,7 +1554,7 @@
           "package": {
             "files": 14,
             "lines": 1328,
-            "bytes": 54645,
+            "bytes": 54658,
             "parts": {
               "contracts": { "files": 1, "lines": 220 },
               "lib": { "files": 3, "lines": 564 },

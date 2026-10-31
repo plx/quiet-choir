@@ -2,6 +2,22 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Port the other twenty Workflow Lab workflows into Batch 03, so it holds all 26 as
+  `<name>.quiet-choir` packages; the reader shows each of the twenty beside its Batch 01 port. Code
+  owns the evidence and effects the upstream left to agents: commands run through `ctx.exec`,
+  artifacts are written behind `ifMatch` guards, agent writers work in pinned worktrees whose
+  receipts code checks before `ctx.merge`, and the plans and probes a human approves carry their
+  SHA-256 digests. feature-factory and prd-to-spec compose sibling packages as inline children, as
+  sdlc-orchestrator does. Each of the twenty has a fixture module in
+  `comparisons/scripts/packaged-fixtures/` (replies, a success check, F1/F2 targets, a kill point,
+  and modes with their own setup, answers and an optional repair, after which the resume pays only
+  the calls the mode names), which `verify-packaged-ports.mjs` runs for every package and
+  `check-packaged-port.mjs <name>` runs alone, with `--mode`, `--no-success`, `--root` and
+  `--mutant` and a failure summary that names the run's failed and settled steps. The fault matrix
+  fails a check when a fixture reply throws, holds an F2 fault through schema retries, records
+  whether the F3 and F4 outputs match the success run's, and gives a mode refused before any record
+  a `refused` row. Batch 03 now records 478 results (455 passed, 23 not applicable), 408 of them for
+  the twenty; the six's rows and the Batch 01 and 02 reports are unchanged.
 - Repair what porting the last 20 Workflow Lab Batch 03 packages surfaced in std (#753–#798 track
   the design-level rest on #594). `std.patterns.tolerantPanel` returns `outcomes`, every item's
   settled outcome in item order with its `item` and `index` (`TolerantPanelOutcome<T, O>`, narrowing

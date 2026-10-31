@@ -1501,6 +1501,15 @@
     },
     {
       "workflow": "design-tournament",
+      "fixture": "out-appears",
+      "status": "passed",
+      "finalStatus": "failed",
+      "agentCalls": 8,
+      "resumedStatus": "completed",
+      "resumedCalls": 0
+    },
+    {
+      "workflow": "design-tournament",
       "fixture": "undecided-graft",
       "status": "passed",
       "finalStatus": "completed",
@@ -3223,6 +3232,13 @@
       "agentCalls": 7,
       "resumedStatus": "completed",
       "resumedCalls": 0
+    },
+    {
+      "workflow": "roadmap-plan",
+      "fixture": "outside-spec",
+      "status": "passed",
+      "finalStatus": "refused",
+      "agentCalls": 0
     },
     {
       "workflow": "roadmap-plan",
