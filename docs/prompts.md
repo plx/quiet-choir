@@ -127,8 +127,9 @@ over template directories, because reformatting changes the rendered text.
 `trimBlocks` removes the first newline after every `{% %}` tag and `{# #}` comment, whether it is
 alone on its line or ends a line of text. `lstripBlocks` removes the spaces and tabs before a tag
 that starts a line. So a line holding only tags vanishes: read a template as if its tag-only lines
-were deleted. `{{ }}` expressions are never trimmed. `+%}` keeps the newline after a tag. `{%-` and
-`-%}` strip all whitespace on that side, newlines and blank lines included.
+were deleted. `trimBlocks` and `lstripBlocks` never touch `{{ }}` expressions. `+%}` keeps the
+newline after a tag. `{%-` and `-%}`, like `{{-` and `-}}`, strip all whitespace on that side,
+newlines and blank lines included.
 
 The recipes below show a template, then its render. `test/prompts.test.ts` pins each render.
 
