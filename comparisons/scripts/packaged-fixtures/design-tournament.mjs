@@ -4,9 +4,9 @@
 // tournament record and writes docs/design.md.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { enumOf, git, ordered } from './_support.mjs';
 
 const philosophies = ['ship-simplest', 'evolvability', 'data-first', 'failure-first'];
@@ -206,6 +206,19 @@ export async function check({ result, env, calls, suspended }) {
     assert.deepEqual(call.options.tools, ['Read', 'Grep', 'Glob']);
 }
 
+/** Another writer's document, which `intrude` creates at `out` once the synthesizer replies. */
+const intruder = '# A design someone else wrote meanwhile\n';
+const intrude = (harness, path) => ({
+  async invoke(request) {
+    const response = await harness.invoke(request);
+    if (request.call.stepId === 'synthesize') {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, intruder);
+    }
+    return response;
+  },
+});
+
 export const kill = { step: '^write$', boundary: 'checkpoint', writeLocation: 'source-checkout' };
 
 /** The proposals and the judges are settled fan-outs; the synthesis is the first call to throw. */
@@ -326,6 +339,29 @@ export const modes = [
       assert.equal(output.design, null);
       assert.equal(output.written, null);
       assert.equal(git(env.cwd, 'status', '--porcelain', '--untracked-files=all'), '');
+    },
+  },
+  {
+    // Another writer creates docs/design.md after the early check: the exclusive create fails
+    // rather than overwrite it, and leaves that file as it found it.
+    mode: 'out-appears',
+    options: (opts, env) => ({ ...opts, harness: intrude(opts.harness, join(env.cwd, out)) }),
+    rejects: /Step write \(write-file\) failed: File ifMatch failed/u,
+    async check({ record, env, calls }) {
+      assert.equal(record.status, 'failed');
+      assert.equal(record.steps.synthesize.status, 'completed');
+      assert.equal(record.steps.write.status, 'failed');
+      assert.equal(calls.length, 8);
+      assert.equal(await readFile(join(env.cwd, out), 'utf8'), intruder);
+      assert.equal(git(env.cwd, 'status', '--porcelain', '--untracked-files=all'), `?? ${out}`);
+    },
+    // Once the other writer's file is gone, the resume retries only the write: no agent is paid.
+    repair: { run: (env) => rmSync(join(env.cwd, out)), paid: [] },
+    async resumeCheck({ result, env }) {
+      const { output } = result;
+      assert.equal(output.status, 'complete');
+      await assertWritten(env, output);
+      assert.equal(git(env.cwd, 'status', '--porcelain', '--untracked-files=all'), `?? ${out}`);
     },
   },
   {

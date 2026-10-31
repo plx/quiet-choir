@@ -297,30 +297,42 @@ export function headline(text) {
 }
 /**
  * What failed in a saved run, for a check's error: the run's status and error, then one line per
- * failed or settled-failed step (its ID, status, error kind and the `headline` of its message) and
- * per failed item of a settled map (the map ID, the item's index and the step it failed at).
+ * failed step (its ID, status, error kind and the `headline` of its message). The settled failures
+ * follow under their own heading, since the run went on past them and a workflow may expect some
+ * (a settled read of a file that should not exist): each settled-failed step, and each failed item
+ * of a settled map (the map ID, the item's index and the step it failed at).
  */
 export function failureSummary(record) {
   if (!record) return 'No run record: the run was refused before it saved one.';
-  const lines = [
-    `Run ${record.id} ${record.status}${record.error ? `: ${headline(record.error)}` : ''}`,
-  ];
+  const failed = [],
+    settled = [];
   for (const [id, step] of Object.entries(record.steps)) {
     if (step.status !== 'failed' && step.status !== 'settled-failed') continue;
     const kind = step.settledError?.kind ?? step.attemptHistory?.at(-1)?.errorKind ?? 'unknown';
     const message = step.settledError?.message ?? step.error;
-    lines.push(`  ${id} (${step.status}, ${kind}): ${headline(message)}`);
+    (step.status === 'failed' ? failed : settled).push(
+      `${id} (${step.status}, ${kind}): ${headline(message)}`,
+    );
   }
   for (const [id, map] of Object.entries(record.maps ?? {}))
     for (const [index, item] of (map.items ?? []).entries()) {
       if (item.outcome?.ok !== false) continue;
       const { kind, message, stepId } = item.outcome.error;
       const at = stepId ? ` at ${stepId}` : '';
-      lines.push(
-        `  ${id} item ${String(index)} (settled-failed${at}, ${kind}): ${headline(message)}`,
+      settled.push(
+        `${id} item ${String(index)} (settled-failed${at}, ${kind}): ${headline(message)}`,
       );
     }
-  if (lines.length === 1) lines.push('  No failed or settled-failed step.');
+  const lines = [
+    `Run ${record.id} ${record.status}${record.error ? `: ${headline(record.error)}` : ''}`,
+    ...failed.map((line) => `  ${line}`),
+  ];
+  if (settled.length)
+    lines.push(
+      `  ${failed.length ? 'Settled' : 'No failed step. Settled'} failures, which the run kept as data:`,
+      ...settled.map((line) => `    ${line}`),
+    );
+  else if (!failed.length) lines.push('  No failed or settled-failed step.');
   return lines.join('\n');
 }
 /**

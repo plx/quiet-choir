@@ -261,10 +261,29 @@ function isolated(env, calls) {
   );
 }
 
-export function check({ result, env, calls, suspended }) {
+/**
+ * The human was asked once, and shown the module plan the output reports, beside its digest, the
+ * base and the limits.
+ */
+function shownPlan(env, output, questions) {
+  assert.deepEqual(
+    questions.map(({ question }) => question.stepId),
+    ['approve-plan'],
+  );
+  const { subject } = questions[0].question;
+  const { digest, ...plan } = output.plan;
+  assert.deepEqual(subject.plan, plan);
+  assert.deepEqual(
+    [subject.digest, subject.base, subject.limits],
+    [digest, env.head, output.limits],
+  );
+}
+
+export function check({ result, env, calls, suspended, questions }) {
   const { output } = result;
   assert.equal(output.status, 'applied');
   assert.equal(suspended, 1);
+  shownPlan(env, output, questions);
   assert.deepEqual(output.backlog, {
     status: 'covered',
     tickets: [
@@ -351,10 +370,11 @@ export const faults = { F1: '^plan$', F2: '^plan$' };
 export const modes = [
   {
     mode: 'declined',
-    check({ result, env, calls }) {
+    check({ result, env, calls, questions }) {
       const { output } = result;
       assert.equal(output.status, 'declined');
       assert.equal(output.plan.modules.length, 3);
+      shownPlan(env, output, questions);
       assert.deepEqual(output.modules, []);
       assert.equal(
         calls.some((call) => leaf(call.call.stepId) === 'build'),

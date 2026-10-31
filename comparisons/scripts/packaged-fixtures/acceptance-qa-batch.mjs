@@ -245,6 +245,45 @@ const digest = (list) =>
   createHash('sha256')
     .update(JSON.stringify(sorted(list), null, 2))
     .digest('hex');
+/** The criterion probes the success run's demonstrators propose, as code lists them. */
+const approvedProbes = [
+  {
+    ticket: 'QA-1',
+    position: 0,
+    criterion: qa1.acceptanceCriteria[0],
+    claim: claims.lowercases,
+    probe: probes.lowercases,
+  },
+  {
+    ticket: 'QA-1',
+    position: 1,
+    criterion: qa1.acceptanceCriteria[1],
+    claim: claims.joins,
+    probe: probes.joins,
+  },
+  {
+    ticket: 'QA-2',
+    position: 0,
+    criterion: qa2.acceptanceCriteria[0],
+    claim: claims.punctuation,
+    probe: probes.punctuation,
+  },
+];
+/** The attack probes QA-1's breaker proposes in `mode`, as code lists them. */
+const approvedAttacks = (mode) =>
+  attacks(mode).map((entry, number) => ({ ...entry, ticket: 'QA-1', attack: number }));
+/**
+ * The approval question `id` was asked once and showed under `key` exactly `list`, whose digest it
+ * carries: a human approves the list itself, not only its digest.
+ */
+function shownList(questions, id, key, list, approvedDigest) {
+  const asked = questions.filter(({ question }) => question.stepId === id);
+  assert.equal(asked.length, 1, id);
+  const { subject } = asked[0].question;
+  assert.deepEqual(subject[key], list);
+  assert.equal(subject.digest, approvedDigest);
+  assert.equal(digest(subject[key]), approvedDigest);
+}
 const statuses = (ticket) => ticket.criteria.map((criterion) => criterion.status);
 const verdicts = (output) => output.tickets.map((ticket) => [ticket.id, ticket.verdict]);
 const tallies = (output) => [output.passed, output.failed, output.unverified, output.inconclusive];
@@ -261,7 +300,7 @@ const runs = (output) =>
     ...ticket.attacks.map((entry) => entry.run),
   ]);
 
-export async function check({ result, env, calls, record, suspended }) {
+export async function check({ result, env, calls, record, suspended, questions }) {
   const { output } = result;
   assert.equal(output.status, 'complete');
   assert.equal(output.base, git(env.cwd, 'rev-parse', 'HEAD'));
@@ -308,37 +347,20 @@ export async function check({ result, env, calls, record, suspended }) {
   // The approved digests are the SHA-256 of exactly the lists code then ran, and the probe list a
   // human reads names each criterion and the claim its probe makes.
   assert.equal(suspended, 2);
-  assert.equal(
-    output.probeDigest,
-    digest([
-      {
-        ticket: 'QA-1',
-        position: 0,
-        criterion: qa1.acceptanceCriteria[0],
-        claim: claims.lowercases,
-        probe: probes.lowercases,
-      },
-      {
-        ticket: 'QA-1',
-        position: 1,
-        criterion: qa1.acceptanceCriteria[1],
-        claim: claims.joins,
-        probe: probes.joins,
-      },
-      {
-        ticket: 'QA-2',
-        position: 0,
-        criterion: qa2.acceptanceCriteria[0],
-        claim: claims.punctuation,
-        probe: probes.punctuation,
-      },
-    ]),
+  assert.equal(output.probeDigest, digest(approvedProbes));
+  assert.equal(output.attackDigest, digest(approvedAttacks('normal')));
+  // Each approval showed the whole list its digest covers.
+  assert.deepEqual(
+    questions.map(({ question }) => question.stepId),
+    ['approve-probes', 'approve-attacks'],
   );
-  assert.equal(
+  shownList(questions, 'approve-probes', 'probes', approvedProbes, output.probeDigest);
+  shownList(
+    questions,
+    'approve-attacks',
+    'attacks',
+    approvedAttacks('normal'),
     output.attackDigest,
-    digest(
-      attacks('normal').map((entry, number) => ({ ...entry, ticket: 'QA-1', attack: number })),
-    ),
   );
   const shown = details(record, 'approve-probes');
   assert.ok(
@@ -710,10 +732,14 @@ export const modes = [
   },
   {
     mode: 'declined-probes',
-    check({ result, record, calls }) {
+    check({ result, record, calls, questions }) {
       const { output } = result;
       assert.equal(output.status, 'declined');
-      assert.match(output.probeDigest, /^[a-f0-9]{64}$/u);
+      assert.deepEqual(
+        questions.map(({ question }) => question.stepId),
+        ['approve-probes'],
+      );
+      shownList(questions, 'approve-probes', 'probes', approvedProbes, output.probeDigest);
       assert.deepEqual(verdicts(output), [
         ['QA-1', 'unverified'],
         ['QA-2', 'unverified'],
@@ -725,9 +751,11 @@ export const modes = [
   },
   {
     mode: 'declined-attacks',
-    check({ result, record }) {
+    check({ result, record, questions }) {
       const { output } = result;
       assert.equal(output.status, 'declined');
+      const list = approvedAttacks('declined-attacks');
+      shownList(questions, 'approve-attacks', 'attacks', list, output.attackDigest);
       const [first] = output.tickets;
       assert.deepEqual([first.verdict, first.breaker], ['pass-pending-manual', 'declined']);
       assert.deepEqual(

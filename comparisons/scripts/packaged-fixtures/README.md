@@ -117,12 +117,15 @@ Each fault prints one line: its initial and final status, then `repaid` (`callsP
 fixture module's F3 and F4) and a not-applicable cell's reason.
 
 A check that fails prints its error, which names the check and the first line of what failed, then
-summarizes the saved run: its status and error, each failed or settled-failed step with its error
-kind and the first line of its message, and each failed item of a settled map with its index and the
-step it failed at. For a node:assert message whose first line names no value
-(`Expected values to be strictly equal:`), the line goes on with the values that follow it, or with
-a diff's first actual (`+`) and expected (`-`) lines. The original error follows as the `cause`. The
-success check and every mode throw this error, in `verify-packaged-ports.mjs` too.
+summarizes the saved run: its status and error, and each failed step with its error kind and the
+first line of its message. The settled failures follow under their own heading, because the run went
+on past them and some are expected (a settled read of a file that should not exist yet): each
+settled-failed step, and each failed item of a settled map with its index and the step it failed at.
+A completed run whose check failed has no failed step, so its error is the assertion's. For a
+node:assert message whose first line names no value (`Expected values to be strictly equal:`), the
+line goes on with the values that follow it, or with a diff's first actual (`+`) and expected (`-`)
+lines. The original error follows as the `cause`. The success check and every mode throw this error,
+in `verify-packaged-ports.mjs` too.
 
 ### Another root, and mutants
 

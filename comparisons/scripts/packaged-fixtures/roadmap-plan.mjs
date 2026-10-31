@@ -421,6 +421,19 @@ export const modes = [
     },
   },
   {
+    // A single-line spec outside the repository: the input schema refuses it before the run
+    // saves a record or pays for anything.
+    mode: 'outside-spec',
+    input: () => ({ ...input(), spec: '../spec.md' }),
+    rejects: /A single-line spec must be a repository-relative path/u,
+    check: ({ result, record, env, calls }) => {
+      assert.equal(result, null);
+      assert.equal(record, null);
+      assert.equal(calls.length, 0);
+      unwritten(env);
+    },
+  },
+  {
     mode: 'cyclic-graph',
     // The decomposition schema refuses the cycle on both attempts, before any strategist is paid.
     rejects: /The dependencies form a cycle: C1 -> C3 -> C2 -> C1/u,

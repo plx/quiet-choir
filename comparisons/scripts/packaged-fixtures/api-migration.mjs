@@ -146,11 +146,27 @@ function published(env, output, files) {
 }
 const partialInput = () => ({ ...input(), verifyCommands: [verify(['b'])] });
 const outcomes = (list) => list.map((group) => [group.files.join(','), group.status]);
+/**
+ * The human was asked once, and shown the plan: the API change as the input states it and the
+ * discovered groups, beside the digest and the base. Returns the plan as the subject shows it.
+ */
+function shownPlan(env, output, questions) {
+  assert.deepEqual(
+    questions.map(({ question }) => question.stepId),
+    ['approve-migration'],
+  );
+  const { subject } = questions[0].question;
+  const plan = { from: subject.from, to: subject.to, notes: subject.notes, groups: subject.groups };
+  assert.deepEqual(plan, { from: input().from, to: input().to, notes: null, groups });
+  assert.deepEqual([subject.digest, subject.base], [output.approvedDigest, env.base]);
+  return plan;
+}
 
-export function check({ result, env, calls, suspended }) {
+export function check({ result, env, calls, suspended, questions }) {
   const { output } = result;
   assert.equal(output.status, 'migrated');
   assert.equal(suspended, 1);
+  const shown = shownPlan(env, output, questions);
   assert.equal(output.totalSites, 2);
   assert.deepEqual([output.coalesced, output.stray, output.deferred], [0, [], []]);
   assert.deepEqual(output.unassigned, []);
@@ -166,14 +182,15 @@ export function check({ result, env, calls, suspended }) {
   // The discoverer saw the code-owned search hits.
   const discover = calls.find((call) => call.call.stepId === 'discover');
   assert.match(discover.options.prompt, /tracked files:\n- CHANGELOG\.md\n- a\.mjs\n- b\.mjs\n/u);
-  // Each migrator got its own worktree and the approved plan verbatim; the digest is of that text.
+  // Each migrator got its own worktree and the approved plan verbatim, the plan the human was
+  // shown; the digest is of that text.
   const migrators = calls.filter((call) => migrator.test(call.call.stepId));
   assert.equal(migrators.length, 2);
   assert.equal(new Set(migrators.map((call) => call.cwd)).size, 2);
   for (const call of migrators) {
     const text = call.options.prompt.split('Approved plan:\n')[1];
     assert.equal(output.approvedDigest, createHash('sha256').update(text).digest('hex'));
-    assert.deepEqual(JSON.parse(text).groups, groups);
+    assert.deepEqual(JSON.parse(text), shown);
   }
   // One verification pass, green, with no leftover reference in the migrated files.
   assert.equal(output.verification.length, 1);
@@ -199,10 +216,11 @@ export const kill = {
 export const modes = [
   {
     mode: 'declined',
-    check({ result, env, calls, suspended }) {
+    check({ result, env, calls, suspended, questions }) {
       assert.equal(result.output.status, 'declined');
       assert.equal(suspended, 1);
       assert.match(result.output.approvedDigest, /^[a-f0-9]{64}$/u);
+      shownPlan(env, result.output, questions);
       assert.ok(calls.every((call) => !migrator.test(call.call.stepId)));
       untouched(env);
     },

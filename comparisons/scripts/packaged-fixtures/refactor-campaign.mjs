@@ -376,6 +376,33 @@ function netsCommitHoldsNet(env, output) {
   );
 }
 const stepIds = (calls) => calls.map((call) => call.call.stepId);
+/** The input schema's default goal, which every mode keeps. */
+const goal = 'reduce complexity and duplication without changing behavior';
+/** The one target the success and declined runs ask to refactor, behind its pinned net. */
+const approvedTargets = [
+  {
+    location: 'pricing.mjs:totalWithTax',
+    refactoring: 'Extract function subtotal',
+    netFile,
+    supportFiles: [casesFile],
+    behaviorsPinned,
+  },
+];
+/**
+ * The human was asked once, and shown the goal and the targets beside the digest. Returns them as
+ * the subject shows them.
+ */
+function shownPlan(questions, output) {
+  assert.deepEqual(
+    questions.map(({ question }) => question.stepId),
+    ['approve-refactors'],
+  );
+  const { subject } = questions[0].question;
+  const approved = { goal: subject.goal, targets: subject.targets };
+  assert.deepEqual(approved, { goal, targets: approvedTargets });
+  assert.equal(subject.digest, output.approvedDigest);
+  return approved;
+}
 const noReview = (calls) => assert.ok(!stepIds(calls).includes('refactor/0/review'));
 const promptOf = (calls, id) => calls.find((call) => call.call.stepId === id).options.prompt;
 const rows = (checks) => checks.map((row) => [row.argv.at(-1), row.code]);
@@ -404,7 +431,7 @@ function bothNetsPublished(env, output, record, clockText) {
     assert.equal(spawnSync(process.execPath, [file], { cwd: env.cwd }).status, 0, file);
 }
 
-export function check({ result, env, calls, record, suspended }) {
+export function check({ result, env, calls, record, suspended, questions }) {
   const { output } = result;
   assert.equal(output.status, 'applied');
   assert.equal(suspended, 1);
@@ -445,8 +472,9 @@ export function check({ result, env, calls, record, suspended }) {
   const refactorer = calls.find((call) => call.call.stepId === 'refactor/0/write');
   const text = refactorer.options.prompt.split('Approved goal and plan:\n')[1];
   assert.equal(output.approvedDigest, createHash('sha256').update(text).digest('hex'));
+  assert.deepEqual(shownPlan(questions, output), JSON.parse(text));
   assert.deepEqual(JSON.parse(text), {
-    goal: 'reduce complexity and duplication without changing behavior',
+    goal,
     targets: [
       {
         location: done.location,
@@ -610,11 +638,12 @@ export const modes = [
   },
   {
     mode: 'declined',
-    check({ result, env, calls, suspended }) {
+    check({ result, env, calls, suspended, questions }) {
       const { output } = result;
       assert.equal(output.status, 'declined');
       assert.equal(suspended, 1);
       assert.match(output.approvedDigest, /^[a-f0-9]{64}$/u);
+      shownPlan(questions, output);
       assert.ok(stepIds(calls).every((id) => !id.startsWith('refactor/')));
       netsCommitHoldsNet(env, output);
       untouched(env);

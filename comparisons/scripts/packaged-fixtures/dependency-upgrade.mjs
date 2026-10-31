@@ -59,6 +59,15 @@ export const input = () => ({
 const read = (cwd, file) => readFileSync(join(cwd, file), 'utf8');
 const writer = (id) => leaf(id) === 'apply' || /^round\/\d+\/fixes\/\d+\/fix$/u.test(id);
 
+/** The planner's reply. */
+const planned = (mode) => ({
+  riskLevel: mode === 'reconsider' ? 'reconsider' : 'moderate',
+  steps: ['Bump tinyclock to ^2.0.0 in package.json', 'Replace now() with tick() in src/'],
+  riskNotes: 'Every caller uses now()',
+  testFocus: ['src/report.mjs'],
+  files: planFiles,
+});
+
 export async function reply(request, env, mode) {
   const id = request.call.stepId,
     prompt = request.options.prompt;
@@ -92,14 +101,7 @@ export async function reply(request, env, mode) {
       indirectExposure: null,
     };
   }
-  if (id === 'plan')
-    return {
-      riskLevel: mode === 'reconsider' ? 'reconsider' : 'moderate',
-      steps: ['Bump tinyclock to ^2.0.0 in package.json', 'Replace now() with tick() in src/'],
-      riskNotes: 'Every caller uses now()',
-      testFocus: ['src/report.mjs'],
-      files: planFiles,
-    };
+  if (id === 'plan') return planned(mode);
   if (id === 'apply') {
     // The upgrader bumps the manifest and fixes one caller, leaving the other for the loop.
     await writeFiles(request.cwd, {
@@ -195,6 +197,21 @@ function untouched(env) {
 const digest = (text) => createHash('sha256').update(text).digest('hex');
 const nonWriters = (calls) => calls.filter((call) => !writer(call.call.stepId));
 
+/**
+ * The human was asked once, and shown the upgrade and the planner's plan as it replied, beside the
+ * digest and the pinned base.
+ */
+function shownPlan(env, output, questions) {
+  assert.deepEqual(
+    questions.map(({ question }) => question.stepId),
+    ['approve-upgrade'],
+  );
+  const { subject } = questions[0].question;
+  assert.deepEqual([subject.package, subject.from, subject.to], ['tinyclock', '1.4.2', '2.0.0']);
+  assert.deepEqual(subject.plan, planned('normal'));
+  assert.deepEqual([subject.digest, subject.base], [output.approvedDigest, env.base]);
+}
+
 const ids = (calls) => calls.map((call) => call.call.stepId);
 const noWriters = (calls) =>
   assert.equal(
@@ -202,10 +219,11 @@ const noWriters = (calls) =>
     false,
   );
 
-export async function check({ result, env, calls, record, suspended }) {
+export async function check({ result, env, calls, record, suspended, questions }) {
   const { output } = result;
   assert.equal(output.status, 'upgraded');
   assert.equal(suspended, 1);
+  shownPlan(env, output, questions);
   assert.deepEqual([output.from, output.to, output.rounds], ['1.4.2', '2.0.0', 2]);
   assert.deepEqual([output.remaining, output.refusal], [[], null]);
   assert.deepEqual(output.usage, {
@@ -301,10 +319,11 @@ export const modes = [
   },
   {
     mode: 'declined',
-    check({ result, env, calls, suspended }) {
+    check({ result, env, calls, suspended, questions }) {
       assert.equal(result.output.status, 'declined');
       assert.equal(suspended, 1);
       assert.match(result.output.approvedDigest, /^[a-f0-9]{64}$/u);
+      shownPlan(env, result.output, questions);
       noWriters(calls);
       untouched(env);
     },

@@ -160,6 +160,12 @@ function classify(request, mode) {
   return { docs: [configDoc, readmeDoc] };
 }
 
+/** The edits each doc's fixer reports. */
+const fixerEdits = {
+  'README.md': ['Usage: replaced --yes with --force'],
+  'docs/config.md': ['Configuration: settings.json is now config.json'],
+};
+
 async function fixDoc(request, env, mode) {
   // Every fixer starts at the root of its checkout, whatever directory the run started in.
   assert.ok(existsSync(join(request.cwd, 'cli.mjs')), request.cwd);
@@ -168,7 +174,7 @@ async function fixDoc(request, env, mode) {
     await writeFile(join(request.cwd, doc), fixedConfig);
     // The mixed mode's config fixer also edits the code, so its change is refused.
     if (mode === 'mixed') await writeFile(join(request.cwd, 'cli.mjs'), 'export {};\n');
-    return { edits: ['Configuration: settings.json is now config.json'] };
+    return { edits: fixerEdits[doc] };
   }
   assert.equal(doc, 'README.md');
   const path = join(request.cwd, doc);
@@ -190,7 +196,7 @@ async function fixDoc(request, env, mode) {
     await writeFiles(env.cwd, { 'notes.txt': 'Unrelated work\n' });
     env.moved = commitAll(env.cwd, 'unrelated work');
   }
-  return { edits: ['Usage: replaced --yes with --force'] };
+  return { edits: fixerEdits[doc] };
 }
 
 export async function reply(request, env, mode) {
@@ -280,7 +286,8 @@ function published(env, output) {
 }
 /**
  * The approval showed the fixed docs and nothing else: its commit is the squash integration parented
- * on the base, and its diff names exactly the docs the subject lists.
+ * on the base, its diff names exactly the docs the subject lists, and each doc carries the edits its
+ * fixer reported.
  */
 function approvedOnly(env, question) {
   const { subject } = question;
@@ -290,6 +297,7 @@ function approvedOnly(env, question) {
     git(env.cwd, 'diff', '--name-only', env.base, subject.commit).split('\n'),
     subject.docs.map((doc) => doc.doc).sort(),
   );
+  for (const doc of subject.docs) assert.deepEqual(doc.edits, fixerEdits[doc.doc], doc.doc);
 }
 const statuses = (output) =>
   output.docs.map((doc) => [doc.path, ...doc.results.map((r) => r.status)]);
@@ -346,10 +354,15 @@ export function check({ result, env, calls, suspended, questions }) {
   assert.equal(question.details, diffText(env.cwd, env.base, 'HEAD'));
   assert.equal(question.subject.digest, output.fix.digest);
   approvedOnly(env, question);
-  assert.deepEqual(
-    question.subject.docs.map((doc) => doc.doc),
-    ['README.md'],
-  );
+  assert.deepEqual(question.subject.docs, [
+    {
+      doc: 'README.md',
+      edits: fixerEdits['README.md'],
+      resolved: 1,
+      unresolved: [],
+      collateral: [],
+    },
+  ]);
   assert.equal(readFileSync(join(env.cwd, 'README.md'), 'utf8'), fixedReadme);
   assert.equal(readFileSync(join(env.cwd, 'docs/config.md'), 'utf8'), config);
   // Only the fixer edits, in its own worktree; the librarian and the extractor have no tools.
@@ -422,9 +435,11 @@ export const modes = [
       assert.match(output.fix.digest, /^[a-f0-9]{64}$/u);
       assert.equal(output.fix.digest, diffDigest(env.cwd, env.base, output.fix.commit));
       assert.deepEqual(output.docs[1].fix.collateral, ['docs/config.md describes the settings']);
-      assert.deepEqual(approval(questions).subject.docs[0].collateral, [
+      const question = approval(questions);
+      assert.deepEqual(question.subject.docs[0].collateral, [
         'docs/config.md describes the settings',
       ]);
+      approvedOnly(env, question);
       assert.equal(output.totals.fixed, 0);
       // The proposal survives in the run-owned integration commit; the checkout does not change.
       assert.match(git(env.cwd, 'show', `${output.fix.commit}:README.md`), /--force/u);
