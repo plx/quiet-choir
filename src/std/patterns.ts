@@ -5,6 +5,9 @@
  * of the agent that fills it. Fill a team explicitly at the call site, or with
  * `ReviewTeam.from(ctx.roster)` where roster names equal slot names.
  *
+ * Call a pattern with the context its team was bound from: an agent read from
+ * `ctx.within(p).roster` keeps the `p/` prefix wherever it is called, so pass that same view.
+ *
  * @module
  */
 import {
@@ -16,6 +19,15 @@ import {
   type TeamOf,
   type WorkflowContext,
 } from '../index.js';
+
+export type { CallDefaults } from './pattern-kit.js';
+export * from './panels.js';
+export * from './revise.js';
+export * from './select.js';
+export * from './aggregate.js';
+export * from './gates.js';
+export * from './investigate.js';
+export * from './edits.js';
 
 /** The slots {@link reviewRevise} needs: an `actor` that drafts and a `critic` that judges. */
 export const ReviewTeam: ReturnType<typeof defineTeam<'actor' | 'critic'>> = defineTeam({

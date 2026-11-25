@@ -1,13 +1,32 @@
 /**
  * `quiet-choir/std`: the opt-in standard library, built only on the public `quiet-choir` entry
- * point. It is a seed sized for the dog-food ports; a later decision record scopes the full
- * library once the ports show what recurs.
+ * point, so a workflow can spend its lines on what is specific to it (ADR 0068). Every piece is an
+ * ordinary composition of public context methods; nothing here is registered with the runtime.
  *
- * - {@link claude} and {@link codex}: per-harness roster entries carrying the values of the
- *   built-in `text`, `readonly` and `edit` presets, to spread into a `defineRoster` entry.
- * - {@link tiers}: Claude model and effort tiers that compose with those entries by spread.
- * - {@link exec}: `json`, `git` and `committedArtifact` over public context methods.
- * - {@link patterns}: `reviewRevise` and `tolerantPanel`, typed against teams (ADR 0067).
+ * Roster inventory, composed by spread into a `defineRoster` entry:
+ *
+ * - {@link claude} and {@link codex}: per-harness capability fragments (text, read-only, edit,
+ *   web, and allowlisted shells).
+ * - {@link tiers}: Claude model and effort tiers.
+ * - {@link limits}: Claude turn, spend and time limits.
+ * - {@link personas}: standing system prompts for Claude roles.
+ * - {@link roles}: complete entries that combine the axes above.
+ * - {@link rosters}: ready-made rosters of those roles.
+ * - {@link bash}: `Bash(...)` allowlist rules for shell-capable Claude entries.
+ *
+ * Data and helpers:
+ *
+ * - {@link types}: Zod schemas for recurring agent outputs and workflow data.
+ * - {@link lenses}: catalogs of named review, bug, security, design, research and release lenses.
+ * - {@link data}: pure helpers for voting, deduplication, ranking, coverage and hashing.
+ * - {@link text}: stable prompt and text formatting.
+ * - {@link exec}: durable command, Git and publication helpers.
+ *
+ * Higher-order workflow pieces:
+ *
+ * - {@link flow}: team-free control flow (loop until dry, dependency waves, settled fan-out).
+ * - {@link patterns}: team-typed patterns (ADR 0067) such as review/revise, adversarial
+ *   verification, critique, repair, tournaments, gates and map/reduce.
  *
  * ```ts
  * import * as std from 'quiet-choir/std';
@@ -15,6 +34,7 @@
  * export const roster = defineRoster({
  *   Reviewer: { ...std.claude.ReadOnly, description: 'Reviews the diff.' },
  *   Mechanic: { ...std.claude.Edit, ...std.tiers.Mechanic },
+ *   Skeptic: std.roles.Skeptic,
  * });
  * ```
  *
@@ -23,5 +43,15 @@
 export * as claude from './claude.js';
 export * as codex from './codex.js';
 export * as tiers from './tiers.js';
+export * as limits from './limits.js';
+export * as personas from './personas.js';
+export * as roles from './roles.js';
+export * as rosters from './rosters.js';
+export * as bash from './bash.js';
+export * as types from './types.js';
+export * as lenses from './lenses.js';
+export * as data from './data.js';
+export * as text from './text.js';
 export * as exec from './exec.js';
+export * as flow from './flow.js';
 export * as patterns from './patterns.js';
