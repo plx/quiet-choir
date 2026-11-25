@@ -123,16 +123,10 @@ describe('check', () => {
     const outcome = await run(CheckOutcome, (ctx) =>
       exec.check(ctx, 'ok', node("process.stdout.write('out'); process.stderr.write('err\\n')")),
     );
-    expect(outcome).toEqual({
-      passed: true,
-      code: 0,
-      signal: null,
-      output: 'out\nerr\n',
-      truncated: false,
-    });
+    expect(outcome).toEqual({ passed: true, code: 0, output: 'out\nerr\n', truncated: false });
   });
 
-  it('returns a failure as data with the saved stream tails', async () => {
+  it('returns a failing exit as data with its output', async () => {
     const outcome = await run(CheckOutcome, (ctx) =>
       exec.check(
         ctx,
@@ -140,35 +134,30 @@ describe('check', () => {
         node("process.stdout.write('out\\n'); process.stderr.write('err'); process.exit(3)"),
       ),
     );
-    expect(outcome).toEqual({
-      passed: false,
-      code: 3,
-      signal: null,
-      output: 'out\nerr',
-      truncated: false,
-    });
+    expect(outcome).toEqual({ passed: false, code: 3, output: 'out\nerr', truncated: false });
   });
 
   it('runs an explicit shell command', async () => {
     const outcome = await run(CheckOutcome, (ctx) =>
       exec.check(ctx, 'shell', { shell: 'echo hi; exit 4' }),
     );
-    expect(outcome).toMatchObject({ passed: false, code: 4, output: 'hi\n' });
+    expect(outcome).toEqual({ passed: false, code: 4, output: 'hi\n', truncated: false });
   });
 
-  it('reports a signal', async () => {
+  it('keeps the whole output of a failing command, not a saved failure tail', async () => {
     const outcome = await run(CheckOutcome, (ctx) =>
-      exec.check(ctx, 'killed', node("process.kill(process.pid, 'SIGKILL')")),
+      exec.check(
+        ctx,
+        'noisy',
+        node("process.stdout.write('a'.repeat(3000)); process.stderr.write('e'); process.exit(1)"),
+      ),
     );
-    expect(outcome).toMatchObject({ passed: false, code: null, signal: 'SIGKILL' });
-  });
-
-  it('uses the failure message when a command cannot start and printed nothing', async () => {
-    const outcome = await run(CheckOutcome, (ctx) =>
-      exec.check(ctx, 'missing', ['quiet-choir-no-such-command']),
-    );
-    expect(outcome).toMatchObject({ passed: false, code: null, signal: null, truncated: false });
-    expect(outcome.output).toMatch(/^Cannot start quiet-choir-no-such-command/u);
+    expect(outcome).toEqual({
+      passed: false,
+      code: 1,
+      output: `${'a'.repeat(3000)}\ne`,
+      truncated: false,
+    });
   });
 
   it('keeps the last 4000 characters of a long output without splitting a surrogate pair', async () => {
@@ -190,47 +179,17 @@ describe('check', () => {
         exec.check(
           ctx,
           'over',
-          node("process.stdout.write('w'); process.stderr.write('y'.repeat(3999))"),
+          node(
+            "process.stdout.write('w'); process.stderr.write('y'.repeat(3999)); process.exit(1)",
+          ),
         ),
       'over',
     );
     // Stdout without a final newline gets one before stderr, so 4001 characters keep the last 4000.
-    expect(over).toMatchObject({ output: `\n${'y'.repeat(3999)}`, truncated: true });
-  });
-
-  it('marks a failure whose saved tail is full as truncated', async () => {
-    const outcome = await run(CheckOutcome, (ctx) =>
-      exec.check(
-        ctx,
-        'noisy',
-        node("process.stdout.write('a'.repeat(3000)); process.stderr.write('e'); process.exit(1)"),
-      ),
-    );
-    expect(outcome).toEqual({
+    expect(over).toEqual({
       passed: false,
       code: 1,
-      signal: null,
-      output: `${'a'.repeat(1024)}\ne`,
-      truncated: true,
-    });
-  });
-
-  it('drops the half surrogate pair a saved failure tail starts with', async () => {
-    // Each stream is 1201 UTF-16 units; the saved 1024-unit tail starts on a low surrogate.
-    const outcome = await run(CheckOutcome, (ctx) =>
-      exec.check(
-        ctx,
-        'emoji',
-        node(
-          "const s = '\\u{1F600}'.repeat(600); process.stdout.write(s + 'x'); process.stderr.write(s + 'z'); process.exit(1)",
-        ),
-      ),
-    );
-    expect(outcome).toEqual({
-      passed: false,
-      code: 1,
-      signal: null,
-      output: `${'\u{1F600}'.repeat(511)}x\n${'\u{1F600}'.repeat(511)}z`,
+      output: `\n${'y'.repeat(3999)}`,
       truncated: true,
     });
     // No lone surrogate: with the u flag, a pair is one code point and never matches \p{Cs}.
@@ -246,11 +205,23 @@ describe('check', () => {
     expect(outcome).toMatchObject({ passed: true, truncated: true });
   });
 
-  it('forwards options: accepted exit codes and the working directory', async () => {
+  it('decides passed by okExitCodes and forwards the other options', async () => {
     const any = await run(CheckOutcome, (ctx) =>
       exec.check(ctx, 'any', node('process.exit(2)'), { okExitCodes: 'any' }),
     );
     expect(any).toMatchObject({ passed: true, code: 2 });
+    const listed = await run(
+      z.array(CheckOutcome),
+      async (ctx) => [
+        await exec.check(ctx, 'two', node('process.exit(2)'), { okExitCodes: [0, 2] }),
+        await exec.check(ctx, 'zero', node('process.exit(0)'), { okExitCodes: [1] }),
+      ],
+      'listed',
+    );
+    expect(listed).toMatchObject([
+      { passed: true, code: 2 },
+      { passed: false, code: 0 },
+    ]);
     const cwd = await run(
       CheckOutcome,
       (ctx) => exec.check(ctx, 'cwd', node('process.stdout.write(process.cwd())'), { cwd: 'sub' }),
@@ -259,15 +230,50 @@ describe('check', () => {
     expect(cwd.output).toBe(join(repo, 'sub'));
   });
 
-  it('settles a failure even when the options were widened to onError throw', async () => {
-    const widened: ExecOptions = { onError: 'throw' };
+  it('returns a failing exit even when the options were widened to onError return', async () => {
+    const widened: ExecOptions = { onError: 'return' };
     const outcome = await run(CheckOutcome, (ctx) =>
       exec.check(ctx, 'widened', node('process.exit(5)'), widened),
     );
     expect(outcome).toMatchObject({ passed: false, code: 5 });
   });
 
-  it('replays a saved failure on resume without running the command again', async () => {
+  it('fails the run when the command is ended by a signal or times out', async () => {
+    await expect(
+      run(CheckOutcome, (ctx) =>
+        exec.check(ctx, 'killed', node("process.kill(process.pid, 'SIGKILL')")),
+      ),
+    ).rejects.toThrow('Step killed (exec) failed: Command exited with SIGKILL.');
+    await expect(
+      run(
+        CheckOutcome,
+        (ctx) => exec.check(ctx, 'slow', node('setTimeout(() => {}, 60000)'), { timeoutMs: 200 }),
+        'slow',
+      ),
+    ).rejects.toThrow(/^Step slow \(exec\) failed: .* exceeded its 200ms deadline\.$/u);
+  });
+
+  it('fails the run when the command cannot start, and a resume runs it again', async () => {
+    const definition = workflow(CheckOutcome, (ctx) =>
+      exec.check(ctx, 'tests', ['./check.sh'], { cwd: 'sub' }),
+    );
+    await expect(runWorkflow(definition, options('missing'))).rejects.toThrow(
+      /Cannot start \.\/check\.sh/u,
+    );
+    expect(runner.commands).toHaveLength(1);
+    // The fix (here, adding the script) happens outside the workflow; the resume runs the check.
+    await writeFile(join(repo, 'sub', 'check.sh'), '#!/bin/sh\necho checked\n', { mode: 0o755 });
+    const resumed = await runWorkflow(definition, { ...options('missing'), resume: true });
+    expect(runner.commands).toHaveLength(2);
+    expect(resumed.output).toEqual({
+      passed: true,
+      code: 0,
+      output: 'checked\n',
+      truncated: false,
+    });
+  });
+
+  it('replays a failing exit on resume without running the command again', async () => {
     const definition = workflow(CheckOutcome, async (ctx) => {
       const outcome = await exec.check(ctx, 'tests', node('process.exit(7)'));
       await ctx.step('tail', {

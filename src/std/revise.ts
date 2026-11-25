@@ -512,12 +512,7 @@ function earlierLine(fix: FixRound): string {
 /** The fixer's default prompt. */
 function fixPrompt(request: FixPromptInput): string {
   const { failure, earlier } = request;
-  const exit =
-    failure.code !== null
-      ? `exit code ${String(failure.code)}`
-      : failure.signal !== null
-        ? `signal ${failure.signal}`
-        : 'no exit code';
+  const exit = `exit code ${String(failure.code)}`;
   const context = [
     ...(request.task === null ? [] : [`### Task\n\n${request.task}`]),
     `### Last run\n\nThe check failed with ${exit}${failure.truncated ? '; this is the end of its output' : ''}:\n\n${fence(failure.output)}`,
@@ -549,12 +544,14 @@ function fixPrompt(request: FixPromptInput): string {
  * Run a check command and, while it fails, have an agent fix the code and run it again. Only the
  * command decides: an agent's report never makes the result green. The first `escalateAfter`
  * rounds go to the mechanic and the rest to the surgeon; a fix call that fails is journaled and the
- * loop goes on to the next check. Checks run through `std.exec.check`, so a failing command is
- * data and its output's end is shown to the next fixer, with the earlier rounds' reports.
+ * loop goes on to the next check. Checks run through `std.exec.check`, so a failing exit is data
+ * and its output's end is shown to the next fixer, with the earlier rounds' reports. A check that
+ * cannot start, times out or is killed is no verdict: it fails the run before any fixer sees it,
+ * and a resume runs it again.
  *
  * Steps, all under `<id>/`:
  *
- * - `check/<n>`: the check command after `n` fixes (`check/0` before any), a settled command.
+ * - `check/<n>`: the check command after `n` fixes (`check/0` before any); every exit is a result.
  * - `fix/<n>`: round `n`'s fix (from 1), a settled `std.types.WorkReport` call to the mechanic or
  *   the surgeon.
  *
@@ -569,6 +566,7 @@ function fixPrompt(request: FixPromptInput): string {
  * @throws TypeError - Before any effect, when the `mechanic` or `surgeon` slot is not filled,
  * `rounds` is not a positive integer, `escalateAfter` is not an integer from 0 to `rounds`, `task`
  * is blank, or `calls.worktree` is set without `worktree`.
+ * @throws ExecError - When a check cannot start, times out or is ended by a signal.
  */
 export async function fixUntilGreen(
   ctx: WorkflowContext,

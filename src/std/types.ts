@@ -945,32 +945,22 @@ export const ReviewReply: z.ZodObject<{
 export type ReviewReply = z.infer<typeof ReviewReply>;
 
 /**
- * What `check` in `std.exec` returns for a command: whether it passed, its exit, and the end of its
- * output. Plain JSON, so it also fits workflow outputs.
+ * What `check` in `std.exec` returns for a command that exited: whether the exit code passed, the
+ * code, and the end of its output. Plain JSON, so it also fits workflow outputs.
  */
 export const CheckOutcome: z.ZodObject<{
-  /** Whether the command succeeded with an accepted exit code. */
+  /** Whether the exit code is one the check accepts. */
   passed: z.ZodBoolean;
-  /** The exit code, or null when the process did not exit normally. */
-  code: z.ZodNullable<z.ZodInt>;
-  /** The signal that ended the process, or null. */
-  signal: z.ZodNullable<z.ZodString>;
-  /** The end of the combined stdout and stderr, or the failure message when there was none. */
+  /** The exit code. */
+  code: z.ZodInt;
+  /** The end of the combined stdout and stderr. */
   output: z.ZodString;
   /** Whether `output` leaves out part of what the command printed. */
   truncated: z.ZodBoolean;
 }> = z.object({
-  passed: z.boolean().describe('Whether the command succeeded with an accepted exit code.'),
-  code: z
-    .int()
-    .nullable()
-    .describe('The exit code, or null when the process did not exit normally.'),
-  signal: z.string().nullable().describe('The signal that ended the process, or null.'),
-  output: z
-    .string()
-    .describe(
-      'The end of the combined stdout and stderr, or the failure message when there was none.',
-    ),
+  passed: z.boolean().describe('Whether the exit code is one the check accepts.'),
+  code: z.int().describe('The exit code.'),
+  output: z.string().describe('The end of the combined stdout and stderr.'),
   truncated: z.boolean().describe('Whether output leaves out part of what the command printed.'),
 });
 /** A {@link CheckOutcome} value. */

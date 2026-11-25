@@ -212,7 +212,7 @@ describe('std result schemas', () => {
       'revise.EscalateResult(Ballot)': '04d4f80f28049ed4',
       'revise.EscalationSlot': '9a92ca356ea0ecdb',
       'revise.FixRound': 'e6c88c6a0bfed34c',
-      'revise.FixUntilGreenResult': 'f8244f18f09d619d',
+      'revise.FixUntilGreenResult': '36a864eb1b99566e',
       'select.Assignment(string, labels)': '960e9d5b1df23e57',
       'select.ClassifyResult(string)': '534adbf688753653',
       'select.ClassifyResult(string, labels)': '46bd7329552c71da',

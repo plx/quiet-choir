@@ -188,24 +188,24 @@ from an agent.
 
 ### Primitives and input helpers
 
-| Export                          | What it is                                                                                         |
-| ------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `isRepoPath(path)`              | Whether `path` is a repository-relative path (see below)                                           |
-| `RepoPath`                      | A string that satisfies `isRepoPath`; safe in agent output                                         |
-| `Sha`                           | Input-side: a full Git object ID, 40 or 64 lowercase hex characters                                |
-| `ShortSha`                      | Input-side: 7 to 64 lowercase hex characters                                                       |
-| `Sha256`                        | Input-side: a SHA-256 digest, 64 lowercase hex characters                                          |
-| `Key`                           | Input-side: a letter or digit, then up to 63 of `A-Za-z0-9._:-`; `ctx.id` leaves it unchanged      |
-| `Argv`                          | Input-side: `[program, ...args]`, a `Command` for `ctx.exec`                                       |
-| `limit(defaultValue, max, min)` | A bounded integer input with a default (see below)                                                 |
-| `Receipt`                       | Input-side: the `WriteFileResult` of `ctx.writeFile` or `std.exec.committedArtifact`               |
-| `Commit`                        | Input-side: one commit as `std.exec.log` returns it (see below)                                    |
-| `Criteria`                      | Input-side: a non-empty list of nonblank strings or `Criterion`s, as `checklist` takes them        |
-| `CheckOutcome`                  | What `std.exec.check` returns: `passed`, `code`, `signal`, `output` (may be empty) and `truncated` |
-| `Rationale`                     | Non-empty text: why, citing the evidence that decided it                                           |
-| `Evidence`                      | Non-empty text: file:line references, command output or quotes                                     |
-| `Summary`                       | Non-empty summary text                                                                             |
-| `Score`                         | An integer from 1 (poor) to 10 (excellent)                                                         |
+| Export                          | What it is                                                                                        |
+| ------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `isRepoPath(path)`              | Whether `path` is a repository-relative path (see below)                                          |
+| `RepoPath`                      | A string that satisfies `isRepoPath`; safe in agent output                                        |
+| `Sha`                           | Input-side: a full Git object ID, 40 or 64 lowercase hex characters                               |
+| `ShortSha`                      | Input-side: 7 to 64 lowercase hex characters                                                      |
+| `Sha256`                        | Input-side: a SHA-256 digest, 64 lowercase hex characters                                         |
+| `Key`                           | Input-side: a letter or digit, then up to 63 of `A-Za-z0-9._:-`; `ctx.id` leaves it unchanged     |
+| `Argv`                          | Input-side: `[program, ...args]`, a `Command` for `ctx.exec`                                      |
+| `limit(defaultValue, max, min)` | A bounded integer input with a default (see below)                                                |
+| `Receipt`                       | Input-side: the `WriteFileResult` of `ctx.writeFile` or `std.exec.committedArtifact`              |
+| `Commit`                        | Input-side: one commit as `std.exec.log` returns it (see below)                                   |
+| `Criteria`                      | Input-side: a non-empty list of nonblank strings or `Criterion`s, as `checklist` takes them       |
+| `CheckOutcome`                  | What `std.exec.check` returns: `passed`, the exit `code`, `output` (may be empty) and `truncated` |
+| `Rationale`                     | Non-empty text: why, citing the evidence that decided it                                          |
+| `Evidence`                      | Non-empty text: file:line references, command output or quotes                                    |
+| `Summary`                       | Non-empty summary text                                                                            |
+| `Score`                         | An integer from 1 (poor) to 10 (excellent)                                                        |
 
 `isRepoPath` accepts 1 to 500 characters that are not absolute on POSIX or Windows, with no drive
 letter (`C:/x`, `C:x`), backslash or NUL, and no `.`, `..`, empty or `.git` segment;
@@ -491,9 +491,10 @@ Git would read it as an option, so text from data cannot change the command. `gi
 - `git(ctx, id, args, options?)` records `git <args>` as `id` and returns its complete stdout. It
   throws `Incomplete Git output: <id>` when stdout or stderr was truncated, since a partial listing
   cannot prove coverage, and the `ExecError` of a failed command.
-- `check(ctx, id, command, options?)` records `command` as `id` with `onError: 'return'` and returns
-  a `CheckOutcome`, so a failing command is data and a resume returns the same outcome. It throws
-  only what `ctx.exec` does not settle, such as cancellation or a checkpoint failure.
+- `check(ctx, id, command, options?)` records `command` as `id`, accepting every exit code, and
+  returns a `CheckOutcome`, so a failing exit is data and a resume returns the same outcome. A
+  command that cannot start, times out or is ended by a signal throws its `ExecError` and fails the
+  run; it is not recorded as completed, so a resume runs it again.
 - `head(ctx, id, options?)` records `git rev-parse HEAD` and returns the full commit ID. It throws
   as `git` does (a repository without a commit, for example) or when the output is not a full object
   ID.
@@ -529,10 +530,11 @@ Git would read it as an option, so text from data cannot change the command. `gi
   (below) and returns a `Receipt`: the absolute target under `ctx.cwd`, the content's SHA-256 and
   byte length, and `previousSha256: null`.
 
-`check` passes when the command settles successfully: an exit code in `okExitCodes` (default `[0]`)
-and no signal. Its `output` is the end of stdout followed by stderr, at most 4000 characters. After
-a failure only the saved 1024-character tail of each stream remains, and when both are empty
-`output` is the failure message. `truncated` reports that `output` may leave something out.
+`check` passes when the exit code is in `okExitCodes` (default `[0]`; `'any'` passes every exit).
+Its `output` is the end of stdout followed by stderr from the whole capture, at most 4000
+characters. `truncated` reports that `output` may leave something out. A missing tool or a hung
+suite is not a verdict, so no fixer is asked to fix it: install the tool or raise `timeoutMs`
+(default 300000), then resume.
 
 `diff`, `diffStat` and `changedFiles` without a range cover the unstaged changes; pass `HEAD` for
 every uncommitted change to tracked files, or a range such as `main...HEAD`. Untracked files are
@@ -1063,7 +1065,8 @@ never passed, or passed after a round whose fix call failed), `checks` (every `C
 
 Steps, under `<id>/`:
 
-- `check/<n>`: the check after `n` fixes, through `std.exec.check`, so a failing command is data.
+- `check/<n>`: the check after `n` fixes, through `std.exec.check`, so a failing exit is data; a
+  check that cannot start, times out or is killed fails the run before any fixer sees it.
 - `fix/<n>`: round `n`'s fix from 1, an `onError: 'return'` call with schema `std.types.WorkReport`.
 
 Fails the run: an unfilled slot, an invalid `rounds` or `escalateAfter`, a blank `task`, or

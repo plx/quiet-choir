@@ -77,7 +77,7 @@ describe('agent-output schemas', () => {
       Change: 'bf18c5f4f85e0341',
       ChangeKind: 'ce403e21efb57f19',
       Changes: '93b77a1cbf70ad88',
-      CheckOutcome: '3d12231247fb4d49',
+      CheckOutcome: '3170c49c5c9df973',
       CheckStatus: '3a1fd89e37693b6d',
       Citation: '94d0ba4c53260c2b',
       Claims: '4468014e15ea8def',
@@ -497,9 +497,10 @@ describe('input-side primitives', () => {
   });
 
   it('CheckOutcome validates a command outcome', () => {
-    const outcome = { passed: false, code: null, signal: 'SIGTERM', output: '', truncated: false };
+    const outcome = { passed: false, code: 1, output: '', truncated: false };
     expect(types.CheckOutcome.parse(outcome)).toEqual(outcome);
     expect(valid(types.CheckOutcome, { ...outcome, code: 1.5 })).toBe(false);
+    expect(valid(types.CheckOutcome, { ...outcome, code: null })).toBe(false);
   });
 });
 
@@ -612,8 +613,7 @@ it('infers the documented value types', () => {
   expectTypeOf<types.ReviewReply['decision']>().toEqualTypeOf<'continue' | 'redo' | 'stop'>();
   expectTypeOf<types.CheckOutcome>().toEqualTypeOf<{
     passed: boolean;
-    code: number | null;
-    signal: string | null;
+    code: number;
     output: string;
     truncated: boolean;
   }>();

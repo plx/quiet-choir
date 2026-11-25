@@ -485,6 +485,23 @@ describe('fixUntilGreen', () => {
     roundTrip(revise.FixUntilGreenResult, result.output);
   });
 
+  it('fails the run, calling no fixer, when the check cannot start; a resume runs it again', async () => {
+    const harness = fixer([]);
+    const missing = repair({ check: ['./no-such-check.sh'] });
+    await expect(run(missing, harness)).rejects.toThrow(/Cannot start \.\/no-such-check\.sh/u);
+    expect(harness.calls).toHaveLength(0);
+    await writeFile(join(root, 'no-such-check.sh'), '#!/bin/sh\necho ok\n', { mode: 0o755 });
+    const resumed = await runWorkflow(missing, {
+      ...runOptions(root, 'std'),
+      harness,
+      processRunner: new NodeProcessRunner(),
+      input: null,
+      resume: true,
+    });
+    expect(resumed.output).toMatchObject({ outcome: 'green', rounds: 0, status: 'complete' });
+    expect(harness.calls).toHaveLength(0);
+  });
+
   it('fixes with the mechanic, checks after every round and replays without rerunning', async () => {
     const harness = fixer(['fix/fix/2']);
     const result = await replayAfterTail(
@@ -508,7 +525,7 @@ describe('fixUntilGreen', () => {
       status: 'complete',
     });
     expect(output.checks.map((outcome) => outcome.passed)).toEqual([false, false, true]);
-    expect(output.checks[0]).toMatchObject({ code: 1, signal: null });
+    expect(output.checks[0]).toMatchObject({ passed: false, code: 1 });
     expect(output.checks[0]?.output).toContain('FAIL: state is red');
     expect(output.checks[2]?.output).toContain('all tests passed');
     expect(output.fixes.map((fix) => [fix.round, fix.slot, fix.report?.status])).toEqual([

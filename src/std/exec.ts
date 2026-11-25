@@ -3,7 +3,7 @@
  * public context methods:
  *
  * - {@link json} formats data for prompts.
- * - {@link check} runs a command whose failure is data, such as a test suite, and returns a
+ * - {@link check} runs a command whose exit is data, such as a test suite, and returns a
  *   {@link CheckOutcome} with the end of its output.
  * - {@link git} returns complete Git output; {@link head}, {@link status}, {@link assertClean},
  *   {@link diff}, {@link diffStat}, {@link changedFiles}, {@link commits} and {@link log} build on
@@ -98,32 +98,16 @@ export async function git(
 /** The most characters of output a {@link CheckOutcome} keeps: the end of the combined streams. */
 const CHECK_OUTPUT_CHARS = 4000;
 
-/** Characters of each stream a settled command failure keeps (`ExecStepError` tails). */
-const FAILURE_TAIL_CHARS = 1024;
-
 /** How many `status` lines an {@link assertClean} failure message lists. */
 const DIRTY_LINES_SHOWN = 10;
-
-/** Whether the UTF-16 code unit at `index` of `text` is a low (trailing) surrogate. */
-function isLowSurrogate(text: string, index: number): boolean {
-  const code = text.charCodeAt(index);
-  return code >= 0xdc00 && code <= 0xdfff;
-}
 
 /** The last `max` UTF-16 code units of `text`, one fewer when the cut would split a pair. */
 function tailChars(text: string, max: number): string {
   if (text.length <= max) return text;
   const start = text.length - max;
-  return text.slice(isLowSurrogate(text, start) ? start + 1 : start);
-}
-
-/**
- * A saved failure tail without the lone low surrogate its cut can leave at the start: the runtime
- * keeps the last 1024 UTF-16 code units of a stream, which may begin inside a pair.
- */
-function savedTail(tail: string | undefined): string {
-  if (tail === undefined) return '';
-  return isLowSurrogate(tail, 0) ? tail.slice(1) : tail;
+  const code = text.charCodeAt(start);
+  // A low (trailing) surrogate at the cut would leave half a pair at the start.
+  return text.slice(code >= 0xdc00 && code <= 0xdfff ? start + 1 : start);
 }
 
 /** Stdout then stderr, separated by a newline when stdout does not end with one. */
@@ -133,28 +117,27 @@ function joinStreams(stdout: string, stderr: string): string {
 }
 
 /**
- * Run `command` as the durable command `id` and return its outcome as data, for commands whose
- * failure the workflow handles, such as a test suite or a build. It is
- * `ctx.exec(id, command, { ...options, onError: 'return' })`, so a failure is saved and a resume
- * returns the same outcome without running the command again.
+ * Run `command` as the durable command `id` and return its exit as data, for commands whose
+ * failure the workflow handles, such as a test suite or a build. Every exit code is a saved result,
+ * so a resume returns the same outcome without running the command again.
  *
- * `passed` is whether the command settled successfully: it exited with a code in `okExitCodes`
- * (default `[0]`) and no signal. `output` is the end of stdout followed by stderr, at most 4000
- * characters and never starting inside a surrogate pair. After a failure only the saved
- * 1024-character tail of each stream is available (less a half pair its cut leaves at the start),
- * and when both are empty `output` is the
- * failure message instead (a command that could not start, for example). `truncated` reports that
- * `output` may leave something out: the capture overflowed `maxOutputBytes`, the text was cut to
- * its end, or a saved failure tail was full.
+ * `passed` is whether the exit code is in `okExitCodes` (default `[0]`; `'any'` passes every exit).
+ * `output` is the end of stdout followed by stderr, at most 4000 characters and never starting
+ * inside a surrogate pair. `truncated` reports that `output` may leave something out: the capture
+ * overflowed `maxOutputBytes` or the text was cut to its end.
+ *
+ * A command that never exits normally is not a verdict, so it fails the run like any `ctx.exec`
+ * failure and a resume runs it again: one that cannot start (a typo or a missing tool), times out
+ * (`timeoutMs`, default 300000) or is ended by a signal. Fix the cause, such as installing the tool
+ * or raising `timeoutMs`, and resume; `fixUntilGreen` and an `escalate` `accept` never hand such a
+ * failure to an agent as code to fix.
  *
  * @param ctx - The workflow context.
  * @param id - The command's step ID, scoped like any `ctx.exec` call.
  * @param command - The argv to run, or an explicit `{ shell }` program.
- * @param options - `ctx.exec` options; `onError` is always `'return'`, so it is not accepted and a
- * forwarded value is overridden.
- * @returns Whether the command passed, its exit code and signal, and the end of its output.
- * @throws Error - Only failures `ctx.exec` does not settle, such as cancellation or a checkpoint
- * failure.
+ * @param options - `ctx.exec` options; `onError` is not accepted, and a forwarded value is ignored.
+ * @returns Whether the command passed, its exit code, and the end of its output.
+ * @throws ExecError - When the command cannot start, times out or is ended by a signal.
  */
 export async function check(
   ctx: WorkflowContext,
@@ -162,28 +145,16 @@ export async function check(
   command: Command,
   options?: Omit<ExecOptions, 'onError'>,
 ): Promise<CheckOutcome> {
-  // A caller can still widen `options` to `ExecOptions`, so force the settled overload at runtime.
-  const settled = await ctx.exec(id, command, { ...options, onError: 'return' });
-  if (settled.ok) {
-    const { code, signal, stdout, stderr, truncated } = settled.value;
-    const combined = joinStreams(stdout, stderr);
-    const output = tailChars(combined, CHECK_OUTPUT_CHARS);
-    return { passed: true, code, signal, output, truncated: truncated || output !== combined };
-  }
-  const { error } = settled;
-  const tails = joinStreams(savedTail(error.stdoutTail), savedTail(error.stderrTail));
-  const shown = tails === '' ? error.message : tails;
-  const output = tailChars(shown, CHECK_OUTPUT_CHARS);
-  return {
-    passed: false,
-    code: error.code ?? null,
-    signal: error.signal ?? null,
-    output,
-    truncated:
-      output !== shown ||
-      (error.stdoutTail ?? '').length >= FAILURE_TAIL_CHARS ||
-      (error.stderrTail ?? '').length >= FAILURE_TAIL_CHARS,
-  };
+  const { okExitCodes = [0], ...rest }: ExecOptions = options ?? {};
+  // Every exit is data; `'any'` still rejects a signal, a timeout or a command that cannot start.
+  // A caller can still widen `options` to `ExecOptions`, so force the throwing overload at runtime.
+  const result = await ctx.exec(id, command, { ...rest, okExitCodes: 'any', onError: 'throw' });
+  const { code, stdout, stderr, truncated } = result;
+  if (code === null) throw new Error(`Command ${id} reported no exit code.`);
+  const combined = joinStreams(stdout, stderr);
+  const output = tailChars(combined, CHECK_OUTPUT_CHARS);
+  const passed = okExitCodes === 'any' || okExitCodes.includes(code);
+  return { passed, code, output, truncated: truncated || output !== combined };
 }
 
 /**

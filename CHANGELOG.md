@@ -30,8 +30,9 @@
   ranking, `topoWaves`, digests of any JSON value, and `health(...parts)` with the `Health` and
   `Coverage` schemas), `std.text` (`brief`, whose `context` takes any JSON value and names the path
   of one that is not, other prompt text, and the Markdown renderers `findings`, `checklist`, `gate`,
-  `plan` and `commits`), the `std.exec` helpers `check`, `head`, `status`, `assertClean`, `diff`,
-  `diffStat`, `changedFiles`, `commits` and `log` (a `std.types.Commit` per commit from one
+  `plan` and `commits`), the `std.exec` helpers `check` (every exit code a durable verdict; a
+  command that cannot start, times out or is killed fails the run), `head`, `status`, `assertClean`,
+  `diff`, `diffStat`, `changedFiles`, `commits` and `log` (a `std.types.Commit` per commit from one
   `git log -z`), whose range argument is refused before any effect when it is empty, starts with `-`
   or contains NUL, and `std.flow` (`untilDry` as `<id>/round/<n>/<leaf>`, reporting `ended`; `waves`
   as `<id>/wave/<n>/<key>/<leaf>`; and `each`). Patterns, each under `ctx.scope(id)` with its team

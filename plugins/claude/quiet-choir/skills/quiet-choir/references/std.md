@@ -340,7 +340,8 @@ settled `types.WorkReport` call), then checks again (`<id>/check/<n>`). Each fix
 and the earlier attempts, and is told not to weaken tests. `fixedBy` names the slot whose fix made
 the check pass; it is null when no fix call did, as when the pass followed a failed fix call.
 `outcome` is `green` only when the last check passed; the status is `degraded` when a fix call
-failed.
+failed. A check that cannot start, times out or is killed is not a verdict: it fails the run before
+any fixer sees it, and a resume runs it again.
 
 <!-- skills-check: example pattern-std-fix-tests -->
 
