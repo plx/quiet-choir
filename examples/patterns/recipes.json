@@ -123,5 +123,95 @@
     "id": "pattern-decide-then-act-fixtures",
     "file": "decide-then-act.fixtures.json",
     "kind": "fixture"
+  },
+  {
+    "id": "pattern-std-bug-hunt",
+    "file": "std-bug-hunt.workflow.ts",
+    "kind": "workflow"
+  },
+  {
+    "id": "pattern-std-code-review",
+    "file": "std-code-review.workflow.ts",
+    "kind": "workflow"
+  },
+  {
+    "id": "pattern-std-doc-polish",
+    "file": "std-doc-polish.workflow.ts",
+    "kind": "workflow"
+  },
+  {
+    "id": "pattern-std-fix-tests",
+    "file": "std-fix-tests.workflow.ts",
+    "kind": "workflow"
+  },
+  {
+    "id": "pattern-std-design-tournament",
+    "file": "std-design-tournament.workflow.ts",
+    "kind": "workflow"
+  },
+  {
+    "id": "pattern-std-triage",
+    "file": "std-triage.workflow.ts",
+    "kind": "workflow"
+  },
+  {
+    "id": "pattern-std-changelog",
+    "file": "std-changelog.workflow.ts",
+    "kind": "workflow"
+  },
+  {
+    "id": "pattern-std-plan-and-build",
+    "file": "std-plan-and-build.workflow.ts",
+    "kind": "workflow"
+  },
+  {
+    "id": "pattern-std-plan-and-build-fixtures",
+    "file": "std-plan-and-build.fixtures.json",
+    "kind": "fixture"
+  },
+  {
+    "id": "pattern-std-acceptance",
+    "file": "std-acceptance.workflow.ts",
+    "kind": "workflow"
+  },
+  {
+    "id": "pattern-std-release-gate",
+    "file": "std-release-gate.workflow.ts",
+    "kind": "workflow"
+  },
+  {
+    "id": "pattern-std-incident",
+    "file": "std-incident.workflow.ts",
+    "kind": "workflow"
+  },
+  {
+    "id": "pattern-std-research",
+    "file": "std-research.workflow.ts",
+    "kind": "workflow"
+  },
+  {
+    "id": "pattern-std-parallel-edits",
+    "file": "std-parallel-edits.workflow.ts",
+    "kind": "workflow"
+  },
+  {
+    "id": "pattern-std-approved-plan",
+    "file": "std-approved-plan.workflow.ts",
+    "kind": "workflow"
+  },
+  {
+    "id": "pattern-std-vote",
+    "file": "std-vote.workflow.ts",
+    "kind": "workflow"
+  },
+  {
+    "id": "pattern-std-escalate",
+    "file": "std-escalate.workflow.ts",
+    "kind": "workflow"
+  },
+  {
+    "id": "pattern-std-route",
+    "file": "std-route.workflow.ts",
+    "kind": "workflow"
   }
 ]

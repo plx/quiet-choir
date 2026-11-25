@@ -80,6 +80,21 @@ export function jsonValue(
   return visit(value, '$');
 }
 
+/**
+ * The copy of a supplied workflow input that its schema parses: the canonical (key-sorted,
+ * undefined-free) JSON copy, as a resume without input parses the saved copy, so record keys reach
+ * the schema and the body in the same order on both runs. Input that is not JSON is returned as
+ * given; the schema or the saved copy reports it. The run and the resume check both use it, so a
+ * resume with the same supplied input parses it the same way. @internal
+ */
+export function canonicalInput(raw: unknown): unknown {
+  try {
+    return jsonValue(raw, 'Workflow input');
+  } catch {
+    return raw;
+  }
+}
+
 /** Hash canonical JSON for explicit step dependency checks. */
 export function digest(value: unknown): string {
   return createHash('sha256')

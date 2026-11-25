@@ -635,13 +635,27 @@ reads an epic's sub-issues (or its checklist) in one command, and the pure `next
 next ticket and says why every other open one was skipped; see
 [GitHub reads, waits and writes](docs/github.md).
 
-`quiet-choir/std` is the opt-in standard library, built only on the public entry point. A roster
-entry can spread one of its per-harness entries, `{ ...std.claude.ReadOnly, description: '...' }`:
-`std.claude` and `std.codex` carry the runtime's text, read-only and edit configurations as `Text`,
-`ReadOnly` and `Edit`, and `std.tiers` adds model and effort tiers such as `Mechanic`. `std.exec`
-has `json`, `git` (complete stdout or throw) and `committedArtifact` (publish a new file through a
-managed worktree), and `std.patterns` has `reviewRevise` and `tolerantPanel`, which take the context
-and a typed team. It is a seed for the dog-food ports; see
+`quiet-choir/std` is the opt-in, batteries-included standard library, built only on the public entry
+point, so a workflow spends its lines on what is specific to it. Its roster inventory composes by
+spread: capability fragments (`std.claude.ReadOnly`, `std.claude.shell(rules)`, `std.codex.Edit`),
+model tiers (`std.tiers.Mechanic`), limits, personas, complete `std.roles` such as `Skeptic` and
+`Mechanic`, and ready-made `std.rosters`. `std.types` holds Codex-compatible schemas for recurring
+agent outputs (findings, refutations, critiques, plans, tasks, hypotheses), and `std.patterns` holds
+team-typed patterns such as adversarial `verify`, `hunt`, `critiqueRevise`, `fixUntilGreen`,
+`tournament`, `mapReduce` and `gate`. Each journals the failures it tolerates, reports them as
+`failures` and a `complete` or `degraded` `status`, and returns a result whose Zod schema of the
+same name can be a workflow's `output`. A bug hunt with skeptic panels is one call, and
+`result.findings` holds the confirmed bugs, most severe first:
+
+```ts
+const result = await std.patterns.hunt(ctx, {
+  id: 'hunt',
+  team: { finder: ctx.roster.Reviewer, skeptic: ctx.roster.Skeptic },
+  subject: 'src/workflow/runtime',
+});
+```
+
+See [the standard library](docs/std.md) and
 [standard library entries](docs/roster.md#standard-library-entries).
 
 ## Progress and monitoring

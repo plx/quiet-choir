@@ -1,9 +1,12 @@
 /**
- * Model tiers from the native epic scripts: each fixes only a Claude model and effort, so it
- * composes with a capability entry by spread, as in
+ * Model tiers from the native epic and merge-down scripts: each fixes only a Claude model and
+ * effort, so it composes with a capability entry by spread, as in
  * `Mechanic: { ...std.claude.Edit, ...std.tiers.Mechanic }`. A tier alone is a valid roster entry
  * with Claude's default capabilities. Each tier is frozen data; its `description` replaces the
  * capability entry's when spread after it.
+ *
+ * There are no Codex tiers: Codex model names change between releases, so a Codex entry sets its
+ * own `effort` (and `model`, when it needs one) directly.
  *
  * @module
  */
@@ -80,4 +83,12 @@ export const Surgeon: Tier<'opus', 'high'> = Object.freeze({
   model: 'opus',
   effort: 'high',
   description: 'Implements subtle changes; takes over when a mechanic fails.',
+});
+
+/** Opus at extra-high effort: the final, escalated judgement that replaces a first pass. */
+export const Judge: Tier<'opus', 'xhigh'> = Object.freeze({
+  harness: 'claude',
+  model: 'opus',
+  effort: 'xhigh',
+  description: 'Gives the final, escalated judgement.',
 });

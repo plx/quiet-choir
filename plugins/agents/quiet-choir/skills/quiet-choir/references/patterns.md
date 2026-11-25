@@ -18,32 +18,33 @@ shared `roster.ts`, its prompt strings become `prompts/*.md` templates, and a lo
 (such as the review/revise loop below) takes it from `lib/teams.ts`, filled from the roster where
 the workflow calls it.
 
-| Need                                                                    | Recipe                                                              |
-| ----------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| Declare agents once and bind options for a helper                       | [Roster and bound agents](#roster-and-bound-agents)                 |
-| Package several workflows with a shared roster, prompts and teams       | [Workflow packages](packages.md)                                    |
-| Combine Claude and Codex reviews; retry failed reviewers                | [Cross-harness fan-out/fan-in](#cross-harness-fan-outfan-in)        |
-| Preserve a quorum decision despite failed reviewers                     | [Failure-tolerant panel](#failure-tolerant-panel)                   |
-| Discover until no new findings appear                                   | [Loop until dry](#loop-until-dry)                                   |
-| Run sequential stages for each item                                     | [Per-item pipeline](#per-item-pipeline)                             |
-| Stop revising after approval or a round limit; fill a typed team        | [Bounded review/revise](#bounded-reviewrevise)                      |
-| Reuse a helper without ID collisions                                    | [Scoped helper](#reusable-helper)                                   |
-| Isolate parallel file edits                                             | [Worktree per item](#worktree-per-item)                             |
-| Wait with a stable deadline                                             | [Polling and deadlines](#polling-and-deadlines)                     |
-| Reuse old completed work after a fix                                    | [Salvage with a fork](#salvage-an-old-run)                          |
-| Freeze a failure before selecting a fallback                            | [Latch an outcome](#latch-an-outcome)                               |
-| Retry a small extraction without repeating expensive work               | [Work, then extract](#work-then-extract)                            |
-| Test before native calls                                                | [Rehearse for free](#rehearse-for-free)                             |
-| Route before an agent runs and grade after; fall back on low confidence | [Decide, then act](#decide-then-act)                                |
-| Keep a human decision attached to its saved plan                        | [Human review](#human-review)                                       |
-| Branch on a trusted command's exit code                                 | [Commands and test verdicts](#commands-and-test-verdicts)           |
-| Edit existing text with an optimistic baseline guard                    | [File snapshots and publication](#file-snapshots-and-publication)   |
-| Restore a Git file after a journaled mutation                           | [Hash guard for mutation](#hash-guard-for-mutation)                 |
-| Read GitHub state through `gh` with typed results                       | [GitHub snapshots through gh](#github-snapshots-through-gh)         |
-| Fix CI until it passes, keyed by head SHA                               | [CI-gated fix loop](#ci-gated-fix-loop)                             |
-| Burn down an epic one ticket per run                                    | [Ticket loop](#ticket-loop)                                         |
-| Recognize tempting but unsafe code                                      | [Traps](#traps)                                                     |
-| See the recipes expanded into strict ports                              | [Workflow Lab acceptance recipes](#workflow-lab-acceptance-recipes) |
+| Need                                                                          | Recipe                                                              |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Declare agents once and bind options for a helper                             | [Roster and bound agents](#roster-and-bound-agents)                 |
+| Package several workflows with a shared roster, prompts and teams             | [Workflow packages](packages.md)                                    |
+| Hunt, verify, vote, critique, tournament, gate, research and more, ready-made | [Standard library patterns](std.md)                                 |
+| Combine Claude and Codex reviews; retry failed reviewers                      | [Cross-harness fan-out/fan-in](#cross-harness-fan-outfan-in)        |
+| Preserve a quorum decision despite failed reviewers                           | [Failure-tolerant panel](#failure-tolerant-panel)                   |
+| Discover until no new findings appear                                         | [Loop until dry](#loop-until-dry)                                   |
+| Run sequential stages for each item                                           | [Per-item pipeline](#per-item-pipeline)                             |
+| Stop revising after approval or a round limit; fill a typed team              | [Bounded review/revise](#bounded-reviewrevise)                      |
+| Reuse a helper without ID collisions                                          | [Scoped helper](#reusable-helper)                                   |
+| Isolate parallel file edits                                                   | [Worktree per item](#worktree-per-item)                             |
+| Wait with a stable deadline                                                   | [Polling and deadlines](#polling-and-deadlines)                     |
+| Reuse old completed work after a fix                                          | [Salvage with a fork](#salvage-an-old-run)                          |
+| Freeze a failure before selecting a fallback                                  | [Latch an outcome](#latch-an-outcome)                               |
+| Retry a small extraction without repeating expensive work                     | [Work, then extract](#work-then-extract)                            |
+| Test before native calls                                                      | [Rehearse for free](#rehearse-for-free)                             |
+| Route before an agent runs and grade after; fall back on low confidence       | [Decide, then act](#decide-then-act)                                |
+| Keep a human decision attached to its saved plan                              | [Human review](#human-review)                                       |
+| Branch on a trusted command's exit code                                       | [Commands and test verdicts](#commands-and-test-verdicts)           |
+| Edit existing text with an optimistic baseline guard                          | [File snapshots and publication](#file-snapshots-and-publication)   |
+| Restore a Git file after a journaled mutation                                 | [Hash guard for mutation](#hash-guard-for-mutation)                 |
+| Read GitHub state through `gh` with typed results                             | [GitHub snapshots through gh](#github-snapshots-through-gh)         |
+| Fix CI until it passes, keyed by head SHA                                     | [CI-gated fix loop](#ci-gated-fix-loop)                             |
+| Burn down an epic one ticket per run                                          | [Ticket loop](#ticket-loop)                                         |
+| Recognize tempting but unsafe code                                            | [Traps](#traps)                                                     |
+| See the recipes expanded into strict ports                                    | [Workflow Lab acceptance recipes](#workflow-lab-acceptance-recipes) |
 
 ## Roster and bound agents
 

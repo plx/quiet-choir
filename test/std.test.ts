@@ -1,6 +1,8 @@
-// quiet-choir/std roster entries and tiers (#588). The preset entries are golden-tested against a
-// literal table of the former text/readonly/edit preset values through the capability manifest, so
-// drift from those values fails here. The type assertions are checked by `npm run typecheck`, in the
+// quiet-choir/std roster entries and tiers (#588). The text, read-only and edit entries are
+// golden-tested against a literal table of the former text/readonly/edit preset values through the
+// capability manifest, so drift from those values fails here. The rest of the roster side (shells,
+// limits, personas, roles, rosters, bash rules) is in std-roster.test.ts, the lenses in
+// std-lenses.test.ts. The type assertions are checked by `npm run typecheck`, in the
 // style of test/roster-types.test.ts: a workflow body that never runs holds one `@ts-expect-error`
 // per rejected entry.
 import { describe, expect, expectTypeOf, it } from 'vitest';
@@ -94,7 +96,7 @@ describe('std.codex', () => {
 });
 
 describe('std.tiers', () => {
-  it('has the seven native tiers, each pinned to Claude with a model and effort', () => {
+  it('has the seven native tiers and Judge, each pinned to Claude with a model and effort', () => {
     const expected = {
       Clerk: ['haiku', 'low'],
       Copyist: ['sonnet', 'low'],
@@ -103,6 +105,7 @@ describe('std.tiers', () => {
       Planner: ['opus', 'high'],
       Skeptic: ['opus', 'medium'],
       Surgeon: ['opus', 'high'],
+      Judge: ['opus', 'xhigh'],
     };
     expect(Object.keys(std.tiers).sort()).toEqual(Object.keys(expected).sort());
     for (const [name, [model, effort]] of Object.entries(expected)) {
@@ -136,18 +139,45 @@ describe('std.tiers', () => {
   });
 });
 
-it('freezes every entry and tier, including tool lists', () => {
-  const groups: readonly Readonly<Record<string, object>>[] = [std.claude, std.codex, std.tiers];
-  for (const group of groups) {
-    for (const entry of Object.values(group)) {
-      expect(Object.isFrozen(entry)).toBe(true);
-      for (const value of Object.values(entry) as unknown[]) {
-        if (typeof value === 'object') expect(Object.isFrozen(value)).toBe(true);
-      }
+/** Expect `value` and every object or array inside it to be frozen. */
+function expectDeepFrozen(value: unknown, path: string): void {
+  if (typeof value !== 'object' || value === null) return;
+  expect(Object.isFrozen(value), path).toBe(true);
+  for (const [key, inner] of Object.entries(value)) expectDeepFrozen(inner, `${path}.${key}`);
+}
+
+it('freezes every data value of the roster and lens namespaces, nested lists too', () => {
+  const groups = {
+    claude: std.claude,
+    codex: std.codex,
+    tiers: std.tiers,
+    limits: std.limits,
+    personas: std.personas,
+    roles: std.roles,
+    rosters: std.rosters,
+    bash: std.bash,
+    lenses: std.lenses,
+  };
+  let checked = 0;
+  for (const [name, group] of Object.entries(groups)) {
+    for (const [key, value] of Object.entries(group as Readonly<Record<string, unknown>>)) {
+      // Functions build fresh frozen values; std-roster.test.ts checks those. A Zod schema such
+      // as std.lenses.LensSchema keeps internal caches; std-result-schemas.test.ts pins it.
+      if (typeof value === 'function' || value instanceof z.ZodType) continue;
+      expect(['object', 'string'], `std.${name}.${key}`).toContain(typeof value);
+      expectDeepFrozen(value, `std.${name}.${key}`);
+      checked++;
     }
   }
+  expect(checked).toBeGreaterThan(70);
   expect(() => {
     (std.claude.ReadOnly.tools as unknown as string[]).push('Bash');
+  }).toThrow(TypeError);
+  expect(() => {
+    (std.bash.gitRead as string[]).push('Bash(git push:*)');
+  }).toThrow(TypeError);
+  expect(() => {
+    (std.roles.Skeptic as { model: string }).model = 'haiku';
   }).toThrow(TypeError);
 });
 

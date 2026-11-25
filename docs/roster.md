@@ -118,45 +118,129 @@ filled `maxTurns` or `maxBudgetUsd` stays out of the fingerprint.
 
 ## Standard library entries
 
-`quiet-choir/std` ships roster entry fragments to spread into an entry, so a common configuration
-has one spelling instead of a copied literal. They carry the runtime's text, read-only and edit
-configurations, per harness (ADR 0063 §3), as frozen data with a short `description` the spreading
-entry usually replaces:
+`quiet-choir/std` ships a roster inventory so a common configuration has one spelling instead of a
+copied literal ([ADR 0068](decisions/0068-standard-library-scope.md) §2). It composes along four
+axes, spread in this order so each later `description` wins: a capability fragment (`std.claude`,
+`std.codex`), a model tier (`std.tiers`), limits (`std.limits`) and a persona (`std.personas`).
+`std.roles` names the useful combinations as complete entries, and `std.rosters` declares them.
+Every value is frozen data:
 
 ```ts
+import { defineRoster } from 'quiet-choir';
 import * as std from 'quiet-choir/std';
 
 export const roster = defineRoster({
   Reviewer: { ...std.claude.ReadOnly, description: 'Reviews the diff.' },
   Checker: { ...std.codex.ReadOnly, effort: 'high' },
-  Mechanic: { ...std.claude.Edit, ...std.tiers.Mechanic },
+  Mechanic: { ...std.claude.Edit, ...std.tiers.Mechanic, ...std.limits.Hour },
+  Skeptic: std.roles.Skeptic,
+  Tester: {
+    ...std.claude.shell([...std.bash.gitRead, ...std.bash.nodeCheck]),
+    ...std.tiers.Mechanic,
+    ...std.personas.Tester,
+    appendSystemPrompt: std.personas.join(
+      std.personas.Tester.appendSystemPrompt,
+      std.personas.ShellEtiquette,
+    ),
+  },
+  Fixer: std.roles.fixer([...std.bash.nodeCheck, ...std.bash.gitCommit]),
 });
 ```
 
-| Entry                 | Tools or sandbox              | `maxTurns` | `maxBudgetUsd` | `timeoutMs` |
-| --------------------- | ----------------------------- | ---------- | -------------- | ----------- |
-| `std.claude.Text`     | none                          | 10         | 0.5            | 300,000     |
-| `std.claude.ReadOnly` | Read, Grep, Glob              | 25         | 2              | 900,000     |
-| `std.claude.Edit`     | Read, Grep, Glob, Edit, Write | 40         | 5              | 1,800,000   |
-| `std.codex.Text`      | `sandbox: 'read-only'`        | -          | -              | 300,000     |
-| `std.codex.ReadOnly`  | `sandbox: 'read-only'`        | -          | -              | 900,000     |
-| `std.codex.Edit`      | `sandbox: 'workspace-write'`  | -          | -              | 1,800,000   |
+The capability fragments carry the runtime's text, read-only and edit configurations per harness
+(ADR 0063 §3), plus a web reader and allowlisted shells:
+
+| Entry                       | Tools or sandbox                                    | Access  | `maxTurns` | `maxBudgetUsd` | `timeoutMs` |
+| --------------------------- | --------------------------------------------------- | ------- | ---------- | -------------- | ----------- |
+| `std.claude.Text`           | none                                                | `none`  | 10         | 0.5            | 300,000     |
+| `std.claude.ReadOnly`       | Read, Grep, Glob                                    | `read`  | 25         | 2              | 900,000     |
+| `std.claude.Web`            | Read, Grep, Glob, WebSearch, WebFetch               | `read`  | 25         | 2              | 900,000     |
+| `std.claude.Edit`           | Read, Grep, Glob, Edit, Write                       | `write` | 40         | 5              | 1,800,000   |
+| `std.claude.shell(rules)`   | Read, Grep, Glob, Bash narrowed to `rules`          | `exec`  | 25         | 2              | 900,000     |
+| `std.claude.editShell(...)` | Read, Grep, Glob, Edit, Write, Bash narrowed to ... | `exec`  | 40         | 5              | 1,800,000   |
+| `std.codex.Text`            | `sandbox: 'read-only'`                              | `read`  | -          | -              | 300,000     |
+| `std.codex.ReadOnly`        | `sandbox: 'read-only'`                              | `read`  | -          | -              | 900,000     |
+| `std.codex.Edit`            | `sandbox: 'workspace-write'`                        | `write` | -          | -              | 1,800,000   |
+
+A shell's `allowedTools` are its file tools followed by the rules, and its `disallowedTools` default
+to `std.bash.noPush` (`Bash(git push:*)`); the second argument replaces the deny list. A rule list
+must be non-empty, each rule a single `Bash(...)` rule, and a rule that a deny rule shadows is
+refused with a `TypeError`. `std.bash` holds the rule sets: `gitRead`, `ghRead`, `files`,
+`nodeCheck`, `pythonCheck`, `cargoCheck`, `goCheck`, `gitCommit`, `gitRebase`, `npmInstall`,
+`npmRun(...scripts)` and `rule(...words)`, plus the deny sets `noPush` and `noRewrite`. A narrowed
+`Bash` still counts as a shell, so a shell entry is `exec` and needs a grant under `requireGrants`.
 
 The Codex fragments carry no `maxTurns` or `maxBudgetUsd`: those are Claude-only limits that
 `CodexOptions` does not have, so a Codex entry cannot set them (and a spread that adds one, or
-`tools`, fails typecheck like any other Claude key on a Codex entry).
+`tools`, fails typecheck like any other Claude key on a Codex entry). The tier, limits and persona
+fragments are Claude-only for the same reason.
 
 `std.tiers` holds the model tiers of the native epic scripts. Each fixes only a Claude model and
 effort: `Clerk` (haiku, low), `Copyist` (sonnet, low), `Scribe` (sonnet, medium), `Mechanic`
-(sonnet, high), `Planner` (opus, high), `Skeptic` (opus, medium) and `Surgeon` (opus, high).
-Capability comes from the `std.claude` and `std.codex` fragments, so the two axes compose by spread,
-`{ ...std.claude.Edit, ...std.tiers.Mechanic }`, rather than as one entry per combination; a tier
-spread last also supplies the description. A tier alone is a valid entry at the text baseline.
+(sonnet, high), `Planner` (opus, high), `Skeptic` (opus, medium), `Surgeon` (opus, high) and `Judge`
+(opus, xhigh). A tier alone is a valid entry at the text baseline. `std.limits` resizes an entry:
+`Brief` (10 turns, USD 0.5, 5 minutes), `Standard` (25, 2, 15 minutes), `Extended` (40, 5, 30
+minutes), `Hour` (100, 10, 1 hour) and `Long` (200, 25, 2 hours).
 
-This is a seed sized for the dog-food ports, not the full library: a later decision record scopes
-what else it holds once the ports show what recurs. `std.exec` (`json`, `git`, `committedArtifact`)
-and `std.patterns` (see [teams](#teams)) sit in the same subpath, which imports only the public
-`quiet-choir` entry point.
+`std.personas` holds standing system prompts, each
+`{ harness: 'claude', description, appendSystemPrompt }`: `Clerk`, `Scout`, `Researcher`,
+`Reviewer`, `Skeptic`, `Critic`, `Judge`, `Planner`, `Implementer`, `Surgeon`, `Tester` and
+`Scribe`. The skeptical personas fall back to "the safe default the prompt names", so a prompt for
+them names one. An entry holds one `appendSystemPrompt`; `std.personas.join(a, b)` combines texts,
+such as a persona and `std.personas.ShellEtiquette` for a shell entry. Codex has no standing prompt:
+prepend the persona's text to the call's prompt instead. A persona's text is part of the request, so
+changing it changes the identity of the calls that use it.
+
+`std.roles` composes the axes into complete entries:
+
+| Role            | Composition                                               | Access  |
+| --------------- | --------------------------------------------------------- | ------- |
+| `Clerk`         | `claude.Text` + `tiers.Clerk` + `personas.Clerk`          | `none`  |
+| `Writer`        | `claude.Text` + `tiers.Scribe` + `personas.Scribe`        | `none`  |
+| `Scout`         | `claude.ReadOnly` + `tiers.Copyist` + `personas.Scout`    | `read`  |
+| `Reader`        | `claude.ReadOnly`                                         | `read`  |
+| `Researcher`    | `claude.Web` + `tiers.Scribe` + `personas.Researcher`     | `read`  |
+| `Reviewer`      | `claude.ReadOnly` + opus, high + `personas.Reviewer`      | `read`  |
+| `Skeptic`       | `claude.ReadOnly` + `tiers.Skeptic` + `personas.Skeptic`  | `read`  |
+| `Critic`        | `claude.ReadOnly` + `tiers.Skeptic` + `personas.Critic`   | `read`  |
+| `Judge`         | `claude.ReadOnly` + `tiers.Judge` + `personas.Judge`      | `read`  |
+| `Planner`       | `claude.ReadOnly` + `tiers.Planner` + `personas.Planner`  | `read`  |
+| `Scribe`        | `claude.ReadOnly` + `tiers.Scribe` + `personas.Scribe`    | `read`  |
+| `Editor`        | `claude.Edit`                                             | `write` |
+| `Mechanic`      | `claude.Edit` + `tiers.Mechanic` + `personas.Implementer` | `write` |
+| `Surgeon`       | `claude.Edit` + `tiers.Surgeon` + `personas.Surgeon`      | `write` |
+| `CodexReader`   | `codex.ReadOnly`                                          | `read`  |
+| `CodexReviewer` | `codex.ReadOnly` + `effort: 'high'`                       | `read`  |
+| `CodexEditor`   | `codex.Edit`                                              | `write` |
+| `CodexMechanic` | `codex.Edit` + `effort: 'high'`                           | `write` |
+
+No role in the table has a shell, since an allowlist is project-specific. Three factories add one,
+each joining `std.personas.ShellEtiquette` to the persona and returning a frozen `exec` entry equal
+to the hand-spelled spread: `std.roles.tester([...std.bash.gitRead, ...std.bash.nodeCheck])` equals
+`Tester` above.
+
+| Factory                                   | Composition                                                                                        |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `std.roles.withShell(role, rules, deny?)` | A Claude role with `claude.editShell` if it edits, else `claude.shell`; other keys kept            |
+| `std.roles.tester(rules, deny?)`          | `claude.shell` + `tiers.Mechanic` + `personas.Tester`                                              |
+| `std.roles.fixer(rules, deny?)`           | `withShell(Mechanic, rules, deny)`: `claude.editShell` + `tiers.Mechanic` + `personas.Implementer` |
+
+`deny` defaults to `std.bash.noPush`. `withShell` refuses a Codex role, a role that already has
+`Bash`, and a role with a tool outside Read, Grep, Glob, Edit and Write (such as `Researcher`'s web
+tools), with a `TypeError`.
+
+`Writer` and `Scribe` set `expectsToolUse: false`, since they write from the facts in the prompt.
+Spread a role to adjust it, `{ ...std.roles.Mechanic, ...std.limits.Long }`, or pick roles into your
+own roster. `std.rosters.readers` declares every `none` and `read` role, so it needs no grant under
+`requireGrants`; `std.rosters.standard` declares every role of the table (not the factories) and
+needs grants for `Editor`, `Mechanic`, `Surgeon`, `CodexEditor` and `CodexMechanic`, used or not. A
+`defineRoster` result cannot be spread into another roster, so build your own from `std.roles` to
+add an entry. Changing a role's tools, model, effort or persona changes the identity of the calls
+that use it; its limits do not.
+
+The rest of the library (schemas, lenses, helpers, control flow and the team-typed
+[patterns](#teams)) is described in [the standard library](std.md). Every module imports only the
+public `quiet-choir` entry point.
 
 ## ctx.roster
 
@@ -372,8 +456,8 @@ slot names `K`.
 
 ```ts
 export const ReviewTeam = defineTeam({
-  actor: 'Produces the artifact under review.',
-  critic: 'Judges the artifact against the brief and returns findings.',
+  actor: 'Produces and revises the draft.',
+  critic: 'Judges the draft and returns feedback.',
 });
 export type ReviewTeam = TeamOf<typeof ReviewTeam>; // { readonly actor: Agent; readonly critic: Agent }
 ```
@@ -388,7 +472,23 @@ Filling is explicit at the call site. A team value is a plain object of agents, 
 ordinary function that takes the context and an options object holding the team (ADR 0067 §3). A
 bound agent carries its own context and takes its step ID prefix where it is called, so calls
 through a slot claim the same IDs, fingerprints and records as calls through the agent that fills
-it; the pattern's context is for scoping and fan-out. `quiet-choir/std` ships two such patterns:
+it; the pattern's context is for scoping and fan-out, so pass the context the team was bound from.
+
+`quiet-choir/std` ships such patterns in `std.patterns`: `lensPanel`, `vote`, `verify` and `hunt`
+(panels), `critiqueRevise`, `fixUntilGreen` and `escalate` (revision and repair), `tournament`,
+`rank`, `route` and `classify` (selection), `mapReduce` and `decompose` (aggregation), `checklist`
+and `gate` (gates), `falsify` and `research` (investigation), `isolatedEdits` and `approvedPlan`
+(edits), and the older `reviewRevise` and `tolerantPanel`. Each exports its team, such as
+`std.patterns.HuntTeam`. All but the two older ones keep
+[one contract](std.md#the-pattern-contract): a required `id`, a `prompts` object, `calls` and, where
+they fan out, `concurrency` and `version`; each fills its team with `XTeam.from(options.team)`
+before any effect, so an unfilled slot throws instead of being journaled as a failed call; and each
+result counts the failed calls it tolerated in `failures`, reports its health as `status`
+(`'complete'` or `'degraded'`) and has a [Zod schema](std.md#result-schemas) of the same name. A
+settled map's items do not show the configuration of the agent that fills a slot, so a completed
+item is reused after a role changes: change the pattern's `version` when you change that agent.
+[The standard library](std.md#patterns) gives each pattern's slots, options, results and step IDs.
+The two older patterns work as follows:
 
 ```ts
 import * as std from 'quiet-choir/std';
@@ -408,8 +508,10 @@ prompts. `std.patterns.tolerantPanel` (team `std.patterns.PanelTeam`, one `panel
 panelist about each item under `ctx.map(id, items, { concurrency, onError: 'return' })` as
 `<id>/<index>/answer`, optionally with a `schema`, and returns `{ quorum, answers, failed }`: a
 failed vote is journaled, so a resume does not retry it into a different quorum. Its optional
-`version` is the map's `version`, a revision for the `prompt` function and `schema`, which the
-settled map's fingerprint does not show.
+`version` is the map's `version`, a revision for the `prompt` function, the `schema` and the
+panelist's configuration, which the settled map's fingerprint does not show. Both check their team
+before any effect, so an unfilled slot throws `Team slot <name> is not filled.` instead of being
+journaled as a failed call.
 
 `ReviewTeam.from(record)` is the one convenience. It picks the slot keys from any record that has
 them, so `ReviewTeam.from(ctx.roster)` fills a team whose roster entries use the slot names, and
@@ -426,7 +528,8 @@ Child workflows that take a team are deferred (ADR 0067 §3). The
 [review/revise recipe](../plugins/agents/quiet-choir/skills/quiet-choir/references/patterns.md#bounded-reviewrevise)
 and the
 [failure-tolerant panel](../plugins/agents/quiet-choir/skills/quiet-choir/references/patterns.md#failure-tolerant-panel)
-are the reference usage.
+are the reference usage of the two older patterns, and the [std recipes](std.md#recipes) show the
+others.
 
 ## Recovery and diagnostics
 

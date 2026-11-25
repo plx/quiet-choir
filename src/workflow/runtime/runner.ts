@@ -234,7 +234,7 @@ import {
   type MapItemScope,
   type ReplayInput,
 } from './replay-decision.js';
-import { digest, jsonValue } from './json.js';
+import { canonicalInput, digest, jsonValue } from './json.js';
 import { recordWarnings } from './record-warnings.js';
 import { summarizeDecisionStep, type DecisionStepSummary } from './decision-summary.js';
 import type {
@@ -1073,7 +1073,10 @@ export async function runWorkflow<
         throw new WorkflowInputError(details, cause);
       }
     }
-    const suppliedInput = options.input === undefined ? undefined : parseInput(options.input);
+    // A supplied input is parsed from its canonical (key-sorted) copy, as a resume without input
+    // parses the saved copy, so record keys reach the body in the same order on both runs.
+    const suppliedInput =
+      options.input === undefined ? undefined : parseInput(canonicalInput(options.input));
     let compatibility: ResumeCheck | undefined;
     if (existing) {
       compatibility = compareResume(definition, options, cwd, existing);
@@ -1164,8 +1167,9 @@ export async function runWorkflow<
         ? parseInput(existing ? existing.input : forkSource?.input)
         : (suppliedInput as TInput);
     const savedInput = jsonValue(input, 'Workflow input');
-    // The body gets a noncanonical JSON copy of the once-parsed input: schema field order without
-    // undefined members, and no second pass through non-idempotent schema overwrites.
+    // The body gets a noncanonical JSON copy of the once-parsed input: schema field order (record
+    // keys sorted, as parsed above) without undefined members, and no second pass through
+    // non-idempotent schema overwrites.
     const bodyInput = jsonValue(input, 'Workflow input', { canonical: false }) as TInput;
     const legacyReplay = existing?.formatVersion === 1;
     const migrating = existing !== undefined && existing.formatVersion !== 7;

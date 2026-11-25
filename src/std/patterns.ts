@@ -5,6 +5,16 @@
  * of the agent that fills it. Fill a team explicitly at the call site, or with
  * `ReviewTeam.from(ctx.roster)` where roster names equal slot names.
  *
+ * Call a pattern with the context its team was bound from: an agent read from
+ * `ctx.within(p).roster` keeps the `p/` prefix wherever it is called, so pass that same view.
+ *
+ * Every result interface `XResult` has a Zod schema of the same name, so a workflow can return a
+ * pattern's result as its output (`defineWorkflow({ output: std.patterns.GateResult, ... })`) and
+ * the compiler checks the schema against the interface. A generic result's schema is a factory
+ * that takes the schema of what varies, such as `std.patterns.VerifyResult(std.types.Finding)`.
+ * The schemas are strict objects with no transforms, so each converts to JSON Schema; they are part
+ * of the output-schema identity of a workflow that uses one.
+ *
  * @module
  */
 import {
@@ -16,6 +26,16 @@ import {
   type TeamOf,
   type WorkflowContext,
 } from '../index.js';
+import { Count } from './pattern-kit.js';
+
+export type { CallDefaults } from './pattern-kit.js';
+export * from './panels.js';
+export * from './revise.js';
+export * from './select.js';
+export * from './aggregate.js';
+export * from './gates.js';
+export * from './investigate.js';
+export * from './edits.js';
 
 /** The slots {@link reviewRevise} needs: an `actor` that drafts and a `critic` that judges. */
 export const ReviewTeam: ReturnType<typeof defineTeam<'actor' | 'critic'>> = defineTeam({
@@ -57,6 +77,12 @@ export interface ReviewReviseResult {
   readonly draft: string;
 }
 
+/** The schema of a {@link ReviewReviseResult}, for a workflow `output` or a saved result. */
+export const ReviewReviseResult: z.ZodType<ReviewReviseResult> = z.strictObject({
+  approved: z.boolean(),
+  draft: z.string(),
+});
+
 /**
  * Review up to `rounds` times and revise after each rejection. Round `n` asks `team.critic` for
  * `{ approved, feedback }` as step `review/<n>` and, when rejected, asks `team.actor` for a new
@@ -67,12 +93,14 @@ export interface ReviewReviseResult {
  * @param ctx - The workflow context; with `id`, the loop runs under `ctx.scope(id, ...)`.
  * @param options - The team, the first draft, the round limit, an optional scope and prompts.
  * @returns Whether a draft was approved, and that draft or the last reviewed one.
+ * @throws TypeError - Before any effect, when the `actor` or `critic` slot is not filled.
  */
 export async function reviewRevise(
   ctx: WorkflowContext,
   options: ReviewReviseOptions,
 ): Promise<ReviewReviseResult> {
   const { team, rounds, id } = options;
+  ReviewTeam.from(team);
   const review = options.prompts?.review ?? ((draft) => `Review this draft: ${draft}`);
   const revise =
     options.prompts?.revise ??
@@ -120,7 +148,9 @@ export interface TolerantPanelOptions<T, O = string> {
   /**
    * A revision for dependencies the items and the mapper source do not show, such as the `prompt`
    * function or the `schema`, as `MapOptions.version` for `ctx.map`. Change it when such a
-   * dependency changes in a way that should not reuse the settled votes.
+   * dependency changes in a way that should not reuse the settled votes. The team's agent
+   * configuration is not part of a map item either, so a completed vote is reused after a role
+   * changes: change `version` when you change the agent that fills a slot.
    */
   readonly version?: string | undefined;
 }
@@ -136,6 +166,24 @@ export interface TolerantPanelResult<O = string> {
 }
 
 /**
+ * The schema of a {@link TolerantPanelResult}, for a workflow `output` or a saved result.
+ *
+ * @typeParam O - The answer type.
+ * @param answer - The schema of each answer: the `schema` the panel ran with. Omitted, text, as
+ * {@link tolerantPanel} defaults to.
+ * @returns A strict object schema of the result.
+ */
+export function TolerantPanelResult<O = string>(
+  answer?: z.ZodType<O>,
+): z.ZodType<TolerantPanelResult<O>> {
+  return z.strictObject({
+    quorum: z.boolean(),
+    answers: z.array((answer ?? z.string()) as z.ZodType<O>),
+    failed: Count,
+  });
+}
+
+/**
  * Ask `team.panelist` about every item and decide a quorum over the answers that succeeded. The
  * calls run under `ctx.map(id, items, { concurrency, onError: 'return' })`, so each whole item
  * outcome, failure included, is journaled: a failed vote stays failed on resume instead of being
@@ -147,6 +195,7 @@ export interface TolerantPanelResult<O = string> {
  * @param options - The map ID, the team, the items, the prompt, the map's concurrency and an
  * optional `version`.
  * @returns The quorum, the text answers in item order and the failed count.
+ * @throws TypeError - Before any effect, when the `panelist` slot is not filled.
  */
 export function tolerantPanel<T>(
   ctx: WorkflowContext,
@@ -159,6 +208,7 @@ export function tolerantPanel<T>(
  * @param ctx - The workflow context.
  * @param options - The map ID, the team, the items, the prompt, the concurrency and the schema.
  * @returns The quorum, the parsed answers in item order and the failed count.
+ * @throws TypeError - Before any effect, when the `panelist` slot is not filled.
  */
 export function tolerantPanel<T, O>(
   ctx: WorkflowContext,
@@ -173,6 +223,7 @@ export function tolerantPanel<T, O>(
  * @param options - The map ID, the team, the items, the prompt, the concurrency and an optional schema.
  * @returns The quorum, the answers in item order (parsed when `schema` is set, else text) and the
  * failed count.
+ * @throws TypeError - Before any effect, when the `panelist` slot is not filled.
  */
 export function tolerantPanel<T, O>(
   ctx: WorkflowContext,
@@ -183,6 +234,9 @@ export async function tolerantPanel<T, O>(
   options: TolerantPanelOptions<T, O>,
 ): Promise<TolerantPanelResult<O | string>> {
   const { id, team, items, prompt, concurrency, schema, version } = options;
+  // Check the slot before the map: inside the mapper, a missing agent would be saved as a failed
+  // answer. The mapper below is unchanged, so its fingerprinted source is too.
+  PanelTeam.from(team);
   const answer = (item: T, index: number): Promise<O | string> =>
     schema === undefined
       ? team.panelist.value('answer', { prompt: prompt(item, index) })

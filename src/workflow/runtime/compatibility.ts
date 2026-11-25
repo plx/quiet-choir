@@ -4,7 +4,7 @@ import { realpath } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 import { engineInfo, oldFormatMessage } from './engine.js';
-import { digest, jsonValue } from './json.js';
+import { canonicalInput, digest, jsonValue } from './json.js';
 import type { WorkflowDefinition } from './model.js';
 import type { StateDirectoryOptions } from './paths.js';
 import type { ResumeCheck, SourceFingerprint, WorkflowIdentity } from './replay-model.js';
@@ -85,8 +85,11 @@ export function compareResume(
   let inputMatches = false;
   let inputValid = false;
   try {
+    // A supplied input is parsed from its canonical copy, as the run parses it (`canonicalInput`).
     const input = jsonValue(
-      definition.input.parse(options.input === undefined ? saved.input : options.input),
+      definition.input.parse(
+        options.input === undefined ? saved.input : canonicalInput(options.input),
+      ),
     );
     inputValid = true;
     inputMatches = digest(input) === digest(saved.input);

@@ -166,7 +166,23 @@ describe('published declarations', () => {
         ]),
       );
       expect(entries[4]?.names).toEqual(
-        expect.arrayContaining(['claude', 'codex', 'tiers', 'exec', 'patterns']),
+        expect.arrayContaining([
+          'claude',
+          'codex',
+          'tiers',
+          'limits',
+          'personas',
+          'roles',
+          'rosters',
+          'bash',
+          'types',
+          'lenses',
+          'data',
+          'text',
+          'exec',
+          'flow',
+          'patterns',
+        ]),
       );
       expect(
         await consumerDiagnostics(join(temp, 'consumer'), { 'quiet-choir': pkg }, entries),
