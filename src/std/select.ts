@@ -764,6 +764,18 @@ export const RankTeam: ReturnType<typeof defineTeam<'ranker'>> = defineTeam({
 /** The team record {@link rank} takes: `{ readonly ranker: Agent }`. */
 export type RankTeam = TeamOf<typeof RankTeam>;
 
+/** Replacement prompts of {@link rank}; each may return text or a rendered {@link Prompt}. */
+export interface RankPrompts {
+  /**
+   * The ranker's prompt, given every item's key and description, the criterion and how many items
+   * to choose. The default asks for exactly `pick` distinct keys, best first, judged by the
+   * criterion alone, and names the item whose neglect would cost more as the safe default.
+   */
+  readonly rank?:
+    | ((entries: readonly ItemText[], criterion: string, pick: number) => string | Prompt)
+    | undefined;
+}
+
 /** Options of {@link rank}. */
 export interface RankOptions<T> {
   /** The scope for every step this pattern records. */
@@ -787,10 +799,8 @@ export interface RankOptions<T> {
    * sorted keys.
    */
   readonly describe?: ((item: T) => string) | undefined;
-  /** Replaces the default prompt; it receives every item's key and description. */
-  readonly prompt?:
-    | ((entries: readonly ItemText[], criterion: string, pick: number) => string | Prompt)
-    | undefined;
+  /** Replacement prompts. */
+  readonly prompts?: RankPrompts | undefined;
   /** Options applied to the agent call (placement, retry, deadlines). */
   readonly calls?: CallDefaults | undefined;
 }
@@ -845,7 +855,8 @@ function rankPrompt(entries: readonly ItemText[], criterion: string, pick: numbe
  *
  * @typeParam T - The item type.
  * @param ctx - The workflow context the team was bound from.
- * @param options - The scope, the team, the items, the count to pick and the criterion.
+ * @param options - The scope, the team, the items, the count to pick and the criterion, with
+ * optional keys, descriptions, prompts and call defaults.
  * @returns The selected items best first, the deferred items, the rationale and the status.
  * @throws TypeError - Before any effect, when the `ranker` slot is not filled, `pick` is not a
  * positive integer, `criterion` is blank, or an item key is blank.
@@ -862,7 +873,7 @@ export async function rank<T>(
   const { ranker } = RankTeam.from(options.team);
   const keys = itemKeys(items, options.key);
   const describe = options.describe ?? describeItem;
-  const custom = options.prompt;
+  const custom = options.prompts?.rank;
   return ctx.scope(options.id, async (): Promise<RankResult<T>> => {
     if (items.length <= pick) {
       return {
@@ -918,6 +929,22 @@ export const RouteTeam: ReturnType<typeof defineTeam<'router'>> = defineTeam({
 /** The team record {@link route} takes: `{ readonly router: Agent }`. */
 export type RouteTeam = TeamOf<typeof RouteTeam>;
 
+/** Replacement prompts of {@link route}; each may return text or a rendered {@link Prompt}. */
+export interface RoutePrompts<K extends string> {
+  /**
+   * The router's prompt for `subject` over `routes`; `fallback` is null when none is set. The
+   * default lists each route with when to take it and, with a fallback, names it as the safe
+   * default when no route clearly fits.
+   */
+  readonly route?:
+    | ((
+        subject: string,
+        routes: Readonly<Record<K, string>>,
+        fallback: K | null,
+      ) => string | Prompt)
+    | undefined;
+}
+
 /** Options of {@link route}. */
 export interface RouteOptions<K extends string> {
   /** The scope for every step this pattern records. */
@@ -933,14 +960,8 @@ export interface RouteOptions<K extends string> {
    * and a failed router call takes it instead of throwing.
    */
   readonly fallback?: K | undefined;
-  /** Replaces the default prompt; `fallback` is null when none is set. */
-  readonly prompt?:
-    | ((
-        subject: string,
-        routes: Readonly<Record<K, string>>,
-        fallback: K | null,
-      ) => string | Prompt)
-    | undefined;
+  /** Replacement prompts. */
+  readonly prompts?: RoutePrompts<K> | undefined;
   /** Options applied to the agent call (placement, retry, deadlines). */
   readonly calls?: CallDefaults | undefined;
 }
@@ -993,7 +1014,8 @@ function routePrompt(
  *
  * @typeParam K - The route keys.
  * @param ctx - The workflow context the team was bound from.
- * @param options - The scope, the team, the subject, the routes and an optional fallback.
+ * @param options - The scope, the team, the subject and the routes, with an optional fallback,
+ * prompts and call defaults.
  * @returns The chosen route, the reason, whether the fallback was taken, and the status.
  * @throws TypeError - Before any effect, when the `router` slot is not filled, `subject` is blank,
  * `routes` is empty or maps a blank key or description, or `fallback` is not one of the routes.
@@ -1011,10 +1033,11 @@ export async function route<const K extends string>(
       `fallback ${JSON.stringify(fallback)} is not one of the routes: ${keys.map((key) => JSON.stringify(key)).join(', ')}.`,
     );
   }
+  const custom = options.prompts?.route;
   const prompt =
-    options.prompt === undefined
+    custom === undefined
       ? routePrompt(subject, routes, fallback ?? null)
-      : options.prompt(subject, routes, fallback ?? null);
+      : custom(subject, routes, fallback ?? null);
   const schema = z.object({
     route: z.enum(keys).describe('The key of the chosen route.'),
     reason: Rationale,
@@ -1051,6 +1074,22 @@ export const ClassifyTeam: ReturnType<typeof defineTeam<'tagger'>> = defineTeam(
 /** The team record {@link classify} takes: `{ readonly tagger: Agent }`. */
 export type ClassifyTeam = TeamOf<typeof ClassifyTeam>;
 
+/** Replacement prompts of {@link classify}; each may return text or a rendered {@link Prompt}. */
+export interface ClassifyPrompts<L extends string> {
+  /**
+   * The tagger's prompt for one batch, given each item's key and description, the `labels` option
+   * as given, and whether an item may take several labels. The default lists the taxonomy and the
+   * items, asks for an answer per item key, and names no label as the safe default.
+   */
+  readonly tag?:
+    | ((
+        entries: readonly ItemText[],
+        labels: Readonly<Record<L, string>> | readonly L[],
+        multi: boolean,
+      ) => string | Prompt)
+    | undefined;
+}
+
 /** Options of {@link classify}. */
 export interface ClassifyOptions<T, L extends string> {
   /** The scope for every step this pattern records. */
@@ -1079,14 +1118,8 @@ export interface ClassifyOptions<T, L extends string> {
    * sorted keys.
    */
   readonly describe?: ((item: T) => string) | undefined;
-  /** Replaces the default prompt for one batch of items; it receives `labels` as given. */
-  readonly prompt?:
-    | ((
-        entries: readonly ItemText[],
-        labels: Readonly<Record<L, string>> | readonly L[],
-        multi: boolean,
-      ) => string | Prompt)
-    | undefined;
+  /** Replacement prompts. */
+  readonly prompts?: ClassifyPrompts<L> | undefined;
   /** How many batches run at once; defaults to 4. */
   readonly concurrency?: number | undefined;
   /** A revision for prompts and schemas the settled map's fingerprint does not show. */
@@ -1250,8 +1283,8 @@ function tagSchema<L extends string>(
  * @typeParam T - The item type.
  * @typeParam L - The labels.
  * @param ctx - The workflow context the team was bound from.
- * @param options - The scope, the team, the items, the taxonomy, and optional keys, batch size
- * and multi-label mode.
+ * @param options - The scope, the team, the items, the taxonomy, and optional keys, batch size,
+ * multi-label mode, descriptions, prompts, concurrency, version and call defaults.
  * @returns The labeled items, the label counts, the unlabeled and failed items, and the status.
  * @throws TypeError - Before any effect, when the `tagger` slot is not filled, `labels` is empty,
  * maps a blank key or definition, or lists a blank name, `chunk` or `concurrency` is not a positive
@@ -1270,7 +1303,7 @@ export async function classify<T, const L extends string>(
   const keys = itemKeys(items, options.key);
   const map = settledMap<BatchRecord<L>>(options);
   const describe = options.describe ?? describeItem;
-  const custom = options.prompt;
+  const custom = options.prompts?.tag;
   const { tagger } = ClassifyTeam.from(options.team);
   const order = new Map<string, number>(labelKeys.map((label, index) => [label, index]));
 

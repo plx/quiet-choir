@@ -88,6 +88,16 @@ export const LensTeam: ReturnType<typeof defineTeam<'reader'>> = defineTeam({
 /** The team record {@link lensPanel} takes: `{ readonly reader: Agent }`. */
 export type LensTeam = TeamOf<typeof LensTeam>;
 
+/** Replacement prompts of {@link lensPanel}; each may return text or a rendered {@link Prompt}. */
+export interface LensPanelPrompts {
+  /**
+   * The reader's prompt for one lens over `subject`; the `task` option is then unused. The default
+   * opens with `task`, names the lens and its charter, gives the subject as context, and asks for
+   * evidenced points within the lens only, allowing an empty answer.
+   */
+  readonly read?: ((lens: Lens, subject: string) => string | Prompt) | undefined;
+}
+
 /** Options of {@link lensPanel}. */
 export interface LensPanelOptions<O> {
   /** The scope for every step this pattern records. */
@@ -108,8 +118,8 @@ export interface LensPanelOptions<O> {
    * `Examine the subject below.` (for example `Review the diff below for defects.`).
    */
   readonly task?: string | undefined;
-  /** Replaces the default prompt for one lens; `task` is then unused. */
-  readonly prompt?: ((lens: Lens, subject: string) => string | Prompt) | undefined;
+  /** Replacement prompts. */
+  readonly prompts?: LensPanelPrompts | undefined;
   /** How many lenses run at once; defaults to 4. */
   readonly concurrency?: number | undefined;
   /** A revision for prompts and schemas the settled map's fingerprint does not show. */
@@ -208,7 +218,8 @@ async function runPanel<O>(ctx: WorkflowContext, run: PanelRun<O>): Promise<Lens
  *
  * @typeParam O - The answer type of `schema`.
  * @param ctx - The workflow context the team was bound from.
- * @param options - The scope, the team, the lenses, the subject and the answer schema.
+ * @param options - The scope, the team, the lenses, the subject and the answer schema, with an
+ * optional task, prompts, concurrency, version and call defaults.
  * @returns The answers in lens order, the failed lenses, whether a quorum answered, and the status.
  * @throws TypeError - Before any effect, when the `reader` slot is not filled, `lenses` is empty or
  * `concurrency` is not a positive integer.
@@ -221,7 +232,7 @@ export async function lensPanel<O>(
   const lenses = nonEmpty('lenses', options.lenses).slice();
   const map = settledMap<PromptRecord>(options);
   const task = options.task ?? 'Examine the subject below.';
-  const custom = options.prompt;
+  const custom = options.prompts?.read;
   const { subject } = options;
   return ctx.scope(options.id, () =>
     runPanel(ctx, {
@@ -249,6 +260,17 @@ export const VoteTeam: ReturnType<typeof defineTeam<'voter'>> = defineTeam({
 /** The team record {@link vote} takes: `{ readonly voter: Agent }`. */
 export type VoteTeam = TeamOf<typeof VoteTeam>;
 
+/** Replacement prompts of {@link vote}; each may return text or a rendered {@link Prompt}. */
+export interface VotePrompts {
+  /**
+   * The ballot prompt for seat `seat` (from 0 to `seats - 1`) on `question`. The default asks for a
+   * vote decided from checked evidence, shows the `context` option under the question, and names no
+   * as the safe default; a replacement that needs the context closes over it.
+   */
+  readonly ballot?:
+    ((question: string, seat: number, seats: number) => string | Prompt) | undefined;
+}
+
 /** Options of {@link vote}. */
 export interface VoteOptions {
   /** The scope for every step this pattern records. */
@@ -263,9 +285,8 @@ export interface VoteOptions {
   readonly seats?: number | undefined;
   /** How many yes votes carry the question; defaults to `'majority'`. */
   readonly rule?: Rule | undefined;
-  /** Replaces the default prompt for one seat (from 0 to `seats - 1`). */
-  readonly prompt?:
-    ((question: string, seat: number, seats: number) => string | Prompt) | undefined;
+  /** Replacement prompts. */
+  readonly prompts?: VotePrompts | undefined;
   /** How many seats vote at once; defaults to 4. */
   readonly concurrency?: number | undefined;
   /** A revision for prompts and schemas the settled map's fingerprint does not show. */
@@ -322,7 +343,8 @@ function ballotPrompt(question: string, context: string | undefined): string {
  * Team slot: `voter`, a read-only judging agent such as `std.roles.Judge` or `std.roles.Skeptic`.
  *
  * @param ctx - The workflow context the team was bound from.
- * @param options - The scope, the team, the question, and optional seats, rule and prompt.
+ * @param options - The scope, the team, the question, and optional context, seats, rule, prompts,
+ * concurrency, version and call defaults.
  * @returns The outcome, the vote counts, each seat's reasoning and the status.
  * @throws TypeError - Before any effect, when the `voter` slot is not filled, `seats` or
  * `concurrency` is not a positive integer, or the rule is invalid for `seats`.
@@ -334,7 +356,7 @@ export async function vote(ctx: WorkflowContext, options: VoteOptions): Promise<
   threshold(rule, seats);
   const map = settledMap<PromptRecord>(options);
   const { question, calls } = options;
-  const custom = options.prompt;
+  const custom = options.prompts?.ballot;
   const records: PromptRecord[] = Array.from({ length: seats }, (_unused, seat) => ({
     key: String(seat),
     prompt: promptText(

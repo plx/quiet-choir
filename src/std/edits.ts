@@ -293,8 +293,8 @@ function mergeOptions(merge: EditMergeOptions | undefined): EditMergeOptions {
  * paths, base, merge options, prompts, concurrency, version and call defaults.
  * @returns The status, the merged commit (null when nothing merged) and merge outcome, the merged
  * and conflicting keys, the in-bounds changes, the violations, and the unchanged and failed keys.
- * @throws TypeError - Before any effect, when `concurrency` is not a positive integer,
- * `calls.worktree` is set, an item's `task` is blank, or an owned path is not a
+ * @throws TypeError - Before any effect, when the `editor` slot is not filled, `concurrency` is not
+ * a positive integer, `calls.worktree` is set, an item's `task` is blank, or an owned path is not a
  * repository-relative path.
  * @throws Error - Before any effect, `isolatedEdits <id>: items must own disjoint paths: ...` when
  * two items own the same path or one owns a directory containing another's path; and the merge's
@@ -304,7 +304,8 @@ export async function isolatedEdits<T>(
   ctx: WorkflowContext,
   options: IsolatedEditsOptions<T>,
 ): Promise<IsolatedEditsResult> {
-  const { id, team, calls } = options;
+  const team = EditTeam.from(options.team);
+  const { id, calls } = options;
   if (calls?.worktree !== undefined) {
     throw new TypeError(
       `isolatedEdits ${id}: every edit gets a fresh checkout of its own; set base, not calls.worktree.`,
@@ -643,17 +644,18 @@ function approvalDetails(
  * approval question, title and audience, prompts and call defaults.
  * @returns Whether a plan was approved, why the loop ended, that plan (or the last reviewed one),
  * its digest, the rounds and the reviewer's last comment.
- * @throws TypeError - Before any effect, when `task` is blank, `revisions` is not a nonnegative
- * integer, `question` is not one nonblank line of at most 1024 characters, or `title` is not 1 to
- * 12 characters.
+ * @throws TypeError - Before any effect, when the `planner` slot is not filled, `task` is blank,
+ * `revisions` is not a nonnegative integer, `question` is not one nonblank line of at most 1024
+ * characters, or `title` is not 1 to 12 characters.
  * @throws Error - The planner's call failures.
  */
 export async function approvedPlan(
   ctx: WorkflowContext,
   options: ApprovedPlanOptions,
 ): Promise<ApprovedPlanResult> {
+  const team = PlanApprovalTeam.from(options.team);
   const revisions = nonNegativeInt('revisions', options.revisions ?? 2);
-  const { team, task, context, calls } = options;
+  const { task, context, calls } = options;
   const question = options.question ?? APPROVAL_QUESTION;
   const title = options.title ?? APPROVAL_TITLE;
   if (task.trim() === '')

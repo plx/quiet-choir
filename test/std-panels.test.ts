@@ -186,7 +186,7 @@ describe('lensPanel', () => {
 
     const custom = readers();
     const result = await run(
-      panel({ prompt: (lens, subject) => `${lens.key} :: ${subject}` }),
+      panel({ prompts: { read: (lens, subject) => `${lens.key} :: ${subject}` } }),
       custom,
       'c',
     );
@@ -299,7 +299,9 @@ describe('vote', () => {
       ballot({
         seats: 4,
         rule: { atLeast: 1 },
-        prompt: (question, seat, seats) => `${question} (${String(seat)}/${String(seats)})`,
+        prompts: {
+          ballot: (question, seat, seats) => `${question} (${String(seat)}/${String(seats)})`,
+        },
       }),
       harness,
       'custom',

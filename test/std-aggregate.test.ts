@@ -407,6 +407,30 @@ describe('mapReduce', () => {
     );
     expect(harness.calls).toHaveLength(0);
   });
+
+  it('refuses an unfilled slot before any effect, instead of journaling failed chunks', async () => {
+    const harness = mappers();
+    const unfilled = (team: (ctx: WorkflowContext) => object) =>
+      workflow('map-reduce', (ctx) =>
+        aggregate.mapReduce(ctx, {
+          id: 'mr',
+          team: team(ctx) as aggregate.MapReduceTeam,
+          items: letters,
+          task: 'Summarize these letters.',
+        }),
+      );
+    await expect(run(unfilled(() => ({})), harness, 'none')).rejects.toThrow(
+      'Team slot mapper is not filled.',
+    );
+    await expect(
+      run(
+        unfilled((ctx) => ({ mapper: ctx.claude.bind({}) })),
+        harness,
+        'mapper',
+      ),
+    ).rejects.toThrow('Team slot reducer is not filled.');
+    expect(harness.calls).toHaveLength(0);
+  });
 });
 
 describe('decompose', () => {
@@ -538,6 +562,9 @@ describe('decompose', () => {
     await expect(run(plan({ maxTasks: 0 }), idle, 'zero')).rejects.toThrow(
       'maxTasks must be a positive integer; got 0.',
     );
+    await expect(
+      run(plan({ team: {} as aggregate.PlanTeam }), idle, 'unfilled'),
+    ).rejects.toThrow('Team slot planner is not filled.');
     expect(idle.calls).toHaveLength(0);
   });
 });

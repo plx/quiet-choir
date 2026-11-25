@@ -252,7 +252,8 @@ function reducePrompt(
  * @param options - The scope, the team, the items and the task, with optional key, chunk size,
  * description, reducer task and prompts.
  * @returns The reducer's text, the parts, the coverage, the chunk counts and the status.
- * @throws TypeError - Before any effect, when `chunk` or `concurrency` is not a positive integer.
+ * @throws TypeError - Before any effect, when the `mapper` or `reducer` slot is not filled, or
+ * `chunk` or `concurrency` is not a positive integer.
  * @throws Error - Before any effect, `Duplicate mapReduce item key: ...` when two items share a key.
  */
 export function mapReduce<T>(
@@ -268,7 +269,8 @@ export function mapReduce<T>(
  * @param ctx - The workflow context the team was bound from.
  * @param options - The scope, the team, the items, the task and the answer schema.
  * @returns The reducer's text, the parsed parts, the coverage, the chunk counts and the status.
- * @throws TypeError - Before any effect, when `chunk` or `concurrency` is not a positive integer.
+ * @throws TypeError - Before any effect, when the `mapper` or `reducer` slot is not filled, or
+ * `chunk` or `concurrency` is not a positive integer.
  * @throws Error - Before any effect, `Duplicate mapReduce item key: ...` when two items share a key.
  */
 export function mapReduce<T, P>(
@@ -287,7 +289,8 @@ export function mapReduce<T, P>(
  * @param options - The scope, the team, the items, the task and an optional answer schema.
  * @returns The reducer's text, the parts (parsed when `schema` is set, else text), the coverage,
  * the chunk counts and the status.
- * @throws TypeError - Before any effect, when `chunk` or `concurrency` is not a positive integer.
+ * @throws TypeError - Before any effect, when the `mapper` or `reducer` slot is not filled, or
+ * `chunk` or `concurrency` is not a positive integer.
  * @throws Error - Before any effect, `Duplicate mapReduce item key: ...` when two items share a key.
  */
 export function mapReduce<T, P>(
@@ -298,9 +301,10 @@ export async function mapReduce<T, P>(
   ctx: WorkflowContext,
   options: MapReduceOptions<T, P>,
 ): Promise<MapReduceResult<P | string>> {
+  const team = MapReduceTeam.from(options.team);
   const size = positiveInt('chunk', options.chunk ?? 20);
   const map = settledMap<PromptRecord>(options);
-  const { team, task, schema, calls } = options;
+  const { task, schema, calls } = options;
   const items = options.items.slice();
   const keyOf =
     options.key ?? ((item: T, index: number) => (typeof item === 'string' ? item : String(index)));
@@ -581,7 +585,8 @@ function repairPrompt(
  * @param ctx - The workflow context the team was bound from.
  * @param options - The scope, the team, the goal, and optional background, task limit and prompts.
  * @returns The tasks, their dependency waves, whether a repair was needed and what it fixed.
- * @throws TypeError - Before any effect, when `maxTasks` is not a positive integer.
+ * @throws TypeError - Before any effect, when the `planner` slot is not filled or `maxTasks` is not
+ * a positive integer.
  * @throws Error - `decompose <id>: the repaired task list is still invalid: ...`, listing the
  * problems, when the repair leaves any; and the planner's own call failures.
  */
@@ -589,8 +594,9 @@ export async function decompose(
   ctx: WorkflowContext,
   options: DecomposeOptions,
 ): Promise<DecomposeResult> {
+  const team = PlanTeam.from(options.team);
   const maxTasks = positiveInt('maxTasks', options.maxTasks ?? 12);
-  const { team, goal, context, calls } = options;
+  const { goal, context, calls } = options;
   const schema = taskListSchema(maxTasks);
   const custom = options.prompts;
   return ctx.scope(options.id, async () => {

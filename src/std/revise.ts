@@ -225,8 +225,8 @@ interface RoundCritique {
  * prompts, concurrency, version and call defaults.
  * @returns The final draft, whether it was approved, the round and revision counts, the open
  * issues, the failed critic count and the status.
- * @throws TypeError - Before any effect, when the brief is blank, `rounds` or `concurrency` is not
- * a positive integer, or `lenses` is empty.
+ * @throws TypeError - Before any effect, when the `critic` or `author` slot is not filled, the brief
+ * is blank, `rounds` or `concurrency` is not a positive integer, or `lenses` is empty.
  * @throws Error - The error of a failed author call (the first draft or a revision): only critics
  * are tolerated, so a resume retries the author's call.
  */
@@ -234,7 +234,8 @@ export async function critiqueRevise(
   ctx: WorkflowContext,
   options: CritiqueReviseOptions,
 ): Promise<CritiqueReviseResult> {
-  const { team, brief, calls } = options;
+  const team = CritiqueTeam.from(options.team);
+  const { brief, calls } = options;
   if (brief.trim() === '') throw new TypeError('critiqueRevise needs a nonblank brief.');
   const rounds = positiveInt('rounds', options.rounds ?? 2);
   const fanOut = settledMap<CriticRecord>(options);
@@ -495,21 +496,22 @@ function fixPrompt(request: FixPromptInput): string {
  * task, shared worktree, command options, prompts and call defaults.
  * @returns The status, the rounds run, which slot fixed it, every check outcome and fix round,
  * and the failed fix count.
- * @throws TypeError - Before any effect, when `rounds` is not a positive integer, `escalateAfter`
- * is not an integer from 0 to `rounds`, `task` is blank, or `calls.worktree` is set without
- * `worktree`.
+ * @throws TypeError - Before any effect, when the `mechanic` or `surgeon` slot is not filled,
+ * `rounds` is not a positive integer, `escalateAfter` is not an integer from 0 to `rounds`, `task`
+ * is blank, or `calls.worktree` is set without `worktree`.
  */
 export async function fixUntilGreen(
   ctx: WorkflowContext,
   options: FixUntilGreenOptions,
 ): Promise<FixUntilGreenResult> {
+  const team = RepairTeam.from(options.team);
   const rounds = positiveInt('rounds', options.rounds ?? 3);
   const escalateAfter = nonNegativeInt('escalateAfter', options.escalateAfter ?? rounds - 1);
   if (escalateAfter > rounds)
     throw new TypeError(
       `escalateAfter must be at most rounds (${String(rounds)}); got ${String(escalateAfter)}.`,
     );
-  const { team, worktree, calls } = options;
+  const { worktree, calls } = options;
   if (calls?.worktree !== undefined && worktree === undefined)
     throw new TypeError(
       'fixUntilGreen runs the check where the fixers work: pass a shared checkout as worktree, not calls.worktree.',
@@ -725,9 +727,9 @@ interface AttemptOutcome<V> {
  * prompts and call defaults; the value is a `std.types.WorkReport`.
  * @returns The status, the deciding slot, the attempts run, the value, the last problems and the
  * failed call count.
- * @throws TypeError - Before any effect, when the task is blank, `attempts` is not a positive
- * integer or `start` is not a slot; and when `accept` returns something other than `true` or a
- * string.
+ * @throws TypeError - Before any effect, when the `mechanic` or `surgeon` slot is not filled, the
+ * task is blank, `attempts` is not a positive integer or `start` is not a slot; and when `accept`
+ * returns something other than `true` or a string.
  */
 export function escalate(
   ctx: WorkflowContext,
@@ -759,7 +761,8 @@ export async function escalate<V>(
   ctx: WorkflowContext,
   options: EscalateOptions<V>,
 ): Promise<EscalateResult<V>> {
-  const { team, task, accept, calls } = options;
+  const team = EscalationTeam.from(options.team);
+  const { task, accept, calls } = options;
   if (task.trim() === '') throw new TypeError('escalate needs a nonblank task.');
   const attempts = positiveInt('attempts', options.attempts ?? 2);
   const start = startSlot(options.start);

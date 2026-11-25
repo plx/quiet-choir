@@ -392,12 +392,27 @@ describe('critiqueRevise', () => {
       [{ rounds: 0 }, 'rounds must be a positive integer; got 0.'],
       [{ lenses: [] }, 'lenses must not be empty.'],
       [{ concurrency: 0 }, 'concurrency must be a positive integer; got 0.'],
+      [{ team: {} as revise.CritiqueTeam }, 'Team slot critic is not filled.'],
     ];
     for (const [index, [options, message]] of cases.entries()) {
       await expect(run(critique(options), harness, `bad-${String(index)}`)).rejects.toThrow(
         message,
       );
     }
+    expect(harness.calls).toHaveLength(0);
+  });
+
+  it('refuses an unfilled critic slot before the author drafts or a lens critic is journaled', async () => {
+    const harness = scripted({ 'cr/draft': 'Hello.' });
+    const definition = workflow('critique-revise', (ctx) =>
+      revise.critiqueRevise(ctx, {
+        id: 'cr',
+        team: { author: ctx.claude.bind({}) } as unknown as revise.CritiqueTeam,
+        brief: 'A greeting for new users.',
+        lenses: [lens('clarity', 'Is it clear?')],
+      }),
+    );
+    await expect(run(definition, harness)).rejects.toThrow('Team slot critic is not filled.');
     expect(harness.calls).toHaveLength(0);
   });
 });
@@ -642,6 +657,7 @@ describe('fixUntilGreen', () => {
         { calls: { worktree: true } },
         'fixUntilGreen runs the check where the fixers work: pass a shared checkout as worktree, not calls.worktree.',
       ],
+      [{ team: {} as revise.RepairTeam }, 'Team slot mechanic is not filled.'],
     ];
     for (const [index, [options, message]] of cases.entries()) {
       await expect(run(repair(options), harness, `bad-${String(index)}`)).rejects.toThrow(message);
@@ -655,7 +671,9 @@ describe('escalate', () => {
   /** escalate under `esc`, with the mechanic and surgeon told apart by their bound model. */
   const attempt = (
     accept: revise.AcceptCheck<WorkReport>,
-    options: Partial<Pick<revise.EscalateOptions<WorkReport>, 'task' | 'attempts' | 'start'>> = {},
+    options: Partial<
+      Pick<revise.EscalateOptions<WorkReport>, 'task' | 'attempts' | 'start' | 'team'>
+    > = {},
   ) =>
     workflow('escalate', (ctx) =>
       revise.escalate(ctx, {
@@ -824,12 +842,13 @@ describe('escalate', () => {
   it('rejects invalid options and accept results', async () => {
     const harness = byModel({});
     const cases: [
-      Partial<Pick<revise.EscalateOptions<WorkReport>, 'task' | 'attempts' | 'start'>>,
+      Partial<Pick<revise.EscalateOptions<WorkReport>, 'task' | 'attempts' | 'start' | 'team'>>,
       string,
     ][] = [
       [{ task: ' ' }, 'escalate needs a nonblank task.'],
       [{ attempts: 0 }, 'attempts must be a positive integer; got 0.'],
       [{ start: 'judge' as 'surgeon' }, `start must be 'mechanic' or 'surgeon'; got "judge".`],
+      [{ team: {} as revise.EscalationTeam }, 'Team slot mechanic is not filled.'],
     ];
     for (const [index, [options, message]] of cases.entries()) {
       await expect(

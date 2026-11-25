@@ -886,8 +886,10 @@ describe('route', () => {
     const harness = scripted(() => ({ route: 'fix', reason: 'r' }));
     await run(
       routing({
-        prompt: (subject, table, fallback) =>
-          `${subject} | ${Object.keys(table).join(',')} | ${fallback ?? 'none'}`,
+        prompts: {
+          route: (subject, table, fallback) =>
+            `${subject} | ${Object.keys(table).join(',')} | ${fallback ?? 'none'}`,
+        },
       }),
       harness,
     );
@@ -1080,7 +1082,7 @@ describe('classify', () => {
     const blind = (options: Partial<select.ClassifyOptions<string, 'bug' | 'feature' | 'docs'>>) =>
       tagging({
         items: ['a'],
-        prompt: (entries) => entries.map((entry) => entry.text).join(','),
+        prompts: { tag: (entries) => entries.map((entry) => entry.text).join(',') },
         ...options,
       });
     const changed =
@@ -1139,8 +1141,10 @@ describe('classify', () => {
     await run(
       tagging({
         items: ['a', 'b', 'c'],
-        prompt: (entries, table, multi) =>
-          `${entries.map((entry) => `${entry.key}=${entry.text}`).join(',')} ${Object.keys(table).join('/')} ${String(multi)}`,
+        prompts: {
+          tag: (entries, table, multi) =>
+            `${entries.map((entry) => `${entry.key}=${entry.text}`).join(',')} ${Object.keys(table).join('/')} ${String(multi)}`,
+        },
       }),
       harness,
     );

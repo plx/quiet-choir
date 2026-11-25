@@ -403,6 +403,10 @@ describe('isolatedEdits', () => {
     await expect(run({ task: () => ' ' })).rejects.toThrow(
       'isolatedEdits edits: item a has a blank task.',
     );
+    // Not a TypeError journaled as every item's failed edit, which a resume would replay.
+    await expect(run({ team: {} as edits.EditTeam })).rejects.toThrow(
+      'Team slot editor is not filled.',
+    );
     expect(harness.calls).toHaveLength(0);
   }, 20_000);
 });
@@ -631,6 +635,9 @@ describe('approvedPlan', () => {
     await expect(
       runWorkflow(plan({ title: 'Implementation plan' }), { ...setup, runId: 'title' }),
     ).rejects.toThrow('approvedPlan plan: title must be 1 to 12 characters.');
+    await expect(
+      runWorkflow(plan({ team: {} as edits.PlanApprovalTeam }), { ...setup, runId: 'team' }),
+    ).rejects.toThrow('Team slot planner is not filled.');
     expect(harness.calls).toHaveLength(0);
   });
 });
