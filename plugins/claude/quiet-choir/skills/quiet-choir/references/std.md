@@ -57,9 +57,10 @@ contract (ADR 0068 §4):
   decision instead of retrying it into a different one. Results carry a `status` and failure counts
   (`failedVotes`, `failedChunks`, ...), never a silently shorter list. A call the pattern cannot do
   without (a planner, a reducer, an author) throws, and a resume retries it.
-- **Fingerprints.** Settled-map items carry the rendered prompt, so changing a prompt or an input
-  that a prompt shows refuses to replay the completed calls. A change the items cannot show, such as
-  a replacement `schema`, needs a new `version` string.
+- **Fingerprints.** Settled-map items carry the rendered prompt and the calls' placement (`cwd`,
+  `addDirs`, `worktree`), so changing a prompt, an input that a prompt shows, or where the calls run
+  refuses to replay the completed calls. A change the items cannot show, such as a replacement
+  `schema`, needs a new `version` string.
 - **`calls`** (`CallDefaults`: placement, `cwd`, `addDirs`, retry, `timeoutMs`, ...) is spread into
   every agent call the pattern makes.
 - **`prompts`** replaces a stage's default prompt: `prompts.<stage>` receives that stage's inputs
