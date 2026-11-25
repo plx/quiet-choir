@@ -79,12 +79,14 @@ export interface ReviewReviseResult {
  * @param ctx - The workflow context; with `id`, the loop runs under `ctx.scope(id, ...)`.
  * @param options - The team, the first draft, the round limit, an optional scope and prompts.
  * @returns Whether a draft was approved, and that draft or the last reviewed one.
+ * @throws TypeError - Before any effect, when the `actor` or `critic` slot is not filled.
  */
 export async function reviewRevise(
   ctx: WorkflowContext,
   options: ReviewReviseOptions,
 ): Promise<ReviewReviseResult> {
   const { team, rounds, id } = options;
+  ReviewTeam.from(team);
   const review = options.prompts?.review ?? ((draft) => `Review this draft: ${draft}`);
   const revise =
     options.prompts?.revise ??
@@ -159,6 +161,7 @@ export interface TolerantPanelResult<O = string> {
  * @param options - The map ID, the team, the items, the prompt, the map's concurrency and an
  * optional `version`.
  * @returns The quorum, the text answers in item order and the failed count.
+ * @throws TypeError - Before any effect, when the `panelist` slot is not filled.
  */
 export function tolerantPanel<T>(
   ctx: WorkflowContext,
@@ -171,6 +174,7 @@ export function tolerantPanel<T>(
  * @param ctx - The workflow context.
  * @param options - The map ID, the team, the items, the prompt, the concurrency and the schema.
  * @returns The quorum, the parsed answers in item order and the failed count.
+ * @throws TypeError - Before any effect, when the `panelist` slot is not filled.
  */
 export function tolerantPanel<T, O>(
   ctx: WorkflowContext,
@@ -185,6 +189,7 @@ export function tolerantPanel<T, O>(
  * @param options - The map ID, the team, the items, the prompt, the concurrency and an optional schema.
  * @returns The quorum, the answers in item order (parsed when `schema` is set, else text) and the
  * failed count.
+ * @throws TypeError - Before any effect, when the `panelist` slot is not filled.
  */
 export function tolerantPanel<T, O>(
   ctx: WorkflowContext,
@@ -195,6 +200,9 @@ export async function tolerantPanel<T, O>(
   options: TolerantPanelOptions<T, O>,
 ): Promise<TolerantPanelResult<O | string>> {
   const { id, team, items, prompt, concurrency, schema, version } = options;
+  // Check the slot before the map: inside the mapper, a missing agent would be saved as a failed
+  // answer. The mapper below is unchanged, so its fingerprinted source is too.
+  PanelTeam.from(team);
   const answer = (item: T, index: number): Promise<O | string> =>
     schema === undefined
       ? team.panelist.value('answer', { prompt: prompt(item, index) })

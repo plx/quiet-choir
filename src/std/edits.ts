@@ -48,6 +48,7 @@ import {
   type WorkflowContext,
   type WorktreeBase,
   type WorktreeChange,
+  type z,
 } from '../index.js';
 import { assertDisjoint, digest as digestOf } from './data.js';
 import { changedFiles, json } from './exec.js';
@@ -734,7 +735,7 @@ export interface PlanCall {
   /** The rendered prompt for implementing the plan. */
   readonly prompt: string;
   /** `std.types.WorkReport`, the implementer's report. */
-  readonly schema: typeof WorkReport;
+  readonly schema: z.ZodType<WorkReport>;
 }
 
 /**

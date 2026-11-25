@@ -435,8 +435,8 @@ slot names `K`.
 
 ```ts
 export const ReviewTeam = defineTeam({
-  actor: 'Produces the artifact under review.',
-  critic: 'Judges the artifact against the brief and returns findings.',
+  actor: 'Produces and revises the draft.',
+  critic: 'Judges the draft and returns feedback.',
 });
 export type ReviewTeam = TeamOf<typeof ReviewTeam>; // { readonly actor: Agent; readonly critic: Agent }
 ```
@@ -451,7 +451,19 @@ Filling is explicit at the call site. A team value is a plain object of agents, 
 ordinary function that takes the context and an options object holding the team (ADR 0067 §3). A
 bound agent carries its own context and takes its step ID prefix where it is called, so calls
 through a slot claim the same IDs, fingerprints and records as calls through the agent that fills
-it; the pattern's context is for scoping and fan-out. `quiet-choir/std` ships two such patterns:
+it; the pattern's context is for scoping and fan-out, so pass the context the team was bound from.
+
+`quiet-choir/std` ships such patterns in `std.patterns`: `lensPanel`, `vote`, `verify` and `hunt`
+(panels), `critiqueRevise`, `fixUntilGreen` and `escalate` (revision and repair), `tournament`,
+`rank`, `route` and `classify` (selection), `mapReduce` and `decompose` (aggregation), `checklist`
+and `gate` (gates), `falsify` and `research` (investigation), `isolatedEdits` and `approvedPlan`
+(edits), and the older `reviewRevise` and `tolerantPanel`. Each exports its team, such as
+`std.patterns.HuntTeam`. All but the two older ones keep
+[one contract](std.md#the-pattern-contract): a required `id`, a `prompts` object, `calls` and, where
+they fan out, `concurrency` and `version`; and each fills its team with `XTeam.from(options.team)`
+before any effect, so an unfilled slot throws instead of being journaled as a failed call.
+[The standard library](std.md#patterns) gives each pattern's slots, options, results and step IDs.
+The two older patterns work as follows:
 
 ```ts
 import * as std from 'quiet-choir/std';
@@ -472,7 +484,8 @@ panelist about each item under `ctx.map(id, items, { concurrency, onError: 'retu
 `<id>/<index>/answer`, optionally with a `schema`, and returns `{ quorum, answers, failed }`: a
 failed vote is journaled, so a resume does not retry it into a different quorum. Its optional
 `version` is the map's `version`, a revision for the `prompt` function and `schema`, which the
-settled map's fingerprint does not show.
+settled map's fingerprint does not show. Both check their team before any effect, so an unfilled
+slot throws `Team slot <name> is not filled.` instead of being journaled as a failed call.
 
 `ReviewTeam.from(record)` is the one convenience. It picks the slot keys from any record that has
 them, so `ReviewTeam.from(ctx.roster)` fills a team whose roster entries use the slot names, and
@@ -489,7 +502,8 @@ Child workflows that take a team are deferred (ADR 0067 §3). The
 [review/revise recipe](../plugins/agents/quiet-choir/skills/quiet-choir/references/patterns.md#bounded-reviewrevise)
 and the
 [failure-tolerant panel](../plugins/agents/quiet-choir/skills/quiet-choir/references/patterns.md#failure-tolerant-panel)
-are the reference usage.
+are the reference usage of the two older patterns, and the [std recipes](std.md#recipes) show the
+others.
 
 ## Recovery and diagnostics
 

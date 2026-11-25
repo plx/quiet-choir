@@ -602,8 +602,8 @@ function repairPrompt(
  * @param ctx - The workflow context the team was bound from.
  * @param options - The scope, the team, the goal, and optional background, task limit and prompts.
  * @returns The tasks, their dependency waves, whether a repair was needed and what it fixed.
- * @throws TypeError - Before any effect, when the `planner` slot is not filled or `maxTasks` is not
- * a positive integer.
+ * @throws TypeError - Before any effect, when the `planner` slot is not filled, `goal` is blank or
+ * `maxTasks` is not a positive integer.
  * @throws Error - `decompose <id>: the repaired task list is still invalid: ...`, listing the
  * problems, when the repair leaves any; and the planner's own call failures.
  */
@@ -614,6 +614,7 @@ export async function decompose(
   const team = PlanTeam.from(options.team);
   const maxTasks = positiveInt('maxTasks', options.maxTasks ?? 12);
   const { goal, context, calls } = options;
+  if (goal.trim() === '') throw new TypeError('decompose needs a nonblank goal.');
   const schema = taskListSchema(maxTasks);
   const custom = options.prompts;
   return ctx.scope(options.id, async () => {
@@ -673,7 +674,7 @@ export interface TaskCall {
   /** The rendered prompt for doing the task. */
   readonly prompt: string;
   /** `std.types.WorkReport`, the implementer's report. */
-  readonly schema: typeof WorkReport;
+  readonly schema: z.ZodType<WorkReport>;
 }
 
 /**

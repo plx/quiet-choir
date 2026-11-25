@@ -605,6 +605,9 @@ describe('decompose', () => {
     await expect(run(plan({ team: {} as aggregate.PlanTeam }), idle, 'unfilled')).rejects.toThrow(
       'Team slot planner is not filled.',
     );
+    await expect(run(plan({ goal: '  ' }), idle, 'blank')).rejects.toThrow(
+      'decompose needs a nonblank goal.',
+    );
     expect(idle.calls).toHaveLength(0);
   });
 });

@@ -708,6 +708,41 @@ it('std tolerantPanel parses answers with a schema and counts failed items', asy
   ]);
 });
 
+it('std reviewRevise and tolerantPanel check their teams before any effect', async () => {
+  const workflow = defineWorkflow({
+    name: 'unfilled-teams',
+    version: '1',
+    input: z.enum(['review', 'panel']),
+    output: z.null(),
+    async run(ctx, which) {
+      if (which === 'review') {
+        await std.patterns.reviewRevise(ctx, {
+          team: { actor: ctx.claude.bind({}) } as unknown as std.patterns.ReviewTeam,
+          draft: 'one',
+          rounds: 2,
+        });
+      } else {
+        await std.patterns.tolerantPanel(ctx, {
+          id: 'votes',
+          team: {} as std.patterns.PanelTeam,
+          items: ['a', 'b'],
+          prompt: (item) => item,
+          concurrency: 2,
+        });
+      }
+      return null;
+    },
+  });
+  const harness = new Fake(() => 'unused');
+  await expect(
+    runWorkflow(workflow, { ...options(), runId: 'review', input: 'review', harness }),
+  ).rejects.toThrow('Team slot critic is not filled.');
+  await expect(
+    runWorkflow(workflow, { ...options(), runId: 'panel', input: 'panel', harness }),
+  ).rejects.toThrow('Team slot panelist is not filled.');
+  expect(harness.calls).toHaveLength(0);
+});
+
 it('std tolerantPanel accepts a value typed as the exported options', async () => {
   const workflow = defineWorkflow({
     name: 'typed-options-panel',

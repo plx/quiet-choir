@@ -8,13 +8,14 @@
  *   {@link Plan} and {@link Refutation}, for structured agent calls.
  * - Builders for shapes known only at runtime: {@link oneOf}, {@link listOf} and {@link rubric}.
  *
- * Every record is a plain `z.object` annotated with its exact Zod type, so `.shape`, `.extend()`
- * and `.pick()` keep working, and each schema exports its inferred type under the same name.
+ * Every record but {@link Receipt} (typed as the runtime's `WriteFileResult`) is a plain `z.object`
+ * annotated with its exact Zod type, so `.shape`, `.extend()` and `.pick()` keep working, and each
+ * schema exports its inferred type under the same name.
  *
  * The agent-output schemas follow rules that both harnesses' structured output accepts: an object
  * root, every property required (`.nullable()` where absence means something), no records, tuples
  * or format validators such as `.regex()`. Enums list their values in rank order, most severe or
- * important first. A schema's `.describe()` text is what the agent reads, and it is part of the
+ * important first ({@link Size} runs from smallest to largest). A schema's `.describe()` text is what the agent reads, and it is part of the
  * identity of every call that sends the schema, so released text does not change. The input-side
  * {@link Sha}, {@link ShortSha}, {@link Sha256}, {@link Key}, {@link Argv} and {@link Receipt} use
  * patterns or tuples: validate data with them, but do not request them from an agent.

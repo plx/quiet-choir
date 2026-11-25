@@ -35,14 +35,15 @@ prove replay behaviour, not the quality of a model's work.
 | Answer a question from cited sources                              | `research`                                | [Research](#research)                                        |
 | Make independent edits in parallel worktrees and merge them       | `isolatedEdits`                           | [Parallel edits](#parallel-edits)                            |
 | Get a human's approval of a plan before acting on it              | `approvedPlan`, `planCall`                | [Approved plan](#approved-plan)                              |
-| Repeat a discovery round until it comes back dry                  | `std.flow.untilDry`                       | [Loop until dry](patterns.md#loop-until-dry)                 |
+| Repeat a discovery round until it comes back dry                  | `std.flow.untilDry`                       | [Loop until dry](patterns.md#loop-until-dry) (by hand)       |
 | Revise until a reviewer approves                                  | `reviewRevise`                            | [Bounded review/revise](patterns.md#bounded-reviewrevise)    |
 | Ask one panelist per item and keep a quorum                       | `tolerantPanel`                           | [Failure-tolerant panel](patterns.md#failure-tolerant-panel) |
 
 ## The pattern contract
 
-Every function in `std.patterns` takes the context and one options object, and keeps the same
-contract (ADR 0068 §4):
+Every pattern in `std.patterns` takes the context and one options object, and keeps the same
+contract (ADR 0068 §4), except the older `reviewRevise` and `tolerantPanel`, which the
+[cookbook](patterns.md) describes: neither takes `calls`, and `reviewRevise`'s `id` is optional.
 
 - **`id` and step IDs.** `id` is required and the pattern runs under `ctx.scope(id, ...)`, so two
   calls with different IDs never collide. Each pattern's TSDoc lists the exact step IDs it records;
@@ -50,25 +51,28 @@ contract (ADR 0068 §4):
 - **Teams.** `team` is a record of bound agents for the pattern's slots (`XTeam.from(record)` picks
   them from a larger record). The pattern checks the team before any effect, so an unfilled slot
   throws `Team slot <name> is not filled.` instead of being saved as a failed call. Fill a team from
-  the same `ctx` you pass to the pattern: an agent bound from another context (a child, a scope)
-  records its calls there.
+  the same context view you pass to the pattern: an agent read from `ctx.within(p).roster` keeps the
+  `p/` prefix wherever it is called.
 - **Failures are data.** Where a failed agent is tolerated (a seat, a lens, a chunk, a critic), the
-  pattern runs the calls in a settled map, so the failure is journaled and a resume replays the same
-  decision instead of retrying it into a different one. Results carry a `status` and failure counts
-  (`failedVotes`, `failedChunks`, ...), never a silently shorter list. A call the pattern cannot do
-  without (a planner, a reducer, an author) throws, and a resume retries it.
+  pattern runs the calls in a settled map (or a single call with `onError: 'return'`, such as a fix
+  or a route), so the failure is journaled and a resume replays the same decision instead of
+  retrying it into a different one. Results carry a `status` and failure counts (`failedVotes`,
+  `failedChunks`, ...), never a silently shorter list. A call the pattern cannot do without (a
+  planner, a reducer, an author) throws, and a resume retries it.
 - **Fingerprints.** Settled-map items carry the rendered prompt and the calls' placement (`cwd`,
   `addDirs`, `worktree`), so changing a prompt, an input that a prompt shows, or where the calls run
   refuses to replay the completed calls. A change the items cannot show, such as a replacement
-  `schema`, needs a new `version` string.
-- **`calls`** (`CallDefaults`: placement, `cwd`, `addDirs`, retry, `timeoutMs`, ...) is spread into
-  every agent call the pattern makes.
+  `schema`, needs a new value of the pattern's `version` option.
+- **`calls`** (`CallDefaults`: `cwd`, `addDirs`, `worktree`, retry, deadlines, ...) is spread into
+  every agent call the pattern makes. `fixUntilGreen` takes a shared checkout as its own `worktree`
+  option instead (`calls.worktree` alone throws), and `isolatedEdits` refuses `calls.worktree`.
 - **`prompts`** replaces a stage's default prompt: `prompts.<stage>` receives that stage's inputs
   and returns a string or a `Prompt` (`definePrompts`). The defaults are built with
   `std.text.brief`, and the prompt of a skeptical slot names its safe default (refute, vote no,
   untestable, not approved), which the `Skeptic`, `Critic` and `Judge` personas fall back to.
 - **`concurrency`** (default 4) bounds each fan-out. Patterns that cap work (`maxCalls`, `reads`,
-  `count`) log what they leave out and return it.
+  `count`, `pick`) log what they leave out; `hunt`, `research` and `rank` also return it
+  (`unverified`, `deferred`).
 - **Released text is identity.** Default prompts, schemas, personas and lenses are part of the
   fingerprint of the calls that use them; the library changes them only by adding new names.
 
@@ -120,18 +124,20 @@ export const roster = defineRoster({
 | `CodexEditor`, `CodexMechanic`  | the same through a workspace-write Codex sandbox              | write         |
 
 `std.rosters.readers` declares every role that needs no grant, and `std.rosters.standard` declares
-all of them. Under `--require-grants`, a workflow on `readers` needs no `--grant` at all.
+all of them. Under `--require-grants`, a workflow on `readers` needs no `--grant` at all, but every
+write or exec entry in a roster needs one even when the body never calls it, and a `shell` or
+`editShell` entry is exec: declare only the roles a workflow calls.
 
 ## Data, helpers and flow
 
-| Namespace    | What it holds                                                                                                                                                                                                                                                                                                                                                                                     |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `std.types`  | strict, bounded, rehearsable output schemas (`Finding`, `Findings`, `Refutation`, `Ballot`, `Critique`, `WorkReport`, `Plan`, `TaskList`, `Criterion`, `Assessment`, `Hypotheses`, `Leads`, `Claims`, `Changes`, ...), enums (`Severity`, `WorkStatus`, `GateDecision`, ...), input primitives (`RepoPath`, `Sha`, `Argv`, `limit(default, max, min)`) and builders (`oneOf`, `listOf`, `rubric`) |
-| `std.lenses` | named charters for fan-out: `bugs`, `review`, `security`, `design`, `research`, `release`, `writing`, and the `designRubric` criteria                                                                                                                                                                                                                                                             |
-| `std.data`   | pure helpers over results: `tally`, `majority`, `threshold`, `dedupeBy`, `fresh`, `corroborate`, `chunk`, `rotate`, `rankBy`, `bySeverity`, `rankCap`, `coverage`, `findingKey`, `topoWaves`, `digest`, ...                                                                                                                                                                                       |
-| `std.text`   | prompt text: `brief` (task, context, guidance, output), `section`, `bullets`, `numbered`, `fence`, `promptText`, `clip`, `tail`, `stripAnsi`, `slug`, `firstSentence`                                                                                                                                                                                                                             |
-| `std.exec`   | journaled Git and command reads: `git`, `json`, `check` (an exit-code verdict), `head`, `status`, `assertClean`, `diff`, `changedFiles`, `commits`, `committedArtifact`                                                                                                                                                                                                                           |
-| `std.flow`   | team-free control flow: `untilDry` (rounds until dry), `waves` (a dependency graph in settled waves), `each` (a settled map with a per-item result)                                                                                                                                                                                                                                               |
+| Namespace    | What it holds                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `std.types`  | strict, bounded, rehearsable output schemas (`Finding`, `Findings`, `Refutation`, `Ballot`, `Critique`, `WorkReport`, `Plan`, `TaskList`, `CriterionResult`, `Assessment`, `Hypotheses`, `Leads`, `Claims`, `Changes`, ...), enums (`Severity`, `WorkStatus`, `GateDecision`, ...), input primitives (`RepoPath`, `Sha`, `Argv`, `limit(default, max, min)`) and builders (`oneOf`, `listOf`, `rubric`) |
+| `std.lenses` | named charters for fan-out: `bugs`, `review`, `security`, `design`, `research`, `release`, `writing`, and the `designRubric` criteria                                                                                                                                                                                                                                                                   |
+| `std.data`   | pure helpers over results: `tally`, `majority`, `threshold`, `dedupeBy`, `fresh`, `corroborate`, `chunk`, `rotate`, `rankBy`, `bySeverity`, `rankCap`, `coverage`, `findingKey`, `topoWaves`, `digest`, ...                                                                                                                                                                                             |
+| `std.text`   | prompt text: `brief` (task, context, guidance, output), `section`, `bullets`, `numbered`, `fence`, `promptText`, `clip`, `tail`, `stripAnsi`, `slug`, `firstSentence`                                                                                                                                                                                                                                   |
+| `std.exec`   | journaled commands and Git reads: `check` (an exit-code verdict), `git`, `head`, `status`, `assertClean`, `diff`, `changedFiles`, `commits`; `committedArtifact` publishes a file, and `json` formats prompt data                                                                                                                                                                                       |
+| `std.flow`   | team-free control flow: `untilDry` (rounds until dry), `waves` (a dependency graph in settled waves), `each` (a settled map with a per-item result)                                                                                                                                                                                                                                                     |
 
 Every agent-output schema in `std.types` has an object root and required fields (`.nullable()` for
 absence) and passes Codex's strict check, and none uses a regex, so fixture rehearsal can synthesize
@@ -142,10 +148,11 @@ it. A schema of your own built from them should keep those rules.
 **Rule:** discover until dry, and verify every new finding before it counts. `hunt` runs rounds of
 finders over a rotating window of lenses (`std.lenses.bugs` by default, `perRound` 3), deduplicates
 findings by `std.data.findingKey`, and has `seats` skeptics (default 3) try to refute each new
-finding in the same round. It ends `dry` after `patience` rounds without a new finding once every
-lens has run, `round-limit` after `rounds`, or `call-limit` when `maxCalls` (finder calls plus
-skeptic seats) would be exceeded; the left-out findings are logged and returned as `unverified`.
-Steps: `<id>/round/<n>/lens/<lens>/find` and `<id>/round/<n>/item/<key>/seat/<s>/verdict`.
+finding in the same round. It ends `dry` after `patience` (default 2) consecutive rounds without a
+new finding or a failed finder once every lens has run, `round-limit` after `rounds` (default 4), or
+`call-limit` when `maxCalls` (finder calls plus skeptic seats) would be exceeded; the left-out
+findings are logged and returned as `unverified`. Steps: `<id>/round/<n>/lens/<lens>/find` and
+`<id>/round/<n>/item/<key>/seat/<s>/verdict`.
 
 <!-- skills-check: example pattern-std-bug-hunt -->
 
@@ -237,10 +244,10 @@ or a seat failed; the failures are journaled and are not retried on resume.
 **Rule:** revise until every critic answers with no issue, or the rounds run out. `critiqueRevise`
 asks one critic per lens (`<id>/round/<n>/lens/<lens>/critique`, or `<id>/round/<n>/critique`
 without lenses) and has the author revise (`<id>/round/<n>/revise`) after each round with issues
-except the last. A draft is approved only when every critic answered; a failed critic leaves the
-draft unapproved (`degraded` if it was the last round). Without `draft`, the author writes the first
-one (`<id>/draft`). The recipe writes the file back only when the result is approved and changed,
-guarded by the hash it read.
+except the last. A draft is approved only when every critic answered; a round with a failed critic
+does not approve (`degraded` when the last round raised no issue but a critic failed). Without
+`draft`, the author writes the first one (`<id>/draft`). The recipe writes the file back only when
+the result is approved and changed, guarded by the hash it read.
 
 <!-- skills-check: example pattern-std-doc-polish -->
 
@@ -282,11 +289,14 @@ export default defineWorkflow({
 ## Fix the tests
 
 **Rule:** only the command decides green. `fixUntilGreen` runs the check (`<id>/check/0`), and after
-each failure asks the `mechanic`, or the `surgeon` from round `escalateAfter` on, to fix it
-(`<id>/fix/<n>`, a settled `types.WorkReport` call), then checks again (`<id>/check/<n>`). Each
-fixer sees the failure and the earlier attempts, and is told not to weaken tests. `escalate` is the
-general ladder: attempt 0 goes to `start` (the mechanic by default), every later attempt to the
-surgeon (`<id>/attempt/<n>/work`), until your `accept(value)` returns `true`.
+each failure asks the `mechanic`, or the `surgeon` after the first `escalateAfter` rounds (by
+default only in the last of `rounds`, which defaults to 3), to fix it (`<id>/fix/<n>` from 1, a
+settled `types.WorkReport` call), then checks again (`<id>/check/<n>`). Each fixer sees the failure
+and the earlier attempts, and is told not to weaken tests. `fixedBy` names the slot whose fix made
+the check pass; it is null when no fix call did, as when the pass followed a failed fix call.
+`escalate` is the general ladder: attempt 0 goes to `start` (the mechanic by default), every later
+attempt to the surgeon (`<id>/attempt/<n>/work`), until your `accept(value)` returns `true`.
+`accept` runs again on resume, so decide only from the value and durable effects.
 
 <!-- skills-check: example pattern-std-fix-tests -->
 
@@ -369,11 +379,12 @@ export default defineWorkflow({
 
 ## Triage
 
-**Rule:** label in batches, then rank only what matters. `classify` sends `chunk` items per call
-(`<id>/chunk/<n>/tag`) and splits them into `assignments`, `unlabeled` and `failed`, with `counts`
-per label; `multi: true` allows several labels. `rank` picks the best `pick` items by a criterion in
-one call (`<id>/rank`) and makes no call when there are no more than `pick`. `route` picks one route
-by name (`<id>/route`); with a `fallback`, a failed call falls back instead of throwing.
+**Rule:** label in batches, then rank only what matters. `classify` sends `chunk` items (default 10)
+per call (`<id>/chunk/<n>/tag`) and splits them into `assignments`, `unlabeled` and `failed`, with
+`counts` per label; `omitted` names the unlabeled items a reply left out, and `multi: true` allows
+several labels. `rank` picks the best `pick` items by a criterion in one call (`<id>/rank`) and
+makes no call when there are no more than `pick`. `route` picks one route by name (`<id>/route`);
+with a `fallback`, a failed call falls back instead of throwing.
 
 <!-- skills-check: example pattern-std-triage -->
 
@@ -415,10 +426,10 @@ export default defineWorkflow({
 ## Change log
 
 **Rule:** map in chunks, reduce once, and say what was not covered. `mapReduce` gives `chunk` items
-(default 20) to each mapper call (`<id>/map/<k>/part`, text or your `schema`) and one reducer call
-the successful parts (`<id>/reduce`). Coverage is computed in code: the items of failed chunks are
-returned in `coverage.missing` and listed to the reducer as not covered. When every chunk fails, the
-reducer is skipped and the status is `failed`.
+(default 20) to each mapper call (`<id>/map/<k>/part`, where `<k>` is the chunk's first item key;
+text or your `schema`) and one reducer call the successful parts (`<id>/reduce`). Coverage is
+computed in code: the items of failed chunks are returned in `coverage.missing` and listed to the
+reducer as not covered. When every chunk fails, the reducer is skipped and the status is `failed`.
 
 <!-- skills-check: example pattern-std-changelog -->
 
@@ -592,10 +603,10 @@ export default defineWorkflow({
 
 **Rule:** a blocker stands until skeptics refute it. `gate` has the assessor judge each dimension
 (`std.lenses.release` by default; `<id>/dimension/<key>/assess`, a `types.Assessment`), then gives
-each reported blocker to `seats` skeptics (`<id>/blocker/<key>/seat/<n>/verdict`). A refuted blocker
-is downgraded to a concern. The decision is `no-go` for a confirmed or undecided blocker,
-`conditional-go` for a concern, a downgrade, a dimension that could not be checked or a failed
-assessor, and `go` otherwise.
+each reported blocker to `seats` skeptics (default 1; `<id>/blocker/<key>/seat/<n>/verdict`). A
+refuted blocker is downgraded to a concern. The decision is `no-go` for a confirmed or undecided
+blocker, `conditional-go` for a concern, a downgrade, a dimension that could not be checked or a
+failed assessor, and `go` otherwise.
 
 <!-- skills-check: example pattern-std-release-gate -->
 
@@ -636,10 +647,11 @@ export default defineWorkflow({
 ## Incident analysis
 
 **Rule:** try to falsify every hypothesis, not to confirm one. `falsify` asks the theorist for up to
-`count` competing hypotheses with testable predictions (`<id>/theorize`), then gives each to a
-falsifier (`<id>/hypothesis/<key>/falsify`, a `types.Falsification`) whose safe default is
-`untestable`. Confidence is `high` for one survivor with every rival falsified, `medium` when rivals
-remain open, `split` for several survivors and `none` for no survivor.
+`count` (default 4, at most 8) competing hypotheses with testable predictions (`<id>/theorize`),
+then gives each to a falsifier (`<id>/hypothesis/<key>/falsify`, a `types.Falsification`) whose safe
+default is `untestable`. Confidence is `high` for one survivor with every rival falsified, `medium`
+for one survivor otherwise (a rival left open, or no rival), `split` for several survivors and
+`none` for no survivor.
 
 <!-- skills-check: example pattern-std-incident -->
 
@@ -760,7 +772,11 @@ export default defineWorkflow({
 });
 ```
 
-**Cost:** one isolated call per item and one merge. The editor needs a write grant.
+The workflow's checkout must be a Git working tree with a commit. Each edit starts from `base` (by
+default `HEAD` when it starts), and under `--dry-run` every item is `unchanged`.
+
+**Cost:** one isolated call per item and one merge. Under `--require-grants`, the editor needs a
+write grant.
 
 ## Approved plan
 
@@ -768,8 +784,8 @@ export default defineWorkflow({
 `types.Plan` (`<id>/round/<n>/plan`) and asks for approval of its digest (`<id>/round/<n>/approve`);
 a rejection with a comment gets a revised plan, up to `revisions` times, and a rejection without one
 stops. `planCall(review, task)` is the implementer's prompt and `types.WorkReport` schema, with the
-reviewer's comment. The run suspends at each approval: answer it as in
-[human review](patterns.md#human-review).
+reviewer's comment; it throws for a result that was not approved. The run suspends at each approval:
+answer it as in [human review](patterns.md#human-review).
 
 <!-- skills-check: example pattern-std-approved-plan -->
 

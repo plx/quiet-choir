@@ -45,35 +45,42 @@ handling drift from port to port.
    combinations as complete entries, and `std.rosters.readers` (every role without write or exec
    access, so it needs no grant under `requireGrants`) and `std.rosters.standard` declare them. A
    shell is an allowlist: `std.claude.shell(rules)` exposes `Bash` narrowed to `std.bash` rule sets
-   and denies `git push`, so it is `exec`. Tiers, limits and personas are Claude-only; Codex has no
-   standing prompt, so a Codex call prepends the persona text instead.
+   and denies `git push` by default, and it is `exec`, as any shell is. Tiers, limits and personas
+   are Claude-only; Codex has no standing prompt, so a Codex call prepends the persona text instead.
 
 3. **Agent-output types are strict, bounded and rehearsable.** Every schema an agent answers has an
    object root and required properties (`.nullable()` for absence), uses no record, tuple,
    discriminated union or loose object, so it passes Codex's strict check, and uses no regex or
-   format validator, so fixture rehearsal can synthesize it. Text is non-empty, lists are bounded,
-   and each field's `.describe()` text tells the agent what to return. Input-side primitives (`Sha`,
-   `Key`, `Argv`, `limit`) may use regexes and tuples.
+   format validator, so fixture rehearsal can synthesize it. Most text is non-empty, the record
+   lists (findings, issues, plan steps, tasks, claims, leads and hypotheses) are bounded, and each
+   field's `.describe()` text tells the agent what to return. Input-side primitives (`Sha`, `Key`,
+   `Argv`, `limit`) may use regexes and tuples.
 
 4. **A pattern is a function over the context, a team and an options object, with a fixed
    contract.**
    - It takes a required `id` and runs under `ctx.scope(id, ...)`; its TSDoc lists the exact step
-     IDs it records.
+     IDs it records. It fills its team with the team's `from` before any effect, so an unfilled slot
+     throws instead of being journaled as a failed call.
    - Every decision that tolerates a failed agent (a vote, a quorum, a fallback) goes through a
      settled map or an `onError: 'return'` call, so the failure is journaled and replays the same
      way. Results report failure counts and a `status` instead of filtering failures out.
-   - A settled map's items carry the rendered prompt text, so a prompt change is detected by the
-     map's fingerprint; the caller's `version` revises what items do not show, such as a schema.
+   - A settled map's items carry the rendered prompt text and the calls' placement (`cwd`,
+     `addDirs`, `worktree`), so a prompt or placement change is detected by the map's fingerprint;
+     the caller's `version` revises what items do not show, such as a schema.
    - `calls` (a `CallDefaults`) supplies placement, retry and deadlines for every agent call.
    - Default prompts are built with `std.text.brief`, and a skeptical slot's prompt names the safe
      default its persona falls back to.
    - `std.flow` helpers that run a caller callback in a settled map pass the callback itself as the
      mapper, so its source is fingerprinted.
 
+   The seeded `reviewRevise` and `tolerantPanel` predate this contract and keep their options:
+   `reviewRevise`'s `id` is optional, and neither takes `calls`. Both check their team before any
+   effect.
+
 5. **Released text is identity.** Default prompts, schemas and their descriptions, persona and lens
    text, and role options are part of the step identity of the calls that use them. They change only
-   by adding a new name or revising a pattern's documented version; the tests pin their digests so a
-   change is deliberate.
+   by adding a new name or revising a pattern's documented version; the tests pin the digests of the
+   schemas and persona texts, so a change to them is deliberate.
 
 6. **Out of scope.** Patterns stay in-process: a child workflow that takes a team is still deferred
    (ADR 0067 §3), and a pattern that called `ctx.workflow` would force every caller to declare std
