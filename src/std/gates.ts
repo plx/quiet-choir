@@ -38,12 +38,19 @@
  *
  * @module
  */
-import { defineTeam, type Prompt, type TeamOf, type WorkflowContext } from '../index.js';
+import {
+  defineTeam,
+  type JsonValue,
+  type Prompt,
+  type TeamOf,
+  type WorkflowContext,
+} from '../index.js';
 import { assertUnique, tally, threshold, type Outcome, type Rule } from './data.js';
 import { release, type Lens } from './lenses.js';
 import {
   keyed,
   nonEmpty,
+  placement,
   positiveInt,
   settledMap,
   statusOf,
@@ -59,16 +66,24 @@ import {
   type GateDecision,
 } from './types.js';
 
-/** A settled-map item that carries its key and the rendered prompt the mapper sends. */
+/**
+ * A settled-map item that carries its key, the rendered prompt the mapper sends, and where the call
+ * runs (see `placement`).
+ */
 interface PromptRecord {
   readonly key: string;
   readonly prompt: string;
+  readonly placement?: JsonValue;
 }
 
-/** The settled-map item of one blocker's skeptic panel: its key and one prompt per seat. */
+/**
+ * The settled-map item of one blocker's skeptic panel: its key, one prompt per seat, and where the
+ * calls run (see `placement`).
+ */
 interface PanelRecord {
   readonly key: string;
   readonly prompts: readonly string[];
+  readonly placement?: JsonValue;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -228,7 +243,7 @@ export async function checklist(
   const { target, calls } = options;
   const prompt = options.prompts?.check ?? checkPrompt;
   const records: PromptRecord[] = keyed(criteria, (criterion) => criterion.id).map(
-    ({ key, item }) => ({ key, prompt: promptText(prompt(item, target)) }),
+    ({ key, item }) => ({ key, prompt: promptText(prompt(item, target)), ...placement(calls) }),
   );
   const settled = await ctx.scope(options.id, () =>
     ctx.map('criterion', records, map, (record) =>
@@ -526,9 +541,11 @@ export async function gate(ctx: WorkflowContext, options: GateOptions): Promise<
     ((dimension: Lens, assessment: Assessment, text: string) =>
       challengePrompt(task, dimension, assessment, text));
   const entries = keyed(dimensions, (dimension) => dimension.key);
+  const where = placement(calls);
   const records: PromptRecord[] = entries.map(({ key, item }) => ({
     key,
     prompt: promptText(assess(item, subject)),
+    ...where,
   }));
 
   return ctx.scope(options.id, async () => {
@@ -546,7 +563,7 @@ export async function gate(ctx: WorkflowContext, options: GateOptions): Promise<
       const prompts = Array.from({ length: seats }, (_unused, seat) =>
         promptText(challenge(lens, assessment, subject, seat, seats)),
       );
-      panels.push({ key, prompts });
+      panels.push({ key, prompts, ...where });
     }
     const challenged =
       panels.length === 0
@@ -554,7 +571,11 @@ export async function gate(ctx: WorkflowContext, options: GateOptions): Promise<
         : await ctx.map('blocker', panels, blockerMap, (record) =>
             ctx.map(
               'seat',
-              record.prompts.map((prompt, seat): PromptRecord => ({ key: String(seat), prompt })),
+              record.prompts.map((prompt, seat): PromptRecord => ({
+                key: String(seat),
+                prompt,
+                ...where,
+              })),
               {
                 concurrency: record.prompts.length,
                 key: (seat) => seat.key,

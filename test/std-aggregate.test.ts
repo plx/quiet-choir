@@ -356,6 +356,35 @@ describe('mapReduce', () => {
     expect(harness.calls).toHaveLength(calls);
   });
 
+  it('refuses to replay chunk answers after a call placement change, not a deadline change', async () => {
+    let calls: aggregate.MapReduceOptions<string>['calls'];
+    const definition = tailFailure(
+      workflow('map-reduce-placed', (ctx) =>
+        aggregate.mapReduce(ctx, {
+          id: 'mr',
+          team: { mapper: ctx.claude.bind({}), reducer: ctx.claude.bind({}) },
+          items: letters,
+          task: 'Summarize these letters.',
+          chunk: 2,
+          calls,
+        }),
+      ),
+    );
+    const harness = mappers();
+    const options = { ...runOptions(root, 'placed'), harness };
+    await expect(runWorkflow(definition, { ...options, input: null })).rejects.toThrow(
+      'Injected tail failure',
+    );
+    calls = { cwd: 'pkg' };
+    await expect(runWorkflow(definition, { ...options, resume: true })).rejects.toThrow(
+      'Settled map mr/map changed after an item completed (changed: items)',
+    );
+    calls = { timeoutMs: 5_000 };
+    const resumed = await runWorkflow(definition, { ...options, resume: true });
+    expect(resumed.output).toMatchObject({ result: 'combined', status: 'complete' });
+    expect(harness.calls).toHaveLength(4);
+  });
+
   it('keeps Prompt objects out of the map items, as their rendered text', async () => {
     await writeFile(join(root, 'Map.md'), 'map {{ keys }}');
     await writeFile(join(root, 'Reduce.md'), 'reduce {{ count }}');
@@ -405,6 +434,13 @@ describe('mapReduce', () => {
     await expect(run(summarize({ items: ['a', 'b', 'a', 'b'] }), harness, 'dupes')).rejects.toThrow(
       'Duplicate mapReduce item key: "a", "b".',
     );
+    // Blank texts are refused up front, not after the map has spent every mapper call.
+    await expect(run(summarize({ reduce: '  ' }), harness, 'reduce')).rejects.toThrow(
+      'mapReduce reduce must be nonblank when given.',
+    );
+    await expect(
+      run(summarize({ task: ' ', prompts: { map: (items) => items.join(',') } }), harness, 'task'),
+    ).rejects.toThrow('mapReduce task must be nonblank.');
     expect(harness.calls).toHaveLength(0);
   });
 
@@ -419,9 +455,13 @@ describe('mapReduce', () => {
           task: 'Summarize these letters.',
         }),
       );
-    await expect(run(unfilled(() => ({})), harness, 'none')).rejects.toThrow(
-      'Team slot mapper is not filled.',
-    );
+    await expect(
+      run(
+        unfilled(() => ({})),
+        harness,
+        'none',
+      ),
+    ).rejects.toThrow('Team slot mapper is not filled.');
     await expect(
       run(
         unfilled((ctx) => ({ mapper: ctx.claude.bind({}) })),
@@ -562,9 +602,9 @@ describe('decompose', () => {
     await expect(run(plan({ maxTasks: 0 }), idle, 'zero')).rejects.toThrow(
       'maxTasks must be a positive integer; got 0.',
     );
-    await expect(
-      run(plan({ team: {} as aggregate.PlanTeam }), idle, 'unfilled'),
-    ).rejects.toThrow('Team slot planner is not filled.');
+    await expect(run(plan({ team: {} as aggregate.PlanTeam }), idle, 'unfilled')).rejects.toThrow(
+      'Team slot planner is not filled.',
+    );
     expect(idle.calls).toHaveLength(0);
   });
 });

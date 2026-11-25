@@ -50,14 +50,18 @@ import {
 } from '../index.js';
 import { assertUnique, chunk, coverage, topoWaves, uniqueKeys, type Coverage } from './data.js';
 import { json } from './exec.js';
-import { positiveInt, settledMap, type CallDefaults } from './pattern-kit.js';
+import { placement, positiveInt, settledMap, type CallDefaults } from './pattern-kit.js';
 import { brief, bullets, fence, promptText } from './text.js';
 import { Task, WorkReport, type TaskList } from './types.js';
 
-/** A settled-map item that carries its key and the rendered prompt the mapper sends. */
+/**
+ * A settled-map item that carries its key, the rendered prompt the mapper sends, and where the call
+ * runs (see `placement`).
+ */
 interface PromptRecord {
   readonly key: string;
   readonly prompt: string;
+  readonly placement?: JsonValue;
 }
 
 /** `### <title>` followed by `body`, a subsection inside a `std.text.brief` section. */
@@ -252,9 +256,11 @@ function reducePrompt(
  * @param options - The scope, the team, the items and the task, with optional key, chunk size,
  * description, reducer task and prompts.
  * @returns The reducer's text, the parts, the coverage, the chunk counts and the status.
- * @throws TypeError - Before any effect, when the `mapper` or `reducer` slot is not filled, or
- * `chunk` or `concurrency` is not a positive integer.
+ * @throws TypeError - Before any effect, when the `mapper` or `reducer` slot is not filled, `task`
+ * is blank, `reduce` is given but blank, or `chunk` or `concurrency` is not a positive integer.
  * @throws Error - Before any effect, `Duplicate mapReduce item key: ...` when two items share a key.
+ * @throws Error - The reducer's call failure, after the map; a resume replays the map and retries
+ * only the reducer.
  */
 export function mapReduce<T>(
   ctx: WorkflowContext,
@@ -269,9 +275,11 @@ export function mapReduce<T>(
  * @param ctx - The workflow context the team was bound from.
  * @param options - The scope, the team, the items, the task and the answer schema.
  * @returns The reducer's text, the parsed parts, the coverage, the chunk counts and the status.
- * @throws TypeError - Before any effect, when the `mapper` or `reducer` slot is not filled, or
- * `chunk` or `concurrency` is not a positive integer.
+ * @throws TypeError - Before any effect, when the `mapper` or `reducer` slot is not filled, `task`
+ * is blank, `reduce` is given but blank, or `chunk` or `concurrency` is not a positive integer.
  * @throws Error - Before any effect, `Duplicate mapReduce item key: ...` when two items share a key.
+ * @throws Error - The reducer's call failure, after the map; a resume replays the map and retries
+ * only the reducer.
  */
 export function mapReduce<T, P>(
   ctx: WorkflowContext,
@@ -289,9 +297,11 @@ export function mapReduce<T, P>(
  * @param options - The scope, the team, the items, the task and an optional answer schema.
  * @returns The reducer's text, the parts (parsed when `schema` is set, else text), the coverage,
  * the chunk counts and the status.
- * @throws TypeError - Before any effect, when the `mapper` or `reducer` slot is not filled, or
- * `chunk` or `concurrency` is not a positive integer.
+ * @throws TypeError - Before any effect, when the `mapper` or `reducer` slot is not filled, `task`
+ * is blank, `reduce` is given but blank, or `chunk` or `concurrency` is not a positive integer.
  * @throws Error - Before any effect, `Duplicate mapReduce item key: ...` when two items share a key.
+ * @throws Error - The reducer's call failure, after the map; a resume replays the map and retries
+ * only the reducer.
  */
 export function mapReduce<T, P>(
   ctx: WorkflowContext,
@@ -302,6 +312,9 @@ export async function mapReduce<T, P>(
   options: MapReduceOptions<T, P>,
 ): Promise<MapReduceResult<P | string>> {
   const team = MapReduceTeam.from(options.team);
+  if (options.task.trim() === '') throw new TypeError('mapReduce task must be nonblank.');
+  if (options.reduce?.trim() === '')
+    throw new TypeError('mapReduce reduce must be nonblank when given.');
   const size = positiveInt('chunk', options.chunk ?? 20);
   const map = settledMap<PromptRecord>(options);
   const { task, schema, calls } = options;
@@ -330,7 +343,11 @@ export async function mapReduce<T, P>(
             members.map((member) => member.item),
             members.map((member) => member.key),
           );
-    return { key: mapKeys[position] ?? String(position), prompt: promptText(prompt) };
+    return {
+      key: mapKeys[position] ?? String(position),
+      prompt: promptText(prompt),
+      ...placement(calls),
+    };
   });
   return ctx.scope(options.id, async () => {
     const settled: Settled<P | string, MapStepError>[] =

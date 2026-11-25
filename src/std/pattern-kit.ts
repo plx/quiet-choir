@@ -2,15 +2,16 @@
  * Shared plumbing for the std pattern modules (`panels`, `revise`, `select`, `aggregate`, `gates`,
  * `investigate`, `edits`) and `flow`. Only {@link CallDefaults} is public, re-exported as
  * `std.patterns.CallDefaults`; the other exports are helpers those modules import directly, so they
- * agree on defaults, option validation and settled-map keys.
+ * agree on defaults, option validation, settled-map keys and what settled-map records carry.
  *
  * ```ts
- * import { DEFAULT_CONCURRENCY, keyed, positiveInt, settledMap } from './pattern-kit.js';
+ * import { keyed, placement, positiveInt, settledMap } from './pattern-kit.js';
  *
  * const seats = positiveInt('seats', options.seats ?? 3);
  * const records = keyed(options.items, options.key).map(({ key, item }) => ({
  *   key,
  *   prompt: std.text.promptText(prompt(item)),
+ *   ...placement(options.calls),
  * }));
  * const verdicts = await ctx.map('verify', records, settledMap(options), (record) =>
  *   team.skeptic.value('verdict', { ...options.calls, prompt: record.prompt, schema }),
@@ -19,11 +20,48 @@
  *
  * @module
  */
-import type { BoundCallOptions, MapOptions } from '../index.js';
+import type { AgentWorktree, BoundCallOptions, JsonValue, MapOptions } from '../index.js';
 import { uniqueKeys } from './data.js';
 
-/** Options applied to every agent call a pattern makes; the pattern sets the prompt, schema and error mode. */
+/**
+ * Options applied to every agent call a pattern makes; the pattern sets the prompt, schema and error
+ * mode. The placement (`cwd`, `addDirs`, `worktree`) is part of what a resume checks, in settled
+ * maps too: a resume with another placement refuses the completed calls instead of reusing them.
+ * `retry` and the deadlines are policy and may change between runs.
+ */
 export type CallDefaults = Omit<BoundCallOptions, 'prompt' | 'onError'>;
+
+/** A worktree selection as JSON: a handle by its ID and pinned base, else the base it starts from. */
+function worktreeIdentity(worktree: AgentWorktree): JsonValue {
+  if (worktree === true) return { base: 'HEAD' };
+  if ('id' in worktree) return { id: worktree.id, base: worktree.base };
+  return { base: worktree.base ?? 'HEAD' };
+}
+
+/**
+ * The placement of a pattern's agent calls, for its settled-map records. `cwd`, `addDirs` and
+ * `worktree` are part of an agent step's identity, but a completed map item is reused without its
+ * calls being compared, so every record carries them and the map fingerprint sees a change. Spread
+ * the result into each record; it is empty when `calls` sets none of them, and it leaves out
+ * `retry` and the deadlines, which are policy.
+ *
+ * @param calls - The pattern's call defaults.
+ * @returns `{ placement: { cwd, addDirs, worktree } }` (absent members as null), or `{}`.
+ */
+export function placement(calls: CallDefaults | undefined): {
+  /** Where the calls run, as JSON. */
+  readonly placement?: JsonValue;
+} {
+  const { cwd, addDirs, worktree } = calls ?? {};
+  if (cwd === undefined && addDirs === undefined && worktree === undefined) return {};
+  return {
+    placement: {
+      cwd: cwd ?? null,
+      addDirs: addDirs === undefined ? null : [...addDirs],
+      worktree: worktree === undefined ? null : worktreeIdentity(worktree),
+    },
+  };
+}
 
 /** The `concurrency` a pattern's fan-out uses when the caller gives none. */
 export const DEFAULT_CONCURRENCY = 4;

@@ -11,13 +11,18 @@ import {
   runWorkflow,
   synthesizeOutput,
   type HarnessRequest,
-  type WorkflowDefinition,
 } from '../src/index.js';
 import * as std from '../src/std/index.js';
 import { capabilityManifest } from '../src/workflow/runtime/profiles.js';
 import docPolish from '../examples/patterns/std-doc-polish.workflow.js';
 import fixTests from '../examples/patterns/std-fix-tests.workflow.js';
-import { ScriptedHarness, makeRoot, removeRoot, runOptions, tailFailure } from './std-harness.js';
+import {
+  ScriptedHarness,
+  makeRoot,
+  removeRoot,
+  replayAfterTail,
+  runOptions,
+} from './std-harness.js';
 
 let root: string;
 beforeEach(async () => {
@@ -37,28 +42,6 @@ function scripted(
     if (request.outputSchema === null) throw new Error(`Unscripted text call ${request.stepId}`);
     return synthesizeOutput(request.outputSchema, request.stepId);
   });
-}
-
-/**
- * Run `workflow` with a real process runner to an injected tail failure, then resume it twice:
- * the resumes make no new agent call and record the same steps. Returns the first resume.
- */
-async function replayAfterTail<I, O>(
-  workflow: WorkflowDefinition<I, O>,
-  input: I,
-  harness: ScriptedHarness,
-) {
-  const wrapped = tailFailure(workflow);
-  const options = { ...runOptions(root), harness, processRunner: new NodeProcessRunner() };
-  await expect(runWorkflow(wrapped, { ...options, input })).rejects.toThrow(
-    'Injected tail failure',
-  );
-  const count = harness.calls.length;
-  const resumed = await runWorkflow(wrapped, { ...options, resume: true });
-  expect(harness.calls).toHaveLength(count);
-  const again = await runWorkflow(wrapped, { ...options, resume: true });
-  expect(again.steps).toEqual(resumed.steps);
-  return resumed;
 }
 
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
@@ -92,7 +75,14 @@ describe('std-doc-polish', () => {
       }),
       'polish/round/0/revise': () => polished,
     });
-    const result = await replayAfterTail(docPolish, { file: 'guide.md', rounds: 2 }, harness);
+    const result = await replayAfterTail(
+      docPolish,
+      { file: 'guide.md', rounds: 2 },
+      harness,
+      root,
+      'std',
+      { processRunner: new NodeProcessRunner() },
+    );
     expect(result.output).toEqual({
       status: 'approved',
       issues: [],
@@ -162,7 +152,9 @@ process.exit(1);
       },
     });
     const input = { check: [process.execPath, 'check.mjs'] as [string, ...string[]], rounds: 3 };
-    const result = await replayAfterTail(fixTests, input, harness);
+    const result = await replayAfterTail(fixTests, input, harness, root, 'std', {
+      processRunner: new NodeProcessRunner(),
+    });
     expect(result.output).toMatchObject({
       status: 'green',
       rounds: 3,

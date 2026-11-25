@@ -51,7 +51,14 @@ import {
 } from '../index.js';
 import { assertDisjoint, digest as digestOf } from './data.js';
 import { changedFiles, json } from './exec.js';
-import { keyed, nonNegativeInt, settledMap, statusOf, type CallDefaults } from './pattern-kit.js';
+import {
+  keyed,
+  nonNegativeInt,
+  placement,
+  settledMap,
+  statusOf,
+  type CallDefaults,
+} from './pattern-kit.js';
 import { brief, bullets, clip, fence, numbered, promptText } from './text.js';
 import { Plan, WorkReport, isRepoPath } from './types.js';
 
@@ -190,14 +197,16 @@ export interface IsolatedEditsResult {
 }
 
 /**
- * A settled-map item of {@link isolatedEdits}: the key, the rendered prompt, the owned paths and
- * the checkout base, so the map fingerprint shows a change to any of them.
+ * A settled-map item of {@link isolatedEdits}: the key, the rendered prompt, the owned paths, the
+ * checkout base and the call placement (see `placement`), so the map fingerprint shows a change to
+ * any of them.
  */
 interface EditRecord {
   readonly key: string;
   readonly prompt: string;
   readonly owns: string[] | null;
   readonly base: WorktreeBase | null;
+  readonly placement?: JsonValue;
 }
 
 /**
@@ -320,7 +329,13 @@ export async function isolatedEdits<T>(
     const task = options.task(item, index);
     if (task.trim() === '')
       throw new TypeError(`isolatedEdits ${id}: item ${key} has a blank task.`);
-    return { key, prompt: promptText(promptFor({ item, key, task, owns })), owns, base };
+    return {
+      key,
+      prompt: promptText(promptFor({ item, key, task, owns })),
+      owns,
+      base,
+      ...placement(calls),
+    };
   });
   if (options.owns !== undefined) {
     try {

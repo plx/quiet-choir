@@ -611,6 +611,37 @@ describe('research', () => {
     expect(harness.calls).toHaveLength(5);
   });
 
+  it('refuses to replay the scouts after a call placement change', async () => {
+    const harness = scripted({
+      'rs/scout/docs/leads': () => ({ leads: [] }),
+      'rs/scout/code/leads': () => ({ leads: [] }),
+      'rs/scout/issues/leads': () => ({ leads: [] }),
+    });
+    expect(await resumeChanged(study(), study({ calls: { addDirs: ['extra'] } }), harness)).toMatch(
+      /^Settled map rs\/scout changed after an item completed \(changed: items\)/u,
+    );
+  });
+
+  it('lets a failed synthesizer reject, then retries only the synthesizer on resume', async () => {
+    let synthesis: string | Error = new Error('synthesizer crashed');
+    const harness = scripted({
+      'rs/scout/docs/leads': () => ({ leads: [lead(docsA)] }),
+      'rs/scout/code/leads': () => ({ leads: [] }),
+      'rs/scout/issues/leads': () => ({ leads: [] }),
+      [`rs/read/${stepId(docsA)}/claims`]: () => ({ claims: [claim('Per origin.', docsA)] }),
+      'rs/synthesize': () => synthesis,
+    });
+    const options = { ...runOptions(root, 'synth'), harness };
+    await expect(runWorkflow(study(), { ...options, input: null })).rejects.toThrow(
+      'synthesizer crashed',
+    );
+    synthesis = 'Yes [1].';
+    const resumed = await runWorkflow(study(), { ...options, resume: true });
+    expect(resumed.output).toMatchObject({ answer: 'Yes [1].', status: 'complete' });
+    expect(harness.calls).toHaveLength(6);
+    expect(harness.count('rs/synthesize')).toBe(2);
+  });
+
   it('refuses a team without a reader before any scout runs', async () => {
     const harness = scripted({});
     const partial = workflow('partial', async (ctx) => {

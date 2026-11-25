@@ -52,6 +52,7 @@ import { design, designRubric, type Lens } from './lenses.js';
 import {
   keyed,
   nonEmpty,
+  placement,
   positiveInt,
   settledMap,
   statusOf,
@@ -60,10 +61,14 @@ import {
 import { brief, bullets, fence, promptText } from './text.js';
 import { Proposal, Rationale, rubric } from './types.js';
 
-/** A settled-map item that carries its key and the rendered prompt the mapper sends. */
+/**
+ * A settled-map item that carries its key, the rendered prompt the mapper sends, and where the call
+ * runs (see `placement`).
+ */
 interface PromptRecord {
   readonly key: string;
   readonly prompt: string;
+  readonly placement?: JsonValue;
 }
 
 /**
@@ -592,6 +597,7 @@ export async function tournament<K extends string = DesignCriterion>(
     const proposeRecords: PromptRecord[] = entrantKeys.map(({ key, item }) => ({
       key,
       prompt: promptText(propose(item, designBrief)),
+      ...placement(calls),
     }));
     const proposals: Settled<Proposal, MapStepError>[] = await ctx.map(
       'propose',
@@ -647,6 +653,7 @@ export async function tournament<K extends string = DesignCriterion>(
       prompt: promptText(judge(designBrief, shifted(entries, seat), criteria, seat, judges)),
       letters,
       rubric: criteria,
+      ...placement(calls),
     }));
     const verdicts: Settled<Sheets<K>, MapStepError>[] = await ctx.map(
       'judge',
@@ -1156,6 +1163,11 @@ export interface ClassifyResult<T, L extends string> {
   readonly counts: LabelCount<L>[];
   /** Items the tagger answered without a label, or left out of its reply (logged), in input order. */
   readonly unlabeled: T[];
+  /**
+   * The unlabeled items a successful batch's reply left out instead of answering, in input order,
+   * so they can be told apart from items no label fits.
+   */
+  readonly omitted: T[];
   /** Items whose batch call failed, in input order; a resume does not retry them. */
   readonly failed: T[];
   /** How many batch calls failed. */
@@ -1266,8 +1278,9 @@ function tagSchema<L extends string>(
 /**
  * Label items from a fixed taxonomy and count the labels. The items are split into batches of
  * `chunk`; each batch is one `team.tagger` call that sees the whole taxonomy and answers per item
- * key, with keys and labels constrained by `z.enum`. An item the reply leaves out (logged) or
- * gives no label counts as unlabeled; a reply entry repeating an item is ignored (logged); the
+ * key, with keys and labels constrained by `z.enum`. An item the reply leaves out (logged, and
+ * also reported in `omitted`) or gives no label counts as unlabeled; a reply entry repeating an
+ * item is ignored (logged); the
  * items of a failed batch are reported in `failed` (logged), and a resume does not retry the
  * batch. The counts are computed in code. The taxonomy is a record of definitions or, for labels
  * whose meaning is plain, a list of names.
@@ -1285,7 +1298,8 @@ function tagSchema<L extends string>(
  * @param ctx - The workflow context the team was bound from.
  * @param options - The scope, the team, the items, the taxonomy, and optional keys, batch size,
  * multi-label mode, descriptions, prompts, concurrency, version and call defaults.
- * @returns The labeled items, the label counts, the unlabeled and failed items, and the status.
+ * @returns The labeled items, the label counts, the unlabeled, omitted and failed items, and the
+ * status.
  * @throws TypeError - Before any effect, when the `tagger` slot is not filled, `labels` is empty,
  * maps a blank key or definition, or lists a blank name, `chunk` or `concurrency` is not a positive
  * integer, or an item key is blank.
@@ -1327,6 +1341,7 @@ export async function classify<T, const L extends string>(
         keys: entries.map((entry) => entry.key),
         labels: labelKeys,
         multi,
+        ...placement(calls),
       };
     });
     const replies: Settled<TagReply<L>, MapStepError>[] =
@@ -1342,6 +1357,7 @@ export async function classify<T, const L extends string>(
 
     const assignments: Assignment<T, L>[] = [];
     const unlabeled: T[] = [];
+    const omittedItems: T[] = [];
     const failed: T[] = [];
     const counts = new Map<L, number>(labelKeys.map((label) => [label, 0]));
     let failedChunks = 0;
@@ -1366,7 +1382,10 @@ export async function classify<T, const L extends string>(
       const omitted: string[] = [];
       for (const { key, item } of batch) {
         const answer = answers.get(key);
-        if (answer === undefined) omitted.push(key);
+        if (answer === undefined) {
+          omitted.push(key);
+          omittedItems.push(item);
+        }
         const chosen = [...new Set(answer?.labels ?? [])].sort(
           (a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0),
         );
@@ -1391,6 +1410,7 @@ export async function classify<T, const L extends string>(
       assignments,
       counts: tallied,
       unlabeled,
+      omitted: omittedItems,
       failed,
       failedChunks,
       status: statusOf(failedChunks),

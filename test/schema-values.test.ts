@@ -355,6 +355,44 @@ it('preserves schema field order in returned values and serialized downstream pr
   expect(invoke).toHaveBeenCalledTimes(3);
 });
 
+it('passes record input keys in the order a resume without input parses them back', async () => {
+  const options = await setup();
+  const seen: string[] = [];
+  let fail = true;
+  const invoke = vi.fn<Harness['invoke']>((request) =>
+    Promise.resolve({ ...reply, text: request.options.prompt }),
+  );
+  const definition = defineWorkflow({
+    name: 'record-order',
+    version: '1',
+    input: z.object({ table: z.record(z.string(), z.number()) }),
+    output: z.string(),
+    async run(ctx, input) {
+      seen.push(JSON.stringify(input));
+      const result = await ctx.codex.value('echo', { prompt: JSON.stringify(input.table) });
+      if (fail) throw new Error('tail');
+      return result;
+    },
+  });
+  await expect(
+    runWorkflow(definition, {
+      ...options,
+      input: { table: { z: 1, a: 2 } },
+      harness: { invoke },
+    }),
+  ).rejects.toThrow('tail');
+  fail = false;
+  const resumed = await runWorkflow(definition, {
+    stateDir: options.stateDir,
+    runId: options.runId,
+    harness: { invoke },
+    resume: true,
+  });
+  expect(resumed.output).toBe('{"a":2,"z":1}');
+  expect(seen).toEqual(['{"table":{"a":2,"z":1}}', '{"table":{"a":2,"z":1}}']);
+  expect(invoke).toHaveBeenCalledTimes(1);
+});
+
 it('passes the body the once-parsed input when the schema overwrite is not idempotent', async () => {
   const options = await setup();
   const seen: number[] = [];

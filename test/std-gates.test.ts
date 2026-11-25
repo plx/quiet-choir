@@ -287,6 +287,15 @@ describe('checklist', () => {
     );
   });
 
+  it('refuses to replay settled criteria after a call placement change', async () => {
+    const harness = scripted({}, () => checked('pass'));
+    expect(
+      await resumeChanged(checklist(), checklist({ calls: { cwd: 'pkg' } }), harness, 'placed'),
+    ).toMatch(
+      /^Settled map acceptance\/criterion changed after an item completed \(changed: items\)/u,
+    );
+  });
+
   it('refuses invalid options before any effect', async () => {
     const cases: [Partial<gates.ChecklistOptions>, string][] = [
       [{ team: {} as unknown as gates.ChecklistTeam }, 'Team slot checker is not filled.'],
@@ -502,6 +511,13 @@ describe('gate', () => {
     expect(await changed({ version: '2' }, 'version')).toMatch(
       /^Settled map gate\/dimension changed after an item completed \(changed: version\)/u,
     );
+  });
+
+  it('refuses to replay settled assessments after a call placement change', async () => {
+    const harness = scripted({ [assess('docs')]: assessed('blocker') }, passing);
+    expect(
+      await resumeChanged(gate(), gate({ calls: { addDirs: ['extra'] } }), harness, 'placed'),
+    ).toMatch(/^Settled map gate\/dimension changed after an item completed \(changed: items\)/u);
   });
 
   it('refuses a changed challenge for a seat map an interrupted run left behind', async () => {

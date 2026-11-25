@@ -35,6 +35,7 @@ import {
   defineTeam,
   type Command,
   type ExecOptions,
+  type JsonValue,
   type Prompt,
   type TeamOf,
   type WorkflowContext,
@@ -47,6 +48,7 @@ import {
   keyed,
   nonEmpty,
   nonNegativeInt,
+  placement,
   positiveInt,
   settledMap,
   type CallDefaults,
@@ -185,12 +187,14 @@ function revisePrompt(draft: string, issues: readonly Issue[], brief: string): s
   });
 }
 
-/** One lens critic's settled-map item: its key and the rendered prompt. */
+/** One lens critic's settled-map item: its key, the rendered prompt and the call placement. */
 interface CriticRecord {
   /** The lens's unique map key. */
   readonly key: string;
   /** The critic's rendered prompt. */
   readonly prompt: string;
+  /** Where the call runs (see `placement`), so a change is seen by the map fingerprint. */
+  readonly placement?: JsonValue;
 }
 
 /** What one critique round produced. */
@@ -260,6 +264,7 @@ export async function critiqueRevise(
     const records: CriticRecord[] = lenses.map(({ key, item }) => ({
       key,
       prompt: promptText(critiqueFor(draft, brief, item)),
+      ...placement(calls),
     }));
     const settled = await ctx.map('lens', records, fanOut, (record) =>
       team.critic.value('critique', { ...calls, prompt: record.prompt, schema: Critique }),
@@ -420,7 +425,10 @@ export interface FixUntilGreenResult {
   readonly status: 'green' | 'red';
   /** How many fix rounds ran; 0 when the first check passed. */
   readonly rounds: number;
-  /** The slot whose fix made the check pass, or null when it passed at first or never did. */
+  /**
+   * The slot whose fix made the check pass; null when the check passed at first, never passed, or
+   * passed after a round whose fix call failed (that round's entry in `fixes` has the error).
+   */
   readonly fixedBy: EscalationSlot | null;
   /** Every check outcome: `checks[0]` before any fix, `checks[n]` after round `n`. */
   readonly checks: CheckOutcome[];
@@ -556,7 +564,9 @@ export async function fixUntilGreen(
       if (!settled.ok) ctx.log(`${options.id}: the ${slot}'s fix ${String(round)} failed`);
       last = await check(ctx, ctx.id('check', round), command, execOptions);
       checks.push(last);
-      if (last.passed) fixedBy = slot;
+      // A failed call reported no fix, so a pass after it (edits made before the failure, or a
+      // flaky check) is credited to no slot; `fixes` shows the failed round.
+      if (last.passed && settled.ok) fixedBy = slot;
     }
     return {
       status: last.passed ? 'green' : 'red',

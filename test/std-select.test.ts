@@ -15,6 +15,7 @@ import {
   type WorkflowResult,
 } from '../src/index.js';
 import * as lenses from '../src/std/lenses.js';
+import type { CallDefaults } from '../src/std/pattern-kit.js';
 import * as select from '../src/std/select.js';
 import type { Proposal } from '../src/std/types.js';
 import {
@@ -553,6 +554,15 @@ describe('tournament', () => {
     expectCalls(harness, callDefaults);
   });
 
+  it('refuses to replay proposals after a call placement change', async () => {
+    const harness = arena({ scores: [{ A: 9, B: 1 }] });
+    const placed = (calls?: { readonly addDirs: string[] }) =>
+      contest({ entrants: lenses.design.slice(0, 2), judges: 1, calls });
+    expect(await resumeChanged(placed(), placed({ addDirs: ['extra'] }), harness)).toMatch(
+      /^Settled map t\/propose changed after an item completed \(changed: items\)/u,
+    );
+  });
+
   it('refuses to replay judges after a rubric or version change the prompts do not show', async () => {
     const harness = scripted((request) => {
       const { stepId } = request;
@@ -676,6 +686,20 @@ describe('rank', () => {
     const harness = scripted(() => ({ selected: ['1'], rationale: 'r' }));
     await run(ranking({ calls: callDefaults }), harness);
     expectCalls(harness, callDefaults);
+  });
+
+  it('uses a replacement prompt', async () => {
+    const harness = scripted(() => ({ selected: ['1'], rationale: 'r' }));
+    await run(
+      ranking({
+        prompts: {
+          rank: (entries, criterion, pick) =>
+            `${entries.map((entry) => entry.key).join(',')} | ${criterion} | ${String(pick)}`,
+        },
+      }),
+      harness,
+    );
+    expect(harness.prompt('r/rank')).toBe('1,2,3,4,5 | How urgently it needs a fix. | 2');
   });
 
   it('counts a repeated key in the reply once', async () => {
@@ -988,6 +1012,7 @@ describe('classify', () => {
         { label: 'docs', count: 1 },
       ],
       unlabeled: ['hello?'],
+      omitted: [],
       failed: ['slow start'],
       failedChunks: 1,
       status: 'degraded',
@@ -1049,6 +1074,7 @@ describe('classify', () => {
         { label: 'feature', count: 0 },
       ],
       unlabeled: ['a'],
+      omitted: ['a'],
       failed: [],
       failedChunks: 0,
       status: 'complete',
@@ -1067,6 +1093,21 @@ describe('classify', () => {
       ],
     ]);
     expectCodexSafe(harness);
+  });
+
+  it('reports the items a reply left out apart from those it left unlabeled', async () => {
+    // Batch 0 answers item 1 with no label and leaves item 2 out; batch 1 leaves out every item.
+    const harness = scripted((request) =>
+      request.stepId === 'c/chunk/0/tag' ? { items: [tag('1')] } : { items: [] },
+    );
+    const result = await run(tagging({ items: ['a', 'b', 'c'] }), harness);
+    expect(result.output).toMatchObject({
+      assignments: [],
+      unlabeled: ['a', 'b', 'c'],
+      omitted: ['b', 'c'],
+      failedChunks: 0,
+      status: 'complete',
+    });
   });
 
   it('passes the call defaults to every tagger call', async () => {
@@ -1096,6 +1137,17 @@ describe('classify', () => {
     ).toBe(changed);
     expect(await resumeChanged(blind({}), blind({ version: '2' }), harness, 'v')).toMatch(
       /^Settled map c\/chunk changed after an item completed \(changed: version\)/u,
+    );
+  });
+
+  it('refuses to replay batches after a call placement change, not a deadline change', async () => {
+    const harness = scripted(() => ({ items: [tag('1', 'bug')] }));
+    const one = (calls?: CallDefaults) => tagging({ items: ['a'], calls });
+    expect(await resumeChanged(one(), one({ addDirs: ['extra'] }), harness, 'dirs')).toMatch(
+      /^Settled map c\/chunk changed after an item completed \(changed: items\)/u,
+    );
+    expect(await resumeChanged(one(), one({ timeoutMs: 5_000 }), harness, 'policy')).toBe(
+      'resumed',
     );
   });
 
@@ -1190,5 +1242,74 @@ describe('classify', () => {
       run(tagging({ team: {} as select.ClassifyTeam }), harness, 'team'),
     ).rejects.toThrow('Team slot tagger is not filled.');
     expect(harness.calls).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// tables from a workflow input
+// ---------------------------------------------------------------------------------------------
+
+describe('tables from a z.record workflow input', () => {
+  /** The routes and labels, in an order a resume would not parse them back in. */
+  const input = {
+    table: { zeta: 'The last definition.', alpha: 'The first definition.' },
+  };
+  const inputSchema = z.object({ table: z.record(z.string(), z.string()) });
+
+  it('replays route and classify after a resume without the input', async () => {
+    const definition = defineWorkflow({
+      name: 'record-tables',
+      version: '1',
+      input: inputSchema,
+      output: z.unknown(),
+      run: async (ctx, { table }) => {
+        const team = { router: ctx.claude.bind({}), tagger: ctx.claude.bind({}) };
+        const routed = await select.route(ctx, {
+          id: 'r',
+          team,
+          subject: 'A crash.',
+          routes: table,
+        });
+        const tagged = await select.classify(ctx, {
+          id: 'c',
+          team,
+          items: ['crash on save', 'add dark mode'],
+          labels: table,
+          chunk: 1,
+        });
+        return { routed, tagged };
+      },
+    });
+    const harness = scripted((request) =>
+      request.stepId === 'r/route'
+        ? { route: 'zeta', reason: 'It fits.' }
+        : {
+            items: [
+              {
+                key: request.stepId === 'c/chunk/0/tag' ? '1' : '2',
+                labels: ['alpha'],
+                reason: 'r',
+              },
+            ],
+          },
+    );
+    const wrapped = tailFailure(definition);
+    const options = { ...runOptions(root), harness };
+    await expect(runWorkflow(wrapped, { ...options, input })).rejects.toThrow(
+      'Injected tail failure',
+    );
+    const calls = harness.calls.length;
+    const resumed = await runWorkflow(wrapped, { ...options, resume: true });
+    expect(harness.calls).toHaveLength(calls);
+    expect(resumed.output).toMatchObject({
+      routed: { route: 'zeta', status: 'routed' },
+      tagged: {
+        status: 'complete',
+        counts: [
+          { label: 'alpha', count: 2 },
+          { label: 'zeta', count: 0 },
+        ],
+      },
+    });
   });
 });

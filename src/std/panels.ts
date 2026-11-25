@@ -30,6 +30,7 @@
 import {
   defineTeam,
   type Agent,
+  type JsonValue,
   type MapOptions,
   type MapStepError,
   type Prompt,
@@ -54,6 +55,7 @@ import { bugs, type Lens } from './lenses.js';
 import {
   keyed,
   nonEmpty,
+  placement,
   positiveInt,
   settledMap,
   statusOf,
@@ -62,10 +64,14 @@ import {
 import { brief, bullets, fence, promptText, section } from './text.js';
 import { Ballot, Findings, Refutation, Severity, type Finding } from './types.js';
 
-/** A settled-map item that carries its key and the rendered prompt the mapper sends. */
+/**
+ * A settled-map item that carries its key, the rendered prompt the mapper sends, and where the call
+ * runs (see `placement`).
+ */
 interface PromptRecord {
   readonly key: string;
   readonly prompt: string;
+  readonly placement?: JsonValue;
 }
 
 /** The settled-map options every panel map uses. */
@@ -183,6 +189,7 @@ async function runPanel<O>(ctx: WorkflowContext, run: PanelRun<O>): Promise<Lens
   const records: PromptRecord[] = entries.map(({ key, item }) => ({
     key,
     prompt: promptText(run.prompt(item)),
+    ...placement(calls),
   }));
   const settled: Settled<O, MapStepError>[] = await ctx.map('lens', records, run.map, (record) =>
     reader.value(leaf, { ...calls, prompt: record.prompt, schema }),
@@ -364,6 +371,7 @@ export async function vote(ctx: WorkflowContext, options: VoteOptions): Promise<
         ? ballotPrompt(question, options.context)
         : custom(question, seat, seats),
     ),
+    ...placement(calls),
   }));
   return ctx.scope(options.id, async () => {
     const settled = await ctx.map('seat', records, map, (record) =>
@@ -525,10 +533,14 @@ interface VerifyEntry<T> {
   readonly prompts: readonly string[];
 }
 
-/** The settled-map item of one item's panel: its key and one rendered prompt per seat. */
+/**
+ * The settled-map item of one item's panel: its key, one rendered prompt per seat, and where the
+ * calls run (see `placement`).
+ */
 interface PanelRecord {
   readonly key: string;
   readonly prompts: readonly string[];
+  readonly placement?: JsonValue;
 }
 
 /** Validate a seat count for `rule` and return it. */
@@ -599,12 +611,13 @@ async function runVerify<T>(
 ): Promise<VerifyTally<T>> {
   const result: VerifyTally<T> = { confirmed: [], refuted: [], undecided: [], failedVotes: 0 };
   if (entries.length === 0) return result;
-  const records: PanelRecord[] = entries.map(({ key, prompts }) => ({ key, prompts }));
+  const where = placement(calls);
+  const records: PanelRecord[] = entries.map(({ key, prompts }) => ({ key, prompts, ...where }));
   const { version } = map;
   const panels = await ctx.map('item', records, map, (record) =>
     ctx.map(
       'seat',
-      record.prompts.map((prompt, seat): PromptRecord => ({ key: String(seat), prompt })),
+      record.prompts.map((prompt, seat): PromptRecord => ({ key: String(seat), prompt, ...where })),
       {
         concurrency: record.prompts.length,
         key: (seat) => seat.key,

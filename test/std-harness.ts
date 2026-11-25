@@ -12,6 +12,7 @@ import {
   type HarnessInvocation,
   type HarnessRequest,
   type HarnessResponse,
+  type ProcessRunner,
   type WorkflowDefinition,
   type WorkflowResult,
 } from '../src/index.js';
@@ -111,6 +112,12 @@ export function tailFailure<I, O>(workflow: WorkflowDefinition<I, O>): WorkflowD
   };
 }
 
+/** Extra `runWorkflow` options for {@link replayAfterTail}. */
+export interface ReplayOptions {
+  /** The process runner of a workflow that runs commands, such as `new NodeProcessRunner()`. */
+  readonly processRunner?: ProcessRunner;
+}
+
 /**
  * Run `workflow` once to an injected tail failure, then resume it twice, asserting that the resume
  * makes no new agent call and that both resumes record the same steps. Returns the first resume.
@@ -121,9 +128,10 @@ export async function replayAfterTail<I, O>(
   harness: ScriptedHarness,
   root: string,
   runId = 'std',
+  extra: ReplayOptions = {},
 ): Promise<WorkflowResult<O>> {
   const wrapped = tailFailure(workflow);
-  const options = { ...runOptions(root, runId), harness };
+  const options = { ...runOptions(root, runId), harness, ...extra };
   await expect(runWorkflow(wrapped, { ...options, input })).rejects.toThrow(
     'Injected tail failure',
   );

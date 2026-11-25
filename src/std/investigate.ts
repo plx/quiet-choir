@@ -41,6 +41,7 @@
  */
 import {
   defineTeam,
+  type JsonValue,
   type MapStepError,
   type Prompt,
   type Settled,
@@ -52,6 +53,7 @@ import { research as researchAngles, type Lens } from './lenses.js';
 import {
   keyed,
   nonEmpty,
+  placement,
   positiveInt,
   settledMap,
   statusOf,
@@ -69,10 +71,14 @@ import {
   type Lead,
 } from './types.js';
 
-/** A settled-map item that carries its key and the rendered prompt the mapper sends. */
+/**
+ * A settled-map item that carries its key, the rendered prompt the mapper sends, and where the call
+ * runs (see `placement`).
+ */
 interface PromptRecord {
   readonly key: string;
   readonly prompt: string;
+  readonly placement?: JsonValue;
 }
 
 /** `### <title>` followed by `body`, a subsection inside a `std.text.brief` section. */
@@ -290,6 +296,7 @@ function confidenceOf(survivors: number, falsified: number, total: number): Fals
  * and failed counts, and the status.
  * @throws TypeError - Before any effect, when a team slot is not filled, `question` is blank,
  * `count` is not an integer from 1 to 8, or `concurrency` is not a positive integer.
+ * @throws Error - The theorist's call failure; a resume retries it.
  */
 export async function falsify(
   ctx: WorkflowContext,
@@ -337,7 +344,7 @@ export async function falsify(
               rivals.map((rival) => rival.item),
               question,
             );
-      return { key: entry.key, prompt: promptText(prompt) };
+      return { key: entry.key, prompt: promptText(prompt), ...placement(calls) };
     });
     const settled = await ctx.map('hypothesis', records, map, (record) =>
       team.falsifier.value('falsify', { ...calls, prompt: record.prompt, schema: Falsification }),
@@ -638,6 +645,8 @@ function synthesizePrompt(
  * leads, the failure counts and the status.
  * @throws TypeError - Before any effect, when a team slot is not filled, `question` is blank,
  * `angles` is empty, or `reads` or `concurrency` is not a positive integer.
+ * @throws Error - The synthesizer's call failure; a resume replays the scouts and readers and
+ * retries only the synthesizer.
  */
 export async function research(
   ctx: WorkflowContext,
@@ -659,6 +668,7 @@ export async function research(
         ? scoutPrompt(item, question, background)
         : custom.scout(item, question),
     ),
+    ...placement(calls),
   }));
 
   return ctx.scope(id, async () => {
@@ -710,6 +720,7 @@ export async function research(
           ? readPrompt(item, question, background)
           : custom.read(item, question),
       ),
+      ...placement(calls),
     }));
     const read = await ctx.map('read', readRecords, map, (record) =>
       team.reader.value('claims', { ...calls, prompt: record.prompt, schema: Claims }),

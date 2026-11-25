@@ -2,6 +2,13 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Parse a supplied workflow input from its canonical (key-sorted) copy, as a resume without input
+  already parses the saved copy (ADR 0017). A `z.record` or other JSON-keyed input now reaches the
+  body in the same key order on a fresh run and on `workflow resume RUN`, so a prompt or schema
+  built from it no longer changes on resume and refuses completed steps
+  (`Step S: prompt changed on a completed step`, `Settled map M changed after an item completed`).
+  `z.object` fields keep schema order. An input that is not JSON is parsed as given, so its errors
+  are unchanged.
 - Expand `quiet-choir/std` into typed inventories and team-typed patterns (ADR 0068; see
   [docs/std.md](docs/std.md)). Roster inventory: `std.claude` adds `Web`, `shell(rules)` and
   `editShell(rules)` (Bash narrowed to `std.bash` rule sets, with `git push` denied, so `exec`);

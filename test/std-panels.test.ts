@@ -205,6 +205,16 @@ describe('lensPanel', () => {
     expect(harness.calls).toHaveLength(6);
   });
 
+  it('refuses to replay answers after a call placement change, not a deadline change', async () => {
+    const harness = readers();
+    expect(await resumeChanged(panel(), panel({ calls: { addDirs: ['extra'] } }), harness)).toMatch(
+      /^Settled map panel\/lens changed after an item completed \(changed: items\)/u,
+    );
+    expect(
+      await resumeChanged(panel(), panel({ calls: { timeoutMs: 5_000 } }), harness, 'policy'),
+    ).toBe('resumed');
+  });
+
   it('passes the call defaults to every reader call', async () => {
     const calls = { timeoutMs: 12_345, addDirs: ['extra'] };
     const harness = readers();
@@ -319,6 +329,13 @@ describe('vote', () => {
 
     const message = await resumeChanged(ballot(), ballot({ question: 'Is it fast?' }), harness);
     expect(message).toMatch(
+      /^Settled map v\/seat changed after an item completed \(changed: items\)/u,
+    );
+  });
+
+  it('refuses to replay seats after a call placement change', async () => {
+    const harness = voters(true, true, true);
+    expect(await resumeChanged(ballot(), ballot({ calls: { cwd: 'pkg' } }), harness)).toMatch(
       /^Settled map v\/seat changed after an item completed \(changed: items\)/u,
     );
   });
@@ -466,6 +483,32 @@ describe('verify', () => {
     });
   });
 
+  it('replays JSON claims from a z.record workflow input after a resume without the input', async () => {
+    const definition = defineWorkflow({
+      name: 'verify-input',
+      version: '1',
+      input: z.object({ claims: z.array(z.record(z.string(), z.string())) }),
+      output: z.unknown(),
+      run: (ctx, input) =>
+        panels.verify(ctx, {
+          id: 'verify',
+          team: { skeptic: ctx.claude.bind({}) },
+          items: input.claims,
+          seats: 1,
+        }),
+    });
+    const harness = scripted(() => ({ refuted: false, reasoning: 'It holds.' }));
+    const wrapped = tailFailure(definition);
+    const options = { ...runOptions(root), harness };
+    const input = { claims: [{ zeta: 'The last field.', alpha: 'The first field.' }] };
+    await expect(runWorkflow(wrapped, { ...options, input })).rejects.toThrow(
+      'Injected tail failure',
+    );
+    const resumed = await runWorkflow(wrapped, { ...options, resume: true });
+    expect(harness.calls).toHaveLength(1);
+    expect(resumed.output).toMatchObject({ confirmed: [{ key: '0', upheld: 1 }] });
+  });
+
   it('refuses a version change for a seat map an interrupted run left behind', async () => {
     // A run budget of one attempt stops the run inside the only item's seat map: one seat commits
     // there, the item itself does not, so on resume the outer map starts over and only the seat
@@ -483,6 +526,30 @@ describe('verify', () => {
       'Settled map verify/item/0/seat changed after an item completed (changed: version)',
     );
     expect(harness.calls).toHaveLength(1);
+  });
+
+  it('refuses to replay verdicts after a call placement change, in either map', async () => {
+    const harness = skeptics();
+    const message = await resumeChanged(check(), check({ calls: { addDirs: ['extra'] } }), harness);
+    expect(message).toMatch(
+      /^Settled map verify\/item changed after an item completed \(changed: items\)/u,
+    );
+    // As above, a run budget of one attempt leaves only a seat of the seat map committed.
+    const options = { ...runOptions(root, 'seat'), harness };
+    const one = (calls?: { readonly addDirs: string[] }) =>
+      check({ items: [nullDeref], key: undefined, seats: 2, calls });
+    await expect(
+      runWorkflow(one(), { ...options, input: null, maxRunAgentAttempts: 1 }),
+    ).rejects.toThrow('maxRunAgentAttempts');
+    await expect(
+      runWorkflow(one({ addDirs: ['extra'] }), {
+        ...options,
+        resume: true,
+        maxRunAgentAttempts: 10,
+      }),
+    ).rejects.toThrow(
+      'Settled map verify/item/0/seat changed after an item completed (changed: items)',
+    );
   });
 
   it('refuses to replay verdicts after a version change in the outer map', async () => {
@@ -770,6 +837,13 @@ describe('hunt', () => {
     const busy = hunters({ '0/a': [f1] });
     const limited = await run(search({ rounds: 1 }), busy, 'limit');
     expect(limited.output).toMatchObject({ rounds: 1, ended: 'round-limit', status: 'complete' });
+  });
+
+  it('refuses to replay finders after a call placement change', async () => {
+    const harness = hunters({ '0/a': [f1] });
+    expect(await resumeChanged(search(), search({ calls: { worktree: true } }), harness)).toMatch(
+      /^Settled map h\/round\/0\/lens changed after an item completed \(changed: items\)/u,
+    );
   });
 
   it('passes the call defaults to every call and sizes each finding once', async () => {

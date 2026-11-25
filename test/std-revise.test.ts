@@ -66,31 +66,6 @@ function run(
   });
 }
 
-/**
- * `replayAfterTail` with a real process runner, for workflows that run commands: one run to an
- * injected tail failure, then two resumes that make no new agent call and record the same steps.
- */
-async function replayCommands(
-  definition: WorkflowDefinition<null, unknown>,
-  harness: ScriptedHarness,
-): Promise<Awaited<ReturnType<typeof run>>> {
-  const wrapped = tailFailure(definition);
-  const options = {
-    ...runOptions(root),
-    harness,
-    processRunner: new NodeProcessRunner(),
-  };
-  await expect(runWorkflow(wrapped, { ...options, input: null })).rejects.toThrow(
-    'Injected tail failure',
-  );
-  const count = harness.calls.length;
-  const resumed = await runWorkflow(wrapped, { ...options, resume: true });
-  expect(harness.calls).toHaveLength(count);
-  const again = await runWorkflow(wrapped, { ...options, resume: true });
-  expect(again.steps).toEqual(resumed.steps);
-  return resumed;
-}
-
 /** Answer each call from `replies` by step ID; an Error value is thrown. */
 function scripted(replies: Readonly<Record<string, unknown>>): ScriptedHarness {
   return new ScriptedHarness((request: HarnessRequest) => {
@@ -360,6 +335,20 @@ describe('critiqueRevise', () => {
     expect(harness.calls).toHaveLength(1);
   });
 
+  it('refuses to replay settled lens critics after a call placement change', async () => {
+    const harness = new ScriptedHarness(() => ({ issues: [] }));
+    const placed = (calls?: { readonly cwd: string }) =>
+      tailFailure(critique({ draft: 'd', lenses: [lens('clarity', 'Plain.')], calls }));
+    const options = { ...runOptions(root), harness };
+    await expect(runWorkflow(placed(), { ...options, input: null })).rejects.toThrow(
+      'Injected tail failure',
+    );
+    await expect(runWorkflow(placed({ cwd: 'pkg' }), { ...options, resume: true })).rejects.toThrow(
+      'Settled map cr/round/0/lens changed after an item completed (changed: items)',
+    );
+    expect(harness.calls).toHaveLength(1);
+  });
+
   it('rethrows a failed author call, and a resume retries only that call', async () => {
     let fail = true;
     const harness = new ScriptedHarness((request) => {
@@ -483,7 +472,16 @@ describe('fixUntilGreen', () => {
 
   it('fixes with the mechanic, checks after every round and replays without rerunning', async () => {
     const harness = fixer(['fix/fix/2']);
-    const result = await replayCommands(repair({ task: 'Upgrade zod.' }), harness);
+    const result = await replayAfterTail(
+      repair({ task: 'Upgrade zod.' }),
+      null,
+      harness,
+      root,
+      'std',
+      {
+        processRunner: new NodeProcessRunner(),
+      },
+    );
     const output = result.output as unknown as revise.FixUntilGreenResult;
     expect(output).toMatchObject({
       status: 'green',
@@ -541,7 +539,14 @@ describe('fixUntilGreen', () => {
 
   it('honors escalateAfter and reports red when no round fixes the check', async () => {
     const harness = fixer([], ['fix/fix/2']);
-    const result = await replayCommands(repair({ rounds: 2, escalateAfter: 0 }), harness);
+    const result = await replayAfterTail(
+      repair({ rounds: 2, escalateAfter: 0 }),
+      null,
+      harness,
+      root,
+      'std',
+      { processRunner: new NodeProcessRunner() },
+    );
     const output = result.output as unknown as revise.FixUntilGreenResult;
     expect(output).toMatchObject({ status: 'red', rounds: 2, fixedBy: null, failedFixes: 1 });
     expect(output.checks).toHaveLength(3);
@@ -553,6 +558,25 @@ describe('fixUntilGreen', () => {
     expect(output.fixes[1]?.error).toContain('fix/fix/2 crashed');
     expect(harness.count('fix/fix/2')).toBe(1);
     expect(await runs()).toBe(3);
+  });
+
+  it('credits no slot when the check passes after a failed fix call', async () => {
+    // The mechanic's call turns the state green and then fails, as a call that times out after
+    // editing would: the check passes, but no fix reported success.
+    const harness = new ScriptedHarness(async (request) => {
+      await writeFile(join(request.cwd, 'state.txt'), 'green');
+      throw new Error(`${request.stepId} timed out`);
+    });
+    const result = await run(repair(), harness);
+    expect(result.output).toMatchObject({
+      status: 'green',
+      rounds: 1,
+      fixedBy: null,
+      failedFixes: 1,
+    });
+    expect((result.output as unknown as revise.FixUntilGreenResult).fixes[0]?.error).toContain(
+      'fix/fix/1 timed out',
+    );
   });
 
   it('runs the check and both agents in a shared worktree', async () => {

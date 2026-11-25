@@ -342,6 +342,18 @@ describe('isolatedEdits', () => {
     expect(harness.calls).toHaveLength(1);
   }, 20_000);
 
+  it('refuses to replay the edits after a call placement change', async () => {
+    const harness = editor([jobA]);
+    const placed = (calls?: { readonly addDirs: string[] }) => tailFailure(edit([jobA], { calls }));
+    await expect(runWorkflow(placed(), { ...options(harness), input: null })).rejects.toThrow(
+      'Injected tail failure',
+    );
+    await expect(
+      runWorkflow(placed({ addDirs: ['extra'] }), { ...options(harness), resume: true }),
+    ).rejects.toThrow('Settled map edits/item changed after an item completed (changed: items)');
+    expect(harness.calls).toHaveLength(1);
+  }, 20_000);
+
   it('skips the merge when nothing changed', async () => {
     const idle: Job = { id: 'idle', writes: {}, owns: [] };
     const harness = editor([idle]);
