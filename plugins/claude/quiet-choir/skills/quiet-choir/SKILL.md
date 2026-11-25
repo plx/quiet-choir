@@ -186,6 +186,7 @@ codes above. After `answer --resume`, add `--after-execution N` with the suspend
 | Locate a run, classify its state, act on exact errors                                  | [Inspection and triage](references/inspection.md)              |
 | Park for readiness, a deadline, or an external signal                                  | [Durable waits and tick](references/waits.md)                  |
 | Write loops, fan-out, failure handling, or waits                                       | [Verified patterns and traps](references/patterns.md)          |
+| Use a ready-made pattern, role, schema or helper from `quiet-choir/std`                | [Standard library](references/std.md)                          |
 | Isolate overlapping writers, share a checkout, integrate pinned changes                | [Worktrees](references/worktrees.md)                           |
 | Run durable commands, publish text, or guard a mutation                                | [Commands and files](references/commands-files.md)             |
 | Compose typed children, inspect frames, discover definitions by name                   | [Child workflows and discovery](references/child-workflows.md) |

@@ -2,6 +2,39 @@
 
 ## Unreleased — 0.0.0 prototype
 
+- Expand `quiet-choir/std` into typed inventories and team-typed patterns (ADR 0068; see
+  [docs/std.md](docs/std.md)). Roster inventory: `std.claude` adds `Web`, `shell(rules)` and
+  `editShell(rules)` (Bash narrowed to `std.bash` rule sets, with `git push` denied, so `exec`);
+  `std.tiers` adds `Judge`; new `std.limits` (`Brief` to `Long`), `std.personas` (standing prompts,
+  `join` and `ShellEtiquette`), `std.roles` (complete entries from `Clerk` to `CodexMechanic`),
+  `std.rosters.readers` (every role that needs no grant), `std.rosters.standard` and `std.bash`.
+  Data: `std.types` (strict, bounded, rehearsable output schemas such as `Finding`, `Refutation`,
+  `Ballot`, `Critique`, `WorkReport`, `Plan`, `TaskList`, `Assessment`, `Hypotheses` and `Claims`;
+  enums; the input primitives `RepoPath`, `Sha`, `Argv` and `limit`; and the builders `oneOf`,
+  `listOf` and `rubric`) and `std.lenses` (`bugs`, `review`, `security`, `design`, `research`,
+  `release`, `writing` and `designRubric`). Helpers: `std.data` (tallies, dedupe, coverage, ranking,
+  `topoWaves`, digests), `std.text` (`brief` and other prompt text), the `std.exec` reads `check`,
+  `head`, `status`, `assertClean`, `diff`, `changedFiles` and `commits`, and `std.flow` (`untilDry`
+  as `<id>/round/<n>/<leaf>`, `waves` as `<id>/wave/<n>/<key>/<leaf>`, and `each`). Patterns, each
+  under `ctx.scope(id)` with its team checked before any effect, tolerated failures journaled
+  through settled maps whose items carry the rendered prompt, `calls`, `prompts` and `version`
+  options, and a `status` with failure counts: `lensPanel` (`<id>/lens/<lens>/read`), `vote`
+  (`<id>/seat/<n>/ballot`), `verify` (`<id>/item/<key>/seat/<n>/verdict`), `hunt`
+  (`<id>/round/<n>/lens/<lens>/find` and the round's `item/.../verdict` seats), `critiqueRevise`
+  (`<id>/draft`, `<id>/round/<n>/critique` or `<id>/round/<n>/lens/<lens>/critique`,
+  `<id>/round/<n>/revise`), `fixUntilGreen` (`<id>/check/<n>`, `<id>/fix/<n>`), `escalate`
+  (`<id>/attempt/<n>/work`), `tournament` (`<id>/propose/<entrant>/proposal`,
+  `<id>/judge/<n>/scores`, `<id>/synthesize`), `rank` (`<id>/rank`), `route` (`<id>/route`),
+  `classify` (`<id>/chunk/<n>/tag`), `mapReduce` (`<id>/map/<k>/part`, `<id>/reduce`), `decompose`
+  (`<id>/plan`, `<id>/repair`) with `taskCall`, `checklist` (`<id>/criterion/<C>/check`), `gate`
+  (`<id>/dimension/<key>/assess`, `<id>/blocker/<key>/seat/<n>/verdict`), `falsify`
+  (`<id>/theorize`, `<id>/hypothesis/<key>/falsify`), `research` (`<id>/scout/<angle>/leads`,
+  `<id>/read/<key>/claims`, `<id>/synthesize`), `isolatedEdits` (`<id>/item/<key>/edit`,
+  `<id>/item/<key>/paths` for a rename, `<id>/merge`) and `approvedPlan` (`<id>/round/<n>/plan`,
+  `<id>/round/<n>/approve`) with `planCall`. `reviewRevise` and `tolerantPanel` are unchanged.
+  Fourteen `std-*` cookbook recipes of at most 30 lines show the patterns, and the skill gains a
+  `references/std.md` reference. `model.ts`, the API snapshot and the record schema revision are
+  unchanged.
 - Remove the public profile surface (#726, amending ADR 0010; ADR 0063 §4). Roster entries are the
   only declared roles, and `text` is the implicit baseline and the default role. Removed: the
   workflow `profiles` field and its `extends` chain, the `readonly` and `edit` presets,
