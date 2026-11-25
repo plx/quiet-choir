@@ -138,3 +138,5 @@ part of the documentation.
 - [0066: Model decision services as providers of one shared protocol](0066-decision-providers.md)
 
 - [0067: Declare team structures as typed slots filled from the roster](0067-teams-as-typed-slots.md)
+
+- [0068: Scope the standard library as typed inventories and team-typed patterns](0068-standard-library-scope.md)

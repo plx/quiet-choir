@@ -29,13 +29,17 @@ definitions to a particular agent harness.
   `runtime/decision-error.ts` are shared contracts, like the registries above. Both stay free of
   I/O, the clock, the process and runner state; `jevCompatible` (the `fetch` transport) lives in the
   subpath.
-- `src/std/` is `quiet-choir/std`, the opt-in standard library: per-harness roster entry fragments
-  with the text, read-only and edit configurations, model tiers, the `json`, `git` and
-  `committedArtifact` exec helpers, and the team-taking `reviewRevise` and `tolerantPanel` patterns.
-  Its modules import only the public entry point (`../index.js`), their siblings and Node built-ins,
-  never runtime internals, which an ESLint rule enforces; `committedArtifact`'s write step is
-  version-identified (`committed-artifact/1`) through the step definition's internal `identity`
-  field, as the built-in helpers are, so its identity does not follow the library's callback text.
+- `src/std/` is `quiet-choir/std`, the opt-in standard library
+  ([ADR 0068](decisions/0068-standard-library-scope.md)): a roster inventory (capability fragments,
+  tiers, limits, personas, roles, rosters and `Bash` allowlist rules), Zod schemas for recurring
+  agent outputs, lens catalogs, pure data and text helpers, durable exec and Git helpers, team-free
+  control flow (`std.flow`) and the team-typed patterns (`std.patterns`). Its modules import only
+  the public entry point (`../index.js`), their siblings and Node built-ins, never runtime
+  internals, which an ESLint rule enforces, so the directory stays flat; `std/patterns.ts`
+  re-exports the pattern modules. `committedArtifact`'s write step is version-identified
+  (`committed-artifact/1`) through the step definition's internal `identity` field, as the built-in
+  helpers are, so its identity does not follow the library's callback text. The durability lint does
+  not read std, so its patterns follow the lint's rules by convention and by test.
 - `src/application/` contains framework-independent execution contracts and small executors.
 - `src/workflow/` contains workflow-specific plans, results, analysis, and executors.
 - `src/workflow/runtime/` defines the typed workflow API and local checkpoint/replay engine.
