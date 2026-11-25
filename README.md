@@ -641,9 +641,11 @@ spread: capability fragments (`std.claude.ReadOnly`, `std.claude.shell(rules)`, 
 model tiers (`std.tiers.Mechanic`), limits, personas, complete `std.roles` such as `Skeptic` and
 `Mechanic`, and ready-made `std.rosters`. `std.types` holds Codex-compatible schemas for recurring
 agent outputs (findings, refutations, critiques, plans, tasks, hypotheses), and `std.patterns` holds
-team-typed patterns such as `reviewRevise`, adversarial `verify`, `hunt`, `critiqueRevise`,
-`fixUntilGreen`, `tournament`, `mapReduce` and `gate`, each journaling the failures it tolerates. A
-bug hunt with skeptic panels is one call:
+team-typed patterns such as adversarial `verify`, `hunt`, `critiqueRevise`, `fixUntilGreen`,
+`tournament`, `mapReduce` and `gate`. Each journals the failures it tolerates, reports them as
+`failures` and a `complete` or `degraded` `status`, and returns a result whose Zod schema of the
+same name can be a workflow's `output`. A bug hunt with skeptic panels is one call, and
+`result.findings` holds the confirmed bugs, most severe first:
 
 ```ts
 const result = await std.patterns.hunt(ctx, {

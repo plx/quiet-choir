@@ -6,12 +6,20 @@
  * - {@link check} runs a command whose failure is data, such as a test suite, and returns a
  *   {@link CheckOutcome} with the end of its output.
  * - {@link git} returns complete Git output; {@link head}, {@link status}, {@link assertClean},
- *   {@link diff}, {@link changedFiles} and {@link commits} build on it for common queries.
+ *   {@link diff}, {@link diffStat}, {@link changedFiles}, {@link commits} and {@link log} build on
+ *   it for common queries.
  * - {@link committedArtifact} publishes a new file through a managed checkout.
  *
  * Each command helper records one `ctx.exec` step under the `id` it is given, so a resume replays
  * the saved result instead of running the command again. The Git helpers take the same options as
  * `ctx.exec` (without `onError`), such as `worktree` or `cwd`, and throw on truncated output.
+ *
+ * Every helper that takes a revision range ({@link diff}, {@link diffStat}, {@link changedFiles},
+ * {@link commits} and {@link log}) follows one rule: a range that is empty, starts with `-` or
+ * contains NUL throws a `TypeError` before any effect, because Git would read it as an option, so
+ * text from data cannot change the command. `git branch` and `git tag` refuse names that start
+ * with `-`; name any other ref that does in full, as in `refs/heads/-x`. {@link diffStat} and
+ * {@link log} also pass the range after `--end-of-options`.
  *
  * ```ts
  * import * as std from 'quiet-choir/std';
@@ -21,6 +29,7 @@
  * const tests = await std.exec.check(ctx, 'tests', ['npm', 'test']);
  * if (!tests.passed) ctx.log(`Tests failed:\n${tests.output}`);
  * const touched = await std.exec.changedFiles(ctx, 'touched', `${base}..HEAD`);
+ * const made = await std.exec.log(ctx, 'made', `${base}..HEAD`);
  * ```
  *
  * @module
@@ -35,7 +44,7 @@ import {
   type WorkflowContext,
   type WriteFileResult,
 } from '../index.js';
-import { Sha, isRepoPath, type CheckOutcome } from './types.js';
+import { Commit, Sha, isRepoPath, type CheckOutcome } from './types.js';
 
 /**
  * The revision that identifies the `write` step of {@link committedArtifact}. Its identity is this
@@ -179,7 +188,7 @@ export async function check(
 
 /**
  * The arguments for an optional revision range, refusing text Git would read as an option, so a
- * range from data cannot change the command.
+ * range from data cannot change the command: the one range rule of the module notes.
  */
 function rangeArgs(range: string | undefined): string[] {
   if (range === undefined) return [];
@@ -287,7 +296,8 @@ export async function assertClean(
  *
  * @param ctx - The workflow context.
  * @param id - The command's step ID.
- * @param range - A revision or range; it must not be empty or start with `-`.
+ * @param range - A revision or range; it must not be empty, start with `-` or contain NUL (the
+ * module's range rule).
  * @param options - `ctx.exec` options, such as `worktree`, `cwd` or `maxOutputBytes`; failures
  * always throw.
  * @returns The diff text; empty when nothing differs.
@@ -309,6 +319,53 @@ export async function diff(
 }
 
 /**
+ * The `git diff --stat` arguments of {@link diffStat}: names up to 10000 columns wide, so no path
+ * is abbreviated whatever `COLUMNS` or `diff.statNameWidth` says, and a graph of at most 40 columns.
+ */
+const STAT_ARGS: readonly string[] = ['--stat=10000,10000', '--stat-graph-width=40'];
+
+/**
+ * A summary of a diff, one line per changed file with its count of changed lines and a graph of
+ * them, then a total line, from `git -c core.quotePath=false diff --stat=10000,10000
+ * --stat-graph-width=40 --no-color --no-ext-diff --no-relative --end-of-options [range] --` as the
+ * durable command `id`. It covers what {@link diff} covers: without `range` the unstaged changes,
+ * with `HEAD` every uncommitted change to tracked files, or a range such as `main...HEAD`;
+ * untracked files are never included. Paths are relative to the repository root and never
+ * abbreviated; Git still quotes a path with a control character, a double quote or a backslash.
+ * Use it to show the shape of a change in a prompt or a report when the whole diff is too long.
+ *
+ * ```text
+ *  src/parser.ts       | 12 +++++++++---
+ *  test/parser.test.ts | 30 ++++++++++++++++++++++++++++++
+ *  2 files changed, 39 insertions(+), 3 deletions(-)
+ * ```
+ *
+ * @param ctx - The workflow context.
+ * @param id - The command's step ID.
+ * @param range - A revision or range; it must not be empty, start with `-` or contain NUL (the
+ * module's range rule).
+ * @param options - `ctx.exec` options, such as `worktree` or `cwd`; failures always throw.
+ * @returns The summary as Git prints it, each line starting with a space and ending with a line
+ * feed; empty when nothing differs.
+ * @throws TypeError - Before any effect, when `range` is empty, starts with `-` or contains NUL.
+ * @throws Error - From {@link git}.
+ */
+export async function diffStat(
+  ctx: WorkflowContext,
+  id: string,
+  range?: string,
+  options?: Omit<ExecOptions, 'onError'>,
+): Promise<string> {
+  const args = ['diff', ...STAT_ARGS, '--no-color', '--no-ext-diff', '--no-relative'];
+  return git(
+    ctx,
+    id,
+    ['-c', 'core.quotePath=false', ...args, '--end-of-options', ...rangeArgs(range), '--'],
+    options,
+  );
+}
+
+/**
  * The paths a diff touches, from `git diff --name-only -z --no-renames --no-relative [range] --` as
  * the durable command `id`: relative to the repository root and exactly as stored, never quoted.
  * Rename detection is off, so a renamed file lists both its old and new path. As for {@link diff},
@@ -316,7 +373,8 @@ export async function diff(
  *
  * @param ctx - The workflow context.
  * @param id - The command's step ID.
- * @param range - A revision or range; it must not be empty or start with `-`.
+ * @param range - A revision or range; it must not be empty, start with `-` or contain NUL (the
+ * module's range rule).
  * @param options - `ctx.exec` options, such as `worktree` or `cwd`; failures always throw.
  * @returns The changed paths in Git's order; empty when nothing changed.
  * @throws TypeError - Before any effect, when `range` is empty, starts with `-` or contains NUL.
@@ -343,7 +401,8 @@ export async function changedFiles(
  *
  * @param ctx - The workflow context.
  * @param id - The command's step ID.
- * @param range - A revision range such as `main..HEAD`; it must not be empty or start with `-`.
+ * @param range - A revision range such as `main..HEAD`; it must not be empty, start with `-` or
+ * contain NUL (the module's range rule).
  * @param options - `ctx.exec` options, such as `worktree` or `cwd`; failures always throw.
  * @returns Full commit IDs, oldest first; empty when the range has no commits.
  * @throws TypeError - Before any effect, when `range` is empty, starts with `-` or contains NUL.
@@ -360,6 +419,75 @@ export async function commits(
     .split('\n')
     .filter((line) => line !== '')
     .map((line) => checkSha(id, line));
+}
+
+/**
+ * The `git log` format of {@link log}: the fields of a {@link Commit} in order, each followed by
+ * NUL (the last by the `-z` record terminator). Git writes no NUL inside these fields.
+ */
+const LOG_FORMAT = '--format=%H%x00%h%x00%an%x00%aI%x00%s';
+
+/** How many fields {@link LOG_FORMAT} writes per commit. */
+const LOG_FIELDS = 5;
+
+/**
+ * The commits in `range` with their metadata, oldest first (the order of {@link commits}), from one
+ * `git -c core.abbrev=auto log -z --reverse --no-color --no-show-signature --encoding=UTF-8
+ * --format=%H%x00%h%x00%an%x00%aI%x00%s --end-of-options <range> --` as the durable command `id`.
+ * Each entry is a `std.types.Commit`: the full commit ID and its abbreviation at Git's default
+ * length (at least 7 characters, whatever `core.abbrev` the repository sets), the author name as
+ * recorded (no mailmap), the author date in strict ISO 8601 and the subject line. The fields are
+ * NUL-separated, so any name or subject parses exactly; signatures are never shown and messages
+ * are re-encoded to UTF-8. For example, `${base}..HEAD` lists the commits made since `base`.
+ *
+ * @param ctx - The workflow context.
+ * @param id - The command's step ID.
+ * @param range - A revision range such as `main..HEAD`; it must not be empty, start with `-` or
+ * contain NUL (the module's range rule).
+ * @param options - `ctx.exec` options, such as `worktree` or `cwd`; failures always throw.
+ * @returns The commits, oldest first; empty when the range has no commits.
+ * @throws TypeError - Before any effect, when `range` is empty, starts with `-` or contains NUL.
+ * @throws Error - From {@link git}, when a commit ID is not a full object ID, or when the output
+ * is not the expected NUL-separated records (`Unexpected git log output (<id>)`).
+ */
+export async function log(
+  ctx: WorkflowContext,
+  id: string,
+  range: string,
+  options?: Omit<ExecOptions, 'onError'>,
+): Promise<Commit[]> {
+  const args = ['-z', '--reverse', '--no-color', '--no-show-signature', '--encoding=UTF-8'];
+  // `core.abbrev` may be 4 to 6, shorter than a Commit's shortSha allows; `auto` is Git's default.
+  const output = await git(
+    ctx,
+    id,
+    [
+      '-c',
+      'core.abbrev=auto',
+      'log',
+      ...args,
+      LOG_FORMAT,
+      '--end-of-options',
+      ...rangeArgs(range),
+      '--',
+    ],
+    options,
+  );
+  const fields = output.split('\0');
+  // Every record ends with NUL, so complete output splits into whole records and one empty tail.
+  if (fields.pop() !== '' || fields.length % LOG_FIELDS !== 0)
+    throw new Error(`Unexpected git log output (${id}): ${JSON.stringify(output.slice(0, 200))}`);
+  const list: Commit[] = [];
+  for (let start = 0; start < fields.length; start += LOG_FIELDS) {
+    const [sha = '', shortSha, author, date, subject] = fields.slice(start, start + LOG_FIELDS);
+    const parsed = Commit.safeParse({ sha: checkSha(id, sha), shortSha, author, date, subject });
+    if (!parsed.success || !sha.startsWith(parsed.data.shortSha))
+      throw new Error(
+        `Unexpected git log output (${id}): ${JSON.stringify(fields.slice(start, start + LOG_FIELDS))}`,
+      );
+    list.push(parsed.data);
+  }
+  return list;
 }
 
 /**

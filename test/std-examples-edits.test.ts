@@ -1,8 +1,8 @@
 // The std edit recipes end to end: std-parallel-edits (isolatedEdits over input steps, each in its
-// own checkout of a real temporary Git repository, squashed into one integration commit) and
-// std-approved-plan (approvedPlan through real approvals, then a Mechanic implements the approved
-// plan), run against a scripted harness, checking their outputs, step IDs, team wiring, grants and
-// replay after a tail failure without new agent calls.
+// own checkout of a real temporary Git repository, squashed into one integration commit, returning
+// the IsolatedEditsResult) and std-approved-plan (approvedPlan through real approvals, then a
+// Mechanic implements the approved plan), run against a scripted harness, checking their outputs,
+// step IDs, team wiring, grants and replay after a tail failure without new agent calls.
 import { execFile } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -17,11 +17,18 @@ import {
   type WorkflowDefinition,
   type WorkflowResult,
 } from '../src/index.js';
-import type * as std from '../src/std/index.js';
+import * as std from '../src/std/index.js';
 import { capabilityManifest } from '../src/workflow/runtime/profiles.js';
 import approvedPlan from '../examples/patterns/std-approved-plan.workflow.js';
 import parallelEdits from '../examples/patterns/std-parallel-edits.workflow.js';
-import { ScriptedHarness, makeRoot, removeRoot, runOptions, tailFailure } from './std-harness.js';
+import {
+  ScriptedHarness,
+  makeRoot,
+  removeRoot,
+  roundTrip,
+  runOptions,
+  tailFailure,
+} from './std-harness.js';
 
 const execute = promisify(execFile);
 let root: string;
@@ -118,15 +125,23 @@ describe('std-parallel-edits', () => {
     expect(again.steps).toEqual(result.steps);
     expect(result.status).toBe('completed');
     const commit = result.output?.commit ?? '';
-    expect(result.output).toEqual({
+    expect(result.output).toMatchObject({
       status: 'degraded',
       commit,
+      merge: { commit, conflicts: [] },
       merged: ['parse', 'format'],
       conflicts: [],
+      changes: [
+        { key: 'parse', files: ['src/parse.ts'], summary: 'Wrote src/parse.ts.' },
+        { key: 'format', files: ['src/format.ts'], summary: 'Wrote src/format.ts.' },
+      ],
       violations: [{ key: 'docs', files: ['README.md'] }],
       unchanged: [],
       failed: [],
+      failures: 0,
     });
+    expect(result.output?.merge?.merged).toHaveLength(2);
+    roundTrip(std.patterns.IsolatedEditsResult, result.output);
     expect(Object.keys(result.steps).sort()).toEqual([
       'edits/item/docs/edit',
       'edits/item/format/edit',
@@ -211,7 +226,19 @@ describe('std-approved-plan', () => {
       harness,
       [{ approved: false, comment: 'Too broad: only add the flag.' }, { approved: true }],
     );
-    expect(result.output).toEqual({ status: 'approved', plan, report });
+    expect(result.output).toEqual({
+      review: {
+        approved: true,
+        outcome: 'approved',
+        plan,
+        digest: std.data.digest(plan),
+        rounds: 2,
+        comment: null,
+        failures: 0,
+        status: 'complete',
+      },
+      report,
+    });
     expect(harness.ids()).toEqual(['plan/round/0/plan', 'plan/round/1/plan', 'implement']);
     expect(Object.keys(result.steps)).toEqual(
       expect.arrayContaining(['plan/round/0/approve', 'plan/round/1/approve']),
@@ -240,7 +267,17 @@ describe('std-approved-plan', () => {
     );
     const schema = harness.calls[0]?.outputSchema ?? null;
     const synthesized = synthesizeOutput(schema, 'plan/round/0/plan');
-    expect(result.output).toEqual({ status: 'out-of-revisions', plan: synthesized, report: null });
+    expect(result.output).toMatchObject({
+      review: {
+        approved: false,
+        outcome: 'out-of-revisions',
+        plan: synthesized,
+        rounds: 1,
+        comment: 'Not now.',
+      },
+      report: null,
+    });
+    roundTrip(std.patterns.ApprovedPlanResult, result.output?.review);
     expect(harness.ids()).toEqual(['plan/round/0/plan']);
   });
 });

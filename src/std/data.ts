@@ -1,10 +1,12 @@
 /**
  * Pure data helpers for workflow bodies and the std patterns: settled results ({@link oks},
- * {@link failures}), voting ({@link majority}, {@link threshold}, {@link tally}), deduplication
- * across sources and rounds ({@link dedupeBy}, {@link fresh}, {@link corroborate}), ordering and
- * selection ({@link rankBy}, {@link bySeverity}, {@link rankCap}, {@link rotate}, {@link chunk}),
- * map keys and checks ({@link uniqueKeys}, {@link assertUnique}, {@link assertDisjoint},
- * {@link coverage}, {@link topoWaves}), and stable hashing ({@link canonicalJson}, {@link digest}).
+ * {@link failures}), combined health ({@link health}), voting ({@link majority},
+ * {@link threshold}, {@link tally}), deduplication across sources and rounds ({@link dedupeBy},
+ * {@link fresh}, {@link corroborate}), ordering and selection ({@link rankBy},
+ * {@link bySeverity}, {@link rankCap}, {@link rotate}, {@link chunk}), map keys and checks
+ * ({@link uniqueKeys}, {@link assertUnique}, {@link assertDisjoint}, {@link coverage},
+ * {@link topoWaves}), and stable hashing ({@link canonicalJson}, {@link digest}). The schemas
+ * {@link Health} and {@link Coverage} check the values those helpers return.
  *
  * Nothing here takes a workflow context or records an effect: every function is deterministic in
  * its arguments, so a body may call them freely between durable effects and replay computes the
@@ -23,7 +25,7 @@
  * @module
  */
 import { createHash } from 'node:crypto';
-import { stepId, type JsonValue, type Settled } from '../index.js';
+import { stepId, z, type Settled } from '../index.js';
 
 /** Severity order used by {@link bySeverity}, most severe first. */
 const SEVERITIES: readonly ['critical', 'high', 'medium', 'low'] = Object.freeze([
@@ -76,6 +78,69 @@ export function failures<T, E>(results: readonly Settled<T, E>[]): E[] {
   const errors: E[] = [];
   for (const result of results) if (!result.ok) errors.push(result.error);
   return errors;
+}
+
+/** The schema of a {@link Health}, as every std pattern result schema checks its `status`. */
+export const Health: z.ZodEnum<z.util.ToEnum<'complete' | 'degraded'>> = z.enum([
+  'complete',
+  'degraded',
+]);
+
+/**
+ * The health of a step that tolerates failures, as every std pattern result's `status` reports it:
+ * `'complete'` when nothing it tolerated failed, else `'degraded'`.
+ */
+export type Health = 'complete' | 'degraded';
+
+/**
+ * One input of {@link health}: a failure count, a {@link Health}, or a result that carries one as
+ * its `status`, such as any std pattern result.
+ */
+export type HealthPart =
+  | number
+  | Health
+  | {
+      /** The result's health. */
+      readonly status: Health;
+    };
+
+/** Return `value` when it is a {@link Health}; otherwise throw a `TypeError` naming `name`. */
+function healthOf(name: string, value: unknown): Health {
+  if (value === 'complete' || value === 'degraded') return value;
+  throw new TypeError(`${name} must be 'complete' or 'degraded'; got ${show(value)}.`);
+}
+
+/**
+ * Combine the health of several steps, such as the patterns a workflow ran and the failures it
+ * tolerated itself: `'degraded'` when any part is `'degraded'` (or a result whose `status` is) or a
+ * positive failure count, else `'complete'`.
+ *
+ * ```ts
+ * const status = std.data.health(review, verdicts, skipped.length);
+ * ```
+ *
+ * @param parts - Failure counts, healths and results with a `status`; none gives `'complete'`.
+ * @returns The combined health.
+ * @throws TypeError - When a count is not a nonnegative integer, or a health or a result's
+ * `status` is neither `'complete'` nor `'degraded'`.
+ */
+export function health(...parts: readonly HealthPart[]): Health {
+  let degraded = false;
+  for (const [index, part] of (parts as readonly unknown[]).entries()) {
+    const name = `parts[${String(index)}]`;
+    let status: Health;
+    if (typeof part === 'number') status = integer(name, part, 0) > 0 ? 'degraded' : 'complete';
+    else if (typeof part === 'string') status = healthOf(name, part);
+    else if (typeof part === 'object' && part !== null)
+      status = healthOf(`${name}.status`, (part as { readonly status?: unknown }).status);
+    else {
+      throw new TypeError(
+        `${name} must be a failure count, a health or a result with a status; got ${show(part)}.`,
+      );
+    }
+    if (status === 'degraded') degraded = true;
+  }
+  return degraded ? 'degraded' : 'complete';
 }
 
 /**
@@ -494,6 +559,11 @@ export interface Coverage {
   /** The expected entries that were not seen, in expected order. */
   readonly missing: string[];
 }
+/** The schema of a {@link Coverage}, as `std.patterns.MapReduceResult` checks its `coverage`. */
+export const Coverage: z.ZodType<Coverage> = z.strictObject({
+  covered: z.array(z.string()),
+  missing: z.array(z.string()),
+});
 
 /**
  * Split the expected entries into covered and missing ones, computed in code rather than reported
@@ -522,12 +592,16 @@ export function coverage(all: readonly string[], seen: Iterable<string>): Covera
  * order, so the text is a stable basis for a digest. Keys sort as strings, so `"10"` precedes
  * `"9"`, and `-0` is written as `0`.
  *
- * @param value - Plain JSON: `null`, booleans, finite numbers, strings, arrays and plain objects.
+ * The parameter is typed `unknown` so read-only arrays and interfaces (such as a pattern result)
+ * pass without a cast; the value is checked at run time instead.
+ *
+ * @param value - A JSON value: `null`, booleans, finite numbers, strings, arrays and plain objects,
+ * read-only or not.
  * @returns The canonical JSON text.
  * @throws TypeError - When the value holds a non-finite number, `undefined` in an array, an array
  * hole, a cycle, a class instance, or a function, symbol or BigInt.
  */
-export function canonicalJson(value: JsonValue): string {
+export function canonicalJson(value: unknown): string {
   const ancestors = new Set<object>();
   const invalid = (path: string, reason: string): never => {
     throw new TypeError(`Value is not canonical JSON at ${path}: ${reason}.`);
@@ -587,11 +661,11 @@ export function sha256(text: string): string {
  * A stable digest of a JSON value: `sha256(canonicalJson(value))`. Use it as an approval subject or
  * a change marker; equal values give equal digests regardless of key order.
  *
- * @param value - Plain JSON.
+ * @param value - A JSON value, read-only arrays and interfaces included; checked at run time.
  * @returns 64 lowercase hexadecimal characters.
  * @throws TypeError - When the value is not plain JSON (see {@link canonicalJson}).
  */
-export function digest(value: JsonValue): string {
+export function digest(value: unknown): string {
   return sha256(canonicalJson(value));
 }
 

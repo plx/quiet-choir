@@ -393,6 +393,51 @@ it('passes record input keys in the order a resume without input parses them bac
   expect(invoke).toHaveBeenCalledTimes(1);
 });
 
+it.each([
+  [
+    'an order-dependent record overwrite',
+    z.object({
+      table: z
+        .record(z.string(), z.number())
+        .overwrite((table) => Object.fromEntries(Object.keys(table).map((key, n) => [key, n]))),
+    }),
+    { table: { z: 5, a: 7 } },
+  ],
+  [
+    'a strict object with an undefined extra member',
+    z.strictObject({ name: z.string() }),
+    { name: 'x', extra: undefined },
+  ],
+] as const)(
+  'resumes with the same supplied input whose parse depends on its copy: %s',
+  async (_label, schema: z.ZodType, input) => {
+    const options = await setup();
+    let fail = true;
+    const definition = defineWorkflow({
+      name: 'canonical-resume',
+      version: '1',
+      input: schema,
+      output: z.unknown(),
+      async run(ctx, parsed) {
+        await ctx.step('tail', {
+          input: null,
+          schema: z.null(),
+          run() {
+            if (fail) throw new Error('tail');
+            return null;
+          },
+        });
+        return parsed;
+      },
+    });
+    await expect(runWorkflow(definition, { ...options, input })).rejects.toThrow('tail');
+    fail = false;
+    const resumed = await runWorkflow(definition, { ...options, input, resume: true });
+    expect(resumed.status).toBe('completed');
+    expect(resumed.output).toEqual((await readRun(options)).input);
+  },
+);
+
 it('passes the body the once-parsed input when the schema overwrite is not idempotent', async () => {
   const options = await setup();
   const seen: number[] = [];

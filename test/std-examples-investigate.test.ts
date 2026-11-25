@@ -1,12 +1,13 @@
-// The std investigation recipes end to end: std-incident (one durable git log read over a real
-// temporary repository, then falsify the incident question against it and the notes) and
-// std-research (research a question from the default angles into a cited answer), against a
-// scripted harness. Calls that matter are scripted by step ID; other structured calls get
-// schema-valid filler from synthesizeOutput. Each checks the output, step IDs, role wiring, grants
-// and replay after a tail failure without new agent calls or commands.
+// The std investigation recipes end to end: std-incident (std.exec.log and std.exec.diffStat over
+// a real temporary repository, then falsify the incident question against them and the notes,
+// returning the FalsifyResult) and std-research (research a question from the default angles into
+// a cited answer, returning the ResearchResult), against a scripted harness. Calls that matter are
+// scripted by step ID; other structured calls get schema-valid filler from synthesizeOutput. Each
+// checks the output, step IDs, role wiring, grants and replay after a tail failure without new
+// agent calls or commands.
 import { execFile } from 'node:child_process';
-import { mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -30,6 +31,7 @@ import {
   makeRoot,
   removeRoot,
   replayAfterTail as replayWithoutCommands,
+  roundTrip,
   runOptions,
   tailFailure,
 } from './std-harness.js';
@@ -128,8 +130,13 @@ describe('std-incident', () => {
     });
     return stdout;
   }
-  /** Make one empty commit with `subject` and return its SHA. */
-  async function commit(subject: string): Promise<string> {
+  /** Commit `subject`, adding a one-line `file` when given, and return the commit's SHA. */
+  async function commit(subject: string, file?: string): Promise<string> {
+    if (file !== undefined) {
+      await mkdir(dirname(join(repo, file)), { recursive: true });
+      await writeFile(join(repo, file), `${subject}\n`);
+      await git('add', '--', file);
+    }
     await git('commit', '--quiet', '--allow-empty', '-m', subject);
     return (await git('rev-parse', 'HEAD')).trim();
   }
@@ -141,8 +148,8 @@ describe('std-incident', () => {
     await mkdir(hooks);
     await git('config', '--local', 'core.hooksPath', hooks);
     base = await commit('Initial commit');
-    await commit('Lower the connection pool size to 4');
-    await commit('Retry checkout requests on timeout');
+    await commit('Lower the connection pool size to 4', 'config/pool.json');
+    await commit('Retry checkout requests on timeout', 'src/checkout.ts');
   });
 
   const question = 'Why did checkout requests time out after the deploy?';
@@ -171,7 +178,19 @@ describe('std-incident', () => {
     });
     const range = `${base}..HEAD`;
     const result = await replayAfterTail(incident, { question, range, notes }, harness);
-    expect(result.output).toEqual({ confidence: 'high', status: 'complete', survivors: [pool] });
+    expect(result.output).toMatchObject({
+      confidence: 'high',
+      survivors: [pool],
+      falsified: 2,
+      failures: 0,
+      status: 'complete',
+    });
+    expect(result.output?.hypotheses.map((tested) => tested.verdict?.verdict)).toEqual([
+      'survives',
+      'falsified',
+      'falsified',
+    ]);
+    roundTrip(std.patterns.FalsifyResult, result.output);
     expect(calledIds(harness)).toEqual(
       [
         'incident/theorize',
@@ -181,17 +200,22 @@ describe('std-incident', () => {
       ].sort(),
     );
     expect(harness.ids()[0]).toBe('incident/theorize');
-    expect(Object.keys(result.steps)).toContain('log');
+    expect(Object.keys(result.steps)).toEqual(expect.arrayContaining(['log', 'stat']));
+    expect(runner.runs).toBe(2);
 
-    // The evidence is the range's log, newest first, then the notes.
+    // The evidence is the range's commits oldest first, the files they changed, then the notes.
     const theorize = harness.prompt('incident/theorize');
     expect(theorize).toContain(`question: ${question}`);
-    expect(theorize).toContain(`## Commits in ${range}`);
-    const newest = theorize.indexOf('Retry checkout requests on timeout');
-    const older = theorize.indexOf('Lower the connection pool size to 4');
-    expect(newest).toBeGreaterThan(0);
-    expect(older).toBeGreaterThan(newest);
+    expect(theorize).toMatch(
+      new RegExp(
+        `## Commits in ${base}\\.\\.HEAD\n\n- \`[0-9a-f]{7,}\` Lower the connection pool size to 4 \\(Fixture, \\d{4}-\\d{2}-\\d{2}\\)\n- \`[0-9a-f]{7,}\` Retry checkout requests on timeout \\(Fixture, `,
+        'u',
+      ),
+    );
     expect(theorize).not.toContain('Initial commit');
+    expect(theorize).toMatch(
+      /## Files changed\n\n config\/pool\.json +\| 1 \+\n src\/checkout\.ts +\| 1 \+\n 2 files changed/u,
+    );
     expect(theorize).toContain(`## Notes\n\n${notes}`);
     expect(harness.prompt('incident/hypothesis/H2/falsify')).toContain(`## Notes\n\n${notes}`);
 
@@ -216,8 +240,24 @@ describe('std-incident', () => {
     });
     const input = { question, range: `${base}..HEAD`, notes: '' };
     const result = await replayAfterTail(incident, input, harness);
-    expect(result.output).toEqual({ confidence: 'medium', status: 'degraded', survivors: [pool] });
+    expect(result.output).toMatchObject({
+      confidence: 'medium',
+      survivors: [pool],
+      falsified: 0,
+      failures: 1,
+      status: 'degraded',
+    });
+    expect(result.output?.hypotheses[1]?.verdict).toBeNull();
     expect(harness.count('incident/hypothesis/H2/falsify')).toBe(1);
+  });
+
+  it('refuses a range that Git would read as an option before running anything', async () => {
+    const harness = scripted({});
+    await expect(
+      runWorkflow(incident, { ...options(harness), input: { question, range: '-n1', notes } }),
+    ).rejects.toThrow('Expected a Git revision or range such as main..HEAD');
+    expect(runner.runs).toBe(0);
+    expect(harness.calls).toHaveLength(0);
   });
 });
 
@@ -240,10 +280,21 @@ describe('std-research', () => {
     });
     const result = await replayWithoutCommands(research, { question, reads: 6 }, harness, root);
     expect(result.output).toEqual({
-      status: 'complete',
+      answered: true,
       answer: 'Yes: one pool per origin [1, 2].',
       sources: [lead(docs), lead(code)],
+      claims: [
+        { claim: 'A Pool serves one origin.', source: docs, quote: null },
+        { claim: 'Pool keys by origin.', source: `${code}#L12`, quote: null },
+      ],
+      deferred: [],
+      unread: [],
+      failedScouts: 0,
+      failedReads: 0,
+      failures: 0,
+      status: 'complete',
     });
+    roundTrip(std.patterns.ResearchResult, result.output);
     expect(calledIds(harness)).toEqual(
       [
         ...std.lenses.research.map((angle) => `research/scout/${angle.key}/leads`),
@@ -276,14 +327,35 @@ describe('std-research', () => {
       'research/synthesize': () => 'Probably [1].',
     });
     const result = await replayWithoutCommands(research, { question, reads: 2 }, harness, root);
-    expect(result.output).toEqual({
-      status: 'degraded',
+    expect(result.output).toMatchObject({
+      answered: true,
       answer: 'Probably [1].',
       sources: [lead(code)],
+      deferred: [lead(issue)],
+      unread: [lead(docs)],
+      failedReads: 1,
+      failures: 1,
+      status: 'degraded',
     });
     expect(harness.ids()).not.toContain(`research/read/${stepId(issue)}/claims`);
     expect(harness.count(`research/read/${stepId(docs)}/claims`)).toBe(1);
     expect(harness.prompt('research/synthesize')).toContain(`### Not read\n\n- ${docs}`);
+  });
+
+  it('answers nothing, without a synthesis call, when no scout finds a lead', async () => {
+    const harness = scripted({});
+    const result = await replayWithoutCommands(research, { question, reads: 6 }, harness, root);
+    expect(result.output).toMatchObject({
+      answered: false,
+      answer: '',
+      sources: [],
+      claims: [],
+      failures: 0,
+      status: 'complete',
+    });
+    expect(calledIds(harness)).toEqual(
+      std.lenses.research.map((angle) => `research/scout/${angle.key}/leads`).sort(),
+    );
   });
 
   it('reads six leads by default', () => {

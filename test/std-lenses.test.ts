@@ -1,6 +1,7 @@
 // quiet-choir/std lenses: the lens constructor's key and charter checks, and the frozen catalogs the
-// std patterns default to. Lens keys are used unchanged in step IDs and map keys, and charters are
+// std patterns default to or a workflow passes them (evidence, requirements, spec, critique). Lens keys are used unchanged in step IDs and map keys, and charters are
 // prompt text, so the catalogs' keys are pinned here and every charter is checked for shape.
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { checkCodexSchema, stepId } from '../src/index.js';
 import * as lenses from '../src/std/lenses.js';
@@ -50,6 +51,12 @@ describe('std.lenses.lens', () => {
   });
 });
 
+/**
+ * The digest of the seven catalogs that predate the evidence, requirements, spec and critique
+ * catalogs: their keys and charters, in order.
+ */
+const RELEASED_DIGEST = '4dc158b4aa678f1e';
+
 /** Every catalog and its keys, in order. */
 const catalogs = {
   bugs: [
@@ -82,12 +89,28 @@ const catalogs = {
   ],
   release: ['tests', 'compatibility', 'security', 'performance', 'docs', 'operability'],
   writing: ['accuracy', 'completeness', 'clarity', 'structure'],
+  evidence: ['diffs', 'logs', 'config', 'dependencies', 'recent-changes'],
+  requirements: ['stories', 'edge-cases', 'non-functional', 'foundations', 'instrumentation'],
+  spec: ['data-model', 'api-contracts', 'architecture', 'edge-semantics', 'operations'],
+  critique: ['ambiguity', 'scope', 'feasibility', 'testability'],
 } as const;
 
+describe('std.lenses.LensSchema', () => {
+  it('parses every catalog lens and a lens from lens(), strips other members, and checks the shape', () => {
+    for (const name of Object.keys(catalogs))
+      for (const item of lenses[name as keyof typeof catalogs])
+        expect(lenses.LensSchema.parse(item)).toStrictEqual({ ...item });
+    const made = lenses.lens('migrations', 'Schema and data migrations.');
+    expect(lenses.LensSchema.parse({ ...made, weight: 2 })).toStrictEqual({ ...made });
+    expect(lenses.LensSchema.safeParse({ key: 'a' }).success).toBe(false);
+    expect(lenses.LensSchema.safeParse({ key: 1, charter: 'c' }).success).toBe(false);
+  });
+});
+
 describe('std.lenses catalogs', () => {
-  it('exports exactly the documented catalogs, the lens constructor and the design rubric', () => {
+  it('exports exactly the documented catalogs, the lens constructor and schema, and the design rubric', () => {
     expect(Object.keys(lenses).sort()).toEqual(
-      [...Object.keys(catalogs), 'designRubric', 'lens'].sort(),
+      [...Object.keys(catalogs), 'LensSchema', 'designRubric', 'lens'].sort(),
     );
   });
 
@@ -116,6 +139,28 @@ describe('std.lenses catalogs', () => {
   it('writes the design philosophies as a proposer stance', () => {
     for (const item of lenses.design) expect(item.charter, item.key).toMatch(/^You /u);
   });
+
+  it('keeps the released charters byte-for-byte', () => {
+    // Charters are prompt text: a change breaks replay of every completed call that sent it. The
+    // seven catalogs that predate the wave-2 additions are pinned by digest.
+    const released = ['bugs', 'review', 'security', 'design', 'research', 'release', 'writing'];
+    const digest = createHash('sha256')
+      .update(JSON.stringify(released.map((name) => lenses[name as keyof typeof catalogs])))
+      .digest('hex')
+      .slice(0, 16);
+    expect(digest).toBe(RELEASED_DIGEST);
+  });
+
+  it.each(['evidence', 'requirements', 'spec', 'critique'] as const)(
+    '%s charters name what to examine, as a list of specifics',
+    (name) => {
+      for (const item of lenses[name]) {
+        // Each charter enumerates concrete things to look at, like the earlier catalogs.
+        expect(item.charter.split(',').length, item.key).toBeGreaterThanOrEqual(3);
+        expect(item.charter.length, item.key).toBeGreaterThanOrEqual(100);
+      }
+    },
+  );
 });
 
 describe('std.lenses.designRubric', () => {

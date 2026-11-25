@@ -11,7 +11,12 @@
  * Each pattern takes a required `id` and records every step under it, with deterministic round and
  * attempt scopes, so a resume replays completed calls and commands. Tolerated failures (a critic, a
  * fixer or an attempt whose call failed) are journaled as settled outcomes and counted in the
- * result, so a resume makes the same decision instead of retrying them.
+ * result, so a resume makes the same decision instead of retrying them. Every result counts them in
+ * `failures` and reports its health as `status` (`'degraded'` exactly when one occurred); what the
+ * pattern decided is in a named field (`approved`, `outcome`). Every result interface has a schema
+ * of the same name, for a workflow `output` or a saved result: {@link CritiqueReviseResult} and
+ * {@link FixUntilGreenResult} are schemas, and {@link EscalateResult} is a factory that takes the
+ * value schema.
  *
  * ```ts
  * import * as std from 'quiet-choir/std';
@@ -40,21 +45,24 @@ import {
   type TeamOf,
   type WorkflowContext,
   type WorktreeHandle,
-  type z,
+  z,
 } from '../index.js';
+import { Health } from './data.js';
 import { check, json } from './exec.js';
 import type { Lens } from './lenses.js';
 import {
+  Count,
   keyed,
   nonEmpty,
   nonNegativeInt,
   placement,
   positiveInt,
   settledMap,
+  statusOf,
   type CallDefaults,
 } from './pattern-kit.js';
 import { brief as briefText, bullets, fence, promptText } from './text.js';
-import { Critique, WorkReport, type CheckOutcome, type Issue } from './types.js';
+import { CheckOutcome, Critique, Issue, WorkReport } from './types.js';
 
 // ---------------------------------------------------------------------------------------------
 // critiqueRevise
@@ -106,7 +114,11 @@ export interface CritiqueReviseOptions {
   readonly prompts?: CritiqueRevisePrompts | undefined;
   /** The bound on concurrent lens critics; defaults to 4. */
   readonly concurrency?: number | undefined;
-  /** A revision for prompts and schemas the lens maps' fingerprints do not show. */
+  /**
+   * A revision for what the lens maps' fingerprints do not show, such as the schema. The team's
+   * agent configuration is not part of a map item either, so a completed item is reused after a
+   * role changes: change `version` when you change the agent that fills a slot.
+   */
   readonly version?: string | undefined;
   /** Options applied to every agent call (placement, retry, deadlines). */
   readonly calls?: CallDefaults | undefined;
@@ -126,12 +138,26 @@ export interface CritiqueReviseResult {
   readonly issues: Issue[];
   /** Critic calls that failed, over all rounds; each is saved, so a resume does not retry it. */
   readonly failedCritics: number;
+  /** How many critic calls failed: the same as `failedCritics`. */
+  readonly failures: number;
   /**
-   * `'approved'`; `'open-issues'` when the rounds ran out with issues open; or `'degraded'` when
-   * the last round raised no issue but a critic failed, so the draft is not approved.
+   * `'complete'` when every critic call answered, else `'degraded'`. Whether the draft was approved
+   * is `approved`; open issues are in `issues`.
    */
-  readonly status: 'approved' | 'open-issues' | 'degraded';
+  readonly status: 'complete' | 'degraded';
 }
+
+/** The schema of a {@link CritiqueReviseResult}, for a workflow `output` or a saved result. */
+export const CritiqueReviseResult: z.ZodType<CritiqueReviseResult> = z.strictObject({
+  draft: z.string(),
+  approved: z.boolean(),
+  rounds: Count,
+  revisions: Count,
+  issues: z.array(Issue),
+  failedCritics: Count,
+  failures: Count,
+  status: Health,
+});
 
 /** The author's default first-draft prompt. */
 function draftPrompt(brief: string): string {
@@ -228,7 +254,7 @@ interface RoundCritique {
  * @param options - The scope, team and brief, plus the optional first draft, rounds, lenses,
  * prompts, concurrency, version and call defaults.
  * @returns The final draft, whether it was approved, the round and revision counts, the open
- * issues, the failed critic count and the status.
+ * issues, the failed critic count (also as `failures`) and the status.
  * @throws TypeError - Before any effect, when the `critic` or `author` slot is not filled, the brief
  * is blank, `rounds` or `concurrency` is not a positive integer, or `lenses` is empty.
  * @throws Error - The error of a failed author call (the first draft or a revision): only critics
@@ -307,15 +333,15 @@ export async function critiqueRevise(
         );
       if (last.issues.length === 0 && last.failed === 0) break;
     }
-    const approved = last.issues.length === 0 && last.failed === 0;
     return {
       draft,
-      approved,
+      approved: last.issues.length === 0 && last.failed === 0,
       rounds: ran,
       revisions,
       issues: last.issues,
       failedCritics,
-      status: approved ? 'approved' : last.issues.length > 0 ? 'open-issues' : 'degraded',
+      failures: failedCritics,
+      status: statusOf(failedCritics),
     };
   });
 }
@@ -323,6 +349,12 @@ export async function critiqueRevise(
 // ---------------------------------------------------------------------------------------------
 // Shared by fixUntilGreen and escalate
 // ---------------------------------------------------------------------------------------------
+
+/** The schema of an {@link EscalationSlot}. */
+export const EscalationSlot: z.ZodEnum<z.util.ToEnum<'mechanic' | 'surgeon'>> = z.enum([
+  'mechanic',
+  'surgeon',
+]);
 
 /** The slots of {@link RepairTeam} and {@link EscalationTeam}: who did a piece of work. */
 export type EscalationSlot = 'mechanic' | 'surgeon';
@@ -367,6 +399,14 @@ export interface FixRound {
   /** The failed call's message, or null when the call succeeded. */
   readonly error: string | null;
 }
+
+/** The schema of a {@link FixRound}. */
+export const FixRound: z.ZodType<FixRound> = z.strictObject({
+  round: Count,
+  slot: EscalationSlot,
+  report: WorkReport.nullable(),
+  error: z.string().nullable(),
+});
 
 /** What the fix prompt of {@link fixUntilGreen} is built from. */
 export interface FixPromptInput {
@@ -422,7 +462,7 @@ export interface FixUntilGreenOptions {
 /** Result of {@link fixUntilGreen}. */
 export interface FixUntilGreenResult {
   /** `'green'` when the last check passed, else `'red'`. */
-  readonly status: 'green' | 'red';
+  readonly outcome: 'green' | 'red';
   /** How many fix rounds ran; 0 when the first check passed. */
   readonly rounds: number;
   /**
@@ -436,7 +476,29 @@ export interface FixUntilGreenResult {
   readonly fixes: FixRound[];
   /** Fix calls that failed; the loop went on to the next check, and a resume does not retry them. */
   readonly failedFixes: number;
+  /** How many fix calls failed: the same as `failedFixes`. */
+  readonly failures: number;
+  /**
+   * `'complete'` when every fix call answered, else `'degraded'`. Whether the check passed is
+   * `outcome`: only the command decides it.
+   */
+  readonly status: 'complete' | 'degraded';
 }
+
+/**
+ * The schema of a {@link FixUntilGreenResult}, for a workflow `output` or a saved result:
+ * `defineWorkflow({ output: std.patterns.FixUntilGreenResult, ... })`.
+ */
+export const FixUntilGreenResult: z.ZodType<FixUntilGreenResult> = z.strictObject({
+  outcome: z.enum(['green', 'red']),
+  rounds: Count,
+  fixedBy: EscalationSlot.nullable(),
+  checks: z.array(CheckOutcome),
+  fixes: z.array(FixRound),
+  failedFixes: Count,
+  failures: Count,
+  status: Health,
+});
 
 /** One earlier fix round as a prompt line. */
 function earlierLine(fix: FixRound): string {
@@ -502,8 +564,8 @@ function fixPrompt(request: FixPromptInput): string {
  * @param ctx - The workflow context the team was bound from.
  * @param options - The scope, team and check command, plus the optional rounds, escalation point,
  * task, shared worktree, command options, prompts and call defaults.
- * @returns The status, the rounds run, which slot fixed it, every check outcome and fix round,
- * and the failed fix count.
+ * @returns Whether the check ended green, the rounds run, which slot fixed it, every check outcome
+ * and fix round, the failed fix count (also as `failures`) and the status.
  * @throws TypeError - Before any effect, when the `mechanic` or `surgeon` slot is not filled,
  * `rounds` is not a positive integer, `escalateAfter` is not an integer from 0 to `rounds`, `task`
  * is blank, or `calls.worktree` is set without `worktree`.
@@ -568,13 +630,16 @@ export async function fixUntilGreen(
       // flaky check) is credited to no slot; `fixes` shows the failed round.
       if (last.passed && settled.ok) fixedBy = slot;
     }
+    const failedFixes = fixes.filter((fix) => fix.report === null).length;
     return {
-      status: last.passed ? 'green' : 'red',
+      outcome: last.passed ? 'green' : 'red',
       rounds: round,
       fixedBy,
       checks,
       fixes,
-      failedFixes: fixes.filter((fix) => fix.report === null).length,
+      failedFixes,
+      failures: failedFixes,
+      status: statusOf(failedFixes),
     };
   });
 }
@@ -654,7 +719,7 @@ export interface EscalateOptions<V> {
 /** Result of {@link escalate}. */
 export interface EscalateResult<V> {
   /** `'accepted'` when `accept` returned true for an attempt, else `'rejected'`. */
-  readonly status: 'accepted' | 'rejected';
+  readonly outcome: 'accepted' | 'rejected';
   /** The slot of the accepted attempt, or of the last attempt when none was accepted. */
   readonly slot: EscalationSlot;
   /** How many attempts ran. */
@@ -665,6 +730,35 @@ export interface EscalateResult<V> {
   readonly problems: string | null;
   /** Attempts whose agent call failed; each is saved, so a resume does not retry it. */
   readonly failedCalls: number;
+  /** How many attempt calls failed: the same as `failedCalls`. */
+  readonly failures: number;
+  /**
+   * `'complete'` when every attempt's call answered, else `'degraded'`. Whether an attempt was
+   * accepted is `outcome`.
+   */
+  readonly status: 'complete' | 'degraded';
+}
+
+/**
+ * The schema of an {@link EscalateResult}, for a workflow `output` or a saved result.
+ *
+ * @typeParam V - The attempt value type.
+ * @param value - The schema of an attempt's value: the `schema` the attempts ran with. Omitted,
+ * `std.types.WorkReport`, as {@link escalate} defaults to.
+ * @returns A strict object schema of the result.
+ */
+export function EscalateResult<V = WorkReport>(value?: z.ZodType<V>): z.ZodType<EscalateResult<V>> {
+  const schema = (value ?? WorkReport) as z.ZodType<V>;
+  return z.strictObject({
+    outcome: z.enum(['accepted', 'rejected']),
+    slot: EscalationSlot,
+    attempts: Count,
+    value: schema.nullable(),
+    problems: z.string().nullable(),
+    failedCalls: Count,
+    failures: Count,
+    status: Health,
+  });
 }
 
 /** The honesty guidance of a default attempt prompt whose value is not a `std.types.WorkReport`. */
@@ -735,8 +829,8 @@ interface AttemptOutcome<V> {
  * @param ctx - The workflow context the team was bound from.
  * @param options - The scope, team, task and `accept`, plus the optional attempts, start slot,
  * prompts and call defaults; the value is a `std.types.WorkReport`.
- * @returns The status, the deciding slot, the attempts run, the value, the last problems and the
- * failed call count.
+ * @returns Whether an attempt was accepted, the deciding slot, the attempts run, the value, the
+ * last problems, the failed call count (also as `failures`) and the status.
  * @throws TypeError - Before any effect, when the `mechanic` or `surgeon` slot is not filled, the
  * task is blank, `attempts` is not a positive integer or `start` is not a slot; and when `accept`
  * returns something other than `true` or a string.
@@ -756,8 +850,8 @@ export function escalate(
  * @param ctx - The workflow context the team was bound from.
  * @param options - The scope, team, task, schema and `accept`, plus the optional attempts, start
  * slot, prompts and call defaults.
- * @returns The status, the deciding slot, the attempts run, the value, the last problems and the
- * failed call count.
+ * @returns Whether an attempt was accepted, the deciding slot, the attempts run, the value, the
+ * last problems, the failed call count (also as `failures`) and the status.
  * @throws TypeError - As for the default overload.
  */
 export function escalate<V>(
@@ -767,6 +861,24 @@ export function escalate<V>(
     readonly schema: z.ZodType<V>;
   },
 ): Promise<EscalateResult<V>>;
+/**
+ * Give a task to the mechanic with options whose `schema` may or may not be set, such as a value
+ * typed as {@link EscalateOptions}; see the default overload for the steps. Without a schema the
+ * value is a `std.types.WorkReport`, so the result's value type includes it; the two narrower
+ * overloads give a precise value type when the schema is known at the call.
+ *
+ * @typeParam V - The attempt value's type when `schema` is set.
+ * @param ctx - The workflow context the team was bound from.
+ * @param options - The scope, team, task and `accept`, an optional schema, plus the optional
+ * attempts, start slot, prompts and call defaults.
+ * @returns Whether an attempt was accepted, the deciding slot, the attempts run, the value, the
+ * last problems, the failed call count (also as `failures`) and the status.
+ * @throws TypeError - As for the default overload.
+ */
+export function escalate<V>(
+  ctx: WorkflowContext,
+  options: EscalateOptions<V>,
+): Promise<EscalateResult<V | WorkReport>>;
 export async function escalate<V>(
   ctx: WorkflowContext,
   options: EscalateOptions<V>,
@@ -830,12 +942,14 @@ export async function escalate<V>(
       ctx.log(`${options.id}: attempt ${String(attempt)} by the ${current} was not accepted`);
     }
     return {
-      status: outcome.problems === null ? 'accepted' : 'rejected',
+      outcome: outcome.problems === null ? 'accepted' : 'rejected',
       slot,
       attempts: ran,
       value: outcome.value,
       problems: outcome.problems,
       failedCalls,
+      failures: failedCalls,
+      status: statusOf(failedCalls),
     };
   });
 }

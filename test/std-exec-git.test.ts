@@ -1,7 +1,8 @@
-// quiet-choir/std exec additions (std.exec): check, head, status, assertClean, diff, changedFiles
-// and commits against a real temporary Git repository and real processes, with an inert harness
-// (none of these workflows calls an agent). A recording process runner shows the exact argv each
-// helper records and that a resume replays saved results instead of running commands again.
+// quiet-choir/std exec additions (std.exec): check, head, status, assertClean, diff, diffStat,
+// changedFiles, commits and log against a real temporary Git repository and real processes, with an
+// inert harness (none of these workflows calls an agent). A recording process runner shows the
+// exact argv each helper records and that a resume replays saved results instead of running
+// commands again. Every range helper refuses a range Git would read as an option.
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -25,7 +26,7 @@ import {
   type WorkflowDefinition,
 } from '../src/index.js';
 import * as exec from '../src/std/exec.js';
-import { CheckOutcome } from '../src/std/types.js';
+import { CheckOutcome, Commit } from '../src/std/types.js';
 
 const execute = promisify(execFile);
 let root: string;
@@ -495,12 +496,15 @@ describe('Git queries', () => {
 
   it.each([
     ['diff', (ctx: WorkflowContext, range: string) => exec.diff(ctx, 'q', range)],
+    ['diffStat', (ctx: WorkflowContext, range: string) => exec.diffStat(ctx, 'q', range)],
     ['changedFiles', (ctx: WorkflowContext, range: string) => exec.changedFiles(ctx, 'q', range)],
     ['commits', (ctx: WorkflowContext, range: string) => exec.commits(ctx, 'q', range)],
+    ['log', (ctx: WorkflowContext, range: string) => exec.log(ctx, 'q', range)],
   ] as const)(
-    '%s refuses an option-like or empty range before any effect',
+    '%s refuses a range that starts with -, is empty or holds NUL, before any effect',
     async (_name, query) => {
-      const ranges = ['--output=/tmp/x', '-n1', '', 'a\0b'];
+      // One rule for every range helper: text Git would read as an option never reaches it.
+      const ranges = ['--output=/tmp/x', '-n1', '-', '--', '', 'a\0b'];
       const refused = workflow(z.array(z.string()), async (ctx) => {
         const messages: string[] = [];
         for (const range of ranges) {
@@ -522,6 +526,193 @@ describe('Git queries', () => {
       expect(runner.commands).toEqual([]);
     },
   );
+
+  it('log lists the commits in a range with their metadata, oldest first', async () => {
+    await writeFile(join(repo, 'one.md'), '1\n');
+    const first = await commit('Add one');
+    await writeFile(join(repo, 'two.md'), '2\n');
+    await git('add', '--all');
+    await git(
+      'commit',
+      '--quiet',
+      '--author=Ünï Åuthor <u@example.invalid>',
+      '--date=2026-01-31T09:30:00+01:00',
+      '-m',
+      'Fix "quotes", tabs\tand ünïcode\nacross two lines\n\nThe body is not the subject.',
+    );
+    const second = (await git('rev-parse', 'HEAD')).trim();
+    await git('commit', '--quiet', '--allow-empty', '--allow-empty-message', '-m', '');
+    const third = (await git('rev-parse', 'HEAD')).trim();
+    const listed = await run(z.array(Commit), (ctx) => exec.log(ctx, 'log', `${base}..HEAD`));
+    expect(runner.commands.at(-1)).toEqual([
+      'git',
+      '-c',
+      'core.abbrev=auto',
+      'log',
+      '-z',
+      '--reverse',
+      '--no-color',
+      '--no-show-signature',
+      '--encoding=UTF-8',
+      '--format=%H%x00%h%x00%an%x00%aI%x00%s',
+      '--end-of-options',
+      `${base}..HEAD`,
+      '--',
+    ]);
+    expect(listed.map((entry) => entry.sha)).toEqual([first, second, third]);
+    for (const entry of listed) {
+      expect(entry.sha.startsWith(entry.shortSha), entry.sha).toBe(true);
+      expect(Commit.parse(entry)).toEqual(entry);
+    }
+    expect(listed[0]).toMatchObject({ author: 'Fixture', subject: 'Add one' });
+    expect(listed[1]).toEqual({
+      sha: second,
+      shortSha: second.slice(0, listed[1]?.shortSha.length),
+      author: 'Ünï Åuthor',
+      date: '2026-01-31T09:30:00+01:00',
+      subject: 'Fix "quotes", tabs\tand ünïcode across two lines',
+    });
+    expect(listed[2]).toMatchObject({ author: 'Fixture', subject: '' });
+    // The same commits, in the same order, as std.exec.commits lists them.
+    const ids = await run(
+      z.array(z.string()),
+      (ctx) => exec.commits(ctx, 'commits', `${base}..HEAD`),
+      'ids',
+    );
+    expect(ids).toEqual([first, second, third]);
+    expect(
+      await run(z.array(Commit), (ctx) => exec.log(ctx, 'none', 'HEAD..HEAD'), 'none'),
+    ).toEqual([]);
+  });
+
+  it('log abbreviates at Git default length whatever core.abbrev the repository sets', async () => {
+    // core.abbrev accepts 4 to 6, which a std.types.Commit's shortSha (7 to 64) would refuse.
+    await git('config', '--local', 'core.abbrev', '4');
+    await writeFile(join(repo, 'one.md'), '1\n');
+    const first = await commit('one');
+    const listed = await run(z.array(Commit), (ctx) => exec.log(ctx, 'log', `${base}..HEAD`));
+    expect(listed).toMatchObject([{ sha: first, shortSha: first.slice(0, 7), subject: 'one' }]);
+  });
+
+  it('log replays the saved listing on resume after a tail failure', async () => {
+    await writeFile(join(repo, 'one.md'), '1\n');
+    const first = await commit('one');
+    const definition = workflow(z.array(Commit), async (ctx) => {
+      const listed = await exec.log(ctx, 'log', `${base}..HEAD`);
+      await ctx.step('tail', {
+        input: null,
+        schema: z.null(),
+        run({ attempt }) {
+          if (attempt === 1) throw new Error('Injected tail failure');
+          return null;
+        },
+      });
+      return listed;
+    });
+    await expect(runWorkflow(definition, options('log-resume'))).rejects.toThrow(
+      'Injected tail failure',
+    );
+    await writeFile(join(repo, 'two.md'), '2\n');
+    await commit('two, made after the listing');
+    const resumed = await runWorkflow(definition, { ...options('log-resume'), resume: true });
+    expect(resumed.output?.map((entry) => entry.sha)).toEqual([first]);
+    expect(resumed.steps['log']?.attempts).toBe(1);
+    expect(runner.commands).toHaveLength(1);
+  });
+
+  it('diffStat summarizes unstaged changes by default and a range when given', async () => {
+    expect(await run(z.string(), (ctx) => exec.diffStat(ctx, 'clean'), 'clean')).toBe('');
+    await writeFile(join(repo, 'exists.md'), 'new\n');
+    await writeFile(join(repo, 'untracked.md'), 'never listed\n');
+    expect(await run(z.string(), (ctx) => exec.diffStat(ctx, 'stat'), 'stat')).toBe(
+      ' exists.md | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)\n',
+    );
+    expect(runner.commands.at(-1)).toEqual([
+      'git',
+      '-c',
+      'core.quotePath=false',
+      'diff',
+      '--stat=10000,10000',
+      '--stat-graph-width=40',
+      '--no-color',
+      '--no-ext-diff',
+      '--no-relative',
+      '--end-of-options',
+      '--',
+    ]);
+    // A long, non-ASCII path is shown whole and unquoted, whatever width the terminal reports.
+    const deep = `${'deep/'.repeat(20)}ünï café.md`;
+    await mkdir(join(repo, ...deep.split('/').slice(0, -1)), { recursive: true });
+    await writeFile(join(repo, deep), 'line\n'.repeat(100));
+    await rm(join(repo, 'untracked.md'));
+    const next = await commit('change');
+    const columns = process.env['COLUMNS'];
+    process.env['COLUMNS'] = '40';
+    try {
+      const range = await run(
+        z.string(),
+        (ctx) => exec.diffStat(ctx, 'range', `${base}..${next}`, { cwd: 'sub' }),
+        'range',
+      );
+      const lines = range.split('\n');
+      expect(lines[0]).toMatch(/^ deep\/(?:deep\/){19}ünï café\.md \| 100 \+{40}$/u);
+      expect(lines[1]).toMatch(/^ exists\.md {2,}\| {3}2 \+-$/u);
+      expect(lines.slice(2)).toEqual([' 2 files changed, 101 insertions(+), 1 deletion(-)', '']);
+    } finally {
+      if (columns === undefined) delete process.env['COLUMNS'];
+      else process.env['COLUMNS'] = columns;
+    }
+    expect(runner.commands.at(-1)).toEqual([
+      'git',
+      '-c',
+      'core.quotePath=false',
+      'diff',
+      '--stat=10000,10000',
+      '--stat-graph-width=40',
+      '--no-color',
+      '--no-ext-diff',
+      '--no-relative',
+      '--end-of-options',
+      `${base}..${next}`,
+      '--',
+    ]);
+  });
+
+  it('diffStat replays the saved summary on resume after a tail failure', async () => {
+    await writeFile(join(repo, 'exists.md'), 'new\n');
+    const definition = workflow(z.string(), async (ctx) => {
+      const stat = await exec.diffStat(ctx, 'stat', 'HEAD');
+      await ctx.step('tail', {
+        input: null,
+        schema: z.null(),
+        run({ attempt }) {
+          if (attempt === 1) throw new Error('Injected tail failure');
+          return null;
+        },
+      });
+      return stat;
+    });
+    await expect(runWorkflow(definition, options('stat-resume'))).rejects.toThrow(
+      'Injected tail failure',
+    );
+    await writeFile(join(repo, 'exists.md'), 'old\n');
+    const resumed = await runWorkflow(definition, { ...options('stat-resume'), resume: true });
+    expect(resumed.output).toContain(' exists.md | 2 +-');
+    expect(runner.commands).toHaveLength(1);
+  });
+
+  it.each([
+    ['diffStat', (ctx: WorkflowContext) => exec.diffStat(ctx, 'q', 'HEAD', { maxOutputBytes: 8 })],
+    ['log', (ctx: WorkflowContext) => exec.log(ctx, 'q', 'HEAD', { maxOutputBytes: 8 })],
+  ] as const)('%s refuses truncated output', async (_name, query) => {
+    await writeFile(join(repo, 'exists.md'), 'new\n');
+    await expect(
+      runWorkflow(
+        workflow(z.unknown(), (ctx) => query(ctx)),
+        options('truncated'),
+      ),
+    ).rejects.toThrow('Incomplete Git output: q');
+  });
 
   it('runs in a runtime worktree when given one', async () => {
     const result = await runWorkflow(

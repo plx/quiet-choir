@@ -9,9 +9,12 @@
  *   in the next round. {@link planCall} gives the call options for implementing the approved plan.
  *
  * Each pattern takes a required `id` and records every step under it; the TSDoc of each lists the
- * exact step IDs. A failed edit is journaled by the settled map and counted in the result, so a
- * resume makes the same decision instead of retrying it. The default prompts are built with
- * `std.text.brief`.
+ * exact step IDs. A failed edit is journaled by the settled map and counted in the result's
+ * `failures`, so a resume makes the same decision instead of retrying it; every result reports its
+ * health as `status` and what it decided in named fields (`merged`, `outcome`). The default prompts
+ * are built with `std.text.brief`. Each result interface has a schema of the same name,
+ * {@link IsolatedEditsResult} and {@link ApprovedPlanResult}, for a workflow `output` or a saved
+ * result.
  *
  * ```ts
  * import * as std from 'quiet-choir/std';
@@ -41,18 +44,20 @@ import {
   type JsonValue,
   type MapStepError,
   type MergeOptions,
-  type MergeResult,
+  type MergeResult as RuntimeMergeResult,
   type Prompt,
   type Settled,
   type TeamOf,
   type WorkflowContext,
   type WorktreeBase,
   type WorktreeChange,
-  type z,
+  z,
 } from '../index.js';
-import { assertDisjoint, digest as digestOf } from './data.js';
+import { Health, assertDisjoint, digest as digestOf } from './data.js';
 import { changedFiles, json } from './exec.js';
 import {
+  Count,
+  checkContext,
   keyed,
   nonNegativeInt,
   placement,
@@ -69,7 +74,7 @@ function subsection(title: string, body: string): string {
 }
 
 /** Context material as prompt text: a string as written, other JSON as a fenced `json` block. */
-function material(value: JsonValue | string): string {
+function material(value: unknown): string {
   return typeof value === 'string' ? value : fence(json(value), 'json');
 }
 
@@ -142,7 +147,11 @@ export interface IsolatedEditsOptions<T> {
     | undefined;
   /** The bound on concurrent edits; defaults to 4. */
   readonly concurrency?: number | undefined;
-  /** A revision for prompts the edit map's fingerprint does not show. */
+  /**
+   * A revision for what the edit map's fingerprint does not show. The team's agent configuration
+   * is not part of a map item, so a completed edit is reused after a role changes: change
+   * `version` when you change the agent that fills a slot.
+   */
   readonly version?: string | undefined;
   /**
    * Options applied to every agent call (`cwd`, `addDirs`, retry, deadlines). Not `worktree`: each
@@ -161,6 +170,13 @@ export interface EditChange {
   readonly summary: string;
 }
 
+/** The schema of an {@link EditChange}. */
+export const EditChange: z.ZodType<EditChange> = z.strictObject({
+  key: z.string(),
+  files: z.array(z.string()),
+  summary: z.string(),
+});
+
 /** An item of {@link isolatedEdits} whose change touched files it does not own. */
 export interface EditViolation {
   /** The item's key. */
@@ -169,11 +185,31 @@ export interface EditViolation {
   readonly files: string[];
 }
 
+/** The schema of an {@link EditViolation}. */
+export const EditViolation: z.ZodType<EditViolation> = z.strictObject({
+  key: z.string(),
+  files: z.array(z.string()),
+});
+
+/**
+ * The outcome of `ctx.merge`, the runtime's `MergeResult`, as {@link IsolatedEditsResult} carries
+ * it: the last clean integration commit, the merged input commits, and the conflicting ones with
+ * their paths.
+ */
+export type MergeResult = RuntimeMergeResult;
+/** The schema of a {@link MergeResult}. */
+export const MergeResult: z.ZodType<MergeResult> = z.strictObject({
+  commit: z.string(),
+  merged: z.array(z.string()),
+  conflicts: z.array(z.strictObject({ commit: z.string(), files: z.array(z.string()) })),
+});
+
 /** Result of {@link isolatedEdits}. */
 export interface IsolatedEditsResult {
   /**
    * `'complete'` when every edit succeeded, stayed within its paths and merged cleanly (an
-   * unchanged item does not count against it); else `'degraded'`.
+   * unchanged item does not count against it); else `'degraded'`. Violations and conflicts degrade
+   * it as well as failed edit calls.
    */
   readonly status: 'complete' | 'degraded';
   /**
@@ -195,7 +231,23 @@ export interface IsolatedEditsResult {
   readonly unchanged: string[];
   /** Keys of the items whose edit call failed; each failure is saved, so a resume does not retry it. */
   readonly failed: string[];
+  /** How many edit calls failed: the length of `failed`. */
+  readonly failures: number;
 }
+
+/** The schema of an {@link IsolatedEditsResult}, for a workflow `output` or a saved result. */
+export const IsolatedEditsResult: z.ZodType<IsolatedEditsResult> = z.strictObject({
+  status: Health,
+  commit: z.string().nullable(),
+  merge: MergeResult.nullable(),
+  merged: z.array(z.string()),
+  conflicts: z.array(z.string()),
+  changes: z.array(EditChange),
+  violations: z.array(EditViolation),
+  unchanged: z.array(z.string()),
+  failed: z.array(z.string()),
+  failures: Count,
+});
 
 /**
  * A settled-map item of {@link isolatedEdits}: the key, the rendered prompt, the owned paths, the
@@ -302,7 +354,8 @@ function mergeOptions(merge: EditMergeOptions | undefined): EditMergeOptions {
  * @param options - The scope, the team, the items with their tasks, and optional keys, owned
  * paths, base, merge options, prompts, concurrency, version and call defaults.
  * @returns The status, the merged commit (null when nothing merged) and merge outcome, the merged
- * and conflicting keys, the in-bounds changes, the violations, and the unchanged and failed keys.
+ * and conflicting keys, the in-bounds changes, the violations, the unchanged and failed keys, and
+ * the failure count.
  * @throws TypeError - Before any effect, when the `editor` slot is not filled, `concurrency` is not
  * a positive integer, `calls.worktree` is set, an item's `task` is blank, or an owned path is not a
  * repository-relative path.
@@ -420,6 +473,7 @@ export async function isolatedEdits<T>(
         violations,
         unchanged,
         failed,
+        failures: failed.length,
       };
     }
     const merge = await ctx.merge('merge', captured, mergeOptions(options.merge));
@@ -443,6 +497,7 @@ export async function isolatedEdits<T>(
       violations,
       unchanged,
       failed,
+      failures: failed.length,
     };
   });
 }
@@ -480,10 +535,11 @@ export interface ApprovedPlanOptions {
   /** What the plan must achieve, shown to the planner and the reviewer. */
   readonly task: string;
   /**
-   * Background for the planner, under the task: a string as written, other JSON as a fenced
-   * `json` block. The reviewer sees the task and the plan.
+   * Background for the planner, under the task: text as written, or a JSON value (read-only arrays
+   * and interfaces included; checked before any effect) as a fenced `json` block. The reviewer
+   * sees the task and the plan.
    */
-  readonly context?: JsonValue | string | undefined;
+  readonly context?: unknown;
   /**
    * The most revisions, a nonnegative integer; defaults to 2, so up to three plans are reviewed.
    * A rejection with a comment is revised while revisions remain.
@@ -512,7 +568,7 @@ export interface ApprovedPlanResult {
    * `'approved'`; `'rejected'` when the reviewer rejected a plan without a comment, so there was
    * nothing to revise; or `'out-of-revisions'` when the last allowed plan was rejected too.
    */
-  readonly status: 'approved' | 'rejected' | 'out-of-revisions';
+  readonly outcome: 'approved' | 'rejected' | 'out-of-revisions';
   /** The approved plan, or the last reviewed one. */
   readonly plan: Plan;
   /** `std.data.digest(plan)`, the subject the reviewer decided on. */
@@ -521,7 +577,23 @@ export interface ApprovedPlanResult {
   readonly rounds: number;
   /** The reviewer's comment on `plan`, or null when there was none (an approval may carry one). */
   readonly comment: string | null;
+  /** Always 0: the planner calls are required, so a failure throws instead of being tolerated. */
+  readonly failures: number;
+  /** Always `'complete'`: approvedPlan tolerates no failed call. */
+  readonly status: 'complete' | 'degraded';
 }
+
+/** The schema of an {@link ApprovedPlanResult}, for a workflow `output` or a saved result. */
+export const ApprovedPlanResult: z.ZodType<ApprovedPlanResult> = z.strictObject({
+  approved: z.boolean(),
+  outcome: z.enum(['approved', 'rejected', 'out-of-revisions']),
+  plan: Plan,
+  digest: z.string(),
+  rounds: Count,
+  comment: z.string().nullable(),
+  failures: Count,
+  status: Health,
+});
 
 /** The default approval question. */
 const APPROVAL_QUESTION =
@@ -565,7 +637,7 @@ function orderedPlan(plan: Plan): JsonValue {
 }
 
 /** The task with optional background, as the context of a planner prompt. */
-function taskContext(task: string, context: JsonValue | string | undefined): string[] {
+function taskContext(task: string, context: unknown): string[] {
   return [
     subsection('Task', task),
     ...(context === undefined ? [] : [subsection('Background', material(context))]),
@@ -573,7 +645,7 @@ function taskContext(task: string, context: JsonValue | string | undefined): str
 }
 
 /** The planner's default first-plan prompt. */
-function planPrompt(task: string, context: JsonValue | string | undefined): string {
+function planPrompt(task: string, context: unknown): string {
   return brief({
     task: 'Write an implementation plan for the task below. A reviewer approves it before anyone implements it.',
     context: taskContext(task, context).join('\n\n'),
@@ -588,12 +660,7 @@ function planPrompt(task: string, context: JsonValue | string | undefined): stri
 }
 
 /** The planner's default revision prompt. */
-function revisePrompt(
-  task: string,
-  context: JsonValue | string | undefined,
-  plan: Plan,
-  comment: string,
-): string {
+function revisePrompt(task: string, context: unknown, plan: Plan, comment: string): string {
   return brief({
     task: "Revise the implementation plan below to answer the reviewer's comment. The reviewer approves the revised plan before anyone implements it.",
     context: [
@@ -658,11 +725,13 @@ function approvalDetails(
  * @param ctx - The workflow context the team was bound from.
  * @param options - The scope, the team and the task, plus optional background, revision limit,
  * approval question, title and audience, prompts and call defaults.
- * @returns Whether a plan was approved, why the loop ended, that plan (or the last reviewed one),
- * its digest, the rounds and the reviewer's last comment.
+ * @returns Whether a plan was approved and why the loop ended, that plan (or the last reviewed
+ * one), its digest, the rounds, the reviewer's last comment, and the failure count and status
+ * (always 0 and `'complete'`).
  * @throws TypeError - Before any effect, when the `planner` slot is not filled, `task` is blank,
- * `revisions` is not a nonnegative integer, `question` is not one nonblank line of at most 1024
- * characters, or `title` is not 1 to 12 characters.
+ * `context` is neither a string nor a JSON value, `revisions` is not a nonnegative integer,
+ * `question` is not one nonblank line of at most 1024 characters, or `title` is not 1 to 12
+ * characters.
  * @throws Error - The planner's call failures.
  */
 export async function approvedPlan(
@@ -676,6 +745,7 @@ export async function approvedPlan(
   const title = options.title ?? APPROVAL_TITLE;
   if (task.trim() === '')
     throw new TypeError(`approvedPlan ${options.id}: task must not be blank.`);
+  checkContext('approvedPlan', context);
   // The rules `ctx.approve` applies, checked here so a bad option fails before the planner runs.
   if (question.trim() === '' || /[\r\n]/u.test(question) || question.length > 1024) {
     throw new TypeError(
@@ -709,12 +779,10 @@ export async function approvedPlan(
       const comment =
         answer.comment === undefined || answer.comment.trim() === '' ? null : answer.comment;
       const rounds = round + 1;
-      if (answer.approved)
-        return { approved: true, status: 'approved', plan, digest, rounds, comment };
-      if (comment === null)
-        return { approved: false, status: 'rejected', plan, digest, rounds, comment };
-      if (round >= revisions)
-        return { approved: false, status: 'out-of-revisions', plan, digest, rounds, comment };
+      const result = { plan, digest, rounds, comment, failures: 0, status: 'complete' } as const;
+      if (answer.approved) return { approved: true, outcome: 'approved', ...result };
+      if (comment === null) return { approved: false, outcome: 'rejected', ...result };
+      if (round >= revisions) return { approved: false, outcome: 'out-of-revisions', ...result };
       previous = { plan, comment };
     }
   });

@@ -43,21 +43,28 @@ export interface UntilDryRound<T> {
   readonly failed?: number | undefined;
 }
 
-/** Options of {@link untilDry}. */
-export interface UntilDryOptions<T> {
+/**
+ * Options of {@link untilDry}. `T` is the item type, inferred from what `round` returns; `K` is
+ * the type `key` reads, which may be wider (such as `std.data.findingKey`, which reads only a file
+ * and a title), and defaults to `T`.
+ */
+export interface UntilDryOptions<T, K = T> {
   /** The scope for every step the rounds record. */
   readonly id: string;
   /** The most rounds to run, a positive integer. */
   readonly rounds: number;
   /** How many consecutive dry rounds end the loop, a positive integer; defaults to 2. */
   readonly patience?: number | undefined;
-  /** An item's identity for deduplication across rounds, such as `std.data.findingKey`. */
-  readonly key: (item: T) => string;
   /**
-   * Run round `n` (from 0) given everything found so far; it runs under the scope
-   * `<id>/round/<n>`, so fixed leaves inside it are unique per round.
+   * An item's identity for deduplication across rounds, such as `std.data.findingKey`. Its
+   * parameter type does not narrow the item type: that comes from what `round` returns.
    */
-  readonly round: (n: number, known: readonly T[]) => Promise<UntilDryRound<T>>;
+  readonly key: (item: K) => string;
+  /**
+   * Run round `n` (from 0) given everything found so far, typed as `key` reads it; it runs under
+   * the scope `<id>/round/<n>`, so fixed leaves inside it are unique per round.
+   */
+  readonly round: (n: number, known: readonly K[]) => Promise<UntilDryRound<T>>;
 }
 
 /** Result of {@link untilDry}. */
@@ -70,8 +77,8 @@ export interface UntilDryResult<T> {
   readonly dryRounds: number;
   /** How many rounds reported a failure. */
   readonly failedRounds: number;
-  /** `'dry'` when `patience` consecutive dry rounds ended the loop, else `'round-limit'`. */
-  readonly status: 'dry' | 'round-limit';
+  /** Why the loop stopped: `'dry'` after `patience` dry rounds in a row, else `'round-limit'`. */
+  readonly ended: 'dry' | 'round-limit';
 }
 
 /**
@@ -85,16 +92,18 @@ export interface UntilDryResult<T> {
  * The loop decides only from the rounds' results, so when every round is built from durable
  * effects a resume replays the same rounds without new calls.
  *
- * @typeParam T - The item type.
+ * @typeParam T - The item type, inferred from what `round` returns, so a `key` that reads only some
+ * members (such as `std.data.findingKey`) keeps the full item type in the result.
+ * @typeParam K - The type `key` reads and `round` sees earlier items as; defaults to `T`.
  * @param ctx - The workflow context.
  * @param options - The scope, the round limit, the patience, the key and the round callback.
  * @returns The distinct items found, round counts and why the loop stopped.
  * @throws TypeError - When `rounds` or `patience` is not a positive integer, or a round returns no
  * `found` array or an invalid `failed` count.
  */
-export async function untilDry<T>(
+export async function untilDry<T extends K, K = T>(
   ctx: WorkflowContext,
-  options: UntilDryOptions<T>,
+  options: UntilDryOptions<T, K>,
 ): Promise<UntilDryResult<T>> {
   const rounds = positiveInt('rounds', options.rounds);
   const patience = positiveInt('patience', options.patience ?? 2);
@@ -119,7 +128,7 @@ export async function untilDry<T>(
         );
       }
       ran += 1;
-      const added = fresh(result.found, seen, key);
+      const added = fresh<T>(result.found, seen, key);
       for (const item of added) found.push(item);
       if (failed > 0) {
         failedRounds += 1;
@@ -136,7 +145,7 @@ export async function untilDry<T>(
       rounds: ran,
       dryRounds,
       failedRounds,
-      status: streak >= patience ? 'dry' : 'round-limit',
+      ended: streak >= patience ? 'dry' : 'round-limit',
     };
   });
 }
@@ -156,7 +165,11 @@ export interface WavesOptions<T, U> {
   readonly dependsOn: (item: T) => readonly string[];
   /** Each wave's mapper bound; defaults to 4. */
   readonly concurrency?: number | undefined;
-  /** A revision for dependencies the items, keys and `run` source do not show. */
+  /**
+   * A revision for dependencies the items, keys and `run` source do not show, such as the
+   * configuration of an agent `run` calls: a completed item is reused after a role changes, so
+   * change `version` when you change the agent.
+   */
   readonly version?: string | undefined;
   /**
    * Run one item; passed to `ctx.map` as the mapper itself, so its source is fingerprinted. Its
@@ -288,7 +301,11 @@ export interface EachOptions<T> {
   readonly key?: ((item: T, index: number) => string) | undefined;
   /** The mapper bound; defaults to 4. */
   readonly concurrency?: number | undefined;
-  /** A revision for dependencies the items, keys and mapper source do not show. */
+  /**
+   * A revision for dependencies the items, keys and mapper source do not show, such as the
+   * configuration of an agent the mapper calls: a completed item is reused after a role changes,
+   * so change `version` when you change the agent.
+   */
   readonly version?: string | undefined;
 }
 

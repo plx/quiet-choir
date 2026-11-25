@@ -573,9 +573,17 @@ const claudeOnlyKeys = [
   'permissionMode',
 ];
 
+/** The shell factories of std.roles; every other export is a role entry. */
+const factories = ['fixer', 'tester', 'withShell'];
+
+/** The role entries of std.roles, without the factories. */
+const roleNames = Object.keys(roles).filter((name) => !factories.includes(name));
+
 describe('std.roles', () => {
-  it('has exactly the documented roles', () => {
-    expect(Object.keys(roles).sort()).toEqual(Object.keys(roleTable).sort());
+  it('has exactly the documented roles and shell factories', () => {
+    expect(roleNames.sort()).toEqual(Object.keys(roleTable).sort());
+    for (const name of factories)
+      expect(typeof (roles as Readonly<Record<string, unknown>>)[name], name).toBe('function');
   });
 
   it.each(Object.entries(roleTable))(
@@ -658,6 +666,177 @@ describe('std.roles', () => {
   });
 });
 
+/** The hand-spelled shell composition: a fragment, a tier and a persona, plus the etiquette. */
+function shellEntry(fragment: object, ...rest: object[]): object {
+  const merged = rest.reduce<Record<string, unknown>>((all, part) => ({ ...all, ...part }), {
+    ...fragment,
+  });
+  const persona =
+    typeof merged['appendSystemPrompt'] === 'string' ? merged['appendSystemPrompt'] : '';
+  return { ...merged, appendSystemPrompt: personas.join(persona, personas.ShellEtiquette) };
+}
+
+/** Expect `value` and every object or array inside it to be frozen. */
+function expectDeepFrozen(value: unknown, path: string): void {
+  if (typeof value !== 'object' || value === null) return;
+  expect(Object.isFrozen(value), path).toBe(true);
+  for (const [key, inner] of Object.entries(value)) expectDeepFrozen(inner, `${path}.${key}`);
+}
+
+describe('std.roles shell factories', () => {
+  const checks = [...bash.gitRead, ...bash.nodeCheck];
+
+  it('tester is a shell, the Mechanic tier and the Tester persona with the shell etiquette', () => {
+    const made = roles.tester(checks);
+    const spelled = {
+      ...claude.shell(checks),
+      ...tiers.Mechanic,
+      ...personas.Tester,
+      appendSystemPrompt: personas.join(
+        personas.Tester.appendSystemPrompt,
+        personas.ShellEtiquette,
+      ),
+    };
+    expect(made).toEqual(spelled);
+    expect(Object.keys(made)).toEqual(Object.keys(spelled));
+    expectDeepFrozen(made, 'tester');
+    expect(roles.tester(checks, bash.noRewrite).disallowedTools).toEqual(bash.noRewrite);
+  });
+
+  it('fixer is Mechanic with an edit shell and the shell etiquette', () => {
+    const made = roles.fixer(checks, bash.noRewrite);
+    const spelled = {
+      ...claude.editShell(checks, bash.noRewrite),
+      ...tiers.Mechanic,
+      ...personas.Implementer,
+      appendSystemPrompt: personas.join(
+        personas.Implementer.appendSystemPrompt,
+        personas.ShellEtiquette,
+      ),
+    };
+    expect(made).toEqual(spelled);
+    expect(Object.keys(made)).toEqual(Object.keys(spelled));
+    expect(roles.fixer(checks)).toEqual(roles.withShell(roles.Mechanic, checks));
+    expectDeepFrozen(made, 'fixer');
+  });
+
+  it.each([
+    ['Clerk', claude.shell, [tiers.Clerk, personas.Clerk]],
+    ['Writer', claude.shell, [tiers.Scribe, personas.Scribe, { expectsToolUse: false }]],
+    ['Scout', claude.shell, [tiers.Copyist, personas.Scout]],
+    ['Reader', claude.shell, []],
+    ['Reviewer', claude.shell, [{ model: 'opus', effort: 'high' }, personas.Reviewer]],
+    ['Skeptic', claude.shell, [tiers.Skeptic, personas.Skeptic]],
+    ['Critic', claude.shell, [tiers.Skeptic, personas.Critic]],
+    ['Judge', claude.shell, [tiers.Judge, personas.Judge]],
+    ['Planner', claude.shell, [tiers.Planner, personas.Planner]],
+    ['Scribe', claude.shell, [tiers.Scribe, personas.Scribe, { expectsToolUse: false }]],
+    ['Editor', claude.editShell, []],
+    ['Mechanic', claude.editShell, [tiers.Mechanic, personas.Implementer]],
+    ['Surgeon', claude.editShell, [tiers.Surgeon, personas.Surgeon]],
+  ] as const)(
+    'withShell(%s) equals the hand-spelled composition and is frozen exec access',
+    (name, fragment, rest) => {
+      const made = roles.withShell(roles[name], checks, bash.noRewrite);
+      expect(made).toEqual(shellEntry(fragment(checks, bash.noRewrite), ...rest));
+      expectDeepFrozen(made, name);
+      const entry = entryRow(defineRoster({ Entry: made }));
+      expect(entry.access).toBe('exec');
+      expect(entry.description).toBe(made.description);
+      expect(entry.redacted?.claude?.appendSystemPrompt).toEqual({
+        sha256: digest(made.appendSystemPrompt),
+      });
+    },
+  );
+
+  it('keeps a custom description and drops a capability description', () => {
+    expect(roles.withShell(roles.Reader, checks).description).toBe(
+      claude.shell(checks).description,
+    );
+    expect(roles.withShell(roles.Editor, checks).description).toBe(
+      claude.editShell(checks).description,
+    );
+    const custom = { ...claude.ReadOnly, description: 'Audits the build.' };
+    expect(roles.withShell(custom, checks).description).toBe('Audits the build.');
+    expect(roles.withShell(custom, checks).appendSystemPrompt).toBe(personas.ShellEtiquette);
+  });
+
+  it('is exec access, so tester and fixer need grants under requireGrants', () => {
+    const roster = defineRoster({
+      Tester: roles.tester(checks),
+      Fixer: roles.fixer(checks),
+      Auditor: roles.withShell(roles.Reviewer, bash.gitRead),
+      Reviewer: roles.Reviewer,
+    });
+    const resolved = manifest(roster, true);
+    expect(resolved.profiles['Tester']?.access).toBe('exec');
+    expect(resolved.profiles['Fixer']?.access).toBe('exec');
+    expect(resolved.profiles['Auditor']?.access).toBe('exec');
+    expect([...resolved.requiredGrants].sort()).toEqual(['Auditor', 'Fixer', 'Tester']);
+  });
+
+  it('refuses Codex, web and shell roles, and the shell errors of its rules', () => {
+    expect(() => {
+      Reflect.apply(roles.withShell, undefined, [roles.CodexReviewer, checks]);
+    }).toThrow(/^std\.roles\.withShell takes a Claude role; got harness "codex"/u);
+    expect(() => roles.withShell(roles.Researcher, checks)).toThrow(
+      new TypeError(
+        'std.roles.withShell would drop the tools ["WebSearch","WebFetch"]: it takes a role whose tools are among Read, Grep, Glob, Edit and Write.',
+      ),
+    );
+    expect(() => roles.withShell(roles.tester(checks), checks)).toThrow(
+      /takes a role without a shell, and this one already has Bash/u,
+    );
+    expect(() => {
+      Reflect.apply(roles.withShell, undefined, [tiers.Mechanic, checks]);
+    }).toThrow(/needs a role with a tools list/u);
+    expect(() => roles.withShell(roles.Reviewer, [])).toThrow(
+      /std\.claude\.shell needs at least one/u,
+    );
+    expect(() => roles.fixer(['Bash(git push:*)'])).toThrow(/is both allowed and denied/u);
+    expect(() => roles.tester(['git log'])).toThrow(TypeError);
+  });
+
+  it('types the shell by the role: an edit shell only for a role that edits', () => {
+    expectTypeOf(roles.tester(checks).tools).toEqualTypeOf<
+      readonly ['Read', 'Grep', 'Glob', 'Bash']
+    >();
+    expectTypeOf(roles.fixer(checks).tools).toEqualTypeOf<
+      readonly ['Read', 'Grep', 'Glob', 'Edit', 'Write', 'Bash']
+    >();
+    expectTypeOf(roles.withShell(roles.Clerk, checks).tools).toEqualTypeOf<
+      readonly ['Read', 'Grep', 'Glob', 'Bash']
+    >();
+    expectTypeOf(roles.withShell(roles.Reviewer, checks).model).toEqualTypeOf<'opus'>();
+    const loose: { harness: 'claude'; description: string; tools: string[] } = {
+      harness: 'claude',
+      description: 'd',
+      tools: ['Read'],
+    };
+    expectTypeOf(roles.withShell(loose, checks).tools).toEqualTypeOf<
+      | readonly ['Read', 'Grep', 'Glob', 'Bash']
+      | readonly ['Read', 'Grep', 'Glob', 'Edit', 'Write', 'Bash']
+    >();
+    defineWorkflow({
+      ...base,
+      name: 'std-shell-roles-types',
+      roster: defineRoster({
+        Tester: roles.tester(checks),
+        Fixer: { ...roles.fixer(checks), ...limits.Long },
+      }),
+      async run(ctx) {
+        expectTypeOf(ctx.roster.Tester).toExtend<Agent>();
+        expectTypeOf(ctx.roster.Fixer).toExtend<Agent>();
+        // The body never runs: these rejected calls are typecheck assertions only.
+        // @ts-expect-error -- a Codex role has no tools list, so it is not a shellable role.
+        roles.withShell(roles.CodexReviewer, checks);
+        await Promise.resolve();
+        return null;
+      },
+    });
+  });
+});
+
 describe('std.rosters', () => {
   it('readers holds every none and read role, and needs no grant', () => {
     const names = Object.keys(roleTable).filter(
@@ -675,7 +854,7 @@ describe('std.rosters', () => {
   });
 
   it('standard holds every role, and needs grants for the editing ones', () => {
-    expect(Object.keys(rosters.standard).sort()).toEqual(Object.keys(roles).sort());
+    expect(Object.keys(rosters.standard).sort()).toEqual([...roleNames].sort());
     const resolved = manifest(rosters.standard, true);
     for (const [name, [access]] of Object.entries(roleTable))
       expect(resolved.profiles[name]?.access, name).toBe(access);

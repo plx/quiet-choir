@@ -1,15 +1,26 @@
 // quiet-choir/std types (std.types): every exported schema's JSON Schema is pinned (descriptions
 // are call identity); every agent-output schema and builder result passes the Codex
 // structured-output check and carries no pattern or format validator; the input-side primitives
-// accept and reject representative samples; Approval stays the exact schema reviewRevise sends;
+// and records (Commit, Criteria) accept and reject representative samples; Approval stays the exact schema reviewRevise sends;
 // and the builders validate their arguments. Type assertions are checked by `npm run typecheck`.
 import { createHash } from 'node:crypto';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import { checkCodexSchema, z, type Command, type WriteFileResult } from '../src/index.js';
 import * as types from '../src/std/types.js';
 
-/** Exports that use a pattern, a tuple or both, and so are input-side only. */
-const inputOnly = new Set(['Sha', 'ShortSha', 'Sha256', 'Key', 'Argv', 'Receipt']);
+/**
+ * Exports that use a pattern, a format, a tuple or an array root, and so are input-side only.
+ */
+const inputOnly = new Set([
+  'Sha',
+  'ShortSha',
+  'Sha256',
+  'Key',
+  'Argv',
+  'Receipt',
+  'Commit',
+  'Criteria',
+]);
 
 /** Every exported schema, by export name. */
 const schemas: [string, z.ZodType][] = [];
@@ -70,7 +81,9 @@ describe('agent-output schemas', () => {
       CheckStatus: '3a1fd89e37693b6d',
       Citation: '94d0ba4c53260c2b',
       Claims: '4468014e15ea8def',
+      Commit: '766d25d2ac8d3e18',
       Complexity: '12edf4e6cbe1a62f',
+      Criteria: '3c07cc855e6106c0',
       Criterion: 'e964080b268887b5',
       CriterionResult: 'f73246e3cca9b7c3',
       Critique: '57f6927de1a6df65',
@@ -92,9 +105,13 @@ describe('agent-output schemas', () => {
       Outcome: 'd8e03de135782409',
       Plan: 'd4b11b6c36824ef5',
       Proposal: '01a52f8c38313b0e',
+      Question: 'ecce9b1ae0c0af19',
+      Questions: '7e6ab3c7c46fa5e8',
       Rationale: '7e23fbc05e8bdc62',
       Receipt: '1f4a9d326793ed3d',
       Refutation: '5a8e80ca282aabb8',
+      Remediation: 'a9b37824ae7aaf14',
+      Remediations: '834a0d0f18d07877',
       RepoPath: '760dc0c42559bba4',
       ReviewReply: 'e4a295f01ce9a599',
       Score: 'bc9c8f60e3a03fff',
@@ -136,6 +153,59 @@ describe('agent-output schemas', () => {
     );
     for (const name of ['Sha', 'ShortSha', 'Sha256', 'Key'])
       expect(jsonKeys(types[name as 'Sha'])).toContain('pattern');
+    expect(jsonKeys(types.Commit)).toContain('pattern');
+    expect(jsonKeys(types.Commit)).toContain('format');
+    expect(z.toJSONSchema(types.Criteria)).toMatchObject({ type: 'array', minItems: 1 });
+  });
+
+  it('makes a Remediation a Finding with a fix, and bounds Remediations', () => {
+    expect(Object.keys(types.Remediation.shape)).toEqual([
+      ...Object.keys(types.Finding.shape),
+      'fix',
+    ]);
+    for (const key of Object.keys(types.Finding.shape) as (keyof types.Finding)[])
+      expect(types.Remediation.shape[key], key).toBe(types.Finding.shape[key]);
+    const remediation = {
+      title: 'Off-by-one in the pager',
+      file: 'src/pager.ts',
+      line: 12,
+      severity: 'high',
+      evidence: 'src/pager.ts:12 uses <=',
+      failureScenario: 'A page size of 10 returns 11 items.',
+      fix: 'Compare with < in src/pager.ts:12.',
+    } as const;
+    expect(types.Remediation.parse(remediation)).toEqual(remediation);
+    expect(types.Remediation.safeParse({ ...remediation, fix: '' }).success).toBe(false);
+    const finding = Object.fromEntries(
+      Object.entries(remediation).filter(([key]) => key !== 'fix'),
+    );
+    expect(types.Remediation.safeParse(finding).success).toBe(false);
+    expect(types.Finding.parse(finding)).toEqual(finding);
+    expect(types.Remediations.parse({ remediations: [] })).toEqual({ remediations: [] });
+    expect(
+      types.Remediations.safeParse({ remediations: Array.from({ length: 21 }, () => remediation) })
+        .success,
+    ).toBe(false);
+  });
+
+  it('requires every field of a Question and bounds Questions', () => {
+    const question = {
+      question: 'Which time zone do report dates use?',
+      why: 'Daily totals shift by a day for users east of UTC.',
+      answerFrom: 'The reporting team, or docs/reports.md',
+      blocking: true,
+    };
+    expect(types.Question.parse(question)).toEqual(question);
+    for (const key of ['question', 'why', 'answerFrom'] as const)
+      expect(types.Question.safeParse({ ...question, [key]: '' }).success, key).toBe(false);
+    const withoutBlocking = Object.fromEntries(
+      Object.entries(question).filter(([key]) => key !== 'blocking'),
+    );
+    expect(types.Question.safeParse(withoutBlocking).success).toBe(false);
+    expect(types.Questions.parse({ questions: [] })).toEqual({ questions: [] });
+    expect(
+      types.Questions.safeParse({ questions: Array.from({ length: 21 }, () => question) }).success,
+    ).toBe(false);
   });
 
   it('lists enum values in rank order, most severe or important first', () => {
@@ -392,6 +462,40 @@ describe('input-side primitives', () => {
     expectTypeOf<types.Receipt>().toEqualTypeOf<WriteFileResult>();
   });
 
+  it('Commit validates one commit as std.exec.log returns it', () => {
+    const commit = {
+      sha: 'a'.repeat(40),
+      shortSha: 'aaaaaaa',
+      author: 'Ada Lovelace',
+      date: '2026-01-31T09:30:00+01:00',
+      subject: 'Add the pager',
+    };
+    expect(types.Commit.parse(commit)).toEqual(commit);
+    expect(types.Commit.parse({ ...commit, author: '', subject: '' })).toMatchObject({
+      author: '',
+      subject: '',
+    });
+    expect(valid(types.Commit, { ...commit, date: '2026-01-31T08:30:00Z' })).toBe(true);
+    expect(valid(types.Commit, { ...commit, sha: 'abc1234' })).toBe(false);
+    expect(valid(types.Commit, { ...commit, shortSha: 'ABC1234' })).toBe(false);
+    expect(valid(types.Commit, { ...commit, date: '2026-01-31' })).toBe(false);
+    expect(valid(types.Commit, { ...commit, date: '2026-01-31T09:30:00' })).toBe(false);
+  });
+
+  it('Criteria accepts nonblank text and criteria, and refuses an empty list', () => {
+    const criteria = [
+      'Invalid input is rejected with a message.',
+      { id: 'docs', criterion: 'The flag is documented.', how: 'Read README.md.' },
+    ];
+    expect(types.Criteria.parse(criteria)).toEqual(criteria);
+    expect(valid(types.Criteria, [])).toBe(false);
+    expect(valid(types.Criteria, [''])).toBe(false);
+    expect(valid(types.Criteria, [' \n'])).toBe(false);
+    expect(valid(types.Criteria, [{ id: 'C1', criterion: 'x' }])).toBe(false);
+    expect(valid(types.Criteria, [{ id: '', criterion: 'x', how: '' }])).toBe(false);
+    expectTypeOf<types.Criteria>().toEqualTypeOf<(string | types.Criterion)[]>();
+  });
+
   it('CheckOutcome validates a command outcome', () => {
     const outcome = { passed: false, code: null, signal: 'SIGTERM', output: '', truncated: false };
     expect(types.CheckOutcome.parse(outcome)).toEqual(outcome);
@@ -515,4 +619,28 @@ it('infers the documented value types', () => {
   }>();
   expectTypeOf<types.Sha>().toEqualTypeOf<string>();
   expectTypeOf<types.Argv>().toEqualTypeOf<[string, ...string[]]>();
+  expectTypeOf<types.Remediation>().toEqualTypeOf<{
+    title: string;
+    file: string;
+    line: number | null;
+    severity: 'critical' | 'high' | 'medium' | 'low';
+    evidence: string;
+    failureScenario: string;
+    fix: string;
+  }>();
+  expectTypeOf<types.Remediations['remediations']>().toEqualTypeOf<types.Remediation[]>();
+  expectTypeOf<types.Question>().toEqualTypeOf<{
+    question: string;
+    why: string;
+    answerFrom: string;
+    blocking: boolean;
+  }>();
+  expectTypeOf<types.Questions['questions']>().toEqualTypeOf<types.Question[]>();
+  expectTypeOf<types.Commit>().toEqualTypeOf<{
+    sha: string;
+    shortSha: string;
+    author: string;
+    date: string;
+    subject: string;
+  }>();
 });

@@ -161,8 +161,9 @@ it('freezes every data value of the roster and lens namespaces, nested lists too
   let checked = 0;
   for (const [name, group] of Object.entries(groups)) {
     for (const [key, value] of Object.entries(group as Readonly<Record<string, unknown>>)) {
-      // Functions build fresh frozen values; std-roster.test.ts checks those.
-      if (typeof value === 'function') continue;
+      // Functions build fresh frozen values; std-roster.test.ts checks those. A Zod schema such
+      // as std.lenses.LensSchema keeps internal caches; std-result-schemas.test.ts pins it.
+      if (typeof value === 'function' || value instanceof z.ZodType) continue;
       expect(['object', 'string'], `std.${name}.${key}`).toContain(typeof value);
       expectDeepFrozen(value, `std.${name}.${key}`);
       checked++;

@@ -43,6 +43,36 @@ describe('option validation', () => {
   });
 });
 
+describe('placement', () => {
+  it('records cwd, addDirs and the checkout selection, and nothing for policy alone', () => {
+    expect(kit.placement(undefined)).toEqual({});
+    expect(kit.placement({ timeoutMs: 5 })).toEqual({});
+    expect(kit.placement({ cwd: 'pkg', addDirs: ['docs'] })).toEqual({
+      placement: { cwd: 'pkg', addDirs: ['docs'], worktree: null },
+    });
+    const fresh = { placement: { cwd: null, addDirs: null, worktree: { base: 'HEAD' } } };
+    expect(kit.placement({ worktree: true })).toEqual(fresh);
+    expect(kit.placement({ worktree: {} })).toEqual(fresh);
+    expect(kit.placement({ worktree: { base: 'main' } })).toEqual({
+      placement: { cwd: null, addDirs: null, worktree: { base: 'main' } },
+    });
+  });
+
+  it('treats the legacy worktree spelling like true and never throws on another value', () => {
+    // Untyped callers may still pass the pre-#340 spelling the runtime accepts.
+    const legacy = { worktree: 'worktree' } as unknown as kit.CallDefaults;
+    expect(kit.placement(legacy)).toEqual(kit.placement({ worktree: true }));
+    const odd = { worktree: 'elsewhere' } as unknown as kit.CallDefaults;
+    expect(kit.placement(odd)).toEqual({
+      placement: { cwd: null, addDirs: null, worktree: 'elsewhere' },
+    });
+    const none = { worktree: null } as unknown as kit.CallDefaults;
+    expect(kit.placement(none)).toEqual({
+      placement: { cwd: null, addDirs: null, worktree: null },
+    });
+  });
+});
+
 describe('keyed', () => {
   it('pairs items with unique ID-safe keys and their labels', () => {
     expect(kit.keyed(['p', 'q'])).toEqual([

@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { stepId, type JsonValue, type Settled } from '../src/index.js';
 import * as data from '../src/std/data.js';
+import type { GateResult } from '../src/std/gates.js';
 import { digest as runtimeDigest } from '../src/workflow/runtime/json.js';
 
 describe('settled results', () => {
@@ -296,6 +297,44 @@ describe('ownership and coverage', () => {
     });
     expect(data.coverage([], ['a'])).toEqual({ covered: [], missing: [] });
   });
+
+  it('checks a coverage with the strict Coverage schema', () => {
+    const coverage = data.coverage(['a', 'b'], ['a']);
+    expect(data.Coverage.parse(coverage)).toStrictEqual(coverage);
+    expect(data.Coverage.safeParse({ ...coverage, extra: [] }).success).toBe(false);
+    expect(data.Coverage.safeParse({ covered: ['a'] }).success).toBe(false);
+  });
+});
+
+describe('health', () => {
+  it('is degraded when any part is degraded or counts a failure', () => {
+    expect(data.health()).toBe('complete');
+    expect(data.health(0, 'complete', { status: 'complete' })).toBe('complete');
+    expect(data.health(0, 1)).toBe('degraded');
+    expect(data.health('complete', 'degraded')).toBe('degraded');
+    const result = { status: 'degraded', extra: true } as const;
+    expect(data.health({ status: 'complete' }, result)).toBe('degraded');
+    const parts: readonly data.HealthPart[] = [{ status: 'complete' }, 0];
+    expect(data.health(...parts)).toBe('complete');
+  });
+
+  it('rejects parts that are not a health, a result with one, or a failure count', () => {
+    const cases: [unknown, string][] = [
+      [-1, 'parts[0] must be a nonnegative integer; got -1.'],
+      [1.5, 'parts[0] must be a nonnegative integer; got 1.5.'],
+      ['approved', "parts[0] must be 'complete' or 'degraded'; got \"approved\"."],
+      [{ status: 'green' }, "parts[0].status must be 'complete' or 'degraded'; got \"green\"."],
+      [null, 'parts[0] must be a failure count, a health or a result with a status; got null.'],
+    ];
+    for (const [part, message] of cases)
+      expect(() => data.health(part as data.HealthPart)).toThrow(new TypeError(message));
+  });
+
+  it('has a schema that accepts exactly what health returns', () => {
+    expect(data.Health.options).toEqual(['complete', 'degraded']);
+    expect(data.Health.parse(data.health(1))).toBe('degraded');
+    expect(data.Health.safeParse('green').success).toBe(false);
+  });
 });
 
 describe('hashing', () => {
@@ -307,7 +346,7 @@ describe('hashing', () => {
     );
     expect(data.canonicalJson(a)).toBe(data.canonicalJson(b));
     expect(data.digest(a)).toBe(data.digest(b));
-    expect(data.canonicalJson({ a: undefined, b: 1 } as unknown as JsonValue)).toBe('{"b":1}');
+    expect(data.canonicalJson({ a: undefined, b: 1 })).toBe('{"b":1}');
     expect(data.canonicalJson('x')).toBe('"x"');
   });
 
@@ -331,6 +370,32 @@ describe('hashing', () => {
       'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
     );
     expect(data.sha256('é')).toMatch(/^[0-9a-f]{64}$/u);
+  });
+
+  it('accepts read-only arrays and interfaces such as a pattern result', () => {
+    const list: readonly string[] = Object.freeze(['b', 'a']);
+    const nested: readonly (readonly number[])[] = [[1], [2, 3]];
+    const result: GateResult = {
+      decision: 'go',
+      assessments: [],
+      blockers: [],
+      undecided: [],
+      downgraded: [],
+      concerns: [],
+      cannotCheck: [],
+      failed: [],
+      reasons: [],
+      failedVotes: 0,
+      failures: 0,
+      status: 'complete',
+    };
+    expect(data.canonicalJson(list)).toBe('["b","a"]');
+    expect(data.canonicalJson(nested)).toBe('[[1],[2,3]]');
+    expect(data.canonicalJson(result)).toBe(
+      '{"assessments":[],"blockers":[],"cannotCheck":[],"concerns":[],"decision":"go","downgraded":[],"failed":[],"failedVotes":0,"failures":0,"reasons":[],"status":"complete","undecided":[]}',
+    );
+    expect(data.digest(result)).toBe(data.sha256(data.canonicalJson(result)));
+    expect(data.digest(list)).toBe(runtimeDigest(list));
   });
 
   it('rejects values that are not plain JSON', () => {

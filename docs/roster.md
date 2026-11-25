@@ -126,6 +126,7 @@ axes, spread in this order so each later `description` wins: a capability fragme
 Every value is frozen data:
 
 ```ts
+import { defineRoster } from 'quiet-choir';
 import * as std from 'quiet-choir/std';
 
 export const roster = defineRoster({
@@ -137,7 +138,12 @@ export const roster = defineRoster({
     ...std.claude.shell([...std.bash.gitRead, ...std.bash.nodeCheck]),
     ...std.tiers.Mechanic,
     ...std.personas.Tester,
+    appendSystemPrompt: std.personas.join(
+      std.personas.Tester.appendSystemPrompt,
+      std.personas.ShellEtiquette,
+    ),
   },
+  Fixer: std.roles.fixer([...std.bash.nodeCheck, ...std.bash.gitCommit]),
 });
 ```
 
@@ -208,14 +214,29 @@ changing it changes the identity of the calls that use it.
 | `CodexEditor`   | `codex.Edit`                                              | `write` |
 | `CodexMechanic` | `codex.Edit` + `effort: 'high'`                           | `write` |
 
+No role in the table has a shell, since an allowlist is project-specific. Three factories add one,
+each joining `std.personas.ShellEtiquette` to the persona and returning a frozen `exec` entry equal
+to the hand-spelled spread: `std.roles.tester([...std.bash.gitRead, ...std.bash.nodeCheck])` equals
+`Tester` above.
+
+| Factory                                   | Composition                                                                                        |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `std.roles.withShell(role, rules, deny?)` | A Claude role with `claude.editShell` if it edits, else `claude.shell`; other keys kept            |
+| `std.roles.tester(rules, deny?)`          | `claude.shell` + `tiers.Mechanic` + `personas.Tester`                                              |
+| `std.roles.fixer(rules, deny?)`           | `withShell(Mechanic, rules, deny)`: `claude.editShell` + `tiers.Mechanic` + `personas.Implementer` |
+
+`deny` defaults to `std.bash.noPush`. `withShell` refuses a Codex role, a role that already has
+`Bash`, and a role with a tool outside Read, Grep, Glob, Edit and Write (such as `Researcher`'s web
+tools), with a `TypeError`.
+
 `Writer` and `Scribe` set `expectsToolUse: false`, since they write from the facts in the prompt.
 Spread a role to adjust it, `{ ...std.roles.Mechanic, ...std.limits.Long }`, or pick roles into your
 own roster. `std.rosters.readers` declares every `none` and `read` role, so it needs no grant under
-`requireGrants`; `std.rosters.standard` declares all of them and needs grants for `Editor`,
-`Mechanic`, `Surgeon`, `CodexEditor` and `CodexMechanic`, used or not. A `defineRoster` result
-cannot be spread into another roster, so build your own from `std.roles` to add an entry. Changing a
-role's tools, model, effort or persona changes the identity of the calls that use it; its limits do
-not.
+`requireGrants`; `std.rosters.standard` declares every role of the table (not the factories) and
+needs grants for `Editor`, `Mechanic`, `Surgeon`, `CodexEditor` and `CodexMechanic`, used or not. A
+`defineRoster` result cannot be spread into another roster, so build your own from `std.roles` to
+add an entry. Changing a role's tools, model, effort or persona changes the identity of the calls
+that use it; its limits do not.
 
 The rest of the library (schemas, lenses, helpers, control flow and the team-typed
 [patterns](#teams)) is described in [the standard library](std.md). Every module imports only the
@@ -460,8 +481,12 @@ and `gate` (gates), `falsify` and `research` (investigation), `isolatedEdits` an
 (edits), and the older `reviewRevise` and `tolerantPanel`. Each exports its team, such as
 `std.patterns.HuntTeam`. All but the two older ones keep
 [one contract](std.md#the-pattern-contract): a required `id`, a `prompts` object, `calls` and, where
-they fan out, `concurrency` and `version`; and each fills its team with `XTeam.from(options.team)`
-before any effect, so an unfilled slot throws instead of being journaled as a failed call.
+they fan out, `concurrency` and `version`; each fills its team with `XTeam.from(options.team)`
+before any effect, so an unfilled slot throws instead of being journaled as a failed call; and each
+result counts the failed calls it tolerated in `failures`, reports its health as `status`
+(`'complete'` or `'degraded'`) and has a [Zod schema](std.md#result-schemas) of the same name. A
+settled map's items do not show the configuration of the agent that fills a slot, so a completed
+item is reused after a role changes: change the pattern's `version` when you change that agent.
 [The standard library](std.md#patterns) gives each pattern's slots, options, results and step IDs.
 The two older patterns work as follows:
 
@@ -483,9 +508,10 @@ prompts. `std.patterns.tolerantPanel` (team `std.patterns.PanelTeam`, one `panel
 panelist about each item under `ctx.map(id, items, { concurrency, onError: 'return' })` as
 `<id>/<index>/answer`, optionally with a `schema`, and returns `{ quorum, answers, failed }`: a
 failed vote is journaled, so a resume does not retry it into a different quorum. Its optional
-`version` is the map's `version`, a revision for the `prompt` function and `schema`, which the
-settled map's fingerprint does not show. Both check their team before any effect, so an unfilled
-slot throws `Team slot <name> is not filled.` instead of being journaled as a failed call.
+`version` is the map's `version`, a revision for the `prompt` function, the `schema` and the
+panelist's configuration, which the settled map's fingerprint does not show. Both check their team
+before any effect, so an unfilled slot throws `Team slot <name> is not filled.` instead of being
+journaled as a failed call.
 
 `ReviewTeam.from(record)` is the one convenience. It picks the slot keys from any record that has
 them, so `ReviewTeam.from(ctx.roster)` fills a team whose roster entries use the slot names, and

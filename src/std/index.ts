@@ -10,23 +10,25 @@
  * - {@link tiers}: Claude model and effort tiers.
  * - {@link limits}: Claude turn, spend and time limits.
  * - {@link personas}: standing system prompts for Claude roles.
- * - {@link roles}: complete entries that combine the axes above.
+ * - {@link roles}: complete entries that combine the axes above, and shell factories.
  * - {@link rosters}: ready-made rosters of those roles.
  * - {@link bash}: `Bash(...)` allowlist rules for shell-capable Claude entries.
  *
  * Data and helpers:
  *
  * - {@link types}: Zod schemas for recurring agent outputs and workflow data.
- * - {@link lenses}: catalogs of named review, bug, security, design, research and release lenses.
- * - {@link data}: pure helpers for voting, deduplication, ranking, coverage and hashing.
- * - {@link text}: stable prompt and text formatting.
+ * - {@link lenses}: catalogs of named lenses for bug hunts, review, security, design, research,
+ *   releases, writing, evidence, requirements, specifications and critique.
+ * - {@link data}: pure helpers for health, voting, deduplication, ranking, coverage and hashing.
+ * - {@link text}: stable prompt text and Markdown reports.
  * - {@link exec}: durable command, Git and publication helpers.
  *
  * Higher-order workflow pieces:
  *
  * - {@link flow}: team-free control flow (loop until dry, dependency waves, settled fan-out).
  * - {@link patterns}: team-typed patterns (ADR 0067) such as review/revise, adversarial
- *   verification, critique, repair, tournaments, gates and map/reduce.
+ *   verification, critique, repair, tournaments, gates and map/reduce. Each result has a Zod
+ *   schema of the same name, so a workflow can return it as its output.
  *
  * ```ts
  * import * as std from 'quiet-choir/std';

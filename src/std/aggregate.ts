@@ -11,7 +11,11 @@
  *
  * Every pattern takes a required `id` and records all of its steps under it; each pattern's TSDoc
  * lists the exact step IDs. A failed mapper call is journaled and counted, so a resume replays the
- * same coverage instead of retrying it. The default prompts are built with `std.text.brief`.
+ * same coverage instead of retrying it. Every result counts the failed calls it tolerated in
+ * `failures` and reports its health as `status` (`'degraded'` exactly when one occurred). The
+ * default prompts are built with `std.text.brief`. Every result interface has a schema of the same
+ * name, for a workflow `output` or a saved result: {@link DecomposeResult} is a schema, and
+ * {@link MapReduceResult} is a factory that takes the part schema.
  *
  * ```ts
  * import * as std from 'quiet-choir/std';
@@ -48,9 +52,17 @@ import {
   type TeamOf,
   type WorkflowContext,
 } from '../index.js';
-import { assertUnique, chunk, coverage, topoWaves, uniqueKeys, type Coverage } from './data.js';
+import { Coverage, Health, assertUnique, chunk, coverage, topoWaves, uniqueKeys } from './data.js';
 import { json } from './exec.js';
-import { placement, positiveInt, settledMap, type CallDefaults } from './pattern-kit.js';
+import {
+  Count,
+  checkContext,
+  placement,
+  positiveInt,
+  settledMap,
+  statusOf,
+  type CallDefaults,
+} from './pattern-kit.js';
 import { brief, bullets, fence, promptText } from './text.js';
 import { Task, WorkReport, type TaskList } from './types.js';
 
@@ -70,7 +82,7 @@ function subsection(title: string, body: string): string {
 }
 
 /** Context material as prompt text: a string as written, other JSON as a fenced `json` block. */
-function material(value: JsonValue | string): string {
+function material(value: unknown): string {
   return typeof value === 'string' ? value : fence(json(value), 'json');
 }
 
@@ -94,6 +106,21 @@ export interface MapReducePart<P> {
   readonly keys: string[];
   /** The mapper's answer for the chunk. */
   readonly value: P;
+}
+
+/**
+ * The schema of a {@link MapReducePart}.
+ *
+ * @typeParam P - The answer type.
+ * @param part - The schema of the answer: the `schema` the mappers ran with. Omitted, text, as
+ * {@link mapReduce} defaults to.
+ * @returns A strict object schema of `{ keys, value }`.
+ */
+export function MapReducePart<P = string>(part?: z.ZodType<P>): z.ZodType<MapReducePart<P>> {
+  return z.strictObject({
+    keys: z.array(z.string()),
+    value: (part ?? z.string()) as z.ZodType<P>,
+  });
 }
 
 /** Replacement prompts of {@link mapReduce}. */
@@ -151,7 +178,11 @@ export interface MapReduceOptions<T, P = string> {
   readonly prompts?: MapReducePrompts<T, P> | undefined;
   /** How many mapper calls run at once; defaults to 4. */
   readonly concurrency?: number | undefined;
-  /** A revision for prompts and schemas the settled map's fingerprint does not show. */
+  /**
+   * A revision for what the settled map's fingerprint does not show, such as the schema. The
+   * team's agent configuration is not part of a map item either, so a completed item is reused
+   * after a role changes: change `version` when you change the agent that fills a slot.
+   */
   readonly version?: string | undefined;
   /** Options applied to every agent call (placement, retry, deadlines). */
   readonly calls?: CallDefaults | undefined;
@@ -172,12 +203,33 @@ export interface MapReduceResult<P> {
   readonly chunks: number;
   /** How many chunk calls failed; the failures are saved, so a resume does not retry them. */
   readonly failedChunks: number;
+  /** How many chunk calls failed: the same as `failedChunks`. */
+  readonly failures: number;
   /**
-   * `'complete'` when every chunk succeeded (or there were no items), `'degraded'` when some
-   * failed and the reducer combined the rest, `'failed'` when every chunk failed and the reducer
-   * was not called.
+   * `'complete'` when every chunk succeeded (or there were no items), else `'degraded'`; when every
+   * chunk failed the reducer was not called and `result` is empty.
    */
-  readonly status: 'complete' | 'degraded' | 'failed';
+  readonly status: 'complete' | 'degraded';
+}
+
+/**
+ * The schema of a {@link MapReduceResult}, for a workflow `output` or a saved result.
+ *
+ * @typeParam P - The answer type of each part.
+ * @param part - The schema of each chunk's answer: the `schema` the mappers ran with. Omitted,
+ * text, as {@link mapReduce} defaults to.
+ * @returns A strict object schema of the result.
+ */
+export function MapReduceResult<P = string>(part?: z.ZodType<P>): z.ZodType<MapReduceResult<P>> {
+  return z.strictObject({
+    result: z.string(),
+    parts: z.array(MapReducePart(part)),
+    coverage: Coverage,
+    chunks: Count,
+    failedChunks: Count,
+    failures: Count,
+    status: Health,
+  });
 }
 
 /**
@@ -255,7 +307,8 @@ function reducePrompt(
  * @param ctx - The workflow context the team was bound from.
  * @param options - The scope, the team, the items and the task, with optional key, chunk size,
  * description, reducer task and prompts.
- * @returns The reducer's text, the parts, the coverage, the chunk counts and the status.
+ * @returns The reducer's text, the parts, the coverage, the chunk and failure counts and the
+ * status.
  * @throws TypeError - Before any effect, when the `mapper` or `reducer` slot is not filled, `task`
  * is blank, `reduce` is given but blank, or `chunk` or `concurrency` is not a positive integer.
  * @throws Error - Before any effect, `Duplicate mapReduce item key: ...` when two items share a key.
@@ -274,7 +327,8 @@ export function mapReduce<T>(
  * @typeParam P - The answer type of `schema`.
  * @param ctx - The workflow context the team was bound from.
  * @param options - The scope, the team, the items, the task and the answer schema.
- * @returns The reducer's text, the parsed parts, the coverage, the chunk counts and the status.
+ * @returns The reducer's text, the parsed parts, the coverage, the chunk and failure counts and the
+ * status.
  * @throws TypeError - Before any effect, when the `mapper` or `reducer` slot is not filled, `task`
  * is blank, `reduce` is given but blank, or `chunk` or `concurrency` is not a positive integer.
  * @throws Error - Before any effect, `Duplicate mapReduce item key: ...` when two items share a key.
@@ -296,7 +350,7 @@ export function mapReduce<T, P>(
  * @param ctx - The workflow context the team was bound from.
  * @param options - The scope, the team, the items, the task and an optional answer schema.
  * @returns The reducer's text, the parts (parsed when `schema` is set, else text), the coverage,
- * the chunk counts and the status.
+ * the chunk and failure counts and the status.
  * @throws TypeError - Before any effect, when the `mapper` or `reducer` slot is not filled, `task`
  * is blank, `reduce` is given but blank, or `chunk` or `concurrency` is not a positive integer.
  * @throws Error - Before any effect, `Duplicate mapReduce item key: ...` when two items share a key.
@@ -384,7 +438,8 @@ export async function mapReduce<T, P>(
         coverage: covered,
         chunks: chunks.length,
         failedChunks,
-        status: chunks.length === 0 ? 'complete' : 'failed',
+        failures: failedChunks,
+        status: statusOf(failedChunks),
       };
     }
     const custom = options.prompts?.reduce;
@@ -407,7 +462,8 @@ export async function mapReduce<T, P>(
       coverage: covered,
       chunks: chunks.length,
       failedChunks,
-      status: failedChunks === 0 ? 'complete' : 'degraded',
+      failures: failedChunks,
+      status: statusOf(failedChunks),
     };
   });
 }
@@ -433,8 +489,7 @@ export interface DecomposePrompts {
    * that are needed, without cycles.
    */
   readonly plan?:
-    | ((goal: string, maxTasks: number, context: JsonValue | string | undefined) => string | Prompt)
-    | undefined;
+    ((goal: string, maxTasks: number, context: unknown) => string | Prompt) | undefined;
   /**
    * The planner's prompt to repair `tasks` given the `problems` found in them. The default gives
    * the goal, the task list and the problems, and asks for the complete list with every problem
@@ -453,11 +508,12 @@ export interface DecomposeOptions {
   /** What the tasks must achieve together, such as a feature request or a requirements document. */
   readonly goal: string;
   /**
-   * Background for the planner, such as constraints, relevant files or an earlier plan; the
-   * default prompts show a string as written and other JSON as a fenced block, and a replacement
-   * `plan` prompt receives it.
+   * Background for the planner, such as constraints, relevant files or an earlier plan: text, or a
+   * JSON value (read-only arrays and interfaces included; checked before any effect). The default
+   * prompts show a string as written and other JSON as a fenced block, and a replacement `plan`
+   * prompt receives it.
    */
-  readonly context?: JsonValue | string | undefined;
+  readonly context?: unknown;
   /** The most tasks the list may hold, a positive integer; defaults to 12. */
   readonly maxTasks?: number | undefined;
   /** Replacement prompts. */
@@ -475,11 +531,25 @@ export interface DecomposeResult {
    * later wave depends only on earlier ones.
    */
   readonly waves: Task[][];
-  /** `'planned'` when the first list was valid, `'repaired'` when the repair call fixed it. */
-  readonly status: 'planned' | 'repaired';
+  /** Whether the first list was invalid and the repair call fixed it. */
+  readonly repaired: boolean;
   /** The problems the repair fixed; empty when the first list was valid. */
   readonly problems: string[];
+  /** Always 0: the planner calls are required, so a failure throws instead of being tolerated. */
+  readonly failures: number;
+  /** Always `'complete'`: decompose tolerates no failed call. */
+  readonly status: 'complete' | 'degraded';
 }
+
+/** The schema of a {@link DecomposeResult}, for a workflow `output` or a saved result. */
+export const DecomposeResult: z.ZodType<DecomposeResult> = z.strictObject({
+  tasks: z.array(Task),
+  waves: z.array(z.array(Task)),
+  repaired: z.boolean(),
+  problems: z.array(z.string()),
+  failures: Count,
+  status: Health,
+});
 
 /** The planner's schema: a {@link TaskList} of 1 to `maxTasks` tasks. */
 function taskListSchema(maxTasks: number): z.ZodType<TaskList> {
@@ -539,14 +609,14 @@ function wavesOf(tasks: readonly Task[]): Task[][] {
 }
 
 /** The goal, with any background under its own heading. */
-function goalMaterial(goal: string, context: JsonValue | string | undefined): string[] {
+function goalMaterial(goal: string, context: unknown): string[] {
   const parts = [subsection('Goal', goal)];
   if (context !== undefined) parts.push(subsection('Background', material(context)));
   return parts;
 }
 
 /** The default planning prompt. */
-function planPrompt(goal: string, context: JsonValue | string | undefined, max: number): string {
+function planPrompt(goal: string, context: unknown, max: number): string {
   return brief({
     task: `Break the goal below into a backlog of at most ${String(max)} tasks that together achieve it.`,
     context: context === undefined ? goal : goalMaterial(goal, context).join('\n\n'),
@@ -563,7 +633,7 @@ function planPrompt(goal: string, context: JsonValue | string | undefined, max: 
 /** The default repair prompt. */
 function repairPrompt(
   goal: string,
-  context: JsonValue | string | undefined,
+  context: unknown,
   tasks: readonly Task[],
   problems: readonly string[],
 ): string {
@@ -601,9 +671,10 @@ function repairPrompt(
  *
  * @param ctx - The workflow context the team was bound from.
  * @param options - The scope, the team, the goal, and optional background, task limit and prompts.
- * @returns The tasks, their dependency waves, whether a repair was needed and what it fixed.
- * @throws TypeError - Before any effect, when the `planner` slot is not filled, `goal` is blank or
- * `maxTasks` is not a positive integer.
+ * @returns The tasks, their dependency waves, whether a repair was needed and what it fixed, and
+ * the failure count and status (always 0 and `'complete'`).
+ * @throws TypeError - Before any effect, when the `planner` slot is not filled, `goal` is blank,
+ * `maxTasks` is not a positive integer, or `context` is neither a string nor a JSON value.
  * @throws Error - `decompose <id>: the repaired task list is still invalid: ...`, listing the
  * problems, when the repair leaves any; and the planner's own call failures.
  */
@@ -615,6 +686,7 @@ export async function decompose(
   const maxTasks = positiveInt('maxTasks', options.maxTasks ?? 12);
   const { goal, context, calls } = options;
   if (goal.trim() === '') throw new TypeError('decompose needs a nonblank goal.');
+  checkContext('decompose', context);
   const schema = taskListSchema(maxTasks);
   const custom = options.prompts;
   return ctx.scope(options.id, async () => {
@@ -627,8 +699,16 @@ export async function decompose(
       schema,
     });
     const problems = planProblems(plan.tasks);
-    if (problems.length === 0)
-      return { tasks: plan.tasks, waves: wavesOf(plan.tasks), status: 'planned', problems };
+    if (problems.length === 0) {
+      return {
+        tasks: plan.tasks,
+        waves: wavesOf(plan.tasks),
+        repaired: false,
+        problems,
+        failures: 0,
+        status: 'complete',
+      };
+    }
     ctx.log(
       `${options.id}: the task list has ${String(problems.length)} problem(s); asking the planner for one repair.`,
       { problems },
@@ -650,8 +730,10 @@ export async function decompose(
     return {
       tasks: repaired.tasks,
       waves: wavesOf(repaired.tasks),
-      status: 'repaired',
+      repaired: true,
       problems,
+      failures: 0,
+      status: 'complete',
     };
   });
 }

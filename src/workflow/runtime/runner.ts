@@ -234,7 +234,7 @@ import {
   type MapItemScope,
   type ReplayInput,
 } from './replay-decision.js';
-import { digest, jsonValue } from './json.js';
+import { canonicalInput, digest, jsonValue } from './json.js';
 import { recordWarnings } from './record-warnings.js';
 import { summarizeDecisionStep, type DecisionStepSummary } from './decision-summary.js';
 import type {
@@ -1074,15 +1074,7 @@ export async function runWorkflow<
       }
     }
     // A supplied input is parsed from its canonical (key-sorted) copy, as a resume without input
-    // parses the saved copy, so record keys reach the body in the same order on both runs. Input
-    // that is not JSON before parsing is parsed as given; the schema or the saved copy reports it.
-    function canonicalInput(raw: unknown): unknown {
-      try {
-        return jsonValue(raw, 'Workflow input');
-      } catch {
-        return raw;
-      }
-    }
+    // parses the saved copy, so record keys reach the body in the same order on both runs.
     const suppliedInput =
       options.input === undefined ? undefined : parseInput(canonicalInput(options.input));
     let compatibility: ResumeCheck | undefined;

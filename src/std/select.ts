@@ -12,7 +12,12 @@
  * lists the exact step IDs and its team slot or slots. Answers are constrained to the keys the
  * pattern offers (`z.enum` of letters, item keys, routes or labels), and the arithmetic (means,
  * counts, ordering, caps) is done in code. A failed agent of a fan-out is journaled and becomes
- * data, so a resume replays the same decision, and results report failures and a `status`.
+ * data, so a resume replays the same decision. Every result counts the failed calls it tolerated in
+ * `failures` and reports its health as `status` (`'degraded'` exactly when one occurred); what the
+ * pattern decided is in named fields (`outcome`, `ranked`, `fallback`). Every result interface has
+ * a schema of the same name, for a workflow `output` or a saved result: {@link TournamentResult} is
+ * a schema, and {@link RankResult}, {@link RouteResult} and {@link ClassifyResult} are factories
+ * that take the item schema or the route and label keys.
  * The default prompts are built with `std.text.brief` and name the safe default for an undecided
  * agent (score low what a proposal does not show; leave an item unlabeled; take the fallback).
  *
@@ -46,10 +51,11 @@ import {
   type TeamOf,
   type WorkflowContext,
 } from '../index.js';
-import { assertUnique, canonicalJson } from './data.js';
+import { Health, assertUnique, canonicalJson } from './data.js';
 import { json } from './exec.js';
 import { design, designRubric, type Lens } from './lenses.js';
 import {
+  Count,
   keyed,
   nonEmpty,
   placement,
@@ -98,7 +104,7 @@ function round2(value: number): number {
 function describeItem(item: unknown): string {
   if (typeof item === 'string') return item;
   try {
-    return canonicalJson(item as JsonValue);
+    return canonicalJson(item);
   } catch {
     // The standard signature says `string`, but it returns undefined for undefined and functions.
     const text = JSON.stringify(item) as string | undefined;
@@ -136,9 +142,12 @@ function ownKey(item: unknown): string | undefined {
  * `key` member, else its 1-based position as text. They need not be step-ID segments, since they
  * only appear in prompts and enums.
  */
-function itemKeys<T>(items: readonly T[], key: ((item: T) => string) | undefined): string[] {
+function itemKeys<T>(
+  items: readonly T[],
+  key: ((item: T, index: number) => string) | undefined,
+): string[] {
   const keys = items.map((item, index) =>
-    key === undefined ? (ownKey(item) ?? String(index + 1)) : key(item),
+    key === undefined ? (ownKey(item) ?? String(index + 1)) : key(item, index),
   );
   for (const value of keys) {
     if (typeof value !== 'string' || value.trim() === '')
@@ -198,6 +207,13 @@ export interface TournamentEntry {
   readonly proposal: Proposal;
 }
 
+/** The schema of a {@link TournamentEntry}. */
+export const TournamentEntry: z.ZodType<TournamentEntry> = z.strictObject({
+  letter: z.string(),
+  entrant: z.string(),
+  proposal: Proposal,
+});
+
 /** One entry's place in a {@link tournament}'s standings. */
 export interface Standing<K extends string = string> {
   /** The entry's anonymous letter. */
@@ -218,6 +234,20 @@ export interface Standing<K extends string = string> {
   /** The entry's strongest ideas as the judges named them, in judge order. */
   readonly bestIdeas: string[];
 }
+
+/**
+ * The schema of a {@link Standing} with any criterion keys: `criteria` is checked as a record of
+ * numbers.
+ */
+export const Standing: z.ZodType<Standing> = z.strictObject({
+  letter: z.string(),
+  entrant: z.string(),
+  title: z.string(),
+  score: z.number().nullable(),
+  criteria: z.record(z.string(), z.number()).nullable(),
+  votes: Count,
+  bestIdeas: z.array(z.string()),
+});
 
 /** Replacement prompts of a {@link tournament}; each returns text or a rendered {@link Prompt}. */
 export interface TournamentPrompts<K extends string = DesignCriterion> {
@@ -286,7 +316,11 @@ export interface TournamentOptions<K extends string = DesignCriterion> {
   readonly prompts?: TournamentPrompts<K> | undefined;
   /** How many proposers or judges run at once; defaults to 4. */
   readonly concurrency?: number | undefined;
-  /** A revision for prompts and schemas the settled maps' fingerprints do not show. */
+  /**
+   * A revision for what the settled maps' fingerprints do not show. The team's agent configuration
+   * is not part of a map item, so a completed item is reused after a role changes: change
+   * `version` when you change the agent that fills a slot.
+   */
   readonly version?: string | undefined;
   /** Options applied to every agent call (placement, retry, deadlines). */
   readonly calls?: CallDefaults | undefined;
@@ -294,6 +328,11 @@ export interface TournamentOptions<K extends string = DesignCriterion> {
 
 /** Result of {@link tournament}. */
 export interface TournamentResult<K extends string = DesignCriterion> {
+  /**
+   * `'decided'` when the judging picked a winner, `'aborted'` when fewer than `minEntrants`
+   * proposals succeeded or every judge failed.
+   */
+  readonly outcome: 'decided' | 'aborted';
   /** The best-scoring entry, ties going to the earlier entrant; null when the tournament aborted. */
   readonly winner: TournamentEntry | null;
   /** Every successful proposal, in entrant order. */
@@ -314,12 +353,29 @@ export interface TournamentResult<K extends string = DesignCriterion> {
   readonly failedEntrants: string[];
   /** How many judge calls failed. */
   readonly failedJudges: number;
-  /**
-   * `'aborted'` when fewer than `minEntrants` proposals succeeded or every judge failed;
-   * `'degraded'` when a proposer or judge failed; else `'complete'`.
-   */
-  readonly status: 'complete' | 'degraded' | 'aborted';
+  /** How many proposer and judge calls failed: `failedEntrants.length + failedJudges`. */
+  readonly failures: number;
+  /** `'complete'` when every proposer and judge answered, else `'degraded'`. */
+  readonly status: 'complete' | 'degraded';
 }
+
+/**
+ * The schema of a {@link TournamentResult} with any rubric, for a workflow `output` or a saved
+ * result: each standing's `criteria` is checked as a record of numbers, so a result over the
+ * default rubric or a custom one parses.
+ */
+export const TournamentResult: z.ZodType<TournamentResult<string>> = z.strictObject({
+  outcome: z.enum(['decided', 'aborted']),
+  winner: TournamentEntry.nullable(),
+  entries: z.array(TournamentEntry),
+  standings: z.array(Standing),
+  design: z.string().nullable(),
+  dissent: z.array(z.string()),
+  failedEntrants: z.array(z.string()),
+  failedJudges: Count,
+  failures: Count,
+  status: Health,
+});
 
 /** One judge's score sheet for one proposal, as parsed. */
 interface Sheet<K extends string> {
@@ -553,8 +609,8 @@ function unscored<K extends string>(entries: readonly TournamentEntry[]): Standi
  * @param ctx - The workflow context the team was bound from.
  * @param options - The scope, the team, the brief, and optional entrants, judges, rubric and
  * limits.
- * @returns The winner, every entry, the standings, the final design, the dissent, the failures and
- * the status.
+ * @returns Whether it was decided, the winner, every entry, the standings, the final design, the
+ * dissent, the failures and the status.
  * @throws TypeError - Before any effect, when a team slot is not filled, `brief` is blank,
  * `entrants` is empty or longer than 26, `judges`, `minEntrants` or `concurrency` is not a positive
  * integer, `minEntrants` exceeds the entrants, `dissentGap` is not a positive number, or the rubric
@@ -621,6 +677,7 @@ export async function tournament<K extends string = DesignCriterion>(
       }
     }
     const aborted = (failedJudges: number, standings: Standing<K>[]): TournamentResult<K> => ({
+      outcome: 'aborted',
       winner: null,
       entries,
       standings,
@@ -628,7 +685,8 @@ export async function tournament<K extends string = DesignCriterion>(
       dissent: [],
       failedEntrants,
       failedJudges,
-      status: 'aborted',
+      failures: failedEntrants.length + failedJudges,
+      status: statusOf(failedEntrants.length + failedJudges),
     });
     if (entries.length < minEntrants) {
       ctx.log(
@@ -747,6 +805,7 @@ export async function tournament<K extends string = DesignCriterion>(
             prompt: synthesize(designBrief, winner, standings, dissent),
           });
     return {
+      outcome: 'decided',
       winner,
       entries,
       standings,
@@ -754,6 +813,7 @@ export async function tournament<K extends string = DesignCriterion>(
       dissent,
       failedEntrants,
       failedJudges,
+      failures: failedEntrants.length + failedJudges,
       status: statusOf(failedEntrants.length + failedJudges),
     };
   });
@@ -792,11 +852,11 @@ export interface RankOptions<T> {
   /** The candidates. */
   readonly items: readonly T[];
   /**
-   * The unique, nonblank key the ranker answers with for an item, such as an issue number.
-   * Defaults to the item's own string `key` member, as std results such as {@link Assignment}
-   * carry, else its 1-based position.
+   * The unique, nonblank key the ranker answers with for an item (at `index` in `items`), such as
+   * an issue number. Defaults to the item's own string `key` member, as std results such as
+   * {@link Assignment} carry, else its 1-based position.
    */
-  readonly key?: ((item: T) => string) | undefined;
+  readonly key?: ((item: T, index: number) => string) | undefined;
   /** How many items to select, a positive integer. */
   readonly pick: number;
   /** What ranks an item higher, such as `How urgently it needs attention.` */
@@ -821,10 +881,32 @@ export interface RankResult<T> {
   /** The ranker's rationale, or a note that nothing needed ranking. */
   readonly rationale: string;
   /**
-   * `'ranked'` when the ranker chose; `'all-selected'` when there were at most `pick` items, so
-   * every item was selected without a call.
+   * Whether the ranker chose; false when there were at most `pick` items, so every item was
+   * selected without a call.
    */
-  readonly status: 'ranked' | 'all-selected';
+  readonly ranked: boolean;
+  /** Always 0: the ranker call is required, so its failure throws instead of being tolerated. */
+  readonly failures: number;
+  /** Always `'complete'`: rank tolerates no failed call. */
+  readonly status: 'complete' | 'degraded';
+}
+
+/**
+ * The schema of a {@link RankResult}, for a workflow `output` or a saved result.
+ *
+ * @typeParam T - The item type.
+ * @param item - The schema of each item: the type of the `items` ranked.
+ * @returns A strict object schema of the result.
+ */
+export function RankResult<T>(item: z.ZodType<T>): z.ZodType<RankResult<T>> {
+  return z.strictObject({
+    selected: z.array(item),
+    deferred: z.array(item),
+    rationale: z.string(),
+    ranked: z.boolean(),
+    failures: Count,
+    status: Health,
+  });
 }
 
 /** The ranker's reply. */
@@ -864,7 +946,8 @@ function rankPrompt(entries: readonly ItemText[], criterion: string, pick: numbe
  * @param ctx - The workflow context the team was bound from.
  * @param options - The scope, the team, the items, the count to pick and the criterion, with
  * optional keys, descriptions, prompts and call defaults.
- * @returns The selected items best first, the deferred items, the rationale and the status.
+ * @returns The selected items best first, the deferred items, the rationale, whether the ranker
+ * chose, and the failure count and status (always 0 and `'complete'`).
  * @throws TypeError - Before any effect, when the `ranker` slot is not filled, `pick` is not a
  * positive integer, `criterion` is blank, or an item key is blank.
  * @throws Error - Before any effect, `Duplicate item key: ...` when two items share a key.
@@ -887,7 +970,9 @@ export async function rank<T>(
         selected: items.slice(),
         deferred: [],
         rationale: `All ${String(items.length)} items fit within pick ${String(pick)}; nothing was ranked.`,
-        status: 'all-selected',
+        ranked: false,
+        failures: 0,
+        status: 'complete',
       };
     }
     const entries: ItemText[] = items.map((item, index) => ({
@@ -920,7 +1005,14 @@ export async function rank<T>(
       `Ranked ${String(items.length)} items: selected ${String(selected.length)}, deferred ${String(deferred.length)}.`,
       { selected: chosen, deferred: deferredKeys },
     );
-    return { selected, deferred, rationale: ranking.rationale, status: 'ranked' };
+    return {
+      selected,
+      deferred,
+      rationale: ranking.rationale,
+      ranked: true,
+      failures: 0,
+      status: 'complete',
+    };
   });
 }
 
@@ -981,8 +1073,51 @@ export interface RouteResult<K extends string> {
   readonly reason: string;
   /** Whether the router failed and the fallback was taken. */
   readonly fallback: boolean;
-  /** `'routed'` when the router chose, `'fallback'` when its call failed. */
-  readonly status: 'routed' | 'fallback';
+  /** How many router calls failed: 1 when the fallback was taken, else 0. */
+  readonly failures: number;
+  /** `'degraded'` when the router call failed and the fallback was taken, else `'complete'`. */
+  readonly status: 'complete' | 'degraded';
+}
+
+/**
+ * The keys of a definitions record (routes, labels) or a list of names, as the enum a result schema
+ * checks them with; any string without one.
+ */
+function keySchema<K extends string>(
+  name: string,
+  keys: Readonly<Record<K, string>> | readonly K[] | undefined,
+): z.ZodType<K> {
+  if (keys === undefined) return z.string() as z.ZodType<string> as z.ZodType<K>;
+  const list = isList(keys) ? keys : (Object.keys(keys) as K[]);
+  return z.enum(nonEmpty(name, list));
+}
+
+/** Whether a definitions option is a plain list of names rather than a record. */
+function isList<K extends string>(
+  keys: Readonly<Record<K, string>> | readonly K[],
+): keys is readonly K[] {
+  return Array.isArray(keys);
+}
+
+/**
+ * The schema of a {@link RouteResult}, for a workflow `output` or a saved result.
+ *
+ * @typeParam K - The route keys.
+ * @param routes - The `routes` option the router ran with, or a list of its keys, so `route` is
+ * checked against them; omitted, any string.
+ * @returns A strict object schema of the result.
+ * @throws TypeError - When `routes` is empty.
+ */
+export function RouteResult<const K extends string = string>(
+  routes?: Readonly<Record<K, string>> | readonly K[],
+): z.ZodType<RouteResult<K>> {
+  return z.strictObject({
+    route: keySchema('routes', routes),
+    reason: z.string(),
+    fallback: z.boolean(),
+    failures: Count,
+    status: Health,
+  });
 }
 
 /** The default router prompt: the subject, the routes and the safe default. */
@@ -1023,7 +1158,8 @@ function routePrompt(
  * @param ctx - The workflow context the team was bound from.
  * @param options - The scope, the team, the subject and the routes, with an optional fallback,
  * prompts and call defaults.
- * @returns The chosen route, the reason, whether the fallback was taken, and the status.
+ * @returns The chosen route, the reason, whether the fallback was taken, the failure count and the
+ * status.
  * @throws TypeError - Before any effect, when the `router` slot is not filled, `subject` is blank,
  * `routes` is empty or maps a blank key or description, or `fallback` is not one of the routes.
  */
@@ -1053,7 +1189,13 @@ export async function route<const K extends string>(
   return ctx.scope(options.id, async (): Promise<RouteResult<K>> => {
     if (fallback === undefined) {
       const answer = await router.value('route', { ...calls, prompt, schema });
-      return { route: answer.route, reason: answer.reason, fallback: false, status: 'routed' };
+      return {
+        route: answer.route,
+        reason: answer.reason,
+        fallback: false,
+        failures: 0,
+        status: 'complete',
+      };
     }
     const answer = await router.value('route', { ...calls, prompt, schema, onError: 'return' });
     if (answer.ok)
@@ -1061,11 +1203,12 @@ export async function route<const K extends string>(
         route: answer.value.route,
         reason: answer.value.reason,
         fallback: false,
-        status: 'routed',
+        failures: 0,
+        status: 'complete',
       };
     const reason = `The router failed (${answer.error.kind}): ${answer.error.message}`;
     ctx.log(`Router failed; taking the fallback route ${fallback}.`, { reason });
-    return { route: fallback, reason, fallback: true, status: 'fallback' };
+    return { route: fallback, reason, fallback: true, failures: 1, status: 'degraded' };
   });
 }
 
@@ -1106,11 +1249,11 @@ export interface ClassifyOptions<T, L extends string> {
   /** The items to label. */
   readonly items: readonly T[];
   /**
-   * The unique, nonblank key the tagger answers with for an item, such as an issue number.
-   * Defaults to the item's own string `key` member, as std results carry, else its 1-based
-   * position.
+   * The unique, nonblank key the tagger answers with for an item (at `index` in `items`), such as
+   * an issue number. Defaults to the item's own string `key` member, as std results carry, else its
+   * 1-based position.
    */
-  readonly key?: ((item: T) => string) | undefined;
+  readonly key?: ((item: T, index: number) => string) | undefined;
   /**
    * The taxonomy, in the order counts break ties: each label mapped to its definition, or a plain
    * list of label names whose meaning is plain (`['bug', 'feature', 'docs']`).
@@ -1129,7 +1272,11 @@ export interface ClassifyOptions<T, L extends string> {
   readonly prompts?: ClassifyPrompts<L> | undefined;
   /** How many batches run at once; defaults to 4. */
   readonly concurrency?: number | undefined;
-  /** A revision for prompts and schemas the settled map's fingerprint does not show. */
+  /**
+   * A revision for what the settled map's fingerprint does not show. The team's agent
+   * configuration is not part of a map item, so a completed item is reused after a role changes:
+   * change `version` when you change the agent that fills a slot.
+   */
   readonly version?: string | undefined;
   /** Options applied to every agent call (placement, retry, deadlines). */
   readonly calls?: CallDefaults | undefined;
@@ -1147,12 +1294,50 @@ export interface Assignment<T, L extends string> {
   readonly reason: string;
 }
 
+/**
+ * The schema of an {@link Assignment}.
+ *
+ * @typeParam T - The item type.
+ * @typeParam L - The labels.
+ * @param item - The schema of the item.
+ * @param labels - The taxonomy (`labels` option) or its label names, so `labels` is checked against
+ * them; omitted, any string.
+ * @returns A strict object schema of one labeled item.
+ * @throws TypeError - When `labels` is empty.
+ */
+export function Assignment<T, const L extends string = string>(
+  item: z.ZodType<T>,
+  labels?: Readonly<Record<L, string>> | readonly L[],
+): z.ZodType<Assignment<T, L>> {
+  return z.strictObject({
+    key: z.string(),
+    item,
+    labels: z.array(keySchema('labels', labels)),
+    reason: z.string(),
+  });
+}
+
 /** How many items carry one label. */
 export interface LabelCount<L extends string> {
   /** The label. */
   readonly label: L;
   /** How many items carry it. */
   readonly count: number;
+}
+
+/**
+ * The schema of a {@link LabelCount}.
+ *
+ * @typeParam L - The labels.
+ * @param labels - The taxonomy (`labels` option) or its label names, so `label` is checked against
+ * them; omitted, any string.
+ * @returns A strict object schema of one label's count.
+ * @throws TypeError - When `labels` is empty.
+ */
+export function LabelCount<const L extends string = string>(
+  labels?: Readonly<Record<L, string>> | readonly L[],
+): z.ZodType<LabelCount<L>> {
+  return z.strictObject({ label: keySchema('labels', labels), count: Count });
 }
 
 /** Result of {@link classify}. */
@@ -1172,8 +1357,39 @@ export interface ClassifyResult<T, L extends string> {
   readonly failed: T[];
   /** How many batch calls failed. */
   readonly failedChunks: number;
+  /** How many batch calls failed: the same as `failedChunks`. */
+  readonly failures: number;
   /** `'complete'` when every batch call succeeded, else `'degraded'`. */
   readonly status: 'complete' | 'degraded';
+}
+
+/**
+ * The schema of a {@link ClassifyResult}, for a workflow `output` or a saved result, such as
+ * `std.patterns.ClassifyResult(Issue, taxonomy)` for `classify` over issues with `labels: taxonomy`.
+ *
+ * @typeParam T - The item type.
+ * @typeParam L - The labels.
+ * @param item - The schema of each item: the type of the `items` labeled.
+ * @param labels - The taxonomy (`labels` option) or its label names, so the labels are checked
+ * against them; omitted, any string.
+ * @returns A strict object schema of the result.
+ * @throws TypeError - When `labels` is empty.
+ */
+export function ClassifyResult<T, const L extends string = string>(
+  item: z.ZodType<T>,
+  labels?: Readonly<Record<L, string>> | readonly L[],
+): z.ZodType<ClassifyResult<T, L>> {
+  const items = z.array(item);
+  return z.strictObject({
+    assignments: z.array(Assignment(item, labels)),
+    counts: z.array(LabelCount(labels)),
+    unlabeled: items,
+    omitted: items,
+    failed: items,
+    failedChunks: Count,
+    failures: Count,
+    status: Health,
+  });
 }
 
 /** One tagged item of a batch reply. */
@@ -1298,8 +1514,8 @@ function tagSchema<L extends string>(
  * @param ctx - The workflow context the team was bound from.
  * @param options - The scope, the team, the items, the taxonomy, and optional keys, batch size,
  * multi-label mode, descriptions, prompts, concurrency, version and call defaults.
- * @returns The labeled items, the label counts, the unlabeled, omitted and failed items, and the
- * status.
+ * @returns The labeled items, the label counts, the unlabeled, omitted and failed items, the
+ * failure counts and the status.
  * @throws TypeError - Before any effect, when the `tagger` slot is not filled, `labels` is empty,
  * maps a blank key or definition, or lists a blank name, `chunk` or `concurrency` is not a positive
  * integer, or an item key is blank.
@@ -1413,6 +1629,7 @@ export async function classify<T, const L extends string>(
       omitted: omittedItems,
       failed,
       failedChunks,
+      failures: failedChunks,
       status: statusOf(failedChunks),
     };
   });

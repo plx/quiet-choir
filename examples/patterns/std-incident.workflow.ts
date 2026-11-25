@@ -6,21 +6,20 @@ export default defineWorkflow({
   version: '1',
   roster: std.rosters.readers,
   input: z.object({ question: z.string().min(1), range: z.string().min(1), notes: z.string() }),
-  output: z.object({
-    confidence: z.enum(['high', 'medium', 'split', 'none']),
-    status: z.enum(['complete', 'degraded']),
-    survivors: z.array(std.types.Hypothesis),
-  }),
+  output: std.patterns.FalsifyResult,
   async run(ctx, { question, range, notes }) {
-    // `--end-of-options` keeps a range such as `--output=x` from being read as an option.
-    const args = ['--stat', '--date=iso', '--format=%h %ad %s', '--end-of-options', range, '--'];
-    const log = await std.exec.git(ctx, 'log', ['log', ...args]);
-    const { confidence, status, survivors } = await std.patterns.falsify(ctx, {
+    // The suspect range as evidence: its commits, oldest first, and the files they changed.
+    const commits = std.text.commits(await std.exec.log(ctx, 'log', range));
+    const stat = await std.exec.diffStat(ctx, 'stat', range);
+    return std.patterns.falsify(ctx, {
       id: 'incident',
       team: { theorist: ctx.roster.Reviewer, falsifier: ctx.roster.Skeptic },
       question,
-      evidence: `${std.text.section(`Commits in ${range}`, log)}\n\n${std.text.section('Notes', notes)}`,
+      context: [
+        std.text.section(`Commits in ${range}`, commits),
+        std.text.section('Files changed', stat),
+        std.text.section('Notes', notes),
+      ].join('\n\n'),
     });
-    return { confidence, status, survivors };
   },
 });

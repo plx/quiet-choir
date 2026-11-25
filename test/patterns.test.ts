@@ -652,6 +652,8 @@ it('std reviewRevise scopes its IDs under id and uses custom prompts', async () 
         rounds: 1,
         id: 'second',
       });
+      for (const result of [first, second])
+        expect(std.patterns.ReviewReviseResult.parse(result)).toStrictEqual(result);
       return [first.approved, second.approved];
     },
   });
@@ -686,6 +688,7 @@ it('std tolerantPanel parses answers with a schema and counts failed items', asy
         concurrency: 4,
         schema: Vote,
       });
+      expect(std.patterns.TolerantPanelResult(Vote).parse(panel)).toStrictEqual(panel);
       return {
         quorum: panel.quorum,
         scores: panel.answers.map((vote) => vote.score),
@@ -761,6 +764,7 @@ it('std tolerantPanel accepts a value typed as the exported options', async () =
         ctx,
         options,
       );
+      expect(std.patterns.TolerantPanelResult().parse(panel)).toStrictEqual(panel);
       return { quorum: panel.quorum, answers: panel.answers };
     },
   });

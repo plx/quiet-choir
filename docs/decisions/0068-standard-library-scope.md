@@ -45,16 +45,18 @@ handling drift from port to port.
    combinations as complete entries, and `std.rosters.readers` (every role without write or exec
    access, so it needs no grant under `requireGrants`) and `std.rosters.standard` declare them. A
    shell is an allowlist: `std.claude.shell(rules)` exposes `Bash` narrowed to `std.bash` rule sets
-   and denies `git push` by default, and it is `exec`, as any shell is. Tiers, limits and personas
-   are Claude-only; Codex has no standing prompt, so a Codex call prepends the persona text instead.
+   and denies `git push` by default, and it is `exec`, as any shell is; `std.roles.withShell`,
+   `tester` and `fixer` give a role one, joining `std.personas.ShellEtiquette` to its persona.
+   Tiers, limits and personas are Claude-only; Codex has no standing prompt, so a Codex call
+   prepends the persona text instead.
 
 3. **Agent-output types are strict, bounded and rehearsable.** Every schema an agent answers has an
    object root and required properties (`.nullable()` for absence), uses no record, tuple,
    discriminated union or loose object, so it passes Codex's strict check, and uses no regex or
    format validator, so fixture rehearsal can synthesize it. Most text is non-empty, the record
-   lists (findings, issues, plan steps, tasks, claims, leads and hypotheses) are bounded, and each
-   field's `.describe()` text tells the agent what to return. Input-side primitives (`Sha`, `Key`,
-   `Argv`, `limit`) may use regexes and tuples.
+   lists (findings, remediations, issues, plan steps, tasks, claims, leads, questions and
+   hypotheses) are bounded, and each field's `.describe()` text tells the agent what to return.
+   Input-side primitives (`Sha`, `Key`, `Argv`, `limit`) may use regexes and tuples.
 
 4. **A pattern is a function over the context, a team and an options object, with a fixed
    contract.**
@@ -63,19 +65,34 @@ handling drift from port to port.
      throws instead of being journaled as a failed call.
    - Every decision that tolerates a failed agent (a vote, a quorum, a fallback) goes through a
      settled map or an `onError: 'return'` call, so the failure is journaled and replays the same
-     way. Results report failure counts and a `status` instead of filtering failures out.
+     way. Results report failures instead of filtering them out.
+   - `status` is health, not outcome: every result's `status` is `'degraded'` exactly when at least
+     one call the pattern tolerates failed, else `'complete'`, and `failures` counts those calls
+     beside the specific counters. What the pattern decided is in a named field (`outcome`,
+     `verdict`, `decision`, `approved`, `answered`, `ended`, ...), so `std.data.health` can combine
+     results and a degraded result can still carry a decision. A pattern whose calls are all
+     required reports `'complete'` and 0; `isolatedEdits` is also degraded by a change outside its
+     owned paths or a merge conflict.
+   - Every result interface `XResult` has a Zod schema of the same name, typed `z.ZodType<XResult>`
+     so the compiler checks it against the interface, or a factory of that name that takes the
+     schema of what varies (`VerifyResult(item)`). Each is a strict object with every property
+     required and no transform, so it converts to JSON Schema, and a workflow can declare it as its
+     `output`. Since a workflow's output schema is part of a run's compatibility check, the result
+     schemas are released text (§5) and their digests are pinned.
    - A settled map's items carry the rendered prompt text and the calls' placement (`cwd`,
      `addDirs`, `worktree`), so a prompt or placement change is detected by the map's fingerprint;
-     the caller's `version` revises what items do not show, such as a schema.
+     the caller's `version` revises what items do not show, such as a schema. The configuration of
+     the agent that fills a slot is not in an item either, so a completed item is reused after a
+     role changes, where a direct call would refuse to replay; `version` must change with it.
    - `calls` (a `CallDefaults`) supplies placement, retry and deadlines for every agent call.
    - Default prompts are built with `std.text.brief`, and a skeptical slot's prompt names the safe
      default its persona falls back to.
    - `std.flow` helpers that run a caller callback in a settled map pass the callback itself as the
      mapper, so its source is fingerprinted.
 
-   The seeded `reviewRevise` and `tolerantPanel` predate this contract and keep their options:
-   `reviewRevise`'s `id` is optional, and neither takes `calls`. Both check their team before any
-   effect.
+   The seeded `reviewRevise` and `tolerantPanel` predate this contract and keep their options and
+   results: `reviewRevise`'s `id` is optional, neither takes `calls`, and neither result has a
+   `status` or `failures`. Both check their team before any effect, and both results have schemas.
 
 5. **Released text is identity.** Default prompts, schemas and their descriptions, persona and lens
    text, and role options are part of the step identity of the calls that use them. They change only

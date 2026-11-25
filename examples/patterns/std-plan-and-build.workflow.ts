@@ -1,15 +1,14 @@
 import { defineRoster, defineWorkflow, z } from '../../src/index.js';
 import * as std from '../../src/std/index.js';
 
+const Reports = z.array(std.types.WorkReport.nullable());
+
 export default defineWorkflow({
   name: 'std-plan-and-build',
   version: '1',
   roster: defineRoster({ Planner: std.roles.Planner, Mechanic: std.roles.Mechanic }),
   input: z.object({ goal: z.string().min(1), maxTasks: std.types.limit(8, 30) }),
-  output: std.types.TaskList.extend({
-    status: z.string(),
-    reports: z.array(std.types.WorkReport.nullable()),
-  }),
+  output: std.types.TaskList.extend({ status: std.data.Health, reports: Reports }),
   async run(ctx, { goal, maxTasks }) {
     const team = { planner: ctx.roster.Planner };
     const plan = await std.patterns.decompose(ctx, { id: 'plan', team, goal, maxTasks });
@@ -25,6 +24,7 @@ export default defineWorkflow({
         throw new Error(`${task.id} is ${report.status}: ${report.summary}`); // Skips dependents.
       },
     });
-    return { status: build.status, tasks: plan.tasks, reports: build.results.map((r) => r.value) };
+    const reports = build.results.map((item) => item.value);
+    return { status: std.data.health(plan, build), tasks: plan.tasks, reports };
   },
 });

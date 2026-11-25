@@ -6,15 +6,7 @@ export default defineWorkflow({
   version: '1',
   roster: defineRoster({ Mechanic: std.roles.Mechanic }),
   input: z.object({ edits: z.array(std.types.Step).min(1).max(12), message: z.string().min(1) }),
-  output: z.object({
-    status: z.enum(['complete', 'degraded']),
-    commit: z.string().nullable(),
-    merged: z.array(z.string()),
-    conflicts: z.array(z.string()),
-    violations: z.array(z.object({ key: z.string(), files: z.array(z.string()) })),
-    unchanged: z.array(z.string()),
-    failed: z.array(z.string()),
-  }),
+  output: std.patterns.IsolatedEditsResult,
   run: (ctx, { edits, message }) =>
     std.patterns.isolatedEdits(ctx, {
       id: 'edits',

@@ -1,9 +1,10 @@
 // The std gate recipes run end to end in a temporary Git repository against a scripted harness:
-// examples/patterns/std-release-gate.workflow.ts (gate over the commit list and diff stat of an
-// input range) and examples/patterns/std-acceptance.workflow.ts (checklist of input acceptance
-// criteria against the diff of an input range). Calls that matter are scripted by step ID; the rest
-// get schema-valid filler from synthesizeOutput. Each run proves replay after a tail failure
-// without new agent calls or commands.
+// examples/patterns/std-release-gate.workflow.ts (gate over the std.exec.log commit list and the
+// std.exec.diffStat of an input range, returning the GateResult) and
+// examples/patterns/std-acceptance.workflow.ts (checklist of input std.types.Criteria against the
+// diff of an input range, returning the ChecklistResult). Calls that matter are scripted by step
+// ID; the rest get schema-valid filler from synthesizeOutput. Each run proves replay after a tail
+// failure without new agent calls or commands.
 import { execFile } from 'node:child_process';
 import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -22,11 +23,20 @@ import {
   type WorkflowDefinition,
   type WorkflowResult,
 } from '../src/index.js';
+import * as std from '../src/std/index.js';
 import { release } from '../src/std/lenses.js';
 import type { Assessment, CriterionResult } from '../src/std/types.js';
+import { capabilityManifest } from '../src/workflow/runtime/profiles.js';
 import acceptance from '../examples/patterns/std-acceptance.workflow.js';
 import releaseGate from '../examples/patterns/std-release-gate.workflow.js';
-import { ScriptedHarness, makeRoot, removeRoot, runOptions, tailFailure } from './std-harness.js';
+import {
+  ScriptedHarness,
+  makeRoot,
+  removeRoot,
+  roundTrip,
+  runOptions,
+  tailFailure,
+} from './std-harness.js';
 
 const execute = promisify(execFile);
 let root: string;
@@ -115,6 +125,13 @@ async function replay<I, O>(
   return resumed;
 }
 
+it('needs no grant: both recipes call only read-only roles', () => {
+  const required = (workflow: object) =>
+    capabilityManifest(workflow, { requireGrants: true }).requiredGrants;
+  expect(required(releaseGate)).toEqual([]);
+  expect(required(acceptance)).toEqual([]);
+});
+
 describe('std-release-gate', () => {
   const blocker: Assessment = {
     status: 'blocker',
@@ -122,7 +139,7 @@ describe('std-release-gate', () => {
     evidence: ['src/parse.ts:1'],
   };
 
-  it('gates the range on commits and diff stat, and a confirmed blocker is no-go', async () => {
+  it('gates the range on its commits and diff stat, and a confirmed blocker is no-go', async () => {
     const calls = harness({
       'gate/dimension/tests/assess': blocker,
       'gate/dimension/docs/assess': { ...blocker, status: 'concern', summary: 'No changelog.' },
@@ -132,19 +149,55 @@ describe('std-release-gate', () => {
     });
     const range = `${base}..HEAD`;
     const result = await replay(releaseGate, { range, seats: 3 }, calls);
-    expect(result.output).toEqual({
+    expect(result.output).toMatchObject({
       decision: 'no-go',
-      status: 'degraded',
+      blockers: ['tests'],
+      concerns: ['docs'],
       reasons: [
         'tests (blocker): parse.ts trims input without tests.',
         'docs (concern): No changelog.',
       ],
+      failedVotes: 1,
+      failures: 1,
+      status: 'degraded',
     });
+    expect(result.output?.assessments.map((dimension) => dimension.key)).toEqual(
+      release.map((lens) => lens.key),
+    );
+    roundTrip(std.patterns.GateResult, result.output);
 
     expect(runner.commands).toEqual([
-      ['git', 'log', '--format=%h %s', '--end-of-options', range, '--'],
-      ['git', 'diff', '--stat', '--end-of-options', range, '--'],
+      [
+        'git',
+        '-c',
+        'core.abbrev=auto',
+        'log',
+        '-z',
+        '--reverse',
+        '--no-color',
+        '--no-show-signature',
+        '--encoding=UTF-8',
+        '--format=%H%x00%h%x00%an%x00%aI%x00%s',
+        '--end-of-options',
+        range,
+        '--',
+      ],
+      [
+        'git',
+        '-c',
+        'core.quotePath=false',
+        'diff',
+        '--stat=10000,10000',
+        '--stat-graph-width=40',
+        '--no-color',
+        '--no-ext-diff',
+        '--no-relative',
+        '--end-of-options',
+        range,
+        '--',
+      ],
     ]);
+    expect(Object.keys(result.steps)).toEqual(expect.arrayContaining(['commits', 'stat']));
     expect(
       calls
         .ids()
@@ -161,10 +214,23 @@ describe('std-release-gate', () => {
     const prompt = calls.prompt('gate/dimension/security/assess');
     const opening = `Assess whether the release ${range} is ready to ship. Assess one dimension only, security:`;
     expect(prompt.slice(0, opening.length)).toBe(opening);
+    // The commits oldest first, each with its short ID, author and day; then the diff stat.
     expect(prompt).toMatch(
-      /## Commits\n\n[0-9a-f]{7,} Trim parsed input\n[0-9a-f]{7,} Add the verbose flag\n/u,
+      /## Commits\n\n- `[0-9a-f]{7,}` Add the verbose flag \(Fixture, \d{4}-\d{2}-\d{2}\)\n- `[0-9a-f]{7,}` Trim parsed input \(Fixture, \d{4}-\d{2}-\d{2}\)\n\n## Diff stat\n\n/u,
     );
-    expect(prompt).toContain('## Diff stat\n\n src/flags.ts | 2 +-\n src/parse.ts | 1 +\n');
+    expect(prompt).toMatch(
+      /## Diff stat\n\n src\/flags\.ts \| 2 \+-\n src\/parse\.ts \| 1 \+\n 2 files changed/u,
+    );
+    // The assessor is the read-only Reviewer and each challenging seat the Skeptic.
+    const options = (id: string) => calls.calls.find((call) => call.stepId === id)?.options;
+    expect(options('gate/dimension/tests/assess')).toMatchObject({
+      tools: ['Read', 'Grep', 'Glob'],
+      model: std.roles.Reviewer.model,
+    });
+    expect(options('gate/blocker/tests/seat/0/verdict')).toMatchObject({
+      tools: ['Read', 'Grep', 'Glob'],
+      model: std.roles.Skeptic.model,
+    });
   });
 
   it('goes when every dimension passes, with one default seat and no blocker panel', async () => {
@@ -175,11 +241,17 @@ describe('std-release-gate', () => {
       processRunner: runner,
       input: { range: `${base}..HEAD` },
     });
-    expect(result.output).toEqual({ decision: 'go', status: 'complete', reasons: [] });
+    expect(result.output).toMatchObject({
+      decision: 'go',
+      blockers: [],
+      reasons: [],
+      failures: 0,
+      status: 'complete',
+    });
     expect(calls.ids()).toHaveLength(release.length);
   });
 
-  it('keeps a range that looks like an option from reaching Git as one', async () => {
+  it('refuses a range that Git would read as an option before running anything', async () => {
     const calls = harness({});
     await expect(
       runWorkflow(releaseGate, {
@@ -188,10 +260,8 @@ describe('std-release-gate', () => {
         processRunner: runner,
         input: { range: '--output=leak.txt' },
       }),
-    ).rejects.toThrow('Step commits (exec) failed: Command exited with 128.');
-    expect(runner.commands).toEqual([
-      ['git', 'log', '--format=%h %s', '--end-of-options', '--output=leak.txt', '--'],
-    ]);
+    ).rejects.toThrow('Expected a Git revision or range such as main..HEAD');
+    expect(runner.commands).toEqual([]);
     expect(calls.calls).toHaveLength(0);
     expect(await readdir(root)).not.toContain('leak.txt');
   });
@@ -216,13 +286,16 @@ describe('std-acceptance', () => {
     const result = await replay(acceptance, { range, criteria }, calls);
     expect(result.output).toEqual({
       verdict: 'not-done',
-      status: 'complete',
       results: [
         { criterion: { id: 'C1', criterion: criteria[0], how: '' }, result: pass },
         { criterion: { id: 'C2', criterion: criteria[1], how: '' }, result: fail },
         { criterion: criteria[2], result: pass },
       ],
+      counts: { pass: 2, fail: 1, partial: 0, unverifiable: 0 },
+      failures: 0,
+      status: 'complete',
     });
+    roundTrip(std.patterns.ChecklistResult, result.output);
 
     expect(runner.commands).toEqual([
       ['git', 'diff', '--no-color', '--no-ext-diff', '--no-relative', range, '--'],
@@ -237,6 +310,12 @@ describe('std-acceptance', () => {
     expect(prompt).toContain(`## Context\n\nThe change in ${range}, as git diff shows it:`);
     expect(prompt).toContain('+export const parse = (s: string) => s.trim();');
     expect(prompt).toContain('- Check it this way: Read src/parse.ts.');
+    // Every checker is the read-only Reviewer.
+    for (const call of calls.calls)
+      expect(call.options).toMatchObject({
+        tools: ['Read', 'Grep', 'Glob'],
+        model: std.roles.Reviewer.model,
+      });
   });
 
   it('is unverified when a checker fails, without retrying it on resume', async () => {
@@ -246,7 +325,23 @@ describe('std-acceptance', () => {
     });
     const input = { range: `${base}..HEAD`, criteria: ['Has a flag.', 'Has docs.'] };
     const result = await replay(acceptance, input, calls);
-    expect(result.output).toMatchObject({ verdict: 'unverified', status: 'degraded' });
+    expect(result.output).toMatchObject({
+      verdict: 'unverified',
+      counts: { pass: 1, fail: 0, partial: 0, unverifiable: 0 },
+      failures: 1,
+      status: 'degraded',
+    });
+    expect(result.output?.results[1]?.result).toBeNull();
     expect(calls.count('acceptance/criterion/C2/check')).toBe(1);
+  });
+
+  it('takes criteria through std.types.Criteria, refusing an empty list or a blank one', () => {
+    const range = 'main..HEAD';
+    expect(() => acceptance.input.parse({ range, criteria: [] })).toThrow();
+    expect(() => acceptance.input.parse({ range, criteria: ['  '] })).toThrow();
+    expect(acceptance.input.parse({ range, criteria: ['Has a flag.'] })).toEqual({
+      range,
+      criteria: ['Has a flag.'],
+    });
   });
 });

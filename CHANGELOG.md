@@ -7,43 +7,60 @@
   body in the same key order on a fresh run and on `workflow resume RUN`, so a prompt or schema
   built from it no longer changes on resume and refuses completed steps
   (`Step S: prompt changed on a completed step`, `Settled map M changed after an item completed`).
-  `z.object` fields keep schema order. An input that is not JSON is parsed as given, so its errors
-  are unchanged.
+  `z.object` fields keep schema order. Schema checks and refinements see the same sorted copy,
+  without `undefined` members: a refinement that depends on key order now sees sorted keys, which
+  can change its result, and a `z.strictObject` no longer sees an `undefined` extra member. A resume
+  that supplies the input again, and a fork's recorded differences, compare that copy too
+  (`compareResume`), so such a schema no longer refuses the same input with `run.input_changed`. An
+  input that is not JSON is parsed as given, so its errors are unchanged.
 - Expand `quiet-choir/std` into typed inventories and team-typed patterns (ADR 0068; see
   [docs/std.md](docs/std.md)). Roster inventory: `std.claude` adds `Web`, `shell(rules)` and
   `editShell(rules)` (Bash narrowed to `std.bash` rule sets, with `git push` denied by default;
   `exec`, as any shell is); `std.tiers` adds `Judge`; new `std.limits` (`Brief` to `Long`),
   `std.personas` (standing prompts, `join` and `ShellEtiquette`), `std.roles` (complete entries from
-  `Clerk` to `CodexMechanic`), `std.rosters.readers` (every role that needs no grant),
-  `std.rosters.standard` and `std.bash`. Data: `std.types` (strict, bounded, rehearsable output
-  schemas such as `Finding`, `Refutation`, `Ballot`, `Critique`, `WorkReport`, `Plan`, `TaskList`,
-  `Assessment`, `Hypotheses` and `Claims`; enums; the input primitives `RepoPath`, `Sha`, `Argv` and
-  `limit`; and the builders `oneOf`, `listOf` and `rubric`) and `std.lenses` (`bugs`, `review`,
-  `security`, `design`, `research`, `release`, `writing` and `designRubric`). Helpers: `std.data`
-  (tallies, dedupe, coverage, ranking, `topoWaves`, digests), `std.text` (`brief` and other prompt
-  text), the `std.exec` helpers `check`, `head`, `status`, `assertClean`, `diff`, `changedFiles` and
-  `commits`, and `std.flow` (`untilDry` as `<id>/round/<n>/<leaf>`, `waves` as
-  `<id>/wave/<n>/<key>/<leaf>`, and `each`). Patterns, each under `ctx.scope(id)` with its team
+  `Clerk` to `CodexMechanic`, and the `exec` shell factories `withShell(role, rules)`,
+  `tester(rules)` and `fixer(rules)`, which keep the tier and persona and join `ShellEtiquette`),
+  `std.rosters.readers` (every role that needs no grant), `std.rosters.standard` and `std.bash`.
+  Data: `std.types` (strict, bounded, rehearsable output schemas such as `Finding`, `Remediation`,
+  `Refutation`, `Ballot`, `Critique`, `WorkReport`, `Plan`, `TaskList`, `Assessment`, `Hypotheses`,
+  `Claims` and `Questions`; enums; `RepoPath`; the input-side `Sha`, `Argv`, `Commit`, `Criteria`
+  and `limit`; and the builders `oneOf`, `listOf` and `rubric`) and `std.lenses` (`bugs`, `review`,
+  `security`, `design`, `research`, `release`, `writing`, `evidence`, `requirements`, `spec`,
+  `critique`, `designRubric` and `LensSchema`). Helpers: `std.data` (tallies, dedupe, coverage,
+  ranking, `topoWaves`, digests of any JSON value, and `health(...parts)` with the `Health` and
+  `Coverage` schemas), `std.text` (`brief`, whose `context` takes any JSON value and names the path
+  of one that is not, other prompt text, and the Markdown renderers `findings`, `checklist`, `gate`,
+  `plan` and `commits`), the `std.exec` helpers `check`, `head`, `status`, `assertClean`, `diff`,
+  `diffStat`, `changedFiles`, `commits` and `log` (a `std.types.Commit` per commit from one
+  `git log -z`), whose range argument is refused before any effect when it is empty, starts with `-`
+  or contains NUL, and `std.flow` (`untilDry` as `<id>/round/<n>/<leaf>`, reporting `ended`; `waves`
+  as `<id>/wave/<n>/<key>/<leaf>`; and `each`). Patterns, each under `ctx.scope(id)` with its team
   checked before any effect, tolerated failures journaled through settled maps (whose items carry
-  the rendered prompt and the calls' placement) or `onError: 'return'` calls, `calls` and `prompts`
-  options (and `version` where a settled map runs), and a `status` with failure counts: `lensPanel`
-  (`<id>/lens/<lens>/read`), `vote` (`<id>/seat/<n>/ballot`), `verify`
-  (`<id>/item/<key>/seat/<n>/verdict`), `hunt` (`<id>/round/<n>/lens/<lens>/find` and the round's
-  `item/.../verdict` seats), `critiqueRevise` (`<id>/draft`, `<id>/round/<n>/critique` or
-  `<id>/round/<n>/lens/<lens>/critique`, `<id>/round/<n>/revise`), `fixUntilGreen`
-  (`<id>/check/<n>`, `<id>/fix/<n>`), `escalate` (`<id>/attempt/<n>/work`), `tournament`
-  (`<id>/propose/<entrant>/proposal`, `<id>/judge/<n>/scores`, `<id>/synthesize`), `rank`
-  (`<id>/rank`), `route` (`<id>/route`), `classify` (`<id>/chunk/<n>/tag`), `mapReduce`
-  (`<id>/map/<k>/part`, `<id>/reduce`), `decompose` (`<id>/plan`, `<id>/repair`) with `taskCall`,
-  `checklist` (`<id>/criterion/<C>/check`), `gate` (`<id>/dimension/<key>/assess`,
-  `<id>/blocker/<key>/seat/<n>/verdict`), `falsify` (`<id>/theorize`,
-  `<id>/hypothesis/<key>/falsify`), `research` (`<id>/scout/<angle>/leads`,
+  the rendered prompt and the calls' placement but not the agent's configuration, so `version` must
+  change with the agent that fills a slot) or `onError: 'return'` calls, `calls` and `prompts`
+  options (and `version` where a settled map runs), and a result that counts those failures in
+  `failures`, reports its health as `status` (`'degraded'` exactly when one occurred), puts what it
+  decided in a named field (`outcome`, `verdict`, `decision`, `approved`, `answered`, `ended`, ...)
+  and has a strict Zod schema of the same name for a workflow `output` (a factory such as
+  `VerifyResult(item)` for a generic result): `lensPanel` (`<id>/lens/<lens>/read`), `vote`
+  (`<id>/seat/<n>/ballot`), `verify` (`<id>/item/<key>/seat/<n>/verdict`), `hunt`
+  (`<id>/round/<n>/lens/<lens>/find` and the round's `item/.../verdict` seats), `critiqueRevise`
+  (`<id>/draft`, `<id>/round/<n>/critique` or `<id>/round/<n>/lens/<lens>/critique`,
+  `<id>/round/<n>/revise`), `fixUntilGreen` (`<id>/check/<n>`, `<id>/fix/<n>`), `escalate`
+  (`<id>/attempt/<n>/work`), `tournament` (`<id>/propose/<entrant>/proposal`,
+  `<id>/judge/<n>/scores`, `<id>/synthesize`), `rank` (`<id>/rank`), `route` (`<id>/route`),
+  `classify` (`<id>/chunk/<n>/tag`), `mapReduce` (`<id>/map/<k>/part`, `<id>/reduce`), `decompose`
+  (`<id>/plan`, `<id>/repair`) with `taskCall`, `checklist` (`<id>/criterion/<C>/check`), `gate`
+  (`<id>/dimension/<key>/assess`, `<id>/blocker/<key>/seat/<n>/verdict`), `falsify`
+  (`<id>/theorize`, `<id>/hypothesis/<key>/falsify`), `research` (`<id>/scout/<angle>/leads`,
   `<id>/read/<key>/claims`, `<id>/synthesize`), `isolatedEdits` (`<id>/item/<key>/edit`,
   `<id>/item/<key>/paths` for a rename, `<id>/merge`) and `approvedPlan` (`<id>/round/<n>/plan`,
-  `<id>/round/<n>/approve`) with `planCall`. `reviewRevise` and `tolerantPanel` keep their options
-  and step IDs and now also check their team before any effect. Fourteen `std-*` cookbook recipes of
-  at most 30 lines show the patterns, and the skill gains a `references/std.md` reference.
-  `model.ts`, the API snapshot and the record schema revision are unchanged.
+  `<id>/round/<n>/approve`) with `planCall`. `reviewRevise` and `tolerantPanel` keep their options,
+  results and step IDs, gain the schemas `ReviewReviseResult` and `TolerantPanelResult(answer?)`,
+  and now also check their team before any effect. Seventeen `std-*` cookbook recipes of at most 30
+  lines show the patterns, most of them returning a result schema as their output, and the skill
+  gains a `references/std.md` reference. `model.ts`, the API snapshot and the record schema revision
+  are unchanged.
 - Remove the public profile surface (#726, amending ADR 0010; ADR 0063 §4). Roster entries are the
   only declared roles, and `text` is the implicit baseline and the default role. Removed: the
   workflow `profiles` field and its `extends` chain, the `readonly` and `edit` presets,

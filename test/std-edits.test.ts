@@ -29,6 +29,7 @@ import {
   makeRoot,
   promptOf,
   removeRoot,
+  roundTrip,
   runOptions,
   tailFailure,
 } from './std-harness.js';
@@ -59,9 +60,10 @@ function workflow(
   });
 }
 
-/** The output of a completed isolatedEdits run. */
+/** The output of a completed isolatedEdits run, checked against its result schema. */
 function outcome(result: WorkflowResult<unknown>): edits.IsolatedEditsResult {
   expect(result.status).toBe('completed');
+  roundTrip(edits.IsolatedEditsResult, result.output);
   return result.output as unknown as edits.IsolatedEditsResult;
 }
 
@@ -180,6 +182,7 @@ describe('isolatedEdits', () => {
       violations: [],
       unchanged: [],
       failed: [],
+      failures: 0,
     });
     expect(output.merge?.conflicts).toEqual([]);
     expect(output.commit).toBe(output.merge?.commit);
@@ -227,6 +230,7 @@ describe('isolatedEdits', () => {
       ],
       unchanged: ['idle'],
       failed: ['broken'],
+      failures: 1,
     });
     const commitId = outcome(result).merge?.commit ?? '';
     expect(await show(commitId, 'shared.txt')).toBe('shared\n');
@@ -368,10 +372,13 @@ describe('isolatedEdits', () => {
       violations: [],
       unchanged: ['idle'],
       failed: [],
+      failures: 0,
     });
     expect(Object.keys(result.steps)).not.toContain('edits/merge');
+    roundTrip(edits.IsolatedEditsResult, result.output);
     const empty = await runWorkflow(edit([]), { ...options(harness, 'empty'), input: null });
     expect(empty.output).toMatchObject({ status: 'complete', merge: null, changes: [] });
+    roundTrip(edits.IsolatedEditsResult, empty.output);
   }, 20_000);
 
   it('uses a replacement prompt and the index as the default key', async () => {
@@ -534,12 +541,15 @@ describe('approvedPlan', () => {
     const digest = data.digest(samplePlan());
     expect(result.output).toEqual({
       approved: true,
-      status: 'approved',
+      outcome: 'approved',
       plan: samplePlan(),
       digest,
       rounds: 1,
       comment: 'Cap it at three tries.',
+      failures: 0,
+      status: 'complete',
     });
+    roundTrip(edits.ApprovedPlanResult, result.output);
     expect(harness.ids()).toEqual(['plan/round/0/plan']);
     expect(Object.keys(result.steps).sort()).toEqual([
       'plan/round/0/approve',
@@ -565,19 +575,23 @@ describe('approvedPlan', () => {
 
   it('revises a plan rejected with a comment and approves the revision', async () => {
     const harness = planner([samplePlan(), samplePlan('second')]);
+    // A JSON context may hold read-only arrays and interface-typed values.
+    const files: readonly string[] = ['src/fetch.ts', 'src/retry.ts'];
+    const earlier: data.Coverage = { covered: ['fetch'], missing: [] };
     const { result, questions } = await drive(
-      plan({ context: { client: 'src/fetch.ts' } }),
+      plan({ context: { client: 'src/fetch.ts', files, earlier } }),
       harness,
       [{ approved: false, comment: 'Add a step for the backoff tests.' }, { approved: true }],
     );
     expect(result.output).toMatchObject({
       approved: true,
-      status: 'approved',
+      outcome: 'approved',
       plan: samplePlan('second'),
       digest: data.digest(samplePlan('second')),
       rounds: 2,
       comment: null,
     });
+    roundTrip(edits.ApprovedPlanResult, result.output);
     expect(harness.ids()).toEqual(['plan/round/0/plan', 'plan/round/1/plan']);
     expect(Object.keys(result.steps).sort()).toEqual([
       'plan/round/0/approve',
@@ -592,7 +606,9 @@ describe('approvedPlan', () => {
     const revise = harness.prompt('plan/round/1/plan');
     expect(revise).toContain("### Reviewer's comment\n\nAdd a step for the backoff tests.");
     expect(revise).toContain('"summary": "Add retries (first)."');
-    expect(revise).toContain('### Background');
+    expect(revise).toContain(
+      '### Background\n\n```json\n{\n  "client": "src/fetch.ts",\n  "files": [\n    "src/fetch.ts",\n    "src/retry.ts"\n  ],\n  "earlier": {\n    "covered": [',
+    );
     expect(questions[1]?.details).toContain(
       '## Revised to answer\n\nAdd a step for the backoff tests.',
     );
@@ -603,10 +619,11 @@ describe('approvedPlan', () => {
     const { result } = await drive(plan(), harness, [{ approved: false, comment: '  ' }]);
     expect(result.output).toMatchObject({
       approved: false,
-      status: 'rejected',
+      outcome: 'rejected',
       rounds: 1,
       comment: null,
     });
+    roundTrip(edits.ApprovedPlanResult, result.output);
     expect(harness.ids()).toEqual(['plan/round/0/plan']);
   });
 
@@ -622,11 +639,13 @@ describe('approvedPlan', () => {
     );
     expect(result.output).toMatchObject({
       approved: false,
-      status: 'out-of-revisions',
+      outcome: 'out-of-revisions',
+      status: 'complete',
       plan: samplePlan('second'),
       rounds: 2,
       comment: 'Still too vague.',
     });
+    roundTrip(edits.ApprovedPlanResult, result.output);
     expect(harness.ids()).toEqual(['plan/round/0/plan', 'plan/round/1/plan']);
   });
 
@@ -650,6 +669,11 @@ describe('approvedPlan', () => {
     await expect(
       runWorkflow(plan({ team: {} as edits.PlanApprovalTeam }), { ...setup, runId: 'team' }),
     ).rejects.toThrow('Team slot planner is not filled.');
+    await expect(
+      runWorkflow(plan({ context: { at: new Date(0) } }), { ...setup, runId: 'context' }),
+    ).rejects.toThrow(
+      'approvedPlan context must be a string or a JSON value: Value is not canonical JSON at $.at: values must be plain objects, not class instances.',
+    );
     expect(harness.calls).toHaveLength(0);
   });
 });

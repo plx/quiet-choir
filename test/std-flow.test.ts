@@ -12,7 +12,9 @@ import {
   type WorkflowContext,
   type WorkflowDefinition,
 } from '../src/index.js';
+import { findingKey } from '../src/std/data.js';
 import * as flow from '../src/std/flow.js';
+import * as types from '../src/std/types.js';
 import {
   ScriptedHarness,
   makeRoot,
@@ -102,7 +104,7 @@ describe('untilDry', () => {
       rounds: 4,
       dryRounds: 2,
       failedRounds: 0,
-      status: 'dry',
+      ended: 'dry',
     });
     expect(harness.ids()).toEqual([
       'hunt/round/0/find',
@@ -126,7 +128,7 @@ describe('untilDry', () => {
     expect(result.output).toMatchObject({
       rounds: 5,
       dryRounds: 3,
-      status: 'dry',
+      ended: 'dry',
       found: ['a', 'b'],
     });
   });
@@ -134,7 +136,7 @@ describe('untilDry', () => {
   it('honors patience and reports the round limit', async () => {
     const patient = scripted({ 'hunt/round/0/find': 'a', 'hunt/round/1/find': '' });
     const once = await run(hunt({ patience: 1 }), patient, 'patience');
-    expect(once.output).toMatchObject({ rounds: 2, dryRounds: 1, status: 'dry' });
+    expect(once.output).toMatchObject({ rounds: 2, dryRounds: 1, ended: 'dry' });
 
     const busy = scripted({
       'hunt/round/0/find': 'a',
@@ -147,13 +149,13 @@ describe('untilDry', () => {
       rounds: 3,
       dryRounds: 0,
       failedRounds: 0,
-      status: 'round-limit',
+      ended: 'round-limit',
     });
 
     // A dry streak completed on the last allowed round still reports dry.
     const last = scripted({ 'hunt/round/0/find': 'a', 'hunt/round/1/find': '' });
     const edge = await run(hunt({ rounds: 2, patience: 1 }), last, 'edge');
-    expect(edge.output).toMatchObject({ rounds: 2, status: 'dry' });
+    expect(edge.output).toMatchObject({ rounds: 2, ended: 'dry' });
   });
 
   it('never counts a failed round as dry and does not retry it on resume', async () => {
@@ -170,7 +172,7 @@ describe('untilDry', () => {
       rounds: 4,
       dryRounds: 2,
       failedRounds: 1,
-      status: 'dry',
+      ended: 'dry',
     });
     expect(harness.count('hunt/round/1/find')).toBe(1);
   });
@@ -195,8 +197,43 @@ describe('untilDry', () => {
       rounds: 3,
       dryRounds: 1,
       failedRounds: 2,
-      status: 'round-limit',
+      ended: 'round-limit',
     });
+  });
+
+  it('infers the item type from the rounds, not from the key', async () => {
+    // As in the module example: `key` takes any value with a file and a title, and it must not
+    // narrow the item type, or `found[0].severity` would not compile.
+    const finding: types.Finding = {
+      title: 'Null dereference',
+      file: 'src/a.ts',
+      line: 3,
+      severity: 'high',
+      evidence: 'src/a.ts:3',
+      failureScenario: 'it breaks',
+    };
+    const definition = workflow('until-dry-infer', async (ctx) => {
+      const finder = ctx.claude.bind({});
+      const hunt = await flow.untilDry(ctx, {
+        id: 'hunt',
+        rounds: 2,
+        patience: 1,
+        key: findingKey,
+        round: async (_n, known) => {
+          const report = await finder.value('find', {
+            prompt: `Find bugs not in this list:\n${JSON.stringify(known)}`,
+            schema: types.Findings,
+          });
+          return { found: report.findings };
+        },
+      });
+      const severity: types.Severity | undefined = hunt.found[0]?.severity;
+      return severity;
+    });
+    const harness = new ScriptedHarness((request) =>
+      request.stepId === 'hunt/round/0/find' ? { findings: [finding] } : { findings: [] },
+    );
+    expect((await run(definition, harness)).output).toBe('high');
   });
 
   it('rejects invalid options and round results before or without new effects', async () => {

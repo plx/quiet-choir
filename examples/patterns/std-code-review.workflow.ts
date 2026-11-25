@@ -6,10 +6,10 @@ export default defineWorkflow({
   version: '1',
   roster: std.rosters.readers,
   input: z.object({ range: z.string().min(1) }),
-  output: z.object({ status: z.string(), findings: z.array(std.types.Finding) }),
+  output: z.object({ status: std.data.Health, findings: z.array(std.types.Finding) }),
   async run(ctx, { range }) {
     const diff = std.text.fence(await std.exec.diff(ctx, 'diff', range), 'diff');
-    const { results, failed } = await std.patterns.lensPanel(ctx, {
+    const panel = await std.patterns.lensPanel(ctx, {
       id: 'review',
       team: { reader: ctx.roster.Reviewer },
       lenses: std.lenses.review,
@@ -17,14 +17,14 @@ export default defineWorkflow({
       subject: diff,
       schema: std.types.Findings,
     });
-    const found = results.flatMap((answer) => answer.value.findings);
+    const found = panel.results.flatMap((answer) => answer.value.findings);
     const verdicts = await std.patterns.verify(ctx, {
       id: 'verify',
       team: { skeptic: ctx.roster.Skeptic },
       items: std.data.dedupeBy(found, std.data.findingKey),
       context: `The changes in ${range}:\n\n${diff}`,
     });
-    const status = failed.length + verdicts.failedVotes === 0 ? 'complete' : 'degraded';
-    return { status, findings: std.data.bySeverity(verdicts.confirmed.map((v) => v.item)) };
+    const findings = std.data.bySeverity(verdicts.confirmed.map((verdict) => verdict.item));
+    return { status: std.data.health(panel, verdicts), findings };
   },
 });

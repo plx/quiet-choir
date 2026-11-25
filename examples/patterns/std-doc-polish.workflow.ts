@@ -7,8 +7,7 @@ export default defineWorkflow({
   roster: std.rosters.readers,
   input: z.object({ file: std.types.RepoPath, rounds: std.types.limit(2, 5) }),
   output: z.object({
-    status: z.enum(['approved', 'open-issues', 'degraded']),
-    issues: z.array(std.types.Issue),
+    polish: std.patterns.CritiqueReviseResult,
     receipt: std.types.Receipt.nullable(),
   }),
   async run(ctx, { file, rounds }) {
@@ -21,10 +20,9 @@ export default defineWorkflow({
       lenses: std.lenses.writing,
       rounds,
     });
-    const changed = polish.approved && polish.draft !== doc.content;
-    const receipt = changed
-      ? await ctx.writeFile('write', file, polish.draft, { ifMatch: doc.sha256 })
-      : null;
-    return { status: polish.status, issues: polish.issues, receipt };
+    // Write only an approved change, and only over the content the critics read.
+    if (!polish.approved || polish.draft === doc.content) return { polish, receipt: null };
+    const receipt = await ctx.writeFile('write', file, polish.draft, { ifMatch: doc.sha256 });
+    return { polish, receipt };
   },
 });

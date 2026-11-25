@@ -12,7 +12,8 @@ what is specific to it. This page is the reference for every export; the one-scr
 - [Lenses](#lenses)
 - [Helpers](#helpers): [std.data](#stddata), [std.text](#stdtext), [std.exec](#stdexec)
 - [Flow](#flow): [untilDry](#untildry), [waves](#waves), [each](#each)
-- [The pattern contract](#the-pattern-contract)
+- [The pattern contract](#the-pattern-contract): [status and failures](#status-and-failures),
+  [result schemas](#result-schemas)
 - [Patterns](#patterns)
 - [Recipes](#recipes)
 - [Writing a pattern of your own](#writing-a-pattern-of-your-own)
@@ -33,16 +34,16 @@ The recipes in this checkout import `../../src/std/index.js` instead, as they im
 | `std.tiers`    | Claude model and effort tiers                                                        |
 | `std.limits`   | Claude turn, spend and time limits                                                   |
 | `std.personas` | Standing Claude system prompts, `join` and `ShellEtiquette`                          |
-| `std.roles`    | Complete roster entries that combine the four axes above                             |
+| `std.roles`    | Complete roster entries that combine the four axes above, and shell factories        |
 | `std.rosters`  | `readers` and `standard`, rosters of the roles                                       |
 | `std.bash`     | `Bash(...)` allowlist and deny rules for shell entries                               |
 | `std.types`    | Zod schemas for agent outputs and workflow data                                      |
-| `std.lenses`   | Catalogs of named lenses and `designRubric`                                          |
-| `std.data`     | Pure helpers: settled results, voting, deduplication, ranking, coverage, hashing     |
-| `std.text`     | Stable prompt and text formatting                                                    |
+| `std.lenses`   | Catalogs of named lenses, `designRubric` and `LensSchema`                            |
+| `std.data`     | Pure helpers: settled results, health, voting, deduplication, ranking, hashing       |
+| `std.text`     | Stable prompt text and Markdown reports                                              |
 | `std.exec`     | Durable command, Git and publication helpers                                         |
 | `std.flow`     | Team-free control flow: `untilDry`, `waves`, `each`                                  |
-| `std.patterns` | Team-typed patterns, their teams and option types, and `CallDefaults`                |
+| `std.patterns` | Team-typed patterns, their teams, option types and result schemas, `CallDefaults`    |
 
 The library follows these principles:
 
@@ -54,8 +55,9 @@ The library follows these principles:
 - **Released text is step identity.** Default prompts, schemas and their descriptions, persona and
   lens text, and a role's tools, model and effort are part of the identity of the calls that use
   them (its limits are not). They change only by adding a new name; changing one would refuse to
-  replay completed calls that sent it, as any prompt change does. The tests pin the persona texts by
-  digest, every schema's JSON Schema and the lens keys.
+  replay completed calls that sent it, as any prompt change does. The tests pin by digest the
+  persona texts, the released lens charters and the JSON Schema of every `std.types` schema and
+  pattern result schema, and they pin the lens keys.
 - **Patterns stay in-process.** A pattern is a function, not a child workflow, so a workflow needs
   no `children` entry to call one. Deciders cannot fill a team slot. The library ships no runnable
   package; the [recipes](#recipes) under `examples/patterns` show the patterns in complete workflows
@@ -111,17 +113,33 @@ never calls.
 | `CodexEditor`   | `codex.Edit`                                              | A Codex editor                                              | `write` | yes   |
 | `CodexMechanic` | `codex.Edit` + `effort: 'high'`                           | A Codex implementer; prepend `personas.Implementer`         | `write` | yes   |
 
-No role has a shell, since an allowlist is project-specific: build one with `std.claude.shell` or
-`std.claude.editShell` and `std.bash`, then spread a tier and a persona. Codex has no standing
-system prompt, so a Codex role carries no persona; prepend the persona's `appendSystemPrompt` to the
-prompt with `std.personas.join`.
+No role in the table has a shell, since an allowlist is project-specific. Three factories in
+`std.roles` give one from `std.bash` rules; `deny` defaults to `std.bash.noPush`:
+
+| Factory                         | Composition                                                                                        | Type                         |
+| ------------------------------- | -------------------------------------------------------------------------------------------------- | ---------------------------- |
+| `withShell(role, rules, deny?)` | The role with `claude.editShell` if its tools include Edit or Write, else `claude.shell`           | `ShellRole<R>`               |
+| `tester(rules, deny?)`          | `claude.shell` + `tiers.Mechanic` + `personas.Tester`                                              | `TesterRole`                 |
+| `fixer(rules, deny?)`           | `withShell(Mechanic, rules, deny)`: `claude.editShell` + `tiers.Mechanic` + `personas.Implementer` | `ShellRole<typeof Mechanic>` |
+
+Each joins `std.personas.ShellEtiquette` to the persona's `appendSystemPrompt` and returns a frozen
+entry equal to the hand-spelled spread; like any shell it is `exec`, so it needs a grant under
+`requireGrants`. `withShell` replaces the role's capability (tools, `allowedTools`,
+`disallowedTools` and the turn, spend and time limits) and keeps every other key, such as the tier,
+the persona and `expectsToolUse`; a description inherited from `claude.Text`, `ReadOnly` or `Edit`
+(as on `Reader` and `Editor`) becomes the shell's. It throws a `TypeError` for a Codex role (a Codex
+sandbox has no command allowlist), a role that already has `Bash`, or one with a tool outside Read,
+Grep, Glob, Edit and Write, such as `Researcher`'s web tools. `ShellableRole` is the type it accepts
+and `ShellFragment<T>` the shell a tools list gets. Codex has no standing system prompt, so a Codex
+role carries no persona; prepend the persona's `appendSystemPrompt` to the prompt with
+`std.personas.join`.
 
 `std.rosters.readers` declares the thirteen `none` and `read` roles (`Clerk`, `Writer`, `Scout`,
 `Reader`, `Researcher`, `Reviewer`, `Skeptic`, `Critic`, `Judge`, `Planner`, `Scribe`, `CodexReader`
-and `CodexReviewer`; type `ReaderRole`), so it needs no grant. `std.rosters.standard` declares all
-eighteen roles and needs grants for `Editor`, `Mechanic`, `Surgeon`, `CodexEditor` and
-`CodexMechanic`. A `defineRoster` result cannot be spread into another roster; to add an entry,
-build your own roster from `std.roles`.
+and `CodexReviewer`; type `ReaderRole`), so it needs no grant. `std.rosters.standard` declares the
+eighteen roles of the table (type `StandardRole`; not the factories) and needs grants for `Editor`,
+`Mechanic`, `Surgeon`, `CodexEditor` and `CodexMechanic`. A `defineRoster` result cannot be spread
+into another roster; to add an entry, build your own roster from `std.roles`.
 
 ```ts
 import { defineRoster } from 'quiet-choir';
@@ -131,15 +149,8 @@ export const roster = defineRoster({
   Reviewer: std.roles.Reviewer,
   Skeptic: std.roles.Skeptic,
   Fixer: { ...std.roles.Mechanic, ...std.limits.Long },
-  Checker: {
-    ...std.claude.shell([...std.bash.gitRead, ...std.bash.nodeCheck]),
-    ...std.tiers.Mechanic,
-    ...std.personas.Tester,
-    appendSystemPrompt: std.personas.join(
-      std.personas.Tester.appendSystemPrompt,
-      std.personas.ShellEtiquette,
-    ),
-  },
+  Checker: std.roles.tester([...std.bash.gitRead, ...std.bash.nodeCheck]),
+  Auditor: std.roles.withShell(std.roles.Reviewer, std.bash.gitRead),
 });
 ```
 
@@ -171,8 +182,9 @@ The agent-output schemas follow rules that both harnesses' structured output acc
   tables give. A list without a bound in the tables is unbounded.
 - Each field's `.describe()` text is what the agent reads, and it is part of call identity.
 
-The input-side `Sha`, `ShortSha`, `Sha256`, `Key`, `Argv` and `Receipt` use patterns or tuples:
-validate data with them, but do not request them from an agent.
+The input-side `Sha`, `ShortSha`, `Sha256`, `Key`, `Argv`, `Receipt`, `Commit` and `Criteria` use
+patterns, formats, tuples, unions or an array root: validate data with them, but do not request them
+from an agent.
 
 ### Primitives and input helpers
 
@@ -187,6 +199,8 @@ validate data with them, but do not request them from an agent.
 | `Argv`                          | Input-side: `[program, ...args]`, a `Command` for `ctx.exec`                                       |
 | `limit(defaultValue, max, min)` | A bounded integer input with a default (see below)                                                 |
 | `Receipt`                       | Input-side: the `WriteFileResult` of `ctx.writeFile` or `std.exec.committedArtifact`               |
+| `Commit`                        | Input-side: one commit as `std.exec.log` returns it (see below)                                    |
+| `Criteria`                      | Input-side: a non-empty list of nonblank strings or `Criterion`s, as `checklist` takes them        |
 | `CheckOutcome`                  | What `std.exec.check` returns: `passed`, `code`, `signal`, `output` (may be empty) and `truncated` |
 | `Rationale`                     | Non-empty text: why, citing the evidence that decided it                                           |
 | `Evidence`                      | Non-empty text: file:line references, command output or quotes                                     |
@@ -199,6 +213,11 @@ letter (`C:/x`, `C:x`), backslash or NUL, and no `.`, `..`, empty or `.git` segm
 `z.int().min(min).max(max).default(defaultValue)`, so an input object declares a limit in one line.
 It throws a `TypeError` unless every argument is a safe integer, and a `RangeError` unless
 `min <= defaultValue <= max`.
+
+A `Commit` is `sha` (a `Sha`), `shortSha` (a `ShortSha`), `author` (the name as recorded), `date`
+(the author date in strict ISO 8601 with its UTC offset) and `subject` (the message's first
+paragraph on one line; empty when the message is). `Criteria` refuses an empty list and a blank
+string criterion.
 
 ### Enums
 
@@ -224,6 +243,8 @@ Each enum lists its values in this order.
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | `Finding`         | `title` (at most 200), `file` (`RepoPath`), `line` (integer from 1, or null), `severity`, `evidence`, `failureScenario`   |
 | `Findings`        | `findings`: at most 20 `Finding`s; may be empty                                                                           |
+| `Remediation`     | The `Finding` fields and `fix`, the concrete change that resolves the defect                                              |
+| `Remediations`    | `remediations`: at most 20 `Remediation`s, most severe first; may be empty                                                |
 | `Refutation`      | `refuted` (true unless the evidence shows the claim holds), `reasoning`                                                   |
 | `Ballot`          | `yes`, `reasoning`                                                                                                        |
 | `Approval`        | `approved`, `feedback` (may be empty); no descriptions, exactly the schema `reviewRevise` sends                           |
@@ -241,6 +262,8 @@ Each enum lists its values in this order.
 | `Claims`          | `claims`: at most 20 `Citation`s; may be empty                                                                            |
 | `Lead`            | `ref` (a URL, path, package or identifier), `why`                                                                         |
 | `Leads`           | `leads`: at most 10 `Lead`s, best first                                                                                   |
+| `Question`        | `question`, `why` (what depends on the answer), `answerFrom` (who can answer it or where to look), `blocking`             |
+| `Questions`       | `questions`: at most 20 `Question`s, blocking ones first; may be empty                                                    |
 | `Hypothesis`      | `id` (at most 64), `cause`, `mechanism`, `predictions` (1 to 5)                                                           |
 | `Hypotheses`      | `hypotheses`: 1 to 8 `Hypothesis` entries                                                                                 |
 | `Falsification`   | `verdict` (`FalsificationVerdict`), `reasoning`, `checked`                                                                |
@@ -281,24 +304,35 @@ it unchanged in step IDs. `std.lenses.lens(key, charter)` makes a frozen lens an
 for a key that is not a clean segment or a blank charter. Charters are prompt text and so call
 identity; every catalog and lens is frozen, and keys are unique within each catalog.
 
-| Catalog    | Keys                                                                                                                                        |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `bugs`     | `error-handling`, `boundaries`, `concurrency`, `resource-lifecycle`, `state-machines`, `contracts`, `time-and-ordering`, `input-validation` |
-| `review`   | `correctness`, `security`, `performance`, `maintainability`, `tests`                                                                        |
-| `security` | `injection`, `access-control`, `secrets`, `data-exposure`, `untrusted-input`, `supply-chain`, `cryptography`                                |
-| `design`   | `ship-simplest`, `evolvability`, `data-first`, `operability-first`                                                                          |
-| `research` | `official-docs`, `source-code`, `issues-and-discussions`, `independent-analysis`, `alternatives`                                            |
-| `release`  | `tests`, `compatibility`, `security`, `performance`, `docs`, `operability`                                                                  |
-| `writing`  | `accuracy`, `completeness`, `clarity`, `structure`                                                                                          |
+| Catalog        | Keys                                                                                                                                        |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bugs`         | `error-handling`, `boundaries`, `concurrency`, `resource-lifecycle`, `state-machines`, `contracts`, `time-and-ordering`, `input-validation` |
+| `review`       | `correctness`, `security`, `performance`, `maintainability`, `tests`                                                                        |
+| `security`     | `injection`, `access-control`, `secrets`, `data-exposure`, `untrusted-input`, `supply-chain`, `cryptography`                                |
+| `design`       | `ship-simplest`, `evolvability`, `data-first`, `operability-first`                                                                          |
+| `research`     | `official-docs`, `source-code`, `issues-and-discussions`, `independent-analysis`, `alternatives`                                            |
+| `release`      | `tests`, `compatibility`, `security`, `performance`, `docs`, `operability`                                                                  |
+| `writing`      | `accuracy`, `completeness`, `clarity`, `structure`                                                                                          |
+| `evidence`     | `diffs`, `logs`, `config`, `dependencies`, `recent-changes`                                                                                 |
+| `requirements` | `stories`, `edge-cases`, `non-functional`, `foundations`, `instrumentation`                                                                 |
+| `spec`         | `data-model`, `api-contracts`, `architecture`, `edge-semantics`, `operations`                                                               |
+| `critique`     | `ambiguity`, `scope`, `feasibility`, `testability`                                                                                          |
 
 Four catalogs are pattern defaults: `bugs` is the lens pool of `hunt`, `design` the entrants of
 `tournament` (each charter is a designer's stance, written to the proposer), `research` the angles
 of `research`, and `release` the dimensions of `gate`. `review`, `security` and `writing` suit
-`lensPanel` and `critiqueRevise`.
+`lensPanel` and `critiqueRevise`. `evidence` names where to look when investigating a failure, as
+the lenses of a `lensPanel` or the `angles` of a repository `research`; `requirements`, `spec` and
+`critique` suit `critiqueRevise` or `lensPanel` over requirements, a technical specification or a
+plan before work starts.
 
 `std.lenses.designRubric` is the default `rubric` of `tournament`: a frozen record of the criteria
 `fitness`, `simplicity`, `evolvability` and `operability`, each mapped to what a 1 to 10 score on it
 measures. Pass it to `std.types.rubric` for a score sheet.
+
+`std.lenses.LensSchema` (`z.ZodType<Lens>`) is the schema of a lens in workflow data and in the
+pattern result schemas. It checks the shape only, two strings, and strips any other member, so every
+lens a pattern accepts parses; `lens` is what checks a key and a charter.
 
 ```ts
 const lenses = [
@@ -320,6 +354,7 @@ that names the argument; the checks `assertUnique`, `assertDisjoint` and `topoWa
 | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | `oks(results)`                        | The values of the `ok` settled results, in order                                                                 |
 | `failures(results)`                   | The errors of the failed settled results, in order                                                               |
+| `health(...parts)`                    | `'degraded'` when any part is degraded or a positive failure count, else `'complete'` (see below)                |
 | `majority(seats)`                     | `floor(seats / 2) + 1`: 2 of 3, 3 of 4, 3 of 5                                                                   |
 | `threshold(rule, seats)`              | The upholding seats a `Rule` needs: `'majority'`, `'unanimous'` (all) or `{ atLeast: n }` with `1 <= n <= seats` |
 | `tally(counts, rule = 'majority')`    | `{ outcome, upheld, against, missing, seats }` from `{ upheld, against, seats }`; see below                      |
@@ -342,11 +377,20 @@ that names the argument; the checks `assertUnique`, `assertDisjoint` and `topoWa
 | `findingKey(finding)`                 | `<file>::<normalizeTitle(title)>`, the deduplication key of a located finding                                    |
 | `topoWaves(items, key, dependsOn)`    | Dependency waves, input order within a wave (see below)                                                          |
 
+`health` combines the health of several steps, such as the patterns a workflow ran and the failures
+it tolerated itself. Each part is a failure count, a `Health` (`'complete'` or `'degraded'`) or a
+result with such a `status`, as every pattern result has; no part gives `'complete'`. It throws a
+`TypeError` naming `parts[i]` (or `parts[i].status`) for a count that is not a nonnegative integer
+or a status that is neither value. `canonicalJson` and `digest` take any JSON value, read-only
+arrays and interface-typed results included (the parameter is `unknown`), and check it at run time.
+
 `tally` decides with `need = threshold(rule, seats)`: `confirmed` when `upheld >= need`, `refuted`
 when `upheld + missing < need`, else `undecided`, where `missing = seats - upheld - against`. A
-missing seat, such as a failed agent call, never counts for either side. The types `Rule`,
-`Outcome`, `TallyCounts`, `Tally`, `Corroborated`, `RankCapOptions`, `RankCapResult` and `Coverage`
-describe the arguments and results.
+missing seat, such as a failed agent call, never counts for either side. The types `Health`,
+`HealthPart`, `Rule`, `Outcome`, `TallyCounts`, `Tally`, `Corroborated`, `RankCapOptions`,
+`RankCapResult` and `Coverage` describe the arguments and results. `Health` and `Coverage` are also
+schemas (`z.enum(['complete', 'degraded'])` and a strict `{ covered, missing }`), which the pattern
+result schemas use.
 
 `assertDisjoint` throws when two items claim the same path, or one claims a directory that contains
 another's path (`src` and `src/a.ts`); trailing slashes are ignored, and the empty path is the root,
@@ -367,6 +411,8 @@ const ballots = std.data.oks(votes);
 const upheld = ballots.filter((ballot) => ballot.yes).length;
 const verdict = std.data.tally({ upheld, against: ballots.length - upheld, seats: 3 });
 // verdict.outcome is 'confirmed', 'refuted' or 'undecided'; verdict.missing counts failed seats.
+// With `review`, an earlier pattern result: 'degraded' when it was or a seat failed.
+const status = std.data.health(review, verdict.missing);
 ```
 
 ### std.text
@@ -387,13 +433,29 @@ them replays.
 | `stripAnsi(text)`                               | `text` without ANSI escape sequences                                                                 |
 | `slug(text, max = 50)`                          | A lowercase, hyphen-separated ASCII slug for branch, file or label names (use `ctx.id` for step IDs) |
 | `firstSentence(text)`                           | The first sentence of the first paragraph, whitespace collapsed                                      |
+| `findings(list)`                                | `Finding`s or `Remediation`s as a numbered list: severity, title, location, evidence, scenario, fix  |
+| `checklist(result)`                             | A checklist result: the verdict, how many passed, one bullet per criterion with status and evidence  |
+| `gate(result)`                                  | A gate result: the decision, one bullet per dimension with disposition, summary and evidence         |
+| `plan(value)`                                   | A `Plan`: the summary, the numbered steps with their files, then the risks and the checks            |
+| `commits(list)`                                 | `Commit`s as bullets: the short ID, the subject, the author and the day, in the order given          |
 
 `brief` renders `task`, then `## Context`, `## Guidance` (a bulleted list) and `## Output`, each
 section separated by a blank line. Absent sections and an empty guidance list are omitted, and
 nothing else is added or trimmed. A string `context` is inserted as written, and any other JSON
-value as a fenced `json` block of its two-space indented form (`std.exec.json`). It throws a
-`TypeError` for a blank task. The type `BriefParts` describes its argument; every default std prompt
-uses it.
+value, such as a read-only array or a pattern result typed by an interface, as a fenced `json` block
+of its two-space indented form (`std.exec.json`); an `undefined` object member is omitted. It throws
+a `TypeError` for a blank task, and for a context that is not JSON (a non-finite number, a function,
+a symbol, a BigInt, a class instance such as a `Date`, an array hole or `undefined` element, or a
+cycle) with the path, as in `A brief's context is not JSON at $.files[1]: ...`. The type
+`BriefParts` describes its argument; every default std prompt uses it.
+
+The report renderers turn std data and pattern results into Markdown for a pull request comment, a
+log or a later prompt. They are pure, and once a rendering is used in a prompt it is part of that
+call's identity, so their layouts are fixed once released. `findings` prints `No findings.` and
+`commits` `No commits.` for an empty list; `checklist` shows `(no result)` and `gate` says the
+assessor call failed for a failed call. `checklist` and `gate` take the structural `ChecklistReport`
+(`verdict`, `results` of `ChecklistReportEntry`) and `GateReport` (`decision`, `assessments` of
+`GateReportDimension`), so a `ChecklistResult` or `GateResult` passes as it is.
 
 `clip` keeps the longest prefix of whole code points that fits with `marker` (default
 `\n… (clipped)`), so the result is valid text. It throws a `TypeError` when text must be clipped and
@@ -415,8 +477,14 @@ const prompt = std.text.brief({
 Each command helper records one `ctx.exec` step under the `id` you give it, scoped like any
 `ctx.exec` call, so a resume returns the saved result instead of running the command again. The
 `options` argument is `ctx.exec` options without `onError` (such as `cwd`, `worktree`, `env` or
-`maxOutputBytes`); a forwarded `onError` is overridden. A range argument that is empty, starts with
-`-` or contains NUL throws a `TypeError` before any effect.
+`maxOutputBytes`); a forwarded `onError` is overridden.
+
+Every helper that takes a revision range (`diff`, `diffStat`, `changedFiles`, `commits` and `log`)
+follows one rule: a range that is empty, starts with `-` or contains NUL throws
+`TypeError: Expected a Git revision or range such as main..HEAD, got ...` before any effect, since
+Git would read it as an option, so text from data cannot change the command. `git branch` and
+`git tag` refuse names that start with `-`; name any other such ref in full, as in `refs/heads/-x`.
+`diffStat` and `log` also pass the range after `--end-of-options`.
 
 - `json(value)` records nothing. It returns two-space indented JSON, the form prompts embed, and
   throws `Value is not JSON-serializable` for `undefined`, a function or a symbol.
@@ -443,8 +511,20 @@ Each command helper records one `ctx.exec` step under the `id` you give it, scop
 - `changedFiles(ctx, id, range?, options?)` records
   `git diff --name-only -z --no-renames --no-relative [range] --` and returns the paths exactly as
   stored; rename detection is off, so a rename lists both paths.
+- `diffStat(ctx, id, range?, options?)` records
+  `git -c core.quotePath=false diff --stat=10000,10000 --stat-graph-width=40 --no-color --no-ext-diff --no-relative --end-of-options [range] --`
+  and returns the summary: one line per file with its changed-line count and graph, then a total
+  line; empty when nothing differs. The fixed widths ignore `COLUMNS` and `diff.statNameWidth`, so
+  no path is abbreviated, and non-ASCII paths are not quoted.
 - `commits(ctx, id, range, options?)` records `git rev-list --reverse <range> --` and returns full
   commit IDs, oldest first. It throws when a line is not a full object ID.
+- `log(ctx, id, range, options?)` records
+  `git -c core.abbrev=auto log -z --reverse --no-color --no-show-signature --encoding=UTF-8 --format=%H%x00%h%x00%an%x00%aI%x00%s --end-of-options <range> --`
+  and returns a `std.types.Commit` per commit, oldest first as `commits` lists them: the full ID and
+  its abbreviation at Git's default length (at least 7 characters, whatever `core.abbrev` the
+  repository sets), the author name as recorded (no mailmap), the strict ISO 8601 author date and
+  the subject. The fields are NUL-separated, so any name or subject parses exactly. It throws
+  `Unexpected git log output (<id>)` for a record that does not parse.
 - `committedArtifact(ctx, path, content)` records the fixed IDs `document`, `write` and `publish`
   (below) and returns a `Receipt`: the absolute target under `ctx.cwd`, the content's SHA-256 and
   byte length, and `previousSha256: null`.
@@ -454,12 +534,12 @@ and no signal. Its `output` is the end of stdout followed by stderr, at most 400
 a failure only the saved 1024-character tail of each stream remains, and when both are empty
 `output` is the failure message. `truncated` reports that `output` may leave something out.
 
-`diff` and `changedFiles` without a range cover the unstaged changes; pass `HEAD` for every
-uncommitted change to tracked files, or a range such as `main...HEAD`. Untracked files are never
-included. `status` shows a path with unusual characters quoted as Git quotes it; use `changedFiles`
-for exact paths. `assertClean` records the status, so a resume decides the same way even after the
-tree changes. Under `--dry-run`, a command's stdout is empty, so `head` throws unless an exec
-fixture answers its `id`.
+`diff`, `diffStat` and `changedFiles` without a range cover the unstaged changes; pass `HEAD` for
+every uncommitted change to tracked files, or a range such as `main...HEAD`. Untracked files are
+never included. `status` shows a path with unusual characters quoted as Git quotes it; use
+`changedFiles` for exact paths. `assertClean` records the status, so a resume decides the same way
+even after the tree changes. Under `--dry-run`, a command's stdout is empty, so `head` throws unless
+an exec fixture answers its `id`.
 
 `committedArtifact` publishes a new file through a managed checkout: it creates the worktree
 `document`, writes `content` to `path` in the local step `write` (identified by the constant
@@ -475,6 +555,8 @@ const base = await std.exec.head(ctx, 'base');
 const tests = await std.exec.check(ctx, 'tests', ['npm', 'test']);
 if (!tests.passed) ctx.log(`Tests failed:\n${tests.output}`);
 const touched = await std.exec.changedFiles(ctx, 'touched', `${base}..HEAD`);
+const made = await std.exec.log(ctx, 'made', `${base}..HEAD`); // std.types.Commit[]
+ctx.log(std.text.commits(made));
 ```
 
 ## Flow
@@ -487,7 +569,11 @@ fingerprint covers its source; their items must be plain lossless JSON.
 ### untilDry
 
 `std.flow.untilDry(ctx, { id, rounds, patience?, key, round })` repeats a discovery round until it
-stops finding anything new. Options `UntilDryOptions<T>`; a round returns an `UntilDryRound<T>`.
+stops finding anything new. Options `UntilDryOptions<T, K>`; a round returns an `UntilDryRound<T>`.
+`T`, the item type, is inferred from what `round` returns; `K`, the type `key` reads and `round`'s
+`known` items have, defaults to `T` and may be wider, so a `key` such as `std.data.findingKey`,
+which reads only a file and a title, does not narrow the items. Write `untilDry<Finding>(...)` to
+type `known` fully.
 
 | Option     | Default  | Meaning                                                                                     |
 | ---------- | -------- | ------------------------------------------------------------------------------------------- |
@@ -504,7 +590,7 @@ never ends the loop early. The loop stops after `patience` consecutive dry round
 rounds.
 
 The result (`UntilDryResult`) is `found` (every distinct item, in discovery order), `rounds`,
-`dryRounds`, `failedRounds` and `status`: `'dry'` when `patience` dry rounds ended it, else
+`dryRounds`, `failedRounds` and `ended`: `'dry'` when `patience` dry rounds ended it, else
 `'round-limit'`. It throws `TypeError` for an invalid `rounds` or `patience`, or a round that
 returns no `found` array or an invalid `failed`.
 
@@ -528,15 +614,15 @@ const hunt = await std.flow.untilDry(ctx, {
 `std.flow.waves(ctx, { id, items, key, dependsOn, concurrency?, version?, run })` runs items in
 dependency order. Options `WavesOptions<T, U>`.
 
-| Option        | Default  | Meaning                                                                            |
-| ------------- | -------- | ---------------------------------------------------------------------------------- |
-| `id`          | required | The scope of every wave's settled map                                              |
-| `items`       | required | The items, each plain lossless JSON                                                |
-| `key`         | required | An item's unique key, which `dependsOn` refers to                                  |
-| `dependsOn`   | required | The keys of the items that must succeed first                                      |
-| `concurrency` | 4        | Each wave's mapper bound                                                           |
-| `version`     | none     | The map's `version`, for dependencies the items, keys and `run` source do not show |
-| `run`         | required | `(item, index) => Promise<U>`, the mapper; `index` counts the items its wave runs  |
+| Option        | Default  | Meaning                                                                           |
+| ------------- | -------- | --------------------------------------------------------------------------------- |
+| `id`          | required | The scope of every wave's settled map                                             |
+| `items`       | required | The items, each plain lossless JSON                                               |
+| `key`         | required | An item's unique key, which `dependsOn` refers to                                 |
+| `dependsOn`   | required | The keys of the items that must succeed first                                     |
+| `concurrency` | 4        | Each wave's mapper bound                                                          |
+| `version`     | none     | The map's `version`, for what the items, keys and `run` source do not show        |
+| `run`         | required | `(item, index) => Promise<U>`, the mapper; `index` counts the items its wave runs |
 
 The waves are planned with `std.data.topoWaves` before anything runs, so a duplicate key, an unknown
 dependency or a cycle throws `Invalid dependencies: ...`, and an invalid `concurrency` a
@@ -547,6 +633,10 @@ without running, and a wave with nothing left to run records no map. The result 
 `results` (one `WaveItem` per item, in input order: `key`, `item`, `status` of `'done'`, `'failed'`
 or `'skipped'`, `value` and `error`), `waves` (the planned keys) and `status` (`'complete'` when
 every item is done, else `'degraded'`).
+
+`version` covers what an item does not show, such as the configuration of an agent `run` calls: a
+completed item is reused after a role changes, so change `version` when you change the agent. `each`
+takes `version` the same way.
 
 `run` decides what counts as done: to skip the dependents of an agent's partial work, throw from
 `run` when its report is not done, as the [plan-and-build recipe](#recipes) does.
@@ -576,24 +666,29 @@ Every pattern in `std.patterns` is a function `pattern(ctx, options)` and keeps 
   `XTeam.from(options.team)` before any effect, so an unfilled slot throws
   `TypeError: Team slot <name> is not filled.` instead of being journaled as a failed call.
   `XTeam.from(ctx.roster)` fills a team whose roster entries use the slot names.
-- **Validation before effects.** Counts, lists and text options are checked before any effect; an
-  invalid one throws a `TypeError` that names it. Item keys that must be distinct, such as `rank`'s
-  or `classify`'s item keys or `checklist`'s criterion IDs, throw an `Error` that lists the repeats
-  (`Duplicate item key: ...`); keys that only name steps, such as lens keys, are made unique
+- **Validation before effects.** Counts, lists and the text options each section lists under "Fails
+  the run" (a blank `brief`, `task` or `question`, for example) are checked before any effect; an
+  invalid one throws a `TypeError` that names it. Other text, such as `vote`'s `question` or a
+  `subject` that a section does not list, is used as given. Item keys that must be distinct, such as
+  `rank`'s or `classify`'s item keys or `checklist`'s criterion IDs, throw an `Error` that lists the
+  repeats (`Duplicate item key: ...`); keys that only name steps, such as lens keys, are made unique
   instead.
-- **Settled failures and `status`.** Where a pattern tolerates a failed agent (a seat, a lens, a
-  chunk, a critic, a fixer), the call runs in a settled map or with `onError: 'return'`, so the
-  failure is journaled and a resume makes the same decision instead of retrying it into another. The
-  result reports failure counts and a `status` instead of a silently shorter list. A call the
-  pattern cannot do without (an author, a planner, a reducer, a synthesizer) throws, and a resume
-  retries it.
+- **Settled failures.** Where a pattern tolerates a failed agent (a seat, a lens, a chunk, a critic,
+  a fixer), the call runs in a settled map or with `onError: 'return'`, so the failure is journaled
+  and a resume makes the same decision instead of retrying it into another. The result counts it in
+  `failures` and reports a [health `status`](#status-and-failures) instead of a silently shorter
+  list. A call the pattern cannot do without (an author, a planner, a reducer, a synthesizer)
+  throws, and a resume retries it.
 - **Fingerprints and `version`.** A settled map's items carry the rendered prompt
   (`std.text.promptText`) and the calls' placement (`cwd`, `addDirs` and `worktree`), and where a
   pattern builds the reply schema from data, the data it is built from. Changing a prompt, an input
   a prompt shows or the placement therefore refuses to replay the completed map. `version` is the
   map's `version`: change it when something the items do not show, such as a replacement `schema`,
-  should not reuse completed calls. A single call's prompt, schema and placement are part of its own
-  step identity.
+  should not reuse completed calls. The agent's configuration (model, effort, tools, persona and
+  bound `addDirs`) is not part of an item either, so a completed item is reused after a role
+  changes, where a direct call to the changed agent would refuse to replay: change `version` when
+  you change the agent that fills a slot. A single call's prompt, schema, placement and agent
+  configuration are part of its own step identity.
 - **`calls`.** `calls` (type `std.patterns.CallDefaults`, the bound call options without `prompt`
   and `onError`: `cwd`, `addDirs`, `worktree`, `retry`, `timeoutMs` and `idleTimeoutMs`) is spread
   into every agent call the pattern makes, before the pattern's own prompt, schema and error mode.
@@ -622,8 +717,89 @@ const hunt = await std.patterns.hunt(ctx, {
   team: { finder: ctx.roster.Reviewer, skeptic: ctx.roster.Skeptic },
   subject: 'The parser in src/parser/.',
 });
-for (const { item } of hunt.confirmed) ctx.log(`${item.severity}: ${item.file}: ${item.title}`);
+for (const item of hunt.findings) ctx.log(`${item.severity}: ${item.file}: ${item.title}`);
 ```
+
+### Status and failures
+
+Every pattern result reports its health, not its outcome, in `status`: `'complete'` when every call
+the pattern tolerates answered, and `'degraded'` exactly when at least one failed. `failures` counts
+those failed calls, beside the specific counters such as `failedVotes` or `failedChunks`. What the
+pattern decided is in named fields, such as `outcome` (`vote`, `fixUntilGreen`, `escalate`,
+`tournament`, `approvedPlan`), `verdict` (`checklist`), `decision` (`gate`), `approved`
+(`critiqueRevise`), `confidence` (`falsify`), `answered` (`research`), `ranked` (`rank`), `repaired`
+(`decompose`), `fallback` (`route`), `ended` (`hunt`) and the `confirmed`, `refuted` and `undecided`
+lists (`verify`, `hunt`). A degraded result can still hold a decision, and a complete one can say
+no.
+
+- A pattern whose calls are all required (`rank`, `decompose` and `approvedPlan`) always reports
+  `'complete'` and `failures: 0`.
+- `route` is degraded, with `failures: 1`, when its router call failed and it took the fallback.
+- `isolatedEdits` is also degraded by a change outside its owned paths or a merge conflict;
+  `failures` counts only the failed edit calls.
+- `std.flow.waves` and `std.flow.each` report `'degraded'` when an item failed (or, in `waves`, was
+  skipped); `untilDry` has no `status` and reports why it stopped in `ended`.
+- `reviewRevise` and `tolerantPanel` keep their older results, without `status` or `failures`.
+
+`std.data.health(...parts)` combines the status of several results with failure counts of your own,
+as the [code review recipe](#recipes) does: `std.data.health(panel, verdicts)`.
+
+### Result schemas
+
+Every pattern result interface `XResult` has a Zod schema exported from `std.patterns` under the
+same name and typed `z.ZodType<XResult>`, so the compiler proves the schema matches the interface.
+Declare one as a workflow's `output` to return a pattern's result as it is, or parse a saved result
+with it. A generic result's schema is a factory that takes the schema of what varies:
+
+| Schema                                                   | What the argument is                                                                  |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `LensPanelResult(value)`                                 | Each answer's schema: the panel's `schema`                                            |
+| `VerifyResult(item)`, `RankResult(item)`                 | The items' schema, such as `std.types.Finding`                                        |
+| `EscalateResult(value?)`                                 | The attempts' `schema`; omitted, `std.types.WorkReport`                               |
+| `RouteResult(routes?)`                                   | The `routes` option or a list of its keys, so `route` is checked; omitted, any string |
+| `ClassifyResult(item, labels?)`                          | The items' schema and the `labels` option or its names; omitted, any label            |
+| `MapReduceResult(part?)`, `TolerantPanelResult(answer?)` | Each chunk's or answer's `schema`; omitted, text                                      |
+
+The others are plain schemas: `VoteResult`, `HuntResult`, `CritiqueReviseResult`,
+`FixUntilGreenResult`, `TournamentResult`, `DecomposeResult`, `ChecklistResult`, `GateResult`,
+`FalsifyResult`, `ResearchResult`, `IsolatedEditsResult`, `ApprovedPlanResult` and
+`ReviewReviseResult`. `TournamentResult` checks each standing's `criteria` as a record of numbers,
+so a result over any rubric parses. The parts have schemas too: `LensAnswer(value)`,
+`Verified(item)`, `EscalationSlot`, `FixRound`, `TournamentEntry`, `Standing`,
+`Assignment(item, labels?)`, `LabelCount(labels?)`, `MapReducePart(part?)`, `ChecklistEntry`,
+`ChecklistCounts`, `GateDisposition`, `GateChallenge`, `GateDimension`, `TestedHypothesis`,
+`FalsifyConfidence`, `EditChange`, `EditViolation` and `MergeResult` (the runtime's `ctx.merge`
+result), with `std.lenses.LensSchema`, `std.data.Health` and `std.data.Coverage`. The `std.flow`
+results have none.
+
+Each result root is a strict object: every property is required and an extra one is refused, counts
+are nonnegative integers, and `status` is `std.data.Health`. No schema uses a transform, so each
+converts to JSON Schema. A workflow's output schema is part of a run's compatibility check, so a
+changed result schema would make a resume report `output schema` as changed; the tests pin each
+schema's JSON Schema by digest. `RouteResult`, `ClassifyResult`, `Assignment` and `LabelCount` throw
+a `TypeError` for empty `routes` or `labels`.
+
+```ts
+import { defineRoster, defineWorkflow, z } from 'quiet-choir';
+import * as std from 'quiet-choir/std';
+
+export default defineWorkflow({
+  name: 'fix-tests',
+  version: '1',
+  roster: defineRoster({ Mechanic: std.roles.Mechanic, Surgeon: std.roles.Surgeon }),
+  input: z.object({ check: std.types.Argv }),
+  output: std.patterns.FixUntilGreenResult, // outcome, fixedBy, checks, fixes, failures, status
+  run: (ctx, { check }) =>
+    std.patterns.fixUntilGreen(ctx, {
+      id: 'fix',
+      team: { mechanic: ctx.roster.Mechanic, surgeon: ctx.roster.Surgeon },
+      check,
+    }),
+});
+```
+
+A factory's result goes wherever a schema does, as in
+`output: z.object({ review: std.patterns.VerifyResult(std.types.Finding), notes: z.string() })`.
 
 ## Patterns
 
@@ -655,7 +831,9 @@ for (const { item } of hunt.confirmed) ctx.log(`${item.severity}: ${item.file}: 
 step ID is made unique and ID-safe with `std.data.uniqueKeys`, so a clean unique key stays as it is
 and a repeated one gets `.2`, `.3`, ... Unless a section says otherwise, every pattern takes the
 common options `id`, `team`, `prompts`, `concurrency` (default 4), `version` and `calls` described
-in [the pattern contract](#the-pattern-contract); the tables list the rest.
+in [the pattern contract](#the-pattern-contract); the tables list the rest. Each result has a
+[schema](#result-schemas) of its name, and its `failures` and `status` follow
+[the status rule](#status-and-failures).
 
 ### lensPanel
 
@@ -674,8 +852,8 @@ Team `LensTeam`: `reader`, a read-only entry such as `std.roles.Reviewer` for co
 | `prompts.read` | default prompt               | `(lens, subject) => prompt`; `task` is then unused    |
 
 Result: `results` (`LensAnswer<O>`: `{ lens, value }` for each lens that answered, in lens order),
-`failed` (the lenses whose call failed), `quorum` (more than half answered) and `status`
-(`'complete'` or `'degraded'`).
+`failed` (the lenses whose call failed), `quorum` (more than half answered), `failures` (the failed
+lenses) and `status`. Schema: `LensPanelResult(value)`.
 
 Steps: the settled map `<id>/lens`, keyed by lens key, so lens `k` records `<id>/lens/<k>/read`.
 
@@ -703,8 +881,9 @@ Team `VoteTeam`: `voter`, a read-only judging entry such as `std.roles.Judge` or
 
 Result: `outcome` (`'yes'` when the yes votes reach the threshold, `'no'` when they cannot reach it
 even if every missing seat voted yes, else `'undecided'`), `yes`, `no`, `missing`, `seats`,
-`reasons` (each answering seat's reasoning prefixed `yes: ` or `no: `) and `status`. The decision is
-`std.data.tally`. The default prompt names no as the safe default.
+`reasons` (each answering seat's reasoning prefixed `yes: ` or `no: `), `failures` (the same as
+`missing`) and `status`. The decision is `std.data.tally`. The default prompt names no as the safe
+default. Schema: `VoteResult`.
 
 Steps: the settled map `<id>/seat`, so seat `n` records `<id>/seat/<n>/ballot` (schema
 `std.types.Ballot`).
@@ -712,7 +891,8 @@ Steps: the settled map `<id>/seat`, so seat `n` records `<id>/seat/<n>/ballot` (
 Fails the run: an unfilled slot, an invalid `seats` or `concurrency`, or a rule invalid for `seats`,
 before any effect. Journaled as data: a failed seat, counted as missing and never as a vote.
 
-Recipe: none of the recipes calls `vote`; it has the panel shape of `verify` for one question.
+Recipe: [std-vote](../examples/patterns/std-vote.workflow.ts), a unanimous merge-safety vote over a
+range's diff.
 
 ### verify
 
@@ -725,7 +905,7 @@ Team `VerifyTeam`: `skeptic`, a high-effort read-only entry such as `std.roles.S
 | ---------------- | -------------------------------------- | ------------------------------------------------------------------------ |
 | `items`          | required                               | The claims, such as findings; each gets its own panel                    |
 | `key`            | the index                              | `(item, index) => label` for the step IDs, such as `std.data.findingKey` |
-| `claim`          | a string item itself, else fenced JSON | `(item) => text`, the claim a skeptic judges                             |
+| `describe`       | a string item itself, else fenced JSON | `(item) => text`, the claim a skeptic judges                             |
 | `context`        | none                                   | What the claims are about, shown under each claim                        |
 | `seats`          | 3                                      | Skeptics per item, or `(item) => number`, called once per item           |
 | `rule`           | `'majority'`                           | How many upholding seats confirm an item                                 |
@@ -734,8 +914,9 @@ Team `VerifyTeam`: `skeptic`, a high-effort read-only entry such as `std.roles.S
 
 Result: `confirmed`, `refuted` and `undecided`, each a list of `Verified<T>` in input order (`key`,
 `item`, `outcome`, `upheld`, `against`, `missing`, `seats` and `reasons` prefixed `upheld: ` or
-`refuted: `), `failedVotes` and `status`. A seat upholds with `refuted: false`; the default prompt
-names `refuted: true` as the safe default when the evidence is inconclusive.
+`refuted: `), `failedVotes`, `failures` (the same) and `status`. A seat upholds with
+`refuted: false`; the default prompt names `refuted: true` as the safe default when the evidence is
+inconclusive. Schema: `VerifyResult(item)`.
 
 Steps: the settled map `<id>/item`, keyed by item key; each item is the settled map
 `<id>/item/<key>/seat`, so seat `n` records `<id>/item/<key>/seat/<n>/verdict` (schema
@@ -756,22 +937,25 @@ prompts `HuntPrompts` (which extends `VerifyPrompts`), result `HuntResult`.
 Team `HuntTeam`: `finder`, a read-only reviewer such as `std.roles.Reviewer`; `skeptic`, a
 high-effort read-only entry such as `std.roles.Skeptic`.
 
-| Option           | Default           | Meaning                                                                          |
-| ---------------- | ----------------- | -------------------------------------------------------------------------------- |
-| `subject`        | required          | Where to hunt: finders get it as context, and skeptics see it under each finding |
-| `lenses`         | `std.lenses.bugs` | The lens pool                                                                    |
-| `perRound`       | 3                 | Lenses per round: round `n` runs `std.data.rotate(lenses, n, perRound)`          |
-| `rounds`         | 4                 | The most rounds                                                                  |
-| `patience`       | 2                 | Consecutive dry rounds that end the hunt once every lens has run                 |
-| `seats`          | 3                 | Skeptics per finding, or `(finding) => number`                                   |
-| `rule`           | `'majority'`      | How many upholding seats confirm a finding                                       |
-| `maxCalls`       | unlimited         | The most agent calls, finders and seats together                                 |
-| `prompts.find`   | default prompt    | `(lens, subject, known) => prompt`; `known` is every finding of earlier rounds   |
-| `prompts.verify` | default prompt    | As for `verify`                                                                  |
-| `concurrency`    | 4                 | How many finders, and separately how many findings' panels, run at once          |
+| Option           | Default           | Meaning                                                                                               |
+| ---------------- | ----------------- | ----------------------------------------------------------------------------------------------------- |
+| `subject`        | required          | Where to hunt: finders get it as context, and skeptics see it under each finding                      |
+| `task`           | none              | The find prompt's opening sentence, such as `Hunt for defects in the diff below.`                     |
+| `lenses`         | `std.lenses.bugs` | The lens pool                                                                                         |
+| `perRound`       | 3                 | Lenses per round: round `n` runs `std.data.rotate(lenses, n, perRound)`                               |
+| `rounds`         | 4                 | The most rounds                                                                                       |
+| `patience`       | 2                 | Consecutive dry rounds that end the hunt once every lens has run                                      |
+| `seats`          | 3                 | Skeptics per finding, or `(finding) => number`                                                        |
+| `rule`           | `'majority'`      | How many upholding seats confirm a finding                                                            |
+| `maxCalls`       | unlimited         | The most agent calls, finders and seats together                                                      |
+| `prompts.find`   | default prompt    | `(lens, subject, known) => prompt`; `known` is every finding of earlier rounds; `task` is then unused |
+| `prompts.verify` | default prompt    | As for `verify`                                                                                       |
+| `concurrency`    | 4                 | How many finders, and separately how many findings' panels, run at once                               |
 
-Round `n` asks `team.finder` for `std.types.Findings` through each lens of its window. The round's
-new findings, deduplicated by `std.data.findingKey` against every earlier finding, are verified most
+Round `n` asks `team.finder` for `std.types.Findings` through each lens of its window. With `task`,
+the find prompt opens `<task> Work through one lens only, <key>: <charter>`; without it, it opens
+`Hunt for defects in the subject below through one lens, <key>: <charter>`. The round's new
+findings, deduplicated by `std.data.findingKey` against every earlier finding, are verified most
 severe first, as `verify` does with the subject as its `context`. Later finders see the earlier
 findings in their prompt. A round is dry when it adds no finding and no finder failed. The hunt
 stops after `patience` consecutive dry rounds, but never before every lens of the pool has run once;
@@ -779,10 +963,12 @@ after `rounds` rounds; or when `maxCalls` cannot admit the next round's lenses o
 seats. A round that `maxCalls` cuts short runs the lenses that fit, leaves the findings whose seats
 do not fit unverified, logs both, and ends the hunt.
 
-Result: `confirmed`, `refuted` and `undecided` (`Verified<Finding>` lists, most severe first),
-`unverified` (findings the cap left out), `rounds`, `dryRounds`, `failedFinders`, `failedVotes`,
-`callsAdmitted`, `ended` (`'dry'`, `'round-limit'` or `'call-limit'`) and `status` (`'call-limit'`
-when `maxCalls` left work out, else `'degraded'` when a finder or seat failed, else `'complete'`).
+Result: `findings` (the confirmed findings themselves, most severe first), `confirmed`, `refuted`
+and `undecided` (`Verified<Finding>` lists, most severe first), `unverified` (findings the cap left
+out), `rounds`, `dryRounds`, `failedFinders`, `failedVotes`, `callsAdmitted`, `ended` (`'dry'`,
+`'round-limit'`, or `'call-limit'` when `maxCalls` left work out), `failures`
+(`failedFinders + failedVotes`) and `status`, which a call cap does not degrade. Schema:
+`HuntResult`.
 
 Steps: `<id>/round/<n>/lens/<lens>/find` in the settled map `<id>/round/<n>/lens`, and
 `<id>/round/<n>/item/<key>/seat/<s>/verdict` in the settled maps `<id>/round/<n>/item` and
@@ -818,10 +1004,10 @@ author revises the draft. A round approves when every critic answered and none r
 round whose critics raised nothing but where one failed does not approve, and the next round
 critiques the same draft again. The last round is never followed by an unreviewed revision.
 
-Result: `draft` (the approved draft, or the last critiqued one), `approved`, `rounds`, `revisions`,
-`issues` (the last round's, open in `draft`), `failedCritics` and `status`: `'approved'`,
-`'open-issues'` when the rounds ran out with issues, or `'degraded'` when the last round raised none
-but a critic failed.
+Result: `draft` (the approved draft, or the last critiqued one), `approved` (the last round's
+critics all answered and raised no issue), `rounds`, `revisions`, `issues` (the last round's, open
+in `draft`), `failedCritics`, `failures` (the same) and `status` (`'degraded'` when a critic failed
+in any round, even if a later round approved). Schema: `CritiqueReviseResult`.
 
 Steps, under `<id>/`:
 
@@ -867,11 +1053,13 @@ There is no `concurrency` or `version`. Set the checkout with `worktree`, not `c
 `calls.worktree` without `worktree` is refused, since it would leave the check running outside the
 agents' checkout, and `worktree` overrides it.
 
-Result: `status` (`'green'` when the last check passed, else `'red'`), `rounds` (0 when the first
+Result: `outcome` (`'green'` when the last check passed, else `'red'`), `rounds` (0 when the first
 check passed), `fixedBy` (the slot whose fix made the check pass; null when it passed at first,
 never passed, or passed after a round whose fix call failed), `checks` (every `CheckOutcome`:
 `checks[0]` before any fix, `checks[n]` after round `n`), `fixes` (every `FixRound`: `round`,
-`slot`, `report` or null, `error` or null) and `failedFixes`.
+`slot`, `report` or null, `error` or null), `failedFixes`, `failures` (the same) and `status`
+(`'degraded'` when a fix call failed; only `outcome` says whether the check passed). Schema:
+`FixUntilGreenResult`.
 
 Steps, under `<id>/`:
 
@@ -900,9 +1088,12 @@ Team `EscalationTeam`: `mechanic` (`std.roles.Mechanic`) and `surgeon` (`std.rol
 | `start`        | `'mechanic'`           | The slot of attempt 0; every later attempt uses the surgeon                       |
 | `prompts.work` | default prompt         | `(request: AttemptPromptInput<V>) => prompt`                                      |
 
-`accept` returns `true` to accept the value, or a string of problems that the next attempt should
-fix. An `AttemptPromptInput` holds the `task`, the `attempt` (from 0), the `slot`, the `previous`
-attempt's value (null on the first attempt or after a failed call) and its `problems`.
+Without `schema` an attempt's value is a `std.types.WorkReport`; options typed as
+`EscalateOptions<V>`, whose `schema` may be unset, give a result of
+`EscalateResult<V | WorkReport>`. `accept` returns `true` to accept the value, or a string of
+problems that the next attempt should fix. An `AttemptPromptInput` holds the `task`, the `attempt`
+(from 0), the `slot`, the `previous` attempt's value (null on the first attempt or after a failed
+call) and its `problems`.
 
 There is no `concurrency` or `version`. Attempts hand work on through the files, so a fresh checkout
 per call (`calls.worktree: true`) would discard each attempt's changes: share a `ctx.worktree`
@@ -910,9 +1101,10 @@ handle instead. `accept` runs inside the attempt's scope, so its own effects use
 than `work`, such as `std.exec.check(ctx, 'tests', argv)`. It runs again on resume, so build its
 decision from the value and durable effects only.
 
-Result: `status` (`'accepted'` or `'rejected'`), `slot` (of the accepted or last attempt),
-`attempts`, `value` (null when the last call failed), `problems` (null when accepted) and
-`failedCalls`. A blank string from `accept` becomes `Rejected without details.`
+Result: `outcome` (`'accepted'` or `'rejected'`), `slot` (of the accepted or last attempt),
+`attempts`, `value` (null when the last call failed), `problems` (null when accepted),
+`failedCalls`, `failures` (the same) and `status`. A blank string from `accept` becomes
+`Rejected without details.` Schema: `EscalateResult(value?)`, with the attempts' `schema`.
 
 Steps: `<id>/attempt/<n>/work` (from 0, an `onError: 'return'` call with `schema`), and
 `<id>/attempt/<n>/<leaf>` for any effect `accept` records.
@@ -921,7 +1113,8 @@ Fails the run: an unfilled slot, a blank task, an invalid `attempts` or `start`,
 `accept` returning something other than `true` or a string. Journaled as data: a failed attempt
 call, which escalates like a rejection.
 
-Recipe: none of the recipes calls `escalate`.
+Recipe: [std-escalate](../examples/patterns/std-escalate.workflow.ts), whose `accept` refuses a
+report that is not done and then runs the check command as `<id>/attempt/<n>/check`.
 
 ### tournament
 
@@ -955,11 +1148,12 @@ score wins, ties going to the earlier entrant. A repeated sheet for a letter is 
 a judge left out is that judge's missing vote; both are logged, as are the standings. The default
 judge prompt names the safe default: no credit for what a proposal does not show.
 
-Result: `winner` (a `TournamentEntry`: `letter`, `entrant`, `proposal`; null when aborted),
-`entries`, `standings` (`Standing`: `letter`, `entrant`, `title`, `score` and `criteria` rounded to
-two decimals or null, `votes`, `bestIdeas`; best first, unscored last), `design` (null when
-aborted), `dissent`, `failedEntrants` (entrant keys), `failedJudges` and `status` (`'aborted'`,
-`'degraded'` or `'complete'`).
+Result: `outcome` (`'decided'`, or `'aborted'` when fewer than `minEntrants` proposals succeeded or
+every judge failed), `winner` (a `TournamentEntry`: `letter`, `entrant`, `proposal`; null when
+aborted), `entries`, `standings` (`Standing`: `letter`, `entrant`, `title`, `score` and `criteria`
+rounded to two decimals or null, `votes`, `bestIdeas`; best first, unscored last), `design` (null
+when aborted), `dissent`, `failedEntrants` (entrant keys), `failedJudges`, `failures`
+(`failedEntrants.length + failedJudges`) and `status`. Schema: `TournamentResult`, for any rubric.
 
 Steps, under `<id>/`:
 
@@ -973,8 +1167,8 @@ Fails the run: an unfilled slot, a blank brief, empty or more than 26 entrants, 
 `minEntrants` or `concurrency`, `minEntrants` above the entrants, a `dissentGap` that is not a
 positive number, or an empty rubric or one with a blank key or description, before any effect; a
 failed synthesizer call, which a resume retries. Journaled as data: failed proposers and judges. The
-tournament aborts, returning data, when fewer than `minEntrants` proposals succeed (no judge runs)
-or every judge fails.
+tournament aborts, returning `outcome: 'aborted'`, when fewer than `minEntrants` proposals succeed
+(no judge runs) or every judge fails.
 
 Recipe: [std-design-tournament](../examples/patterns/std-design-tournament.workflow.ts).
 
@@ -991,7 +1185,7 @@ code.
 | `items`        | required                                                      | The candidates                                                                   |
 | `pick`         | required                                                      | How many to select, a positive integer                                           |
 | `criterion`    | required, non-blank                                           | What ranks an item higher                                                        |
-| `key`          | the item's own string `key` member, else its 1-based position | `(item) => key` the ranker answers with; unique and non-blank                    |
+| `key`          | the item's own string `key` member, else its 1-based position | `(item, index) => key` the ranker answers with; unique and non-blank             |
 | `describe`     | a string item itself, else JSON with sorted keys              | `(item) => text` for the ranker                                                  |
 | `prompts.rank` | default prompt                                                | `(entries, criterion, pick) => prompt`; `entries` are `ItemText` (`key`, `text`) |
 
@@ -999,8 +1193,9 @@ There is no `concurrency` or `version`. The reply is the chosen keys, best first
 `z.enum` to the item keys and at most `pick` of them; a repeated key counts once. The default prompt
 names the item whose neglect would cost more as the safe default. What the cap deferred is logged.
 
-Result: `selected` (best first), `deferred` (input order), `rationale` and `status` (`'ranked'`, or
-`'all-selected'` when there were at most `pick` items and no call was made).
+Result: `selected` (best first), `deferred` (input order), `rationale`, `ranked` (false when there
+were at most `pick` items, so every item was selected and no call was made), `failures` (always 0)
+and `status` (always `'complete'`: the ranker call is required). Schema: `RankResult(item)`.
 
 Steps: `<id>/rank`, none when every item fits.
 
@@ -1029,8 +1224,10 @@ choice is consequential.
 There is no `concurrency` or `version`. The reply's `route` is constrained by `z.enum` to the route
 keys. The default prompt names the fallback as the safe default when no route clearly fits.
 
-Result: `route`, `reason`, `fallback` (whether the fallback was taken) and `status` (`'routed'` or
-`'fallback'`).
+Result: `route`, `reason` (the router's, or its failure when the fallback was taken), `fallback`
+(whether the router call failed and the fallback was taken), `failures` (1 then, else 0) and
+`status` (`'degraded'` then). Schema: `RouteResult(routes?)`, which checks `route` against the route
+keys it is given.
 
 Steps: `<id>/route`.
 
@@ -1039,7 +1236,8 @@ description, or a `fallback` that is not a route, before any effect; without `fa
 router call, which a resume retries. With `fallback`, the call runs with `onError: 'return'`, so a
 failure is journaled, logged and the fallback taken, and a resume replays that decision.
 
-Recipe: none of the recipes calls `route`.
+Recipe: [std-route](../examples/patterns/std-route.workflow.ts), which routes a request to one of
+four short branches, with `unclear` as the fallback.
 
 ### classify
 
@@ -1055,7 +1253,7 @@ labeling needs the code.
 | `labels`      | required                                                      | Each label mapped to its definition, or a plain list of label names; this order breaks count ties |
 | `multi`       | false                                                         | Whether an item may take several labels                                                           |
 | `chunk`       | 10                                                            | Items per tagger call                                                                             |
-| `key`         | the item's own string `key` member, else its 1-based position | `(item) => key`; unique and non-blank                                                             |
+| `key`         | the item's own string `key` member, else its 1-based position | `(item, index) => key`; unique and non-blank                                                      |
 | `describe`    | a string item itself, else JSON with sorted keys              | `(item) => text` for the tagger                                                                   |
 | `prompts.tag` | default prompt                                                | `(entries, labels, multi) => prompt`                                                              |
 
@@ -1066,8 +1264,9 @@ reply entry that repeats an item is ignored; the left-out items and the repeats 
 Result: `assignments` (`Assignment`: `key`, `item`, `labels` in taxonomy order, `reason`), `counts`
 (`LabelCount`: `label`, `count`; most used first, ties in taxonomy order), `unlabeled`, `omitted`
 (the unlabeled items a successful reply left out), `failed` (the items of failed batches),
-`failedChunks` and `status`. An `Assignment` carries `key`, so `rank` can take the assignments with
-its default key.
+`failedChunks`, `failures` (the same) and `status`. An `Assignment` carries `key`, so `rank` can
+take the assignments with its default key. Schema: `ClassifyResult(item, labels?)`, which checks the
+labels against the taxonomy or names it is given.
 
 Steps: the settled map `<id>/chunk`, so batch `n` from 0 records `<id>/chunk/<n>/tag`. Each item
 carries the batch's keys, the labels and `multi`, from which its schema is built. No items, no map.
@@ -1104,9 +1303,9 @@ it failed. The reducer is told which items no part covers.
 
 Result: `result` (the reducer's text; empty with no items or no successful chunk), `parts`
 (`MapReducePart<P>`: `{ keys, value }` per successful chunk, in item order), `coverage`
-(`{ covered, missing }`), `chunks`, `failedChunks` and `status`: `'complete'` (or no items),
-`'degraded'` when some chunks failed, or `'failed'` when every chunk failed and the reducer was not
-called.
+(`{ covered, missing }`), `chunks`, `failedChunks`, `failures` (the same) and `status`: `'complete'`
+when every chunk succeeded or there were no items, else `'degraded'`. When every chunk failed, the
+reducer is not called and `result` is empty. Schema: `MapReduceResult(part?)`.
 
 Steps: the settled map `<id>/map`, keyed by each chunk's first item key, so that chunk records
 `<id>/map/<k>/part`; then `<id>/reduce`, the reducer's text, when a chunk succeeded.
@@ -1126,27 +1325,30 @@ one repair when they are invalid. Options `DecomposeOptions`, prompts `Decompose
 
 Team `PlanTeam`: `planner`, a read-only planning entry such as `std.roles.Planner`.
 
-| Option           | Default        | Meaning                                                       |
-| ---------------- | -------------- | ------------------------------------------------------------- |
-| `goal`           | required       | What the tasks must achieve together                          |
-| `context`        | none           | Background: a string as written, other JSON as a fenced block |
-| `maxTasks`       | 12             | The most tasks                                                |
-| `prompts.plan`   | default prompt | `(goal, maxTasks, context) => prompt`                         |
-| `prompts.repair` | default prompt | `(tasks, problems) => prompt`                                 |
+| Option           | Default        | Meaning                                                                                                                 |
+| ---------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `goal`           | required       | What the tasks must achieve together                                                                                    |
+| `context`        | none           | Background: a string as written, or any JSON value (read-only arrays and interface-typed results too) as a fenced block |
+| `maxTasks`       | 12             | The most tasks                                                                                                          |
+| `prompts.plan`   | default prompt | `(goal, maxTasks, context) => prompt`                                                                                   |
+| `prompts.repair` | default prompt | `(tasks, problems) => prompt`                                                                                           |
 
 There is no `concurrency` or `version`. The planner answers a `std.types.TaskList` of at most
 `maxTasks` tasks. The checks are: every ID unique, every dependency an ID in the list, and no cycle.
 Problems are logged and sent back for one repair.
 
-Result: `tasks` (in the planner's order), `waves` (`std.data.topoWaves` of the tasks), `status`
-(`'planned'` or `'repaired'`) and `problems` (what the repair fixed).
+Result: `tasks` (in the planner's order), `waves` (`std.data.topoWaves` of the tasks), `repaired`
+(whether the first list had problems and the repair fixed them), `problems` (what the repair fixed),
+`failures` (always 0) and `status` (always `'complete'`: the planner calls are required). Schema:
+`DecomposeResult`.
 
 Steps: `<id>/plan`, and `<id>/repair` only when the plan had problems.
 
-Fails the run: an unfilled slot, a blank `goal` or an invalid `maxTasks`, before any effect; a
-failed planner call; and a repaired list that is still invalid
-(`decompose <id>: the repaired task list is still invalid: ...`). Under `--dry-run`, synthesized
-task lists name unknown dependencies, so give `<id>/plan` a fixture to rehearse past it.
+Fails the run: an unfilled slot, a blank `goal`, an invalid `maxTasks`, or a `context` that is
+neither a string nor a JSON value (`decompose context must be a string or a JSON value: ...`, for a
+`Date` or `NaN` too), before any effect; a failed planner call; and a repaired list that is still
+invalid (`decompose <id>: the repaired task list is still invalid: ...`). Under `--dry-run`,
+synthesized task lists name unknown dependencies, so give `<id>/plan` a fixture to rehearse past it.
 
 `std.patterns.taskCall(task, goal?)` returns `{ prompt, schema }` (type `TaskCall`) for having an
 implementer do one task: a `std.text.brief` prompt with the goal and the task, and
@@ -1160,7 +1362,7 @@ and `std.flow.waves`.
 
 ### checklist
 
-Checks each acceptance criterion against a target, one call per criterion, and decides the verdict
+Checks each acceptance criterion against a subject, one call per criterion, and decides the verdict
 in code. Options `ChecklistOptions`, prompts `ChecklistPrompts`, result `ChecklistResult`.
 
 Team `ChecklistTeam`: `checker`, a read-only entry such as `std.roles.Reviewer`, or a shell entry
@@ -1168,23 +1370,26 @@ built with `std.claude.shell` when criteria name commands to run.
 
 | Option          | Default             | Meaning                                                                                   |
 | --------------- | ------------------- | ----------------------------------------------------------------------------------------- |
-| `target`        | required            | What the criteria are checked against, such as a range and its fenced diff                |
+| `subject`       | required            | What the criteria are checked against, such as a range and its fenced diff                |
 | `criteria`      | required, non-empty | Strings (ID `C<n>` from the 1-based position) or `std.types.Criterion` values; IDs unique |
-| `prompts.check` | default prompt      | `(criterion, target) => prompt`                                                           |
+| `prompts.check` | default prompt      | `(criterion, subject) => prompt`                                                          |
 
-The default prompt follows the criterion's `how` and names `unverifiable` as the safe default.
+The default prompt shows the subject as the target, follows the criterion's `how` and names
+`unverifiable` as the safe default. `std.types.Criteria` validates a criteria list in a workflow
+input.
 
 Result: `verdict` (`'not-done'` when any criterion failed or holds only in part; otherwise `'done'`
 when every criterion passed, else `'unverified'`), `results` (`ChecklistEntry`: `criterion` and
-`result` or null), `passed`, `failed`, `partial`, `unverifiable`, `errors` (failed calls) and
-`status`.
+`result` or null), `counts` (`ChecklistCounts`: how many answered `pass`, `fail`, `partial` and
+`unverifiable`; a failed call is in none), `failures` (failed checker calls) and `status`. Schema:
+`ChecklistResult`. `std.text.checklist` renders the result as Markdown.
 
 Steps: the settled map `<id>/criterion`, keyed by criterion ID (made ID-safe), so `C1` records
 `<id>/criterion/C1/check` (schema `std.types.CriterionResult`).
 
 Fails the run: an unfilled slot, empty `criteria`, a blank string criterion, an invalid criterion
 object, an invalid `concurrency`, or two criteria with one ID, before any effect. Journaled as data:
-a failed checker call, counted in `errors`.
+a failed checker call, counted in `failures`.
 
 Recipe: [std-acceptance](../examples/patterns/std-acceptance.workflow.ts).
 
@@ -1226,7 +1431,9 @@ Result: `decision`, `assessments` (`GateDimension`: `key`, `lens`, `assessment` 
 (a `GateChallenge`: the panel's `outcome`, `upheld`, `against`, `missing`, `seats` and `reasons`) or
 null, `disposition`), the dimension keys by disposition in `blockers`, `undecided`, `downgraded`,
 `concerns`, `cannotCheck` and `failed`, `reasons` (one `<key> (<disposition>): <summary>` line per
-dimension that is not a pass; empty for `go`), `failedVotes` and `status`.
+dimension that is not a pass; empty for `go`), `failedVotes`, `failures` (failed assessors and
+seats: `failed.length + failedVotes`) and `status`. Schema: `GateResult`. `std.text.gate` renders
+the result as Markdown.
 
 Steps: the settled map `<id>/dimension`, so dimension `k` records `<id>/dimension/<k>/assess`
 (schema `std.types.Assessment`); then, when an assessor reported a blocker, the settled map
@@ -1252,9 +1459,9 @@ shell entry when predictions need commands.
 | Option             | Default             | Meaning                                                                        |
 | ------------------ | ------------------- | ------------------------------------------------------------------------------ |
 | `question`         | required, non-blank | What to explain                                                                |
-| `evidence`         | none                | What was observed, shown under `### Evidence`; blank counts as none            |
+| `context`          | none                | What was observed, shown under `### Evidence`; blank counts as none            |
 | `count`            | 4                   | The most hypotheses to test, from 1 to 8; any beyond it are logged, not tested |
-| `prompts.theorize` | default prompt      | `(question, count) => prompt`; `evidence` is then unused for it                |
+| `prompts.theorize` | default prompt      | `(question, count) => prompt`; `context` is then unused for it                 |
 | `prompts.falsify`  | default prompt      | `(hypothesis, rivals, question) => prompt`                                     |
 
 The default falsifier prompt names `untestable` as the safe default and shows the rivals' causes as
@@ -1266,7 +1473,8 @@ context only. The confidence (type `FalsifyConfidence`) is:
 - `none`: none survives.
 
 Result: `hypotheses` (`TestedHypothesis`: `key`, `hypothesis`, `verdict` or null), `survivors`,
-`confidence`, `falsified`, `failed` and `status`.
+`confidence`, `falsified`, `failures` (failed falsifier calls) and `status`. Schema:
+`FalsifyResult`.
 
 Steps: `<id>/theorize` (schema `std.types.Hypotheses`), then the settled map `<id>/hypothesis`,
 keyed by hypothesis `id`, so hypothesis `k` records `<id>/hypothesis/<k>/falsify` (schema
@@ -1308,10 +1516,10 @@ distinct. The claims are deduplicated by normalized claim text and source, numbe
 order, and cited as `[n]`. The default reader prompt names leaving out an unverifiable claim as the
 safe default.
 
-Result: `answer` (empty when unanswered), `sources` (the leads that yielded a claim), `claims`,
-`deferred` (past the `reads` cap), `unread` (failed reads), `failedScouts`, `failedReads` and
-`status`: `'complete'`, `'degraded'` when a scout or reader failed, or `'unanswered'` when no claim
-was collected and the synthesizer was not called.
+Result: `answered` (false when no claim was collected and the synthesizer was not called), `answer`
+(empty when unanswered), `sources` (the leads that yielded a claim), `claims`, `deferred` (past the
+`reads` cap), `unread` (failed reads), `failedScouts`, `failedReads`, `failures` (their sum) and
+`status` (`'degraded'` when a scout or reader failed). Schema: `ResearchResult`.
 
 Steps: the settled map `<id>/scout`, so angle `a` records `<id>/scout/<a>/leads` (schema
 `std.types.Leads`); the settled map `<id>/read`, keyed by the lead's reference made ID-safe, so lead
@@ -1358,10 +1566,12 @@ another strategy, a branch or the checkout as the target, or a commit message. F
 and conflicts are logged.
 
 Result: `status` (`'complete'` when every edit succeeded, stayed within its paths and merged
-cleanly; an unchanged item does not count against it), `commit` (the merge's commit, or null when
-nothing merged), `merge` (the `MergeResult`, or null when no merge ran), `merged` and `conflicts`
-(item keys), `changes` (`EditChange`: `key`, `files`, `summary`), `violations` (`EditViolation`:
-`key`, `files`), `unchanged` and `failed` (item keys).
+cleanly; an unchanged item does not count against it, and a violation or conflict degrades it as a
+failed edit does), `commit` (the merge's commit, or null when nothing merged), `merge` (the
+`MergeResult`, or null when no merge ran), `merged` and `conflicts` (item keys), `changes`
+(`EditChange`: `key`, `files`, `summary`), `violations` (`EditViolation`: `key`, `files`),
+`unchanged` and `failed` (item keys), and `failures` (failed edit calls). Schema:
+`IsolatedEditsResult`.
 
 Steps, under `<id>/`:
 
@@ -1388,16 +1598,16 @@ prompts `ApprovedPlanPrompts`, result `ApprovedPlanResult`.
 
 Team `PlanApprovalTeam`: `planner`, a read-only planning entry such as `std.roles.Planner`.
 
-| Option           | Default                      | Meaning                                                             |
-| ---------------- | ---------------------------- | ------------------------------------------------------------------- |
-| `task`           | required, non-blank          | What the plan must achieve                                          |
-| `context`        | none                         | Background for the planner: a string, or JSON as a fenced block     |
-| `revisions`      | 2                            | The most revisions, so up to three plans are reviewed               |
-| `question`       | the default question (below) | The approval question: one nonblank line of at most 1024 characters |
-| `title`          | `Plan review`                | The question-tool header, 1 to 12 characters                        |
-| `audience`       | `'human'`                    | `'human'`, `'agent'` or `'any'`                                     |
-| `prompts.plan`   | default prompt               | `(task) => prompt`; a replacement does not receive `context`        |
-| `prompts.revise` | default prompt               | `(task, plan, comment) => prompt`                                   |
+| Option           | Default                      | Meaning                                                                 |
+| ---------------- | ---------------------------- | ----------------------------------------------------------------------- |
+| `task`           | required, non-blank          | What the plan must achieve                                              |
+| `context`        | none                         | Background for the planner: a string, or a JSON value as a fenced block |
+| `revisions`      | 2                            | The most revisions, so up to three plans are reviewed                   |
+| `question`       | the default question (below) | The approval question: one nonblank line of at most 1024 characters     |
+| `title`          | `Plan review`                | The question-tool header, 1 to 12 characters                            |
+| `audience`       | `'human'`                    | `'human'`, `'agent'` or `'any'`                                         |
+| `prompts.plan`   | default prompt               | `(task) => prompt`; a replacement does not receive `context`            |
+| `prompts.revise` | default prompt               | `(task, plan, comment) => prompt`                                       |
 
 The default question is
 `Approve this implementation plan? Reject with a comment to have it revised.`
@@ -1408,15 +1618,16 @@ details are the task and the plan as Markdown, clipped to 16000 bytes. The run s
 approval until an answer arrives (`quiet-choir workflow answer`, or `writeAnswer` when embedded);
 the answer is saved, so a resume replays it.
 
-Result: `approved`, `status` (`'approved'`, `'rejected'` when a rejection had no comment to revise
-from, or `'out-of-revisions'`), `plan` (the approved or last reviewed plan), `digest`, `rounds` and
-`comment` (the reviewer's comment, or null).
+Result: `approved`, `outcome` (`'approved'`, `'rejected'` when a rejection had no comment to revise
+from, or `'out-of-revisions'`), `plan` (the approved or last reviewed plan), `digest`, `rounds`,
+`comment` (the reviewer's comment, or null), `failures` (always 0) and `status` (always
+`'complete'`: the planner calls are required). Schema: `ApprovedPlanResult`.
 
 Steps: `<id>/round/<n>/plan` (schema `std.types.Plan`) and `<id>/round/<n>/approve`, for rounds `n`
 from 0.
 
-Fails the run: an unfilled slot, a blank task, an invalid `revisions`, `question` or `title`, before
-any effect; a failed planner call.
+Fails the run: an unfilled slot, a blank task, a `context` that is neither a string nor a JSON
+value, or an invalid `revisions`, `question` or `title`, before any effect; a failed planner call.
 
 `std.patterns.planCall(source, task?)` returns `{ prompt, schema }` (type `PlanCall`) for having an
 implementer carry out the plan: a `std.text.brief` prompt with the task, the plan and the reviewer's
@@ -1443,7 +1654,8 @@ judges (such as `std.roles.Reviewer`).
 | `prompts.review` | `Review this draft: <draft>`                     | `(draft) => prompt`                                                        |
 | `prompts.revise` | `Revise <draft> using this feedback: <feedback>` | `(draft, feedback) => prompt`                                              |
 
-Result: `approved` and `draft` (the approved draft, or the last reviewed one).
+Result: `approved` and `draft` (the approved draft, or the last reviewed one). Schema:
+`ReviewReviseResult`.
 
 Steps: `review/<n>`, the critic's `{ approved, feedback }` (exactly `std.types.Approval`), and
 `revise/<n>`, the actor's text after a rejection, never after the last round; under `<id>/` when
@@ -1473,11 +1685,12 @@ Team `PanelTeam`: `panelist`, which answers one item.
 | `version`     | none     | The map's `version`                                                  |
 
 Result: `quorum` (more than half of the items answered), `answers` (in item order) and `failed`.
+Schema: `TolerantPanelResult(answer?)`, with the panel's `schema`.
 
 Steps: `ctx.map(id, items, { concurrency, onError: 'return', version })`, so item `i` records
 `<id>/<i>/answer`. A failed vote is journaled, so a resume does not retry it into a different
-quorum. The map fingerprints the items and the mapper source but not the `prompt` function or the
-`schema`: change `version` when you change either.
+quorum. The map fingerprints the items and the mapper source but not the `prompt` function, the
+`schema` or the panelist's configuration: change `version` when you change any of them.
 
 It checks its team before the map, as the other patterns do, so an unfilled `panelist` throws
 instead of being journaled as a failed answer for every item.
@@ -1486,26 +1699,41 @@ Recipe: [tolerant-panel](../examples/patterns/tolerant-panel.workflow.ts).
 
 ## Recipes
 
-The fourteen `std-*` recipes in `examples/patterns` are complete workflows of at most 30 lines,
+The seventeen `std-*` recipes in `examples/patterns` are complete workflows of at most 30 lines,
 registered in `examples/patterns/recipes.json`. Roles from `std.rosters.readers` need no grant;
 under `requireGrants`, a `write` role needs one, used or not.
 
-| Recipe                  | What it does                                             | Patterns                                  | Roster                            | Grants                |
-| ----------------------- | -------------------------------------------------------- | ----------------------------------------- | --------------------------------- | --------------------- |
-| [std-acceptance]        | Checks a range's diff against acceptance criteria        | `checklist`                               | `readers`: `Reviewer`             | none                  |
-| [std-approved-plan]     | Plans a task, waits for approval, implements the plan    | `approvedPlan`, `planCall`                | `Planner`, `Mechanic`             | `Mechanic`            |
-| [std-bug-hunt]          | Hunts a scope for defects within a call cap              | `hunt`                                    | `readers`: `Reviewer`, `Skeptic`  | none                  |
-| [std-changelog]         | Turns a range's commits into release notes               | `mapReduce`                               | `readers`: `Scribe`, `Writer`     | none                  |
-| [std-code-review]       | Reviews a range through lenses, then verifies findings   | `lensPanel`, `verify`                     | `readers`: `Reviewer`, `Skeptic`  | none                  |
-| [std-design-tournament] | Runs a design tournament                                 | `tournament`                              | `readers`: `Planner`, `Judge`     | none                  |
-| [std-doc-polish]        | Polishes a Markdown file and writes it back              | `critiqueRevise`                          | `readers`: `Critic`, `Writer`     | none                  |
-| [std-fix-tests]         | Fixes the code until a check command passes              | `fixUntilGreen`                           | `Mechanic`, `Surgeon`             | `Mechanic`, `Surgeon` |
-| [std-incident]          | Explains an incident from a range's log and notes        | `falsify`                                 | `readers`: `Reviewer`, `Skeptic`  | none                  |
-| [std-parallel-edits]    | Makes edits in isolated checkouts and squash-merges them | `isolatedEdits`                           | `Mechanic`                        | `Mechanic`            |
-| [std-plan-and-build]    | Plans tasks and builds them in dependency waves          | `decompose`, `taskCall`, `std.flow.waves` | `Planner`, `Mechanic`             | `Mechanic`            |
-| [std-release-gate]      | Decides go, conditional-go or no-go for a release        | `gate`                                    | `readers`: `Reviewer`, `Skeptic`  | none                  |
-| [std-research]          | Answers a question from cited web sources                | `research`                                | `readers`: `Researcher`, `Writer` | none                  |
-| [std-triage]            | Labels issues and picks the most urgent                  | `classify`, `rank`                        | `readers`: `Clerk`, `Judge`       | none                  |
+| Recipe                  | What it does                                             | Patterns                                  | Roster                                                        | Grants                |
+| ----------------------- | -------------------------------------------------------- | ----------------------------------------- | ------------------------------------------------------------- | --------------------- |
+| [std-acceptance]        | Checks a range's diff against acceptance criteria        | `checklist`                               | `readers`: `Reviewer`                                         | none                  |
+| [std-approved-plan]     | Plans a task, waits for approval, implements the plan    | `approvedPlan`, `planCall`                | `Planner`, `Mechanic`                                         | `Mechanic`            |
+| [std-bug-hunt]          | Hunts a scope for defects within a call cap              | `hunt`                                    | `readers`: `Reviewer`, `Skeptic`                              | none                  |
+| [std-changelog]         | Turns a range's commit log into release notes            | `mapReduce`                               | `readers`: `Scribe`, `Writer`                                 | none                  |
+| [std-code-review]       | Reviews a range through lenses, then verifies findings   | `lensPanel`, `verify`                     | `readers`: `Reviewer`, `Skeptic`                              | none                  |
+| [std-design-tournament] | Runs a design tournament                                 | `tournament`                              | `readers`: `Planner`, `Judge`                                 | none                  |
+| [std-doc-polish]        | Polishes a Markdown file and writes it back              | `critiqueRevise`                          | `readers`: `Critic`, `Writer`                                 | none                  |
+| [std-escalate]          | Makes a change, escalating until a check command passes  | `escalate`                                | `Mechanic`, `Surgeon`                                         | `Mechanic`, `Surgeon` |
+| [std-fix-tests]         | Fixes the code until a check command passes              | `fixUntilGreen`                           | `Mechanic`, `Surgeon`                                         | `Mechanic`, `Surgeon` |
+| [std-incident]          | Explains an incident from a range's commits and notes    | `falsify`                                 | `readers`: `Reviewer`, `Skeptic`                              | none                  |
+| [std-parallel-edits]    | Makes edits in isolated checkouts and squash-merges them | `isolatedEdits`                           | `Mechanic`                                                    | `Mechanic`            |
+| [std-plan-and-build]    | Plans tasks and builds them in dependency waves          | `decompose`, `taskCall`, `std.flow.waves` | `Planner`, `Mechanic`                                         | `Mechanic`            |
+| [std-release-gate]      | Decides go, conditional-go or no-go for a release        | `gate`                                    | `readers`: `Reviewer`, `Skeptic`                              | none                  |
+| [std-research]          | Answers a question from cited web sources                | `research`                                | `readers`: `Researcher`, `Writer`                             | none                  |
+| [std-route]             | Routes a request to one of four branches and answers it  | `route`                                   | `readers`: `Clerk`, `Reader`, `Reviewer`, `Planner`, `Writer` | none                  |
+| [std-triage]            | Labels issues and picks the most urgent                  | `classify`, `rank`                        | `readers`: `Clerk`, `Judge`                                   | none                  |
+| [std-vote]              | Votes unanimously on whether a range is safe to merge    | `vote`                                    | `readers`: `Skeptic`                                          | none                  |
+
+Most recipes declare a pattern's result schema as their `output` and return the result as it is:
+`std-acceptance` (`ChecklistResult`), `std-bug-hunt` (`HuntResult`), `std-changelog`
+(`MapReduceResult(std.types.Changes)`), `std-design-tournament`, `std-escalate`, `std-fix-tests`,
+`std-incident`, `std-parallel-edits`, `std-release-gate`, `std-research` and `std-vote`. Four wrap
+one beside their own data: `std-approved-plan` (`review` and the implementer's `report`),
+`std-doc-polish` (`polish` and the write's `receipt`), `std-triage` (`labeled` and the `urgent`
+issues) and `std-route` (`routed` and the branch's `reply`). `std-code-review` and
+`std-plan-and-build` combine two steps' health with `std.data.health`. The Git recipes read their
+range with `std.exec` helpers (`diff`, `diffStat`, `log`), so an option-like range is refused before
+any command runs, and `std-incident` and `std-release-gate` show the commits with
+`std.text.commits`.
 
 `std-plan-and-build` has a fixture file, `std-plan-and-build.fixtures.json`, so it rehearses past
 `decompose` under `--dry-run`. `std-approved-plan` suspends until the approval is answered, and
@@ -1523,12 +1751,15 @@ are internal, so do not import them; `std.patterns.CallDefaults` is the one shar
 2. Fill the team with `XTeam.from(options.team)` and validate every option before any effect.
 3. Run under `ctx.scope(options.id, ...)` and document the exact step IDs.
 4. Tolerate a failed agent with a settled map (`onError: 'return'`) or an `onError: 'return'` call,
-   and report failure counts and a `status`.
+   count the failures in `failures`, report health in `status` (`std.data.health(failures)`), and
+   put what the pattern decided in a named field.
 5. Make each map item carry its key, its rendered prompt (`std.text.promptText`) and the calls'
    placement, so a change to either refuses replay. Forward the caller's `version` to the map for
    what the items do not show, such as a schema.
 6. Build default prompts with `std.text.brief` and name the safe default in a skeptical one.
 7. Make keys ID-safe and unique with `std.data.uniqueKeys` before the map starts.
+8. To let callers return the result as a workflow `output`, export a strict Zod schema under the
+   name of its interface, typed `z.ZodType<XResult>`, with `std.data.Health` for `status`.
 
 ```ts
 import { defineTeam, type Prompt, type TeamOf, type WorkflowContext } from 'quiet-choir';
@@ -1583,12 +1814,8 @@ export async function summarize(ctx: WorkflowContext, options: SummarizeOptions)
       },
       (record) => summarizer.value('summary', { ...calls, prompt: record.prompt }),
     );
-    const failed = std.data.failures(settled).length;
-    return {
-      summaries: std.data.oks(settled),
-      failed,
-      status: failed === 0 ? 'complete' : 'degraded',
-    };
+    const failures = std.data.failures(settled).length;
+    return { summaries: std.data.oks(settled), failures, status: std.data.health(failures) };
   });
 }
 ```
@@ -1603,10 +1830,13 @@ handle's `id` and `base`, or the base of a fresh checkout.
 [std-code-review]: ../examples/patterns/std-code-review.workflow.ts
 [std-design-tournament]: ../examples/patterns/std-design-tournament.workflow.ts
 [std-doc-polish]: ../examples/patterns/std-doc-polish.workflow.ts
+[std-escalate]: ../examples/patterns/std-escalate.workflow.ts
 [std-fix-tests]: ../examples/patterns/std-fix-tests.workflow.ts
 [std-incident]: ../examples/patterns/std-incident.workflow.ts
 [std-parallel-edits]: ../examples/patterns/std-parallel-edits.workflow.ts
 [std-plan-and-build]: ../examples/patterns/std-plan-and-build.workflow.ts
 [std-release-gate]: ../examples/patterns/std-release-gate.workflow.ts
 [std-research]: ../examples/patterns/std-research.workflow.ts
+[std-route]: ../examples/patterns/std-route.workflow.ts
 [std-triage]: ../examples/patterns/std-triage.workflow.ts
+[std-vote]: ../examples/patterns/std-vote.workflow.ts

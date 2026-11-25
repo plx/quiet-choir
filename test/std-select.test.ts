@@ -23,6 +23,7 @@ import {
   makeRoot,
   removeRoot,
   replayAfterTail,
+  roundTrip,
   runOptions,
   tailFailure,
 } from './std-harness.js';
@@ -233,6 +234,7 @@ describe('tournament', () => {
       operability: value,
     });
     expect(result.output).toEqual({
+      outcome: 'decided',
       winner: entry('A', 'ship-simplest'),
       entries: [
         entry('A', 'ship-simplest'),
@@ -282,6 +284,7 @@ describe('tournament', () => {
       dissent: ['Judge 2 scored the winner 4/10 against the panel mean 7.33: judge 2 on A'],
       failedEntrants: [],
       failedJudges: 0,
+      failures: 0,
       status: 'complete',
     });
     expect([...harness.ids()].sort()).toEqual(
@@ -294,6 +297,7 @@ describe('tournament', () => {
       ].sort(),
     );
     expect(harness.ids().at(-1)).toBe('t/synthesize');
+    roundTrip(select.TournamentResult, result.output);
     expect(logs(result)).toEqual([
       [
         'Tournament standings: A (ship-simplest) 7.33, C (data-first) 7, B (evolvability) 5.67, D (operability-first) 4.67.',
@@ -347,6 +351,7 @@ describe('tournament', () => {
     });
     const result = await replayAfterTail(contest(), null, harness, root);
     const output = result.output as unknown as select.TournamentResult<string>;
+    roundTrip(select.TournamentResult, output);
     expect(output.entries.map(({ letter, entrant }) => `${letter}=${entrant}`)).toEqual([
       'A=ship-simplest',
       'B=data-first',
@@ -360,7 +365,7 @@ describe('tournament', () => {
     expect(output.winner?.entrant).toBe('data-first');
     expect(output.failedEntrants).toEqual(['evolvability']);
     expect(output.failedJudges).toBe(1);
-    expect(output.status).toBe('degraded');
+    expect(output).toMatchObject({ outcome: 'decided', failures: 2, status: 'degraded' });
     expect(harness.count('t/propose/evolvability/proposal')).toBe(1);
     expect(harness.count('t/judge/1/scores')).toBe(1);
     expect(harness.prompt('t/judge/0/scores')).not.toContain('Plugin host');
@@ -384,6 +389,7 @@ describe('tournament', () => {
     });
     const result = await replayAfterTail(contest(), null, harness, root);
     expect(result.output).toEqual({
+      outcome: 'aborted',
       winner: null,
       entries: [{ letter: 'A', entrant: 'data-first', proposal: proposal('data-first') }],
       standings: [
@@ -401,9 +407,11 @@ describe('tournament', () => {
       dissent: [],
       failedEntrants: ['ship-simplest', 'evolvability', 'operability-first'],
       failedJudges: 0,
-      status: 'aborted',
+      failures: 3,
+      status: 'degraded',
     });
     expect(harness.ids().every((id) => id.startsWith('t/propose/'))).toBe(true);
+    roundTrip(select.TournamentResult, result.output);
     expect(logs(result)[0]?.[0]).toBe(
       'Tournament aborted: 1 of 4 proposals succeeded, fewer than minEntrants (2).',
     );
@@ -413,7 +421,8 @@ describe('tournament', () => {
     const harness = arena({ fail: ['t/judge/0/scores', 't/judge/1/scores'] });
     const result = await run(contest({ judges: 2 }), harness);
     const output = result.output as unknown as select.TournamentResult<string>;
-    expect(output.status).toBe('aborted');
+    roundTrip(select.TournamentResult, output);
+    expect(output).toMatchObject({ outcome: 'aborted', failures: 2, status: 'degraded' });
     expect(output.failedJudges).toBe(2);
     expect(output.winner).toBeNull();
     expect(output.design).toBeNull();
@@ -425,6 +434,7 @@ describe('tournament', () => {
     const harness = arena({ scores: [{ A: 6, B: 7, C: 7, D: 2 }] });
     const result = await run(contest({ judges: 1, synthesize: false }), harness);
     const output = result.output as unknown as select.TournamentResult<string>;
+    roundTrip(select.TournamentResult, output);
     expect(output.winner?.letter).toBe('B');
     expect(output.design).toBe(proposal('evolvability').design);
     expect(output.dissent).toEqual([]);
@@ -485,6 +495,7 @@ describe('tournament', () => {
       harness,
     );
     const output = result.output as unknown as select.TournamentResult<'speed' | 'cost'>;
+    roundTrip(select.TournamentResult, output);
     expect(output.standings.map((standing) => standing.criteria)).toEqual([
       { speed: 4, cost: 9 },
       { speed: 9, cost: 3 },
@@ -659,8 +670,11 @@ describe('rank', () => {
       selected: ['data loss on save', 'crash on start'],
       deferred: ['typo in docs', 'slow search', 'old link'],
       rationale: 'Data loss and crashes first.',
-      status: 'ranked',
+      ranked: true,
+      failures: 0,
+      status: 'complete',
     });
+    roundTrip(select.RankResult(z.string()), result.output);
     expect(harness.ids()).toEqual(['r/rank']);
     expect(logs(result)).toEqual([
       [
@@ -708,7 +722,7 @@ describe('rank', () => {
     expect(result.output).toMatchObject({
       selected: ['old link'],
       deferred: items.slice(0, 4),
-      status: 'ranked',
+      ranked: true,
     });
   });
 
@@ -738,6 +752,34 @@ describe('rank', () => {
       deferred: [issues[0], issues[1]],
     });
     expect(harness.prompt('r/rank')).toContain('- #7: crash\n- #9: typo\n- #12: leak');
+  });
+
+  it('passes the item index to the key callback', async () => {
+    const harness = scripted(() => ({ selected: ['i2'], rationale: 'Leaks grow.' }));
+    const seen: [string, number][] = [];
+    const result = await run(
+      workflow('rank-index', (ctx) =>
+        select.rank(ctx, {
+          id: 'r',
+          team: { ranker: ctx.claude.bind({}) },
+          items: ['crash', 'typo', 'leak'],
+          key: (item, index) => {
+            seen.push([item, index]);
+            return `i${String(index)}`;
+          },
+          pick: 1,
+          criterion: 'Severity.',
+        }),
+      ),
+      harness,
+    );
+    expect(seen).toEqual([
+      ['crash', 0],
+      ['typo', 1],
+      ['leak', 2],
+    ]);
+    expect(result.output).toMatchObject({ selected: ['leak'], deferred: ['crash', 'typo'] });
+    expect(harness.prompt('r/rank')).toContain('- i0: crash\n- i1: typo\n- i2: leak');
   });
 
   it("defaults to the items' own key members, as classify assignments carry", async () => {
@@ -785,8 +827,11 @@ describe('rank', () => {
       selected: items.slice(0, 2),
       deferred: [],
       rationale: 'All 2 items fit within pick 2; nothing was ranked.',
-      status: 'all-selected',
+      ranked: false,
+      failures: 0,
+      status: 'complete',
     });
+    roundTrip(select.RankResult(z.string()), result.output);
     expect(harness.calls).toEqual([]);
   });
 
@@ -801,7 +846,7 @@ describe('rank', () => {
     );
     fail = false;
     const resumed = await runWorkflow(ranking(), { ...options, resume: true });
-    expect(resumed.output).toMatchObject({ selected: ['crash on start'], status: 'ranked' });
+    expect(resumed.output).toMatchObject({ selected: ['crash on start'], ranked: true });
     expect(harness.count('r/rank')).toBe(2);
   });
 
@@ -850,8 +895,11 @@ describe('route', () => {
       route: 'docs',
       reason: 'Only the README changes.',
       fallback: false,
-      status: 'routed',
+      failures: 0,
+      status: 'complete',
     });
+    roundTrip(select.RouteResult(routes), result.output);
+    roundTrip(select.RouteResult(), result.output);
     expect(harness.ids()).toEqual(['triage/route']);
     const prompt = harness.prompt('triage/route');
     expect(prompt).toContain('### Subject\n\nThe README links to a removed page.');
@@ -870,8 +918,15 @@ describe('route', () => {
   it('takes the fallback when the router fails and does not retry it on resume', async () => {
     const harness = scripted(() => new Error('router down'));
     const result = await replayAfterTail(routing(), null, harness, root);
-    expect(result.output).toMatchObject({ route: 'escalate', fallback: true, status: 'fallback' });
+    expect(result.output).toMatchObject({
+      route: 'escalate',
+      fallback: true,
+      failures: 1,
+      status: 'degraded',
+    });
     expect((result.output as { reason: string }).reason).toContain('router down');
+    roundTrip(select.RouteResult(routes), result.output);
+    expect(select.RouteResult(['fix', 'docs']).safeParse(result.output).success).toBe(false);
     expect(harness.count('triage/route')).toBe(1);
     expect(logs(result)[0]?.[0]).toBe('Router failed; taking the fallback route escalate.');
   });
@@ -892,7 +947,8 @@ describe('route', () => {
       route: 'fix',
       reason: 'Small fix.',
       fallback: false,
-      status: 'routed',
+      failures: 0,
+      status: 'complete',
     });
     expect(harness.count('triage/route')).toBe(2);
     expect(harness.prompt('triage/route')).toContain(
@@ -1015,8 +1071,11 @@ describe('classify', () => {
       omitted: [],
       failed: ['slow start'],
       failedChunks: 1,
+      failures: 1,
       status: 'degraded',
     });
+    roundTrip(select.ClassifyResult(z.string(), labels), result.output);
+    roundTrip(select.ClassifyResult(z.string()), result.output);
     expect([...harness.ids()].sort()).toEqual(['c/chunk/0/tag', 'c/chunk/1/tag', 'c/chunk/2/tag']);
     expect(harness.count('c/chunk/2/tag')).toBe(1);
     expect(logs(result)).toEqual([
@@ -1062,7 +1121,7 @@ describe('classify', () => {
         items: ['a', 'b'],
         multi: true,
         chunk: 10,
-        key: (item) => `#${String(item.charCodeAt(0) - 96)}`,
+        key: (_item, index) => `#${String(index + 1)}`,
       }),
       harness,
     );
@@ -1077,8 +1136,10 @@ describe('classify', () => {
       omitted: ['a'],
       failed: [],
       failedChunks: 0,
+      failures: 0,
       status: 'complete',
     });
+    roundTrip(select.ClassifyResult(z.string(), labels), result.output);
     expect(harness.ids()).toEqual(['c/chunk/0/tag']);
     expect(harness.prompt('c/chunk/0/tag')).toContain(
       'Label each item below with every label from the taxonomy that applies to it.',
@@ -1106,8 +1167,10 @@ describe('classify', () => {
       unlabeled: ['a', 'b', 'c'],
       omitted: ['b', 'c'],
       failedChunks: 0,
+      failures: 0,
       status: 'complete',
     });
+    roundTrip(select.ClassifyResult(z.string(), labels), result.output);
   });
 
   it('passes the call defaults to every tagger call', async () => {
@@ -1175,6 +1238,8 @@ describe('classify', () => {
       ],
       status: 'complete',
     });
+    roundTrip(select.ClassifyResult(z.string(), ['bug', 'docs']), result.output);
+    expect(select.ClassifyResult(z.string(), ['bug']).safeParse(result.output).success).toBe(false);
     const prompt = harness.prompt('c/chunk/0/tag');
     expect(prompt).toContain('### Taxonomy\n\n- bug\n- docs\n\n### Items\n\n- 1: typo\n- 2: crash');
     expect(prompt).toContain('Use only the labels in the taxonomy, in their plain meaning.');
@@ -1185,6 +1250,7 @@ describe('classify', () => {
     const harness = scripted(() => undefined);
     const result = await run(tagging({ items: [] }), harness);
     expect(result.output).toMatchObject({ assignments: [], failed: [], status: 'complete' });
+    roundTrip(select.ClassifyResult(z.string(), labels), result.output);
     expect(harness.calls).toEqual([]);
   });
 
@@ -1302,7 +1368,7 @@ describe('tables from a z.record workflow input', () => {
     const resumed = await runWorkflow(wrapped, { ...options, resume: true });
     expect(harness.calls).toHaveLength(calls);
     expect(resumed.output).toMatchObject({
-      routed: { route: 'zeta', status: 'routed' },
+      routed: { route: 'zeta', fallback: false, status: 'complete' },
       tagged: {
         status: 'complete',
         counts: [

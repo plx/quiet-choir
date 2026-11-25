@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from 'vitest';
 import {
   NodeProcessRunner,
   checkCodexSchema,
@@ -25,6 +25,7 @@ import {
   makeRoot,
   removeRoot,
   replayAfterTail,
+  roundTrip,
   runOptions,
   tailFailure,
 } from './std-harness.js';
@@ -126,8 +127,10 @@ describe('critiqueRevise', () => {
       revisions: 1,
       issues: [],
       failedCritics: 0,
-      status: 'approved',
+      failures: 0,
+      status: 'complete',
     });
+    roundTrip(revise.CritiqueReviseResult, result.output);
     expect(harness.ids()).toEqual([
       'cr/draft',
       'cr/round/0/critique',
@@ -158,7 +161,8 @@ describe('critiqueRevise', () => {
       approved: true,
       rounds: 1,
       revisions: 0,
-      status: 'approved',
+      failures: 0,
+      status: 'complete',
     });
     expect(harness.ids()).toEqual(['cr/round/0/critique']);
   });
@@ -177,8 +181,10 @@ describe('critiqueRevise', () => {
       revisions: 1,
       issues: [issue('b'), issue('c')],
       failedCritics: 0,
-      status: 'open-issues',
+      failures: 0,
+      status: 'complete',
     });
+    roundTrip(revise.CritiqueReviseResult, result.output);
     expect(harness.ids()).toEqual([
       'cr/round/0/critique',
       'cr/round/0/revise',
@@ -208,8 +214,10 @@ describe('critiqueRevise', () => {
       revisions: 1,
       issues: [],
       failedCritics: 1,
-      status: 'approved',
+      failures: 1,
+      status: 'degraded',
     });
+    roundTrip(revise.CritiqueReviseResult, result.output);
     expect(harness.ids()).toEqual([
       'cr/round/0/lens/clarity/critique',
       'cr/round/0/lens/accuracy/critique',
@@ -246,10 +254,12 @@ describe('critiqueRevise', () => {
       rounds: 2,
       revisions: 0,
       failedCritics: 1,
-      status: 'approved',
+      failures: 1,
+      status: 'degraded',
     });
     expect(harness.prompt('cr/round/1/critique')).toContain('```\nsame\n```');
     expect(harness.count('cr/round/0/critique')).toBe(1);
+    roundTrip(revise.CritiqueReviseResult, recovered.output);
 
     const failing = scripted({ 'cr/round/0/critique': new Error('critic timed out') });
     const degraded = await run(critique({ draft: 'same', rounds: 1 }), failing, 'degraded');
@@ -260,8 +270,10 @@ describe('critiqueRevise', () => {
       revisions: 0,
       issues: [],
       failedCritics: 1,
+      failures: 1,
       status: 'degraded',
     });
+    roundTrip(revise.CritiqueReviseResult, degraded.output);
   });
 
   it('uses replacement prompts', async () => {
@@ -460,14 +472,17 @@ describe('fixUntilGreen', () => {
     const harness = fixer([]);
     const result = await run(repair(), harness);
     expect(result.output).toMatchObject({
-      status: 'green',
+      outcome: 'green',
       rounds: 0,
       fixedBy: null,
       fixes: [],
       failedFixes: 0,
+      failures: 0,
+      status: 'complete',
     });
     expect(harness.calls).toHaveLength(0);
     expect(Object.keys(result.steps)).toEqual(['fix/check/0']);
+    roundTrip(revise.FixUntilGreenResult, result.output);
   });
 
   it('fixes with the mechanic, checks after every round and replays without rerunning', async () => {
@@ -483,11 +498,14 @@ describe('fixUntilGreen', () => {
       },
     );
     const output = result.output as unknown as revise.FixUntilGreenResult;
+    roundTrip(revise.FixUntilGreenResult, output);
     expect(output).toMatchObject({
-      status: 'green',
+      outcome: 'green',
       rounds: 2,
       fixedBy: 'mechanic',
       failedFixes: 0,
+      failures: 0,
+      status: 'complete',
     });
     expect(output.checks.map((outcome) => outcome.passed)).toEqual([false, false, true]);
     expect(output.checks[0]).toMatchObject({ code: 1, signal: null });
@@ -527,7 +545,7 @@ describe('fixUntilGreen', () => {
   it('escalates the last round to the surgeon and never trusts a report', async () => {
     const harness = fixer(['fix/fix/3']);
     const result = await run(repair(), harness);
-    expect(result.output).toMatchObject({ status: 'green', rounds: 3, fixedBy: 'surgeon' });
+    expect(result.output).toMatchObject({ outcome: 'green', rounds: 3, fixedBy: 'surgeon' });
     expect(
       harness.calls.map((call) => [call.stepId, (call.options as { model?: string }).model]),
     ).toEqual([
@@ -548,7 +566,15 @@ describe('fixUntilGreen', () => {
       { processRunner: new NodeProcessRunner() },
     );
     const output = result.output as unknown as revise.FixUntilGreenResult;
-    expect(output).toMatchObject({ status: 'red', rounds: 2, fixedBy: null, failedFixes: 1 });
+    roundTrip(revise.FixUntilGreenResult, output);
+    expect(output).toMatchObject({
+      outcome: 'red',
+      rounds: 2,
+      fixedBy: null,
+      failedFixes: 1,
+      failures: 1,
+      status: 'degraded',
+    });
     expect(output.checks).toHaveLength(3);
     expect(output.fixes.map((fix) => [fix.round, fix.slot, fix.report])).toEqual([
       [1, 'surgeon', report('fixed by surgeon-model')],
@@ -569,14 +595,17 @@ describe('fixUntilGreen', () => {
     });
     const result = await run(repair(), harness);
     expect(result.output).toMatchObject({
-      status: 'green',
+      outcome: 'green',
       rounds: 1,
       fixedBy: null,
       failedFixes: 1,
+      failures: 1,
+      status: 'degraded',
     });
     expect((result.output as unknown as revise.FixUntilGreenResult).fixes[0]?.error).toContain(
       'fix/fix/1 timed out',
     );
+    roundTrip(revise.FixUntilGreenResult, result.output);
   });
 
   it('runs the check and both agents in a shared worktree', async () => {
@@ -623,7 +652,7 @@ describe('fixUntilGreen', () => {
       worktrees: { root: join(root, 'worktrees') },
       input: null,
     });
-    expect(result.output).toMatchObject({ status: 'green', rounds: 1, fixedBy: 'mechanic' });
+    expect(result.output).toMatchObject({ outcome: 'green', rounds: 1, fixedBy: 'mechanic' });
     const cwd = harness.calls[0]?.cwd ?? '';
     expect(cwd.startsWith(join(root, 'worktrees'))).toBe(true);
     expect(await readFile(join(repo, 'state.txt'), 'utf8')).toBe('red\n');
@@ -653,7 +682,7 @@ describe('fixUntilGreen', () => {
       repair({ exec: { cwd: 'pkg' }, calls: { cwd: 'pkg', timeoutMs: 54_321 } }),
       harness,
     );
-    expect(result.output).toMatchObject({ status: 'green', rounds: 1, fixedBy: 'mechanic' });
+    expect(result.output).toMatchObject({ outcome: 'green', rounds: 1, fixedBy: 'mechanic' });
     expect(harness.calls[0]?.cwd).toBe(pkg);
     expect(harness.calls[0]?.options).toMatchObject({ timeoutMs: 54_321 });
     expect(await runs(pkg)).toBe(2);
@@ -664,7 +693,7 @@ describe('fixUntilGreen', () => {
     const harness = fixer(['fix/fix/1']);
     const shell = `set -e\n"${process.execPath}" check.mjs`;
     const result = await run(repair({ check: { shell } }), harness);
-    expect(result.output).toMatchObject({ status: 'green', rounds: 1 });
+    expect(result.output).toMatchObject({ outcome: 'green', rounds: 1 });
     expect(harness.prompt('fix/fix/1')).toMatch(
       /^Make this check pass:\n\n```sh\nset -e\n.+ check\.mjs\n```\n\n## Context/u,
     );
@@ -727,13 +756,16 @@ describe('escalate', () => {
       root,
     );
     expect(result.output).toEqual({
-      status: 'accepted',
+      outcome: 'accepted',
       slot: 'mechanic',
       attempts: 1,
       value: report('mechanic-model'),
       problems: null,
       failedCalls: 0,
+      failures: 0,
+      status: 'complete',
     });
+    roundTrip(revise.EscalateResult(), result.output);
     expect(harness.ids()).toEqual(['esc/attempt/0/work']);
     const prompt = harness.prompt('esc/attempt/0/work');
     expect(prompt).toMatch(/^Add a --verbose flag\.\n\n## Guidance\n\n/u);
@@ -763,12 +795,14 @@ describe('escalate', () => {
     );
     const result = await replayAfterTail(definition, null, harness, root);
     expect(result.output).toEqual({
-      status: 'accepted',
+      outcome: 'accepted',
       slot: 'surgeon',
       attempts: 2,
       value: report('surgeon-model'),
       problems: null,
       failedCalls: 0,
+      failures: 0,
+      status: 'complete',
     });
     expect(harness.ids()).toEqual(['esc/attempt/0/work', 'esc/attempt/1/work']);
     expect(Object.keys(result.steps).sort()).toEqual([
@@ -793,12 +827,15 @@ describe('escalate', () => {
       root,
     );
     expect(result.output).toMatchObject({
-      status: 'accepted',
+      outcome: 'accepted',
       slot: 'surgeon',
       attempts: 2,
       failedCalls: 1,
+      failures: 1,
+      status: 'degraded',
     });
     expect(harness.count('esc/attempt/0/work')).toBe(1);
+    roundTrip(revise.EscalateResult(WorkReport), result.output);
     const retry = harness.prompt('esc/attempt/1/work');
     expect(retry).toContain('Its agent call failed before returning a result.');
     expect(retry).toContain("The mechanic's agent call failed:");
@@ -811,13 +848,16 @@ describe('escalate', () => {
       harness,
     );
     expect(result.output).toEqual({
-      status: 'rejected',
+      outcome: 'rejected',
       slot: 'surgeon',
       attempts: 3,
       value: report('surgeon-model'),
       problems: 'Rejected without details.',
       failedCalls: 0,
+      failures: 0,
+      status: 'complete',
     });
+    roundTrip(revise.EscalateResult(), result.output);
     expect(harness.ids()).toEqual([
       'esc/attempt/0/work',
       'esc/attempt/1/work',
@@ -842,11 +882,12 @@ describe('escalate', () => {
         accept: (value) => value.answer === '42' || 'wrong',
         calls: { timeoutMs: 9_999 },
       });
+      roundTrip(revise.EscalateResult(Answer), result);
       return { ...result, answer: result.value?.answer ?? null };
     });
     const result = await run(definition, harness);
     expect(result.output).toMatchObject({
-      status: 'accepted',
+      outcome: 'accepted',
       slot: 'surgeon',
       attempts: 2,
       answer: '42',
@@ -861,6 +902,41 @@ describe('escalate', () => {
     expect(retry).toContain('### Problems found\n\nwrong');
     expect(retry).toContain('- Fix the problems found and keep what the earlier attempt got right');
     expect(retry).not.toContain('partial or blocked');
+  });
+
+  it('accepts options typed as the exported EscalateOptions, with or without a schema', async () => {
+    const Answer = z.object({ answer: z.string() });
+    const definition = workflow('escalate-typed', async (ctx) => {
+      const agent = ctx.claude.bind({});
+      const team = { mechanic: agent, surgeon: agent };
+      const reportOptions: revise.EscalateOptions<WorkReport> = {
+        id: 'report',
+        team,
+        task: 'Add a --verbose flag.',
+        accept: () => true,
+      };
+      const answerOptions: revise.EscalateOptions<z.infer<typeof Answer>> = {
+        id: 'answer',
+        team,
+        task: 'Answer.',
+        schema: Answer,
+        accept: () => true,
+      };
+      const reported = await revise.escalate(ctx, reportOptions);
+      const answered = await revise.escalate(ctx, answerOptions);
+      expectTypeOf(reported).toEqualTypeOf<revise.EscalateResult<WorkReport>>();
+      expectTypeOf(answered).toEqualTypeOf<
+        revise.EscalateResult<z.infer<typeof Answer> | WorkReport>
+      >();
+      return { reported: reported.value, answered: answered.value };
+    });
+    const harness = new ScriptedHarness((request) =>
+      request.stepId.startsWith('answer/') ? { answer: '42' } : report('done'),
+    );
+    expect((await run(definition, harness)).output).toEqual({
+      reported: report('done'),
+      answered: { answer: '42' },
+    });
   });
 
   it('rejects invalid options and accept results', async () => {

@@ -142,3 +142,11 @@ export async function replayAfterTail<I, O>(
   expect(again.steps).toEqual(resumed.steps);
   return resumed;
 }
+
+/**
+ * Assert that a std result schema parses `value`, a result a pattern produced, back to an equal
+ * value: it accepts every member the pattern returns and strips none.
+ */
+export function roundTrip(schema: z.ZodType, value: unknown): void {
+  expect(schema.parse(value)).toStrictEqual(value);
+}

@@ -2,10 +2,12 @@
  * Zod schemas for the data that recurs across workflows, so a workflow names a shared contract
  * instead of re-declaring it:
  *
- * - Input-side primitives such as {@link RepoPath}, {@link Sha}, {@link Key}, {@link Argv} and
- *   {@link limit}, for workflow inputs, outputs and local checks.
- * - Agent-output enums and records such as {@link Severity}, {@link Finding}, {@link WorkReport},
- *   {@link Plan} and {@link Refutation}, for structured agent calls.
+ * - Input-side primitives and records such as {@link RepoPath}, {@link Sha}, {@link Key},
+ *   {@link Argv}, {@link Commit}, {@link Criteria} and {@link limit}, for workflow inputs, outputs
+ *   and local checks.
+ * - Agent-output enums and records such as {@link Severity}, {@link Finding},
+ *   {@link Remediation}, {@link WorkReport}, {@link Plan}, {@link Question} and
+ *   {@link Refutation}, for structured agent calls.
  * - Builders for shapes known only at runtime: {@link oneOf}, {@link listOf} and {@link rubric}.
  *
  * Every record but {@link Receipt} (typed as the runtime's `WriteFileResult`) is a plain `z.object`
@@ -17,8 +19,9 @@
  * or format validators such as `.regex()`. Enums list their values in rank order, most severe or
  * important first ({@link Size} runs from smallest to largest). A schema's `.describe()` text is what the agent reads, and it is part of the
  * identity of every call that sends the schema, so released text does not change. The input-side
- * {@link Sha}, {@link ShortSha}, {@link Sha256}, {@link Key}, {@link Argv} and {@link Receipt} use
- * patterns or tuples: validate data with them, but do not request them from an agent.
+ * {@link Sha}, {@link ShortSha}, {@link Sha256}, {@link Key}, {@link Argv}, {@link Receipt},
+ * {@link Commit} and {@link Criteria} use patterns, formats, tuples, unions or an array root:
+ * validate data with them, but do not request them from an agent.
  *
  * ```ts
  * import { z } from 'quiet-choir';
@@ -363,6 +366,46 @@ export const Findings: z.ZodObject<{
 /** A {@link Findings} value. */
 export type Findings = z.infer<typeof Findings>;
 
+/** A {@link Finding} with the concrete `fix` that resolves it. */
+export const Remediation: z.ZodObject<{
+  /** A one-line statement of the defect, at most 200 characters. */
+  title: z.ZodString;
+  /** The repository-relative file that contains the defect (a {@link RepoPath}). */
+  file: z.ZodString;
+  /** The 1-based line of the defect, or null when no single line applies. */
+  line: z.ZodNullable<z.ZodInt>;
+  /** How serious the defect is. */
+  severity: typeof Severity;
+  /** The code, output or quote that shows the defect. */
+  evidence: z.ZodString;
+  /** The concrete inputs or state that trigger the defect, and the wrong outcome they cause. */
+  failureScenario: z.ZodString;
+  /** The concrete change that fixes the defect. */
+  fix: z.ZodString;
+}> = z.object({
+  ...Finding.shape,
+  fix: nonEmpty(
+    'The concrete change that fixes the defect: the code to write or an exact instruction, not "handle this case".',
+  ),
+});
+/** A {@link Remediation} value. */
+export type Remediation = z.infer<typeof Remediation>;
+
+/** Up to 20 {@link Remediation}s; an empty list is a valid answer. */
+export const Remediations: z.ZodObject<{
+  /** The defects found, each with its fix, most severe first; may be empty. */
+  remediations: z.ZodArray<typeof Remediation>;
+}> = z.object({
+  remediations: z
+    .array(Remediation)
+    .max(20)
+    .describe(
+      'The defects found, each with its fix, most severe first. An empty list is a valid answer.',
+    ),
+});
+/** A {@link Remediations} value. */
+export type Remediations = z.infer<typeof Remediations>;
+
 /** A skeptic's verdict on one claim: `refuted` unless the evidence shows the claim holds. */
 export const Refutation: z.ZodObject<{
   /** True when the claim is wrong or unestablished; false only when the evidence shows it holds. */
@@ -606,6 +649,28 @@ export const CriterionResult: z.ZodObject<{
 /** A {@link CriterionResult} value. */
 export type CriterionResult = z.infer<typeof CriterionResult>;
 
+/**
+ * Input-side: a non-empty list of acceptance criteria, each a nonblank condition as text or a
+ * {@link Criterion} with its own ID and `how`, as `checklist` in `std.patterns` takes them. Its
+ * array root and union suit workflow inputs, not agent output.
+ */
+export const Criteria: z.ZodArray<z.ZodUnion<readonly [z.ZodString, typeof Criterion]>> = z
+  .array(
+    z.union([
+      z
+        .string()
+        .min(1)
+        .refine((text) => text.trim() !== '', 'A criterion must not be blank'),
+      Criterion,
+    ]),
+  )
+  .min(1)
+  .describe(
+    'Acceptance criteria: each a condition as text, or a criterion with an ID and how to check it.',
+  );
+/** A {@link Criteria} value. */
+export type Criteria = z.infer<typeof Criteria>;
+
 /** One factual claim with its source and, where there is one, the exact supporting quote. */
 export const Citation: z.ZodObject<{
   /** One factual claim. */
@@ -663,6 +728,46 @@ export const Leads: z.ZodObject<{
 });
 /** A {@link Leads} value. */
 export type Leads = z.infer<typeof Leads>;
+
+/** An open question the agent could not settle itself: why it matters and who can answer it. */
+export const Question: z.ZodObject<{
+  /** The question, specific enough to answer. */
+  question: z.ZodString;
+  /** What depends on the answer. */
+  why: z.ZodString;
+  /** Who can answer it, or where to look. */
+  answerFrom: z.ZodString;
+  /** Whether the work cannot proceed correctly until it is answered. */
+  blocking: z.ZodBoolean;
+}> = z.object({
+  question: nonEmpty('The question, specific enough that one answer settles it.'),
+  why: nonEmpty('Why it matters: what depends on the answer, and what goes wrong if it is wrong.'),
+  answerFrom: nonEmpty(
+    'Who can answer it or where to look: a person or role, a document, a file or a system.',
+  ),
+  blocking: z
+    .boolean()
+    .describe(
+      'true when the work cannot proceed correctly until it is answered; false when a stated assumption can stand in the meantime.',
+    ),
+});
+/** A {@link Question} value. */
+export type Question = z.infer<typeof Question>;
+
+/** Up to 20 open {@link Question}s, blocking ones first; an empty list is a valid answer. */
+export const Questions: z.ZodObject<{
+  /** The open questions, blocking ones first; may be empty. */
+  questions: z.ZodArray<typeof Question>;
+}> = z.object({
+  questions: z
+    .array(Question)
+    .max(20)
+    .describe(
+      'Questions you could not settle from the material available, blocking ones first. An empty list is a valid answer.',
+    ),
+});
+/** A {@link Questions} value. */
+export type Questions = z.infer<typeof Questions>;
 
 /** A candidate explanation with the mechanism and 1 to 5 checkable predictions. */
 export const Hypothesis: z.ZodObject<{
@@ -880,6 +985,39 @@ export const Receipt: z.ZodType<WriteFileResult> = z.object({
 });
 /** A {@link Receipt} value, the same type as `WriteFileResult`. */
 export type Receipt = z.infer<typeof Receipt>;
+
+/**
+ * Input-side: one commit as `log` in `std.exec` returns it, for workflow data and outputs. Its IDs
+ * use patterns and its date a format, so do not request it from an agent.
+ */
+export const Commit: z.ZodObject<{
+  /** The full commit ID (a {@link Sha}). */
+  sha: z.ZodString;
+  /** The abbreviated commit ID Git prints (a {@link ShortSha}). */
+  shortSha: z.ZodString;
+  /** The author name as recorded in the commit. */
+  author: z.ZodString;
+  /** The author date in strict ISO 8601 with its UTC offset. */
+  date: z.ZodISODateTime;
+  /** The commit message's subject line; empty when the message is. */
+  subject: z.ZodString;
+}> = z.object({
+  sha: Sha,
+  shortSha: ShortSha,
+  author: z.string().describe('The author name as recorded in the commit.'),
+  date: z.iso
+    .datetime({ offset: true })
+    .describe(
+      'The author date in strict ISO 8601 with its UTC offset, such as 2026-01-31T09:30:00+01:00.',
+    ),
+  subject: z
+    .string()
+    .describe(
+      "The commit message's subject: its first paragraph on one line; empty when the message is.",
+    ),
+});
+/** A {@link Commit} value. */
+export type Commit = z.infer<typeof Commit>;
 
 // ---------------------------------------------------------------------------------------------
 // Builders

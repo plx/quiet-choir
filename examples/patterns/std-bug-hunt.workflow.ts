@@ -10,20 +10,14 @@ export default defineWorkflow({
     rounds: std.types.limit(4, 10),
     maxCalls: std.types.limit(80, 400),
   }),
-  output: z.object({ status: z.string(), rounds: z.int(), findings: z.array(std.types.Finding) }),
-  async run(ctx, { scope, rounds, maxCalls }) {
-    const hunt = await std.patterns.hunt(ctx, {
+  // `findings` holds the confirmed bugs, most severe first; `ended` says why the hunt stopped.
+  output: std.patterns.HuntResult,
+  run: (ctx, { scope, rounds, maxCalls }) =>
+    std.patterns.hunt(ctx, {
       id: 'hunt',
       team: { finder: ctx.roster.Reviewer, skeptic: ctx.roster.Skeptic },
       subject: scope,
       rounds,
       maxCalls,
-    });
-    // Each outcome list is already sorted most severe first.
-    return {
-      status: hunt.status,
-      rounds: hunt.rounds,
-      findings: hunt.confirmed.map((v) => v.item),
-    };
-  },
+    }),
 });

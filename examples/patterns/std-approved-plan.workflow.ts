@@ -7,23 +7,15 @@ export default defineWorkflow({
   roster: defineRoster({ Planner: std.roles.Planner, Mechanic: std.roles.Mechanic }),
   input: z.object({ task: z.string().min(1), revisions: std.types.limit(2, 5, 0) }),
   output: z.object({
-    status: z.enum(['approved', 'rejected', 'out-of-revisions']),
-    plan: std.types.Plan,
+    review: std.patterns.ApprovedPlanResult,
     report: std.types.WorkReport.nullable(),
   }),
   async run(ctx, { task, revisions }) {
-    const review = await std.patterns.approvedPlan(ctx, {
-      id: 'plan',
-      team: { planner: ctx.roster.Planner },
-      task,
-      revisions,
-    });
-    const { status, plan } = review;
-    if (!review.approved) return { status, plan, report: null };
-    const report = await ctx.roster.Mechanic.value(
-      'implement',
-      std.patterns.planCall(review, task),
-    );
-    return { status, plan, report };
+    const team = { planner: ctx.roster.Planner };
+    const review = await std.patterns.approvedPlan(ctx, { id: 'plan', team, task, revisions });
+    // Only an approved plan is implemented; a rejected one is returned for the record.
+    if (!review.approved) return { review, report: null };
+    const call = std.patterns.planCall(review, task);
+    return { review, report: await ctx.roster.Mechanic.value('implement', call) };
   },
 });

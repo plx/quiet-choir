@@ -10,11 +10,14 @@
  *
  * Both take a required `id` and record every step under it; each pattern's TSDoc lists the exact
  * step IDs. Every fan-out is a settled map, so a failed falsifier, scout or reader is journaled,
- * counted and logged, and a resume decides the same way instead of retrying it. Nothing is dropped
+ * counted and logged, and a resume decides the same way instead of retrying it; every result counts
+ * those failures in `failures` and reports its health as `status` (`'degraded'` exactly when one
+ * occurred), apart from what it found (`confidence`, `answered`). Nothing is dropped
  * silently: leads beyond the `reads` cap are logged with `ctx.log` and returned as `deferred`, and
  * hypotheses beyond `count` are logged. The default prompts are `std.text.brief`s; the
  * falsifier's names `untestable` as the safe default when the evidence does not settle a
- * hypothesis.
+ * hypothesis. Each result interface has a schema of the same name, {@link FalsifyResult} and
+ * {@link ResearchResult}, for a workflow `output` or a saved result.
  *
  * ```ts
  * import * as std from 'quiet-choir/std';
@@ -24,7 +27,7 @@
  *   id: 'incident',
  *   team: { theorist: ctx.roster.Reviewer, falsifier: ctx.roster.Skeptic },
  *   question: 'Why did checkout requests time out after the 1.4.1 deploy?',
- *   evidence: std.text.section('Git log', log),
+ *   context: std.text.section('Git log', log),
  * });
  * const answer = await std.patterns.research(ctx, {
  *   id: 'research',
@@ -41,6 +44,7 @@
  */
 import {
   defineTeam,
+  z,
   type JsonValue,
   type MapStepError,
   type Prompt,
@@ -48,9 +52,10 @@ import {
   type TeamOf,
   type WorkflowContext,
 } from '../index.js';
-import { corroborate, dedupeBy, normalizeTitle } from './data.js';
+import { Health, corroborate, dedupeBy, normalizeTitle } from './data.js';
 import { research as researchAngles, type Lens } from './lenses.js';
 import {
+  Count,
   keyed,
   nonEmpty,
   placement,
@@ -61,15 +66,7 @@ import {
   type Keyed,
 } from './pattern-kit.js';
 import { brief, bullets, numbered, promptText } from './text.js';
-import {
-  Claims,
-  Falsification,
-  Hypotheses,
-  Leads,
-  type Citation,
-  type Hypothesis,
-  type Lead,
-} from './types.js';
+import { Citation, Claims, Falsification, Hypotheses, Hypothesis, Lead, Leads } from './types.js';
 
 /**
  * A settled-map item that carries its key, the rendered prompt the mapper sends, and where the call
@@ -128,15 +125,15 @@ export type FalsifyTeam = TeamOf<typeof FalsifyTeam>;
 /** Replacement prompts of {@link falsify}. */
 export interface FalsifyPrompts {
   /**
-   * The theorist's prompt for `question`, asking for up to `count` hypotheses; the `evidence`
+   * The theorist's prompt for `question`, asking for up to `count` hypotheses; the `context`
    * option is then unused for it. The default asks for genuinely different causes, each with a
    * mechanism and one to five checkable predictions that tell the hypotheses apart.
    */
   readonly theorize?: ((question: string, count: number) => string | Prompt) | undefined;
   /**
    * The falsifier's prompt for one hypothesis, given its rivals (every other tested hypothesis) as
-   * context. The default gives the hypothesis, the rivals' causes and the evidence, and names
-   * `untestable` as the safe default.
+   * context. The default gives the hypothesis, the rivals' causes and the `context` option (under
+   * `### Evidence`), and names `untestable` as the safe default.
    */
   readonly falsify?:
     | ((hypothesis: Hypothesis, rivals: readonly Hypothesis[], question: string) => string | Prompt)
@@ -152,11 +149,11 @@ export interface FalsifyOptions {
   /** What to explain, such as `Why did checkout requests time out after the 1.4.1 deploy?`. */
   readonly question: string;
   /**
-   * What was observed, shown to the theorist and every falsifier under `### Evidence`, such as a
-   * commit log, error output and incident notes; the agents may also read what their tools reach.
-   * Blank evidence counts as none.
+   * What was observed, the background the agents read: shown to the theorist and every falsifier
+   * under `### Evidence`, such as a commit log, error output and incident notes; the agents may
+   * also read what their tools reach. Blank context counts as none.
    */
-  readonly evidence?: string | undefined;
+  readonly context?: string | undefined;
   /**
    * The most hypotheses to test, from 1 to 8; defaults to 4. The theorist is asked for up to this
    * many; any beyond it are logged and not tested.
@@ -166,7 +163,11 @@ export interface FalsifyOptions {
   readonly prompts?: FalsifyPrompts | undefined;
   /** How many falsifier calls run at once; defaults to 4. */
   readonly concurrency?: number | undefined;
-  /** A revision for prompts and schemas the settled map's fingerprint does not show. */
+  /**
+   * A revision for what the settled map's fingerprint does not show, such as the schema. The
+   * team's agent configuration is not part of a map item either, so a completed item is reused
+   * after a role changes: change `version` when you change the agent that fills a slot.
+   */
   readonly version?: string | undefined;
   /** Options applied to every agent call (placement, retry, deadlines). */
   readonly calls?: CallDefaults | undefined;
@@ -181,6 +182,17 @@ export interface TestedHypothesis {
   /** The falsifier's verdict, reasoning and checked predictions, or null when its call failed. */
   readonly verdict: Falsification | null;
 }
+
+/** The schema of a {@link TestedHypothesis}. */
+export const TestedHypothesis: z.ZodType<TestedHypothesis> = z.strictObject({
+  key: z.string(),
+  hypothesis: Hypothesis,
+  verdict: Falsification.nullable(),
+});
+
+/** The schema of a {@link FalsifyConfidence}. */
+export const FalsifyConfidence: z.ZodEnum<z.util.ToEnum<'high' | 'medium' | 'split' | 'none'>> =
+  z.enum(['high', 'medium', 'split', 'none']);
 
 /**
  * How far the verdicts single out one explanation, decided in code:
@@ -204,10 +216,20 @@ export interface FalsifyResult {
   /** How many hypotheses were falsified. */
   readonly falsified: number;
   /** How many falsifier calls failed; the failures are saved, so a resume does not retry them. */
-  readonly failed: number;
+  readonly failures: number;
   /** `'complete'` when every falsifier answered, else `'degraded'`. */
   readonly status: 'complete' | 'degraded';
 }
+
+/** The schema of a {@link FalsifyResult}, for a workflow `output` or a saved result. */
+export const FalsifyResult: z.ZodType<FalsifyResult> = z.strictObject({
+  hypotheses: z.array(TestedHypothesis),
+  survivors: z.array(Hypothesis),
+  confidence: FalsifyConfidence,
+  falsified: Count,
+  failures: Count,
+  status: Health,
+});
 
 /** The default theorist prompt. */
 function theorizePrompt(question: string, evidence: string | undefined, count: number): string {
@@ -276,24 +298,24 @@ function confidenceOf(survivors: number, falsified: number, total: number): Fals
  *
  * The confidence is decided in code from the verdicts (see {@link FalsifyConfidence}): only one
  * survivor whose every rival was falsified is `high`. A failed falsifier call is journaled, logged
- * and counted in `failed`; its hypothesis has a null verdict, is not a survivor, and keeps the
+ * and counted in `failures`; its hypothesis has a null verdict, is not a survivor, and keeps the
  * confidence below `high`. A failed theorist call rejects, since there is nothing to test.
  *
- * The default prompts are `std.text.brief`s: the theorist's states the question with the evidence
- * and asks for distinct causes with checkable predictions; the falsifier's gives the hypothesis,
- * its rivals and the evidence, and names `untestable` as the safe default (never `survives`
- * without checked evidence). Each map item carries its rendered prompt, so a prompt change is
- * detected on resume; set `version` when a change the prompts do not show should not reuse
- * verdicts.
+ * The default prompts are `std.text.brief`s: the theorist's states the question with the
+ * `context` under `### Evidence` and asks for distinct causes with checkable predictions; the
+ * falsifier's gives the hypothesis, its rivals and the same evidence, and names `untestable` as the
+ * safe default (never `survives` without checked evidence). Each map item carries its rendered
+ * prompt, so a prompt change is detected on resume; set `version` when a change the prompts do not
+ * show should not reuse verdicts.
  *
  * Team slots: `theorist`, a high-effort read-only entry such as `std.roles.Reviewer` (or
  * `std.roles.Planner`); `falsifier`, a skeptical read-only entry such as `std.roles.Skeptic`, or
  * a shell entry built with `std.claude.shell` when predictions need commands to check.
  *
  * @param ctx - The workflow context the team was bound from.
- * @param options - The scope, the team and the question, with optional evidence, count and prompts.
+ * @param options - The scope, the team and the question, with optional context, count and prompts.
  * @returns Every tested hypothesis with its verdict, the survivors, the confidence, the falsified
- * and failed counts, and the status.
+ * count, the failure count and the status.
  * @throws TypeError - Before any effect, when a team slot is not filled, `question` is blank,
  * `count` is not an integer from 1 to 8, or `concurrency` is not a positive integer.
  * @throws Error - The theorist's call failure; a resume retries it.
@@ -312,7 +334,7 @@ export async function falsify(
   const team = FalsifyTeam.from(options.team);
   const map = settledMap<PromptRecord>(options);
   const { id, calls } = options;
-  const evidence = present(options.evidence);
+  const evidence = present(options.context);
   const custom = options.prompts;
   const theorize = promptText(
     custom?.theorize === undefined
@@ -370,7 +392,7 @@ export async function falsify(
       survivors,
       confidence: confidenceOf(survivors.length, falsified, hypotheses.length),
       falsified,
-      failed: failedKeys.length,
+      failures: failedKeys.length,
       status: statusOf(failedKeys.length),
     };
   });
@@ -449,7 +471,11 @@ export interface ResearchOptions {
   readonly prompts?: ResearchPrompts | undefined;
   /** How many scout calls, and separately how many reader calls, run at once; defaults to 4. */
   readonly concurrency?: number | undefined;
-  /** A revision for prompts and schemas the settled maps' fingerprints do not show. */
+  /**
+   * A revision for what the settled maps' fingerprints do not show, such as a schema. The team's
+   * agent configuration is not part of a map item either, so a completed item is reused after a
+   * role changes: change `version` when you change the agent that fills a slot.
+   */
   readonly version?: string | undefined;
   /** Options applied to every agent call (placement, retry, deadlines). */
   readonly calls?: CallDefaults | undefined;
@@ -458,8 +484,13 @@ export interface ResearchOptions {
 /** Result of {@link research}. */
 export interface ResearchResult {
   /**
+   * Whether the synthesizer answered: false when no claim was collected, so it was not called and
+   * `answer` is empty.
+   */
+  readonly answered: boolean;
+  /**
    * The synthesizer's cited answer: claim `n` is cited as `[n]` and is `claims[n - 1]`. Empty when
-   * no claim was collected (status `'unanswered'`).
+   * no claim was collected (`answered: false`).
    */
   readonly answer: string;
   /**
@@ -481,13 +512,28 @@ export interface ResearchResult {
   readonly failedScouts: number;
   /** How many reader calls failed (the length of `unread`). */
   readonly failedReads: number;
+  /** How many scout and reader calls failed: `failedScouts + failedReads`. */
+  readonly failures: number;
   /**
-   * `'complete'` when every scout and reader answered and the synthesizer wrote the answer,
-   * `'degraded'` when some failed and the answer rests on the rest, `'unanswered'` when no claim
-   * was collected, so the synthesizer was not called.
+   * `'complete'` when every scout and reader answered, else `'degraded'` (the answer, if any, rests
+   * on the rest). Whether there is an answer is `answered`.
    */
-  readonly status: 'complete' | 'degraded' | 'unanswered';
+  readonly status: 'complete' | 'degraded';
 }
+
+/** The schema of a {@link ResearchResult}, for a workflow `output` or a saved result. */
+export const ResearchResult: z.ZodType<ResearchResult> = z.strictObject({
+  answered: z.boolean(),
+  answer: z.string(),
+  sources: z.array(Lead),
+  claims: z.array(Citation),
+  deferred: z.array(Lead),
+  unread: z.array(Lead),
+  failedScouts: Count,
+  failedReads: Count,
+  failures: Count,
+  status: Health,
+});
 
 /**
  * The identity of a lead for deduplication: its `ref` trimmed and lowercased, without an
@@ -624,7 +670,7 @@ function synthesizePrompt(
  * `<id>/read/<l>/claims` (schema `std.types.Claims`). The distinct claims, numbered in reading
  * order, go to `team.synthesizer` as the text call `<id>/synthesize`, which cites them as `[n]`.
  * Without any lead nothing is read, and without any claim the synthesizer is not called: the
- * answer is empty and the status `'unanswered'`.
+ * answer is empty and `answered` is false.
  *
  * A failed scout or reader call is journaled, logged and counted, so a resume does not retry it;
  * the synthesizer is told which sources could not be read. The default prompts are
@@ -641,8 +687,8 @@ function synthesizePrompt(
  * @param ctx - The workflow context the team was bound from.
  * @param options - The scope, the team and the question, with optional background, angles, read
  * cap and prompts.
- * @returns The cited answer, the leads the claims came from, the claims, the deferred and unread
- * leads, the failure counts and the status.
+ * @returns Whether it was answered, the cited answer, the leads the claims came from, the claims,
+ * the deferred and unread leads, the failure counts and the status.
  * @throws TypeError - Before any effect, when a team slot is not filled, `question` is blank,
  * `angles` is empty, or `reads` or `concurrency` is not a positive integer.
  * @throws Error - The synthesizer's call failure; a resume replays the scouts and readers and
@@ -699,7 +745,9 @@ export async function research(
     }
     const unanswered = (reason: string, unread: Lead[]): ResearchResult => {
       ctx.log(`${id}: ${reason}; the question is unanswered.`);
+      const failures = failedAngles.length + unread.length;
       return {
+        answered: false,
         answer: '',
         sources: [],
         claims: [],
@@ -707,7 +755,8 @@ export async function research(
         unread,
         failedScouts: failedAngles.length,
         failedReads: unread.length,
-        status: 'unanswered',
+        failures,
+        status: statusOf(failures),
       };
     };
     if (chosen.length === 0) return unanswered('no scout named a lead', []);
@@ -753,7 +802,9 @@ export async function research(
         ? synthesizePrompt(question, background, claims, unread)
         : custom.synthesize(question, claims, unread);
     const answer = await team.synthesizer.value('synthesize', { ...calls, prompt });
+    const failures = failedAngles.length + unread.length;
     return {
+      answered: true,
       answer,
       sources,
       claims,
@@ -761,7 +812,8 @@ export async function research(
       unread,
       failedScouts: failedAngles.length,
       failedReads: unread.length,
-      status: failedAngles.length + unread.length === 0 ? 'complete' : 'degraded',
+      failures,
+      status: statusOf(failures),
     };
   });
 }

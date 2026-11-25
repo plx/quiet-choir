@@ -8,6 +8,13 @@
  * Call a pattern with the context its team was bound from: an agent read from
  * `ctx.within(p).roster` keeps the `p/` prefix wherever it is called, so pass that same view.
  *
+ * Every result interface `XResult` has a Zod schema of the same name, so a workflow can return a
+ * pattern's result as its output (`defineWorkflow({ output: std.patterns.GateResult, ... })`) and
+ * the compiler checks the schema against the interface. A generic result's schema is a factory
+ * that takes the schema of what varies, such as `std.patterns.VerifyResult(std.types.Finding)`.
+ * The schemas are strict objects with no transforms, so each converts to JSON Schema; they are part
+ * of the output-schema identity of a workflow that uses one.
+ *
  * @module
  */
 import {
@@ -19,6 +26,7 @@ import {
   type TeamOf,
   type WorkflowContext,
 } from '../index.js';
+import { Count } from './pattern-kit.js';
 
 export type { CallDefaults } from './pattern-kit.js';
 export * from './panels.js';
@@ -68,6 +76,12 @@ export interface ReviewReviseResult {
   /** The approved draft, or the last reviewed one when no round approved. */
   readonly draft: string;
 }
+
+/** The schema of a {@link ReviewReviseResult}, for a workflow `output` or a saved result. */
+export const ReviewReviseResult: z.ZodType<ReviewReviseResult> = z.strictObject({
+  approved: z.boolean(),
+  draft: z.string(),
+});
 
 /**
  * Review up to `rounds` times and revise after each rejection. Round `n` asks `team.critic` for
@@ -134,7 +148,9 @@ export interface TolerantPanelOptions<T, O = string> {
   /**
    * A revision for dependencies the items and the mapper source do not show, such as the `prompt`
    * function or the `schema`, as `MapOptions.version` for `ctx.map`. Change it when such a
-   * dependency changes in a way that should not reuse the settled votes.
+   * dependency changes in a way that should not reuse the settled votes. The team's agent
+   * configuration is not part of a map item either, so a completed vote is reused after a role
+   * changes: change `version` when you change the agent that fills a slot.
    */
   readonly version?: string | undefined;
 }
@@ -147,6 +163,24 @@ export interface TolerantPanelResult<O = string> {
   readonly answers: O[];
   /** How many items failed; their failures are saved, so a resume does not retry them. */
   readonly failed: number;
+}
+
+/**
+ * The schema of a {@link TolerantPanelResult}, for a workflow `output` or a saved result.
+ *
+ * @typeParam O - The answer type.
+ * @param answer - The schema of each answer: the `schema` the panel ran with. Omitted, text, as
+ * {@link tolerantPanel} defaults to.
+ * @returns A strict object schema of the result.
+ */
+export function TolerantPanelResult<O = string>(
+  answer?: z.ZodType<O>,
+): z.ZodType<TolerantPanelResult<O>> {
+  return z.strictObject({
+    quorum: z.boolean(),
+    answers: z.array((answer ?? z.string()) as z.ZodType<O>),
+    failed: Count,
+  });
 }
 
 /**

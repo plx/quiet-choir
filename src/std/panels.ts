@@ -10,9 +10,14 @@
  *
  * Every pattern takes a required `id` and records all of its steps under it; each pattern's TSDoc
  * lists the exact step IDs. A failed agent call is journaled and becomes data (a failed lens, a
- * missing vote), so a resume replays the same decision instead of retrying it, and every result
- * reports its failures and a `status`. The default prompts are built with `std.text.brief`, and
- * the skeptical ones name the safe default for an undecided agent (refute; vote no).
+ * missing vote), so a resume replays the same decision instead of retrying it. Every result counts
+ * those failures in `failures` and reports its health as `status`: `'degraded'` exactly when a
+ * tolerated call failed, else `'complete'`; what the pattern decided is in named fields. The
+ * default prompts are built with `std.text.brief`, and the skeptical ones name the safe default for
+ * an undecided agent (refute; vote no). Every result interface has a schema of the same name, for a
+ * workflow `output` or a saved result: {@link VoteResult} and {@link HuntResult} are schemas, and
+ * {@link LensPanelResult} and {@link VerifyResult} are factories that take the answer or item
+ * schema.
  *
  * ```ts
  * import * as std from 'quiet-choir/std';
@@ -22,7 +27,7 @@
  *   team: { finder: ctx.roster.Reviewer, skeptic: ctx.roster.Skeptic },
  *   subject: 'The parser in src/parser/.',
  * });
- * for (const { item } of hunt.confirmed) ctx.log(`${item.severity}: ${item.file}: ${item.title}`);
+ * for (const item of hunt.findings) ctx.log(`${item.severity}: ${item.file}: ${item.title}`);
  * ```
  *
  * @module
@@ -36,8 +41,8 @@ import {
   type Prompt,
   type Settled,
   type TeamOf,
+  z,
   type WorkflowContext,
-  type z,
 } from '../index.js';
 import {
   bySeverity,
@@ -45,14 +50,16 @@ import {
   fresh,
   rankBy,
   rotate,
+  Health,
   tally,
   threshold,
   type Outcome,
   type Rule,
 } from './data.js';
 import { json } from './exec.js';
-import { bugs, type Lens } from './lenses.js';
+import { LensSchema, bugs, type Lens } from './lenses.js';
 import {
+  Count,
   keyed,
   nonEmpty,
   placement,
@@ -62,7 +69,14 @@ import {
   type CallDefaults,
 } from './pattern-kit.js';
 import { brief, bullets, fence, promptText, section } from './text.js';
-import { Ballot, Findings, Refutation, Severity, type Finding } from './types.js';
+import {
+  Ballot,
+  Finding,
+  Findings,
+  Outcome as OutcomeSchema,
+  Refutation,
+  Severity,
+} from './types.js';
 
 /**
  * A settled-map item that carries its key, the rendered prompt the mapper sends, and where the call
@@ -128,7 +142,11 @@ export interface LensPanelOptions<O> {
   readonly prompts?: LensPanelPrompts | undefined;
   /** How many lenses run at once; defaults to 4. */
   readonly concurrency?: number | undefined;
-  /** A revision for prompts and schemas the settled map's fingerprint does not show. */
+  /**
+   * A revision for what the settled map's fingerprint does not show, such as the schema. The team's
+   * agent configuration is not part of a map item either, so a completed item is reused after a
+   * role changes: change `version` when you change the agent that fills a slot.
+   */
   readonly version?: string | undefined;
   /** Options applied to every agent call (placement, retry, deadlines). */
   readonly calls?: CallDefaults | undefined;
@@ -142,6 +160,17 @@ export interface LensAnswer<O> {
   readonly value: O;
 }
 
+/**
+ * The schema of a {@link LensAnswer}.
+ *
+ * @typeParam O - The answer type.
+ * @param value - The schema of the answer, such as the panel's `schema`.
+ * @returns A strict object schema of `{ lens, value }`.
+ */
+export function LensAnswer<O>(value: z.ZodType<O>): z.ZodType<LensAnswer<O>> {
+  return z.strictObject({ lens: LensSchema, value });
+}
+
 /** Result of {@link lensPanel}. */
 export interface LensPanelResult<O> {
   /** The answers of the lenses whose call succeeded, in lens order. */
@@ -150,8 +179,28 @@ export interface LensPanelResult<O> {
   readonly failed: Lens[];
   /** Whether more than half of the lenses answered. */
   readonly quorum: boolean;
+  /** How many lens calls failed: the length of `failed`. */
+  readonly failures: number;
   /** `'complete'` when every lens answered, else `'degraded'`. */
   readonly status: 'complete' | 'degraded';
+}
+
+/**
+ * The schema of a {@link LensPanelResult}, for a workflow `output` or a saved result, such as
+ * `std.patterns.LensPanelResult(std.types.Findings)`.
+ *
+ * @typeParam O - The answer type.
+ * @param value - The schema of each answer: the `schema` the panel ran with.
+ * @returns A strict object schema of the result.
+ */
+export function LensPanelResult<O>(value: z.ZodType<O>): z.ZodType<LensPanelResult<O>> {
+  return z.strictObject({
+    results: z.array(LensAnswer(value)),
+    failed: z.array(LensSchema),
+    quorum: z.boolean(),
+    failures: Count,
+    status: Health,
+  });
 }
 
 /** The default lens prompt: the task, the lens and its charter, the subject and the rules. */
@@ -206,6 +255,7 @@ async function runPanel<O>(ctx: WorkflowContext, run: PanelRun<O>): Promise<Lens
     results,
     failed,
     quorum: results.length > entries.length / 2,
+    failures: failed.length,
     status: statusOf(failed.length),
   };
 }
@@ -227,7 +277,8 @@ async function runPanel<O>(ctx: WorkflowContext, run: PanelRun<O>): Promise<Lens
  * @param ctx - The workflow context the team was bound from.
  * @param options - The scope, the team, the lenses, the subject and the answer schema, with an
  * optional task, prompts, concurrency, version and call defaults.
- * @returns The answers in lens order, the failed lenses, whether a quorum answered, and the status.
+ * @returns The answers in lens order, the failed lenses, whether a quorum answered, the failure
+ * count and the status.
  * @throws TypeError - Before any effect, when the `reader` slot is not filled, `lenses` is empty or
  * `concurrency` is not a positive integer.
  */
@@ -296,7 +347,11 @@ export interface VoteOptions {
   readonly prompts?: VotePrompts | undefined;
   /** How many seats vote at once; defaults to 4. */
   readonly concurrency?: number | undefined;
-  /** A revision for prompts and schemas the settled map's fingerprint does not show. */
+  /**
+   * A revision for what the settled map's fingerprint does not show, such as the schema. The team's
+   * agent configuration is not part of a map item either, so a completed item is reused after a
+   * role changes: change `version` when you change the agent that fills a slot.
+   */
   readonly version?: string | undefined;
   /** Options applied to every agent call (placement, retry, deadlines). */
   readonly calls?: CallDefaults | undefined;
@@ -319,9 +374,23 @@ export interface VoteResult {
   readonly seats: number;
   /** Each answering seat's reasoning in seat order, prefixed `yes: ` or `no: `. */
   readonly reasons: string[];
+  /** How many seat calls failed: the same as `missing`. */
+  readonly failures: number;
   /** `'complete'` when every seat answered, else `'degraded'`. */
   readonly status: 'complete' | 'degraded';
 }
+
+/** The schema of a {@link VoteResult}, for a workflow `output` or a saved result. */
+export const VoteResult: z.ZodType<VoteResult> = z.strictObject({
+  outcome: z.enum(['yes', 'no', 'undecided']),
+  yes: Count,
+  no: Count,
+  missing: Count,
+  seats: Count,
+  reasons: z.array(z.string()),
+  failures: Count,
+  status: Health,
+});
 
 /** The default ballot prompt; it names no as the safe default. */
 function ballotPrompt(question: string, context: string | undefined): string {
@@ -352,7 +421,7 @@ function ballotPrompt(question: string, context: string | undefined): string {
  * @param ctx - The workflow context the team was bound from.
  * @param options - The scope, the team, the question, and optional context, seats, rule, prompts,
  * concurrency, version and call defaults.
- * @returns The outcome, the vote counts, each seat's reasoning and the status.
+ * @returns The outcome, the vote counts, each seat's reasoning, the failure count and the status.
  * @throws TypeError - Before any effect, when the `voter` slot is not filled, `seats` or
  * `concurrency` is not a positive integer, or the rule is invalid for `seats`.
  */
@@ -399,6 +468,7 @@ export async function vote(ctx: WorkflowContext, options: VoteOptions): Promise<
       missing: decided.missing,
       seats,
       reasons,
+      failures: decided.missing,
       status: statusOf(decided.missing),
     };
   });
@@ -419,10 +489,10 @@ export type VerifyTeam = TeamOf<typeof VerifyTeam>;
 /** Replacement prompts of {@link verify} and {@link hunt}. */
 export interface VerifyPrompts {
   /**
-   * The prompt for seat `seat` (from 0) of a panel of `seats` judging `claim`, the item's claim
-   * text. The default asks the skeptic to refute the claim, shows the `context` under it, and asks
-   * for `refuted: true` when the evidence is inconclusive; a replacement that needs the context
-   * closes over it.
+   * The prompt for seat `seat` (from 0) of a panel of `seats` judging `claim`, the item's text from
+   * the `describe` option. The default asks the skeptic to refute the claim, shows the `context`
+   * under it, and asks for `refuted: true` when the evidence is inconclusive; a replacement that
+   * needs the context closes over it.
    */
   readonly verify?: ((claim: string, seat: number, seats: number) => string | Prompt) | undefined;
 }
@@ -443,10 +513,10 @@ export interface VerifyOptions<T> {
    */
   readonly key?: ((item: T, index: number) => string) | undefined;
   /**
-   * The claim text a skeptic judges; defaults to a string item itself and to any other item as a
-   * fenced JSON block.
+   * An item's text as the claim a skeptic judges; defaults to a string item itself and to any other
+   * item as a fenced JSON block.
    */
-  readonly claim?: ((item: T) => string) | undefined;
+  readonly describe?: ((item: T) => string) | undefined;
   /**
    * What the claims are about, such as the reviewed diff or the hunted scope, shown under the
    * claim in the default prompt so a skeptic checks the claim against the same material.
@@ -463,7 +533,11 @@ export interface VerifyOptions<T> {
   readonly prompts?: VerifyPrompts | undefined;
   /** How many items are verified at once (each item's seats run together); defaults to 4. */
   readonly concurrency?: number | undefined;
-  /** A revision for prompts and schemas the settled maps' fingerprints do not show. */
+  /**
+   * A revision for what the settled maps' fingerprints do not show, such as a schema. The team's
+   * agent configuration is not part of a map item either, so a completed item is reused after a
+   * role changes: change `version` when you change the agent that fills a slot.
+   */
   readonly version?: string | undefined;
   /** Options applied to every agent call (placement, retry, deadlines). */
   readonly calls?: CallDefaults | undefined;
@@ -492,6 +566,26 @@ export interface Verified<T> {
   readonly reasons: string[];
 }
 
+/**
+ * The schema of a {@link Verified}.
+ *
+ * @typeParam T - The item type.
+ * @param item - The schema of the item, such as `std.types.Finding`.
+ * @returns A strict object schema of one item's verdict.
+ */
+export function Verified<T>(item: z.ZodType<T>): z.ZodType<Verified<T>> {
+  return z.strictObject({
+    key: z.string(),
+    item,
+    outcome: OutcomeSchema,
+    upheld: Count,
+    against: Count,
+    missing: Count,
+    seats: Count,
+    reasons: z.array(z.string()),
+  });
+}
+
 /** Result of {@link verify}. */
 export interface VerifyResult<T> {
   /** The confirmed items, in input order. */
@@ -502,8 +596,30 @@ export interface VerifyResult<T> {
   readonly undecided: Verified<T>[];
   /** How many seats failed across all items; their failures are saved and not retried. */
   readonly failedVotes: number;
+  /** How many seat calls failed: the same as `failedVotes`. */
+  readonly failures: number;
   /** `'complete'` when every seat answered, else `'degraded'`. */
   readonly status: 'complete' | 'degraded';
+}
+
+/**
+ * The schema of a {@link VerifyResult}, for a workflow `output` or a saved result, such as
+ * `std.patterns.VerifyResult(std.types.Finding)`.
+ *
+ * @typeParam T - The item type.
+ * @param item - The schema of each item: the type of the `items` verified.
+ * @returns A strict object schema of the result.
+ */
+export function VerifyResult<T>(item: z.ZodType<T>): z.ZodType<VerifyResult<T>> {
+  const verdicts = z.array(Verified(item));
+  return z.strictObject({
+    confirmed: verdicts,
+    refuted: verdicts,
+    undecided: verdicts,
+    failedVotes: Count,
+    failures: Count,
+    status: Health,
+  });
 }
 
 /** The default skeptic prompt; it names `refuted: true` as the safe default. */
@@ -569,13 +685,14 @@ function verifyEntries<T>(
   seats: readonly number[],
   options: {
     readonly key?: ((item: T, index: number) => string) | undefined;
-    readonly claim?: ((item: T) => string) | undefined;
+    readonly describe?: ((item: T) => string) | undefined;
     readonly context?: string | undefined;
     readonly prompts?: VerifyPrompts | undefined;
   },
 ): VerifyEntry<T>[] {
   const claimOf =
-    options.claim ?? ((item: T) => (typeof item === 'string' ? item : fence(json(item), 'json')));
+    options.describe ??
+    ((item: T) => (typeof item === 'string' ? item : fence(json(item), 'json')));
   const { context } = options;
   const custom = options.prompts?.verify;
   return keyed(items, options.key).map(({ key, item, index }) => {
@@ -664,19 +781,20 @@ async function runVerify<T>(
  * records `<id>/item/<key>/seat/<n>/verdict` (schema `std.types.Refutation`). A failed seat is
  * journaled and counted as missing for that item, so a resume decides the same way.
  *
- * The default prompt (a `std.text.brief`) gives the claim (by default a string item itself, or any
- * other item as fenced JSON) and any `context` under it, asks the skeptic to refute the claim
- * against the actual code, data or sources, and names `refuted: true` as the safe default when the
- * evidence is inconclusive. Each map item carries the rendered prompts, so a prompt change is
- * detected on resume.
+ * The default prompt (a `std.text.brief`) gives the claim (the item's `describe` text: by default a
+ * string item itself, or any other item as fenced JSON) and any `context` under it, asks the
+ * skeptic to refute the claim against the actual code, data or sources, and names `refuted: true`
+ * as the safe default when the evidence is inconclusive. Each map item carries the rendered
+ * prompts, so a prompt change is detected on resume.
  *
  * Team slot: `skeptic`, a high-effort read-only agent such as `std.roles.Skeptic`.
  *
  * @typeParam T - The item type; items must be JSON-serializable for the default claim.
  * @param ctx - The workflow context the team was bound from.
- * @param options - The scope, the team, the items, and optional key, claim, context, seats, rule
+ * @param options - The scope, the team, the items, and optional key, describe, context, seats, rule
  * and prompts.
- * @returns The confirmed, refuted and undecided items, the failed seat count and the status.
+ * @returns The confirmed, refuted and undecided items, the failed seat count (also as `failures`)
+ * and the status.
  * @throws TypeError - Before any effect, when the `skeptic` slot is not filled, a seat count or
  * `concurrency` is not a positive integer, or the rule is invalid for an item's seat count.
  */
@@ -692,7 +810,11 @@ export async function verify<T>(
   const verdicts = await ctx.scope(options.id, () =>
     runVerify(ctx, skeptic, entries, rule, map, options.calls),
   );
-  return { ...verdicts, status: statusOf(verdicts.failedVotes) };
+  return {
+    ...verdicts,
+    failures: verdicts.failedVotes,
+    status: statusOf(verdicts.failedVotes),
+  };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -731,6 +853,12 @@ export interface HuntOptions {
    * context, and skeptics see it under each finding.
    */
   readonly subject: string;
+  /**
+   * The opening sentence of the default finder prompt, before the lens, such as `Hunt for defects
+   * in the diff below.`; omitted, the prompt opens `Hunt for defects in the subject below through
+   * one lens, <key>: <charter>` as it always has. Unused with a replacement `find` prompt.
+   */
+  readonly task?: string | undefined;
   /** The lens pool to rotate through; defaults to `std.lenses.bugs`. */
   readonly lenses?: readonly Lens[] | undefined;
   /** How many lenses each round runs (a window that walks the pool); defaults to 3. */
@@ -749,14 +877,18 @@ export interface HuntOptions {
   /**
    * The most agent calls to admit, finders and skeptic seats together; unlimited when omitted.
    * Lenses and findings the cap leaves out are logged with `ctx.log`, the skipped findings are
-   * returned in `unverified`, and the hunt ends with status `'call-limit'`.
+   * returned in `unverified`, and the hunt ends with `ended: 'call-limit'`.
    */
   readonly maxCalls?: number | undefined;
   /** Replacement prompts. */
   readonly prompts?: HuntPrompts | undefined;
   /** How many finders, and separately how many findings' panels, run at once; defaults to 4. */
   readonly concurrency?: number | undefined;
-  /** A revision for prompts and schemas the settled maps' fingerprints do not show. */
+  /**
+   * A revision for what the settled maps' fingerprints do not show, such as a schema. The team's
+   * agent configuration is not part of a map item either, so a completed item is reused after a
+   * role changes: change `version` when you change the agent that fills a slot.
+   */
   readonly version?: string | undefined;
   /** Options applied to every agent call (placement, retry, deadlines). */
   readonly calls?: CallDefaults | undefined;
@@ -764,7 +896,12 @@ export interface HuntOptions {
 
 /** Result of {@link hunt}. */
 export interface HuntResult {
-  /** The confirmed findings, most severe first (discovery order within a severity). */
+  /**
+   * The confirmed findings themselves, most severe first (discovery order within a severity): the
+   * `item` of each entry of `confirmed`.
+   */
+  readonly findings: Finding[];
+  /** The confirmed findings with their verdicts, most severe first. */
   readonly confirmed: Verified<Finding>[];
   /** The refuted findings, most severe first. */
   readonly refuted: Verified<Finding>[];
@@ -787,12 +924,31 @@ export interface HuntResult {
    * `'round-limit'` after `rounds` rounds, or `'call-limit'` when `maxCalls` left work out.
    */
   readonly ended: 'dry' | 'round-limit' | 'call-limit';
+  /** How many finder and skeptic calls failed: `failedFinders + failedVotes`. */
+  readonly failures: number;
   /**
-   * `'call-limit'` when `maxCalls` left lenses or findings out, else `'degraded'` when a finder or
-   * a seat failed, else `'complete'`.
+   * `'complete'` when every finder and seat answered, else `'degraded'`; a call cap that left work
+   * out shows in `ended` and `unverified`, not here.
    */
-  readonly status: 'complete' | 'degraded' | 'call-limit';
+  readonly status: 'complete' | 'degraded';
 }
+
+/** The schema of a {@link HuntResult}, for a workflow `output` or a saved result. */
+export const HuntResult: z.ZodType<HuntResult> = z.strictObject({
+  findings: z.array(Finding),
+  confirmed: z.array(Verified(Finding)),
+  refuted: z.array(Verified(Finding)),
+  undecided: z.array(Verified(Finding)),
+  unverified: z.array(Finding),
+  rounds: Count,
+  dryRounds: Count,
+  failedFinders: Count,
+  failedVotes: Count,
+  callsAdmitted: Count,
+  ended: z.enum(['dry', 'round-limit', 'call-limit']),
+  failures: Count,
+  status: Health,
+});
 
 /** A finding as one line: `file[:line]: title`. */
 function findingLine(finding: Finding): string {
@@ -800,14 +956,25 @@ function findingLine(finding: Finding): string {
   return `${finding.file}${line}: ${finding.title}`;
 }
 
-/** The default finder prompt for one lens, listing what earlier rounds already reported. */
-function findPrompt(lens: Lens, subject: string, known: readonly Finding[]): string {
+/**
+ * The default finder prompt for one lens, listing what earlier rounds already reported. Without a
+ * `task`, it opens as it always has; with one, the task comes first and then the lens.
+ */
+function findPrompt(
+  task: string | undefined,
+  lens: Lens,
+  subject: string,
+  known: readonly Finding[],
+): string {
   const repeat =
     known.length === 0
       ? []
       : ['Do not report anything listed under Already reported, even in other words.'];
   return brief({
-    task: `Hunt for defects in the subject below through one lens, ${lens.key}: ${lens.charter}`,
+    task:
+      task === undefined
+        ? `Hunt for defects in the subject below through one lens, ${lens.key}: ${lens.charter}`
+        : `${task} Work through one lens only, ${lens.key}: ${lens.charter}`,
     context:
       known.length === 0
         ? subject
@@ -845,13 +1012,14 @@ function severest(verdicts: readonly Verified<Finding>[]): Verified<Finding>[] {
  *
  * Team slots: `finder`, a read-only reviewer such as `std.roles.Reviewer`; `skeptic`, a
  * high-effort read-only agent such as `std.roles.Skeptic`. The default prompts are
- * `std.text.brief`s; the skeptic's names `refuted: true` as the safe default.
+ * `std.text.brief`s: the finder's opens with `task` when it is given; the skeptic's names
+ * `refuted: true` as the safe default.
  *
  * @param ctx - The workflow context the team was bound from.
- * @param options - The scope, the team and the subject, with optional lenses, round, seat and call
- * limits and prompts.
- * @returns The verified findings by outcome, the unverified ones, round and failure counts, why the
- * hunt ended and the status.
+ * @param options - The scope, the team and the subject, with an optional task, lenses, round, seat
+ * and call limits and prompts.
+ * @returns The confirmed findings, the verified findings by outcome, the unverified ones, round and
+ * failure counts, why the hunt ended and the status.
  * @throws TypeError - Before any effect, when a team slot is not filled, `lenses` is empty, a count
  * option is not a positive integer, or the rule is invalid for `seats`; during the hunt, when a
  * `seats` function returns an invalid count.
@@ -870,7 +1038,11 @@ export async function hunt(ctx: WorkflowContext, options: HuntOptions): Promise<
   if (typeof seats === 'number') seatCount(seats, rule);
   const lensMap = settledMap<PromptRecord>(options);
   const itemMap = settledMap<PanelRecord>(options);
-  const find = options.prompts?.find ?? findPrompt;
+  const { task } = options;
+  const find =
+    options.prompts?.find ??
+    ((lens: Lens, text: string, earlier: readonly Finding[]) =>
+      findPrompt(task, lens, text, earlier));
   const verifyOptions = { key: findingKey, context: subject, prompts: options.prompts };
 
   return ctx.scope(options.id, async () => {
@@ -961,8 +1133,10 @@ export async function hunt(ctx: WorkflowContext, options: HuntOptions): Promise<
       if (limited) break;
     }
     const failedVotes = verdicts.reduce((sum, tallied) => sum + tallied.failedVotes, 0);
+    const confirmed = severest(verdicts.flatMap((tallied) => tallied.confirmed));
     return {
-      confirmed: severest(verdicts.flatMap((tallied) => tallied.confirmed)),
+      findings: confirmed.map((verdict) => verdict.item),
+      confirmed,
       refuted: severest(verdicts.flatMap((tallied) => tallied.refuted)),
       undecided: severest(verdicts.flatMap((tallied) => tallied.undecided)),
       unverified: bySeverity(unverified),
@@ -972,7 +1146,8 @@ export async function hunt(ctx: WorkflowContext, options: HuntOptions): Promise<
       failedVotes,
       callsAdmitted,
       ended: limited ? 'call-limit' : dry() ? 'dry' : 'round-limit',
-      status: limited ? 'call-limit' : statusOf(failedFinders + failedVotes),
+      failures: failedFinders + failedVotes,
+      status: statusOf(failedFinders + failedVotes),
     };
   });
 }

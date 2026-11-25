@@ -1,8 +1,8 @@
-// The std aggregate recipes end to end: std-changelog (std.exec.commits and one git log read over a
-// real temporary repository, then mapReduce into release notes) and std-plan-and-build (decompose a
-// goal, then std.flow.waves running a Mechanic per task), against a scripted harness, checking
-// their outputs, step IDs, team wiring, grants, failure handling and replay after a tail failure
-// without new agent calls or commands.
+// The std aggregate recipes end to end: std-changelog (one std.exec.log read over a real temporary
+// repository, then mapReduce into release notes, returning the MapReduceResult) and
+// std-plan-and-build (decompose a goal, then std.flow.waves running a Mechanic per task), against a
+// scripted harness, checking their outputs, step IDs, team wiring, grants, failure handling and
+// replay after a tail failure without new agent calls or commands.
 import { execFile } from 'node:child_process';
 import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -30,6 +30,7 @@ import {
   makeRoot,
   promptOf,
   removeRoot,
+  roundTrip,
   runOptions,
   tailFailure,
 } from './std-harness.js';
@@ -134,14 +135,14 @@ describe('std-changelog', () => {
     base = await commit('Initial commit');
   });
 
-  /** One change-log entry per commit the mapper's prompt lists (`- <sha> <subject>`). */
+  /** One change-log entry per commit the mapper's prompt lists (`- <sha>: <subject>`). */
   const entries = (request: HarnessRequest) => ({
     changes: promptOf(request)
       .split('\n')
-      .filter((line) => /^- [0-9a-f]{40} /u.test(line))
+      .filter((line) => /^- [0-9a-f]{40}: /u.test(line))
       .map((line) => ({
         kind: 'feature',
-        summary: line.slice(43),
+        summary: line.slice(44),
         shas: [line.slice(2, 42)],
         userVisible: true,
         migration: null,
@@ -160,17 +161,31 @@ describe('std-changelog', () => {
       'notes/reduce': () => '## Features\n\n- Add the --json flag',
     });
     const result = await replayAfterTail(changelog, { range: `${base}..HEAD` }, harness);
-    expect(result.output).toEqual({
+    expect(result.output).toMatchObject({
+      result: '## Features\n\n- Add the --json flag',
+      coverage: { covered: shas, missing: [] },
+      chunks: 1,
+      failedChunks: 0,
+      failures: 0,
       status: 'complete',
-      notes: '## Features\n\n- Add the --json flag',
-      missing: [],
     });
+    expect(result.output?.parts).toHaveLength(1);
+    expect(result.output?.parts[0]?.keys).toEqual(shas);
+    expect(result.output?.parts[0]?.value.changes.map((change) => change.summary)).toEqual([
+      'Add the --json flag',
+      'Fix the parser',
+      'Document export',
+    ]);
+    roundTrip(std.patterns.MapReduceResult(std.types.Changes), result.output);
     expect(harness.ids()).toEqual([`notes/map/${first}/part`, 'notes/reduce']);
-    expect(Object.keys(result.steps)).toEqual(expect.arrayContaining(['commits', 'subjects']));
+    // One git log read lists the commits with their subjects.
+    expect(Object.keys(result.steps)).toContain('commits');
+    expect(Object.keys(result.steps)).not.toContain('subjects');
+    expect(runner.runs).toBe(1);
     // Commits are listed oldest first, each once, as its SHA and subject.
     const map = harness.prompt(`notes/map/${first}/part`);
     expect(map).toContain(
-      `- ${shas[0] ?? ''} Add the --json flag\n- ${shas[1] ?? ''} Fix the parser\n- ${shas[2] ?? ''} Document export`,
+      `- ${shas[0] ?? ''}: Add the --json flag\n- ${shas[1] ?? ''}: Fix the parser\n- ${shas[2] ?? ''}: Document export`,
     );
     expect(map).toContain(`Turn these commits from ${base}..HEAD into change-log entries`);
     const reduce = harness.prompt('notes/reduce');
@@ -193,10 +208,13 @@ describe('std-changelog', () => {
       'notes/reduce': () => 'Partial notes',
     });
     const result = await replayAfterTail(changelog, { range: `${base}..HEAD` }, harness);
-    expect(result.output).toEqual({
+    expect(result.output).toMatchObject({
+      result: 'Partial notes',
+      coverage: { covered: shas.slice(0, 20), missing: shas.slice(20) },
+      chunks: 2,
+      failedChunks: 1,
+      failures: 1,
       status: 'degraded',
-      notes: 'Partial notes',
-      missing: shas.slice(20),
     });
     expect(harness.count(`notes/map/${second}/part`)).toBe(1);
     expect(harness.prompt('notes/reduce')).toContain(
@@ -208,7 +226,15 @@ describe('std-changelog', () => {
       ...options(idle, 'empty'),
       input: { range: 'HEAD..HEAD' },
     });
-    expect(empty.output).toEqual({ status: 'complete', notes: '', missing: [] });
+    expect(empty.output).toEqual({
+      result: '',
+      parts: [],
+      coverage: { covered: [], missing: [] },
+      chunks: 0,
+      failedChunks: 0,
+      failures: 0,
+      status: 'complete',
+    });
     expect(idle.calls).toHaveLength(0);
   });
 });

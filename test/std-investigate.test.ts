@@ -24,6 +24,7 @@ import {
   makeRoot,
   removeRoot,
   replayAfterTail,
+  roundTrip,
   runOptions,
   tailFailure,
 } from './std-harness.js';
@@ -128,7 +129,7 @@ describe('falsify', () => {
         id: 'inc',
         team: { theorist: agent, falsifier: agent },
         question,
-        evidence,
+        context: evidence,
         ...options,
       });
     });
@@ -162,9 +163,10 @@ describe('falsify', () => {
       survivors: [hypothesis('H1')],
       confidence: 'high',
       falsified: 2,
-      failed: 0,
+      failures: 0,
       status: 'complete',
     });
+    roundTrip(investigate.FalsifyResult, result.output);
     expect(calledIds(harness)).toEqual(
       [
         'inc/theorize',
@@ -211,7 +213,8 @@ describe('falsify', () => {
     ];
     for (const [index, [ids, outcomes, confidence]] of cases.entries()) {
       const result = await run(inquiry(), scripted(replies(ids, outcomes)), `c${String(index)}`);
-      expect(result.output).toMatchObject({ confidence, failed: 0, status: 'complete' });
+      expect(result.output).toMatchObject({ confidence, failures: 0, status: 'complete' });
+      roundTrip(investigate.FalsifyResult, result.output);
     }
   });
 
@@ -228,7 +231,7 @@ describe('falsify', () => {
       survivors: [hypothesis('H1')],
       confidence: 'medium',
       falsified: 1,
-      failed: 1,
+      failures: 1,
       status: 'degraded',
     });
     expect((result.output as unknown as investigate.FalsifyResult).hypotheses[2]).toEqual({
@@ -237,6 +240,7 @@ describe('falsify', () => {
       verdict: null,
     });
     expect(harness.count('inc/hypothesis/H3/falsify')).toBe(1);
+    roundTrip(investigate.FalsifyResult, result.output);
     expect(logs(result)).toContainEqual([
       'inc: 1 of 3 falsifier call(s) failed; those hypotheses stay open.',
       { failed: ['H3'] },
@@ -260,6 +264,7 @@ describe('falsify', () => {
       falsified: 2,
     });
     const tested = (result.output as unknown as investigate.FalsifyResult).hypotheses;
+    roundTrip(investigate.FalsifyResult, result.output);
     expect(tested.map((entry) => entry.key)).toEqual(['H1', 'H1.2', stepId(odd)]);
     expect(harness.prompt('inc/theorize')).toContain('Propose up to 3 distinct');
     expect(harness.prompt('inc/hypothesis/H1.2/falsify')).toContain(
@@ -271,10 +276,10 @@ describe('falsify', () => {
     ]);
   });
 
-  it('omits the evidence sections without evidence and uses replacement prompts', async () => {
+  it('omits the evidence sections without context and uses replacement prompts', async () => {
     for (const [index, absent] of [undefined, ' \n '].entries()) {
       const bare = scripted(replies(['H1'], { H1: 'untestable' }));
-      await run(inquiry({ evidence: absent }), bare, `bare-${String(index)}`);
+      await run(inquiry({ context: absent }), bare, `bare-${String(index)}`);
       expect(bare.prompt('inc/theorize')).not.toContain('## Context');
       const falsify = bare.prompt('inc/hypothesis/H1/falsify');
       expect(falsify).not.toContain('### Evidence');
@@ -397,6 +402,7 @@ describe('research', () => {
     });
     const result = await replayAfterTail(study({ reads: 3 }), null, harness, root);
     expect(result.output).toEqual({
+      answered: true,
       answer: 'Yes [1, 2].',
       // issueA was read but yielded no claim, so it is not a source.
       sources: [lead(docsA), lead(codeA)],
@@ -408,8 +414,10 @@ describe('research', () => {
       unread: [],
       failedScouts: 0,
       failedReads: 0,
+      failures: 0,
       status: 'complete',
     });
+    roundTrip(investigate.ResearchResult, result.output);
     expect(calledIds(harness)).toEqual(
       [
         'rs/scout/docs/leads',
@@ -473,10 +481,12 @@ describe('research', () => {
       unread: [lead(issueA)],
       failedScouts: 1,
       failedReads: 1,
+      failures: 2,
       status: 'degraded',
     });
     expect(harness.count('rs/scout/code/leads')).toBe(1);
     expect(harness.count(`rs/read/${stepId(issueA)}/claims`)).toBe(1);
+    roundTrip(investigate.ResearchResult, result.output);
     const synthesize = harness.prompt('rs/synthesize');
     expect(synthesize).toContain('Quote: one pool per origin');
     expect(synthesize).toContain(`### Not read\n\n- ${issueA}`);
@@ -497,6 +507,7 @@ describe('research', () => {
     });
     const none = await run(study(), empty, 'none');
     expect(none.output).toEqual({
+      answered: false,
       answer: '',
       sources: [],
       claims: [],
@@ -504,9 +515,11 @@ describe('research', () => {
       unread: [],
       failedScouts: 1,
       failedReads: 0,
-      status: 'unanswered',
+      failures: 1,
+      status: 'degraded',
     });
     expect(empty.ids()).toHaveLength(3);
+    roundTrip(investigate.ResearchResult, none.output);
     expect(logs(none)).toContainEqual([
       'rs: no scout named a lead; the question is unanswered.',
       null,
@@ -520,13 +533,16 @@ describe('research', () => {
     });
     const quiet = await run(study(), silent, 'quiet');
     expect(quiet.output).toMatchObject({
+      answered: false,
       answer: '',
       sources: [],
       unread: [],
       failedReads: 0,
-      status: 'unanswered',
+      failures: 0,
+      status: 'complete',
     });
     expect(silent.ids()).not.toContain('rs/synthesize');
+    roundTrip(investigate.ResearchResult, quiet.output);
   });
 
   it('keeps hash routes, issues and other pages distinct, merging only anchors', async () => {
@@ -553,6 +569,7 @@ describe('research', () => {
     });
     const result = await run(study({ reads: 3 }), harness);
     const output = result.output as unknown as investigate.ResearchResult;
+    roundTrip(investigate.ResearchResult, output);
     // Six distinct leads: the pool page, the file and docsA were each named by two scouts and come
     // first; the rest follow by rank across the scouts. The first spelling of each is kept.
     const read = harness.ids().filter((id) => id.startsWith('rs/read/'));

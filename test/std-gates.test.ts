@@ -23,6 +23,7 @@ import {
   makeRoot,
   removeRoot,
   replayAfterTail,
+  roundTrip,
   runOptions,
   tailFailure,
 } from './std-harness.js';
@@ -134,7 +135,7 @@ describe('checklist', () => {
       gates.checklist(ctx, {
         id: 'acceptance',
         team: { checker: ctx.claude.bind({}) },
-        target: 'The change in main..HEAD.',
+        subject: 'The change in main..HEAD.',
         criteria,
         ...options,
       }),
@@ -150,13 +151,11 @@ describe('checklist', () => {
         criterion: { id: `C${String(index + 1)}`, criterion, how: '' },
         result: checked('pass'),
       })),
-      passed: 3,
-      failed: 0,
-      partial: 0,
-      unverifiable: 0,
-      errors: 0,
+      counts: { pass: 3, fail: 0, partial: 0, unverifiable: 0 },
+      failures: 0,
       status: 'complete',
     });
+    roundTrip(gates.ChecklistResult, result.output);
     expect(harness.ids().sort()).toEqual(ids);
     const prompt = harness.prompt('acceptance/criterion/C2/check');
     expect(prompt).toMatch(
@@ -177,19 +176,20 @@ describe('checklist', () => {
     );
     expect(failing.output).toMatchObject({
       verdict: 'not-done',
-      passed: 0,
-      failed: 1,
-      partial: 0,
-      unverifiable: 1,
-      errors: 1,
+      counts: { pass: 0, fail: 1, partial: 0, unverifiable: 1 },
+      failures: 1,
       status: 'degraded',
     });
+    roundTrip(gates.ChecklistResult, failing.output);
     const partial = await run(
       checklist(),
       scripted({ [ids[2] ?? '']: checked('partial') }, () => checked('pass')),
       'partial',
     );
-    expect(partial.output).toMatchObject({ verdict: 'not-done', passed: 2, partial: 1 });
+    expect(partial.output).toMatchObject({
+      verdict: 'not-done',
+      counts: { pass: 2, fail: 0, partial: 1, unverifiable: 0 },
+    });
   });
 
   it('is unverified when a criterion is unverifiable or its call failed, and does not retry the failure', async () => {
@@ -199,9 +199,8 @@ describe('checklist', () => {
     );
     expect(unverifiable.output).toMatchObject({
       verdict: 'unverified',
-      passed: 2,
-      unverifiable: 1,
-      errors: 0,
+      counts: { pass: 2, unverifiable: 1 },
+      failures: 0,
       status: 'complete',
     });
 
@@ -211,11 +210,12 @@ describe('checklist', () => {
     const result = await replayAfterTail(checklist(), null, harness, root, 'errored');
     expect(result.output).toMatchObject({
       verdict: 'unverified',
-      passed: 2,
-      errors: 1,
+      counts: { pass: 2, fail: 0, partial: 0, unverifiable: 0 },
+      failures: 1,
       status: 'degraded',
     });
     expect((result.output as unknown as gates.ChecklistResult).results[0]?.result).toBeNull();
+    roundTrip(gates.ChecklistResult, result.output);
     expect(harness.count(ids[0] ?? '')).toBe(1);
   });
 
@@ -228,6 +228,7 @@ describe('checklist', () => {
     };
     const result = await run(checklist({ criteria: ['First.', object, 'Third.'] }), harness);
     const results = (result.output as unknown as gates.ChecklistResult).results;
+    roundTrip(gates.ChecklistResult, result.output);
     expect(results.map((entry) => entry.criterion)).toEqual([
       { id: 'C1', criterion: 'First.', how: '' },
       object,
@@ -247,7 +248,7 @@ describe('checklist', () => {
       checklist({
         criteria: ['Only one.'],
         prompts: {
-          check: (criterion, target) => `${criterion.id}|${criterion.criterion}|${target}`,
+          check: (criterion, subject) => `${criterion.id}|${criterion.criterion}|${subject}`,
         },
       }),
       harness,
@@ -268,7 +269,7 @@ describe('checklist', () => {
     for (const call of harness.calls) expect(call.options).toMatchObject(calls);
   });
 
-  it('refuses to replay settled criteria after a target, prompt or version change', async () => {
+  it('refuses to replay settled criteria after a subject, prompt or version change', async () => {
     const changed = (options: Partial<gates.ChecklistOptions>, runId: string) =>
       resumeChanged(
         checklist(),
@@ -278,7 +279,7 @@ describe('checklist', () => {
       );
     const items =
       /^Settled map acceptance\/criterion changed after an item completed \(changed: items/u;
-    expect(await changed({ target: 'The change in main..next.' }, 'target')).toMatch(items);
+    expect(await changed({ subject: 'The change in main..next.' }, 'subject')).toMatch(items);
     expect(
       await changed({ prompts: { check: (criterion) => criterion.criterion } }, 'prompt'),
     ).toMatch(items);
@@ -341,6 +342,7 @@ describe('gate', () => {
     const harness = scripted({}, passing);
     const result = await replayAfterTail(gate(), null, harness, root);
     const output = result.output as unknown as gates.GateResult;
+    roundTrip(gates.GateResult, output);
     expect(output).toMatchObject({
       decision: 'go',
       blockers: [],
@@ -351,6 +353,7 @@ describe('gate', () => {
       failed: [],
       reasons: [],
       failedVotes: 0,
+      failures: 0,
       status: 'complete',
     });
     expect(output.assessments).toEqual(
@@ -396,6 +399,7 @@ describe('gate', () => {
     );
     const result = await replayAfterTail(gate({ seats: 3 }), null, harness, root);
     const output = result.output as unknown as gates.GateResult;
+    roundTrip(gates.GateResult, output);
     expect(output).toMatchObject({
       decision: 'no-go',
       blockers: ['security'],
@@ -412,6 +416,7 @@ describe('gate', () => {
         'operability (failed): The assessor call failed.',
       ],
       failedVotes: 0,
+      failures: 1,
       status: 'degraded',
     });
     const security = output.assessments.find((entry) => entry.key === 'security');
@@ -493,9 +498,11 @@ describe('gate', () => {
       blockers: [],
       failed: keys,
       reasons: keys.map((key) => `${key} (failed): The assessor call failed.`),
+      failures: keys.length,
       status: 'degraded',
     });
     expect(harness.calls).toHaveLength(keys.length);
+    roundTrip(gates.GateResult, result.output);
   });
 
   it('refuses to replay settled assessments or verdicts after a prompt or version change', async () => {
@@ -577,9 +584,11 @@ describe('gate', () => {
       undecided: ['compatibility'],
       reasons: ['compatibility (undecided): The config format changed.'],
       failedVotes: 1,
+      failures: 1,
       status: 'degraded',
     });
     expect(harness.count(seat('compatibility', 0))).toBe(1);
+    roundTrip(gates.GateResult, result.output);
   });
 
   it('uses custom dimensions, task, rule and prompts', async () => {
@@ -605,6 +614,7 @@ describe('gate', () => {
       harness,
     );
     expect(result.output).toMatchObject({ decision: 'no-go', blockers: ['api.2'] });
+    roundTrip(gates.GateResult, result.output);
     expect(harness.prompt(assess('api'))).toMatch(
       /^Decide whether to merge\. Assess one dimension only, api: Public API changes\./u,
     );

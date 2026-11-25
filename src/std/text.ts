@@ -5,6 +5,12 @@
  * `## Context`, `## Guidance` and `## Output` sections); the rest are small building blocks for
  * Markdown lists and fences, byte- and character-safe clipping, and cleaning command output.
  *
+ * The report renderers {@link findings}, {@link checklist}, {@link gate}, {@link plan} and
+ * {@link commits} turn std data and pattern results into Markdown for a pull request comment, a
+ * log or the context of a later prompt. They are pure, and once their text is used in a prompt it
+ * is part of that call's identity like any other prompt text, so their layout is fixed once
+ * released.
+ *
  * ```ts
  * import * as std from 'quiet-choir/std';
  *
@@ -14,12 +20,26 @@
  *   guidance: ['Report only defects you can demonstrate.', 'An empty list is a valid answer.'],
  *   output: 'The findings, most severe first.',
  * });
+ * const { findings } = await ctx.roster.Reviewer.value('review', {
+ *   prompt,
+ *   schema: std.types.Findings,
+ * });
+ * ctx.log(std.text.findings(std.data.bySeverity(findings)));
  * ```
  *
  * @module
  */
-import type { JsonValue, Prompt } from '../index.js';
+import type { Prompt } from '../index.js';
 import { json } from './exec.js';
+import type {
+  Assessment,
+  Commit,
+  Criterion,
+  CriterionResult,
+  Finding,
+  Plan,
+  Remediation,
+} from './types.js';
 
 /** The default marker {@link clip} appends to clipped text. */
 const CLIP_MARKER = '\n… (clipped)';
@@ -38,14 +58,56 @@ export interface BriefParts {
   /** What to do, as the opening paragraph; it must contain non-whitespace text. */
   readonly task: string;
   /**
-   * Material the task works on, under `## Context`. A string is inserted as written; any other JSON
-   * value is shown as a fenced `json` block of its two-space indented form (`std.exec.json`).
+   * Material the task works on, under `## Context`: a string, inserted as written, or a JSON
+   * value, shown as a fenced `json` block of its two-space indented form (`std.exec.json`). The
+   * JSON value may be any plain data, such as a read-only array or a pattern result typed by an
+   * interface; it is checked when the brief is rendered, and an `undefined` object member is
+   * omitted, as `JSON.stringify` omits it.
    */
-  readonly context?: JsonValue | string | undefined;
+  readonly context?: unknown;
   /** Rules and hints, rendered as a bulleted list under `## Guidance`; omitted when empty. */
   readonly guidance?: readonly string[] | undefined;
   /** What to return, under `## Output`. */
   readonly output?: string | undefined;
+}
+
+/**
+ * Throw a `TypeError` unless `value` is plain JSON, the data `JSON.stringify` renders without
+ * changing its meaning: `null`, a string, a boolean, a finite number, an array without holes or
+ * `undefined` elements, or a plain object (whose `undefined` members are omitted), with no cycle.
+ */
+function checkJson(value: unknown): void {
+  const ancestors = new Set<object>();
+  const fail = (path: string, reason: string): never => {
+    throw new TypeError(`A brief's context is not JSON at ${path}: ${reason}.`);
+  };
+  const visit = (item: unknown, path: string): void => {
+    if (item === null || typeof item === 'string' || typeof item === 'boolean') return;
+    if (typeof item === 'number') {
+      if (!Number.isFinite(item)) fail(path, `${String(item)} is not a finite number`);
+      return;
+    }
+    if (typeof item !== 'object') return fail(path, `a ${typeof item} is not a JSON value`);
+    if (ancestors.has(item)) fail(path, 'the value contains a cycle');
+    ancestors.add(item);
+    if (Array.isArray(item)) {
+      for (let index = 0; index < item.length; index++) {
+        const at = `${path}[${String(index)}]`;
+        if (!Object.hasOwn(item, index)) fail(at, 'an array cannot have holes');
+        const element: unknown = item[index];
+        if (element === undefined) fail(at, 'an array cannot contain undefined');
+        visit(element, at);
+      }
+    } else {
+      const prototype: unknown = Object.getPrototypeOf(item);
+      if (prototype !== Object.prototype && prototype !== null)
+        fail(path, 'only plain objects are JSON, not class instances');
+      for (const [key, member] of Object.entries(item as Readonly<Record<string, unknown>>))
+        if (member !== undefined) visit(member, `${path}.${key}`);
+    }
+    ancestors.delete(item);
+  };
+  visit(value, '$');
 }
 
 /**
@@ -71,13 +133,17 @@ export interface BriefParts {
  *
  * @param parts - The task and optional context, guidance and output description.
  * @returns The prompt text.
- * @throws TypeError - When `task` is blank, or `context` is not JSON-serializable.
+ * @throws TypeError - When `task` is blank, or `context` is neither a string nor a JSON value: it
+ * holds a number that is not finite, a function, a symbol, a BigInt, a class instance such as a
+ * `Date` or a `Map`, an array hole or `undefined` element, or a cycle. The message names the path,
+ * as in `A brief's context is not JSON at $.files[1]: ...`.
  */
 export function brief(parts: BriefParts): string {
   if (parts.task.trim() === '') throw new TypeError('A brief needs a nonblank task.');
   const sections = [parts.task];
   const { context, guidance, output } = parts;
   if (context !== undefined) {
+    if (typeof context !== 'string') checkJson(context);
     sections.push(
       section('Context', typeof context === 'string' ? context : fence(json(context), 'json')),
     );
@@ -273,4 +339,200 @@ export function slug(text: string, max = 50): string {
 export function firstSentence(text: string): string {
   const paragraph = (text.trim().split(/\n[ \t]*\r?\n/u)[0] ?? '').replace(/\s+/gu, ' ').trim();
   return /^.*?[.!?](?=\s|$)/u.exec(paragraph)?.[0] ?? paragraph;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Report renderers
+// ---------------------------------------------------------------------------------------------
+
+/** An inline Markdown code span around `text`, delimited by more backticks than any run inside. */
+function code(text: string): string {
+  let longest = 0;
+  for (const run of text.match(/`+/gu) ?? []) longest = Math.max(longest, run.length);
+  const ticks = '`'.repeat(longest + 1);
+  const pad = text.startsWith('`') || text.endsWith('`') ? ' ' : '';
+  return `${ticks}${pad}${text}${pad}${ticks}`;
+}
+
+/**
+ * Findings as a Markdown numbered list, in the order given (sort them with `std.data.bySeverity`
+ * first): each item is the severity in bold, the title and the location as code, then bullets for
+ * the evidence, the failure scenario and, for a `std.types.Remediation`, the fix.
+ *
+ * ```markdown
+ * 1. **high**: Off-by-one in the pager (`src/pager.ts:12`)
+ *    - Evidence: src/pager.ts:12 compares with <=.
+ *    - Failure scenario: A page size of 10 returns 11 items.
+ *    - Fix: Compare with < in src/pager.ts:12.
+ * ```
+ *
+ * @param list - Findings or remediations, such as the `findings` of a `std.types.Findings` reply.
+ * @returns The Markdown list; `No findings.` for an empty list.
+ */
+export function findings(list: readonly (Finding | Remediation)[]): string {
+  if (list.length === 0) return 'No findings.';
+  return numbered(
+    list.map((item) => {
+      const where = item.line === null ? item.file : `${item.file}:${String(item.line)}`;
+      const details = [`Evidence: ${item.evidence}`, `Failure scenario: ${item.failureScenario}`];
+      if ('fix' in item) details.push(`Fix: ${item.fix}`);
+      return `**${item.severity}**: ${item.title} (${code(where)})\n${bullets(details)}`;
+    }),
+  );
+}
+
+/** One criterion of a {@link ChecklistReport}, as a `std.patterns.ChecklistEntry` holds it. */
+export interface ChecklistReportEntry {
+  /** The criterion, with its ID. */
+  readonly criterion: Criterion;
+  /** The checker's status and evidence, or null when its call failed. */
+  readonly result: CriterionResult | null;
+}
+
+/** What {@link checklist} renders: the parts of a `std.patterns.ChecklistResult` it shows. */
+export interface ChecklistReport {
+  /** The verdict, such as `done`, `not-done` or `unverified`. */
+  readonly verdict: string;
+  /** Every criterion with its result, in order. */
+  readonly results: readonly ChecklistReportEntry[];
+}
+
+/**
+ * A checklist result, such as `std.patterns.checklist` returns, as Markdown: the verdict and how
+ * many criteria passed, then one bullet per criterion in order with its ID, status and text, and
+ * its evidence (or that its checker call failed) below.
+ *
+ * ```markdown
+ * Verdict: **not-done** (1 of 2 criteria passed)
+ *
+ * - **C1** (pass): Invalid input is rejected with a message.
+ *   Evidence: test/cli.test.ts:40 expects the message.
+ * - **C2** (fail): The new flag is documented.
+ *   Evidence: README.md does not mention --flag.
+ * ```
+ *
+ * @param result - The verdict and every criterion with its result.
+ * @returns The Markdown text; a criterion whose call failed shows `(no result)`.
+ */
+export function checklist(result: ChecklistReport): string {
+  const total = result.results.length;
+  const passed = result.results.filter((entry) => entry.result?.status === 'pass').length;
+  const noun = total === 1 ? 'criterion' : 'criteria';
+  const head = `Verdict: **${result.verdict}** (${String(passed)} of ${String(total)} ${noun} passed)`;
+  const items = result.results.map(({ criterion, result: checked }) => {
+    const status = checked?.status ?? 'no result';
+    const detail = checked === null ? 'The checker call failed.' : `Evidence: ${checked.evidence}`;
+    return `**${criterion.id}** (${status}): ${criterion.criterion}\n${detail}`;
+  });
+  return `${head}\n\n${bullets(items, 'No criteria.')}`;
+}
+
+/** One dimension of a {@link GateReport}, as a `std.patterns.GateDimension` holds it. */
+export interface GateReportDimension {
+  /** The dimension's key. */
+  readonly key: string;
+  /** What the dimension contributes to the decision, such as `pass`, `blocker` or `downgraded`. */
+  readonly disposition: string;
+  /** The assessor's status, summary and evidence, or null when its call failed. */
+  readonly assessment: Assessment | null;
+}
+
+/** What {@link gate} renders: the parts of a `std.patterns.GateResult` it shows. */
+export interface GateReport {
+  /** The decision, such as `go`, `conditional-go` or `no-go`. */
+  readonly decision: string;
+  /** Every dimension with its assessment and disposition, in order. */
+  readonly assessments: readonly GateReportDimension[];
+}
+
+/**
+ * A gate result, such as `std.patterns.gate` returns, as Markdown: the decision, then one bullet
+ * per dimension in order with its key, disposition and the assessor's summary, and the evidence
+ * as nested bullets (or that the assessor call failed).
+ *
+ * ```markdown
+ * Decision: **conditional-go**
+ *
+ * - **tests** (pass): The suite passes and covers the new flag.
+ *   - test/cli.test.ts:40 checks the flag.
+ * - **docs** (concern): The changelog does not mention the flag.
+ *   - CHANGELOG.md has no entry for --flag.
+ * - **security** (failed): The assessor call failed.
+ * ```
+ *
+ * @param result - The decision and every dimension.
+ * @returns The Markdown text.
+ */
+export function gate(result: GateReport): string {
+  const items = result.assessments.map(({ key, disposition, assessment }) => {
+    const head = `**${key}** (${disposition}): ${assessment?.summary ?? 'The assessor call failed.'}`;
+    if (assessment === null || assessment.evidence.length === 0) return head;
+    return `${head}\n${bullets(assessment.evidence)}`;
+  });
+  return `Decision: **${result.decision}**\n\n${bullets(items, 'No dimensions.')}`;
+}
+
+/**
+ * A plan as Markdown: its summary, the numbered steps with their IDs and files, then the risks and
+ * the checks as bulleted lists, each under a bold label.
+ *
+ * ```markdown
+ * Add a pager to the list endpoint.
+ *
+ * **Steps**
+ *
+ * 1. **S1**: Accept page and size parameters.
+ *    Files: `src/list.ts`, `test/list.test.ts`
+ *
+ * **Risks**
+ *
+ * - Clients that expect every item get one page.
+ *
+ * **Checks**
+ *
+ * - npm test
+ * ```
+ *
+ * @param value - A `std.types.Plan`.
+ * @returns The Markdown text; an empty list of risks or checks shows `(none)`.
+ */
+export function plan(value: Plan): string {
+  const steps = value.steps.map((step) => {
+    const head = `**${step.id}**: ${step.description}`;
+    if (step.files.length === 0) return head;
+    return `${head}\nFiles: ${step.files.map((file) => code(file)).join(', ')}`;
+  });
+  return [
+    value.summary,
+    '**Steps**',
+    numbered(steps),
+    '**Risks**',
+    bullets(value.risks),
+    '**Checks**',
+    bullets(value.checks),
+  ].join('\n\n');
+}
+
+/**
+ * Commits as a Markdown bulleted list, in the order given (`std.exec.log` lists them oldest
+ * first): each the abbreviated ID as code, the subject, then the author and the day of the author
+ * date.
+ *
+ * ```markdown
+ * - `3f2a91c` Add the pager (Ada Lovelace, 2026-01-31)
+ * ```
+ *
+ * @param list - `std.types.Commit` entries, such as `std.exec.log` returns.
+ * @returns The Markdown list; `No commits.` for an empty list. An empty subject shows as
+ * `(no subject)`.
+ */
+export function commits(list: readonly Commit[]): string {
+  if (list.length === 0) return 'No commits.';
+  return bullets(
+    list.map((commit) => {
+      const subject = commit.subject === '' ? '(no subject)' : commit.subject;
+      const day = /^\d{4}-\d{2}-\d{2}/u.exec(commit.date)?.[0] ?? commit.date;
+      return `${code(commit.shortSha)} ${subject} (${commit.author}, ${day})`;
+    }),
+  );
 }

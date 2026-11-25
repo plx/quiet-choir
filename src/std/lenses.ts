@@ -4,6 +4,20 @@
  * `research`, `critiqueRevise`), one call per lens, so each agent looks at the same subject from a
  * different angle instead of repeating the others.
  *
+ * | Catalog        | For                                              |
+ * | -------------- | ------------------------------------------------ |
+ * | `bugs`         | bug hunts (the default of `hunt`)                |
+ * | `review`       | code review                                      |
+ * | `security`     | security review                                  |
+ * | `design`       | design proposals (the default of `tournament`)   |
+ * | `research`     | research sources (the default of `research`)     |
+ * | `release`      | release gates (the default of `gate`)            |
+ * | `writing`      | prose review                                     |
+ * | `evidence`     | where to look when investigating a failure       |
+ * | `requirements` | writing or reviewing requirements                |
+ * | `spec`         | writing or reviewing a technical specification   |
+ * | `critique`     | critiquing a plan, specification or requirements |
+ *
  * ```ts
  * import * as std from 'quiet-choir/std';
  *
@@ -17,11 +31,12 @@
  * A lens key is a clean step-ID segment (`stepId(key) === key`), so a pattern uses it unchanged in
  * its step IDs and map keys, and keys stay unique within each catalog. Charters are prompt text and
  * so part of the identity of every call that sends them: they are fixed once released. Every
- * catalog and lens is frozen.
+ * catalog and lens is frozen. {@link LensSchema} is the Zod schema of a lens, for workflow data and
+ * the pattern result schemas.
  *
  * @module
  */
-import { stepId } from '../index.js';
+import { stepId, z } from '../index.js';
 
 /** One angle on a subject: what a single agent of a panel examines. */
 export interface Lens {
@@ -30,6 +45,14 @@ export interface Lens {
   /** What to examine through this lens, as prompt text. */
   readonly charter: string;
 }
+
+/**
+ * The schema of a {@link Lens}, for workflow data and outputs that carry lenses, such as the
+ * `failed` lenses of a `std.patterns.LensPanelResult`. It checks the shape only, two strings, and
+ * strips any other member, so every lens a pattern accepts parses; {@link lens} is what checks a
+ * key and a charter.
+ */
+export const LensSchema: z.ZodType<Lens> = z.object({ key: z.string(), charter: z.string() });
 
 /**
  * Make a lens, checking that its key is a clean step-ID segment and its charter is not empty.
@@ -308,6 +331,133 @@ export const writing: readonly Lens[] = catalog([
     'structure',
     'Ordered for the reader: the most important information first, related points together, and ' +
       'headings and lists where they help.',
+  ],
+]);
+
+/**
+ * Five sources of evidence for investigating a failure or a change in behavior: `diffs`, `logs`,
+ * `config`, `dependencies` and `recent-changes`. Each charter names what to read and what to look
+ * for in it.
+ */
+export const evidence: readonly Lens[] = catalog([
+  [
+    'diffs',
+    'The code changes in question, hunk by hunk: what each alters in behavior, which callers, ' +
+      'tests and data it affects, and what it removes or stops handling.',
+  ],
+  [
+    'logs',
+    'Application, test and CI logs and error output: the first error rather than the ones it ' +
+      'causes, stack traces, timestamps, and the conditions under which each message appears.',
+  ],
+  [
+    'config',
+    'Configuration files, environment variables, feature flags and build or deploy settings: ' +
+      'defaults, overrides, differences between environments, and values the code reads but ' +
+      'nothing sets.',
+  ],
+  [
+    'dependencies',
+    'Manifests and lockfiles: the versions actually resolved, recent upgrades and their ' +
+      'changelogs, known issues in those versions, and duplicate or conflicting copies of a ' +
+      'package.',
+  ],
+  [
+    'recent-changes',
+    'The history of the affected code: what changed recently, when the behavior started, and ' +
+      'which commit, merge or deploy introduced it, through the log, blame and a bisectable range.',
+  ],
+]);
+
+/**
+ * Five angles for writing or reviewing requirements: `stories`, `edge-cases`, `non-functional`,
+ * `foundations` and `instrumentation`.
+ */
+export const requirements: readonly Lens[] = catalog([
+  [
+    'stories',
+    'Who the users are and what each needs to do: stories with a goal and a reason, the main ' +
+      'flows end to end, and acceptance conditions that show each story is met.',
+  ],
+  [
+    'edge-cases',
+    'Empty, missing, duplicate, oversized and conflicting input, partial failure, concurrent use, ' +
+      'permissions and undo: what the user sees and what the system must do in each case.',
+  ],
+  [
+    'non-functional',
+    'Performance, scale, availability, security, privacy, accessibility and compatibility, each ' +
+      'stated as a measurable target rather than an adjective.',
+  ],
+  [
+    'foundations',
+    'What must exist before the work can start or ship: data, interfaces, infrastructure, ' +
+      'migrations, work owned by other teams, and decisions that are still open.',
+  ],
+  [
+    'instrumentation',
+    'How success and failure will be observed: the metrics, events, logs and alerts to add, the ' +
+      'baseline to compare against, and who watches them after release.',
+  ],
+]);
+
+/**
+ * Five angles for writing or reviewing a technical specification: `data-model`, `api-contracts`,
+ * `architecture`, `edge-semantics` and `operations`.
+ */
+export const spec: readonly Lens[] = catalog([
+  [
+    'data-model',
+    'Entities, fields, types, keys and relationships, the invariants each must keep, who owns and ' +
+      'writes each piece of data, and how existing data migrates to the new shape.',
+  ],
+  [
+    'api-contracts',
+    'Every interface the design exposes or consumes: requests, responses, errors, versioning, ' +
+      'idempotency, pagination and limits, precise enough to implement both sides apart.',
+  ],
+  [
+    'architecture',
+    'The components and their responsibilities, how they communicate, where state lives, and how ' +
+      'the design fits the existing system without duplicating or bypassing it.',
+  ],
+  [
+    'edge-semantics',
+    'Exact behavior under retries, timeouts, partial failure, concurrent writes, reordering, ' +
+      'duplicates, and empty or maximum sizes, and what each component guarantees when another ' +
+      'fails.',
+  ],
+  [
+    'operations',
+    'How the design is deployed, configured, monitored and rolled back: rollout order, feature ' +
+      'flags, migrations, capacity, alerts and the runbook for its likely failures.',
+  ],
+]);
+
+/**
+ * Four angles for critiquing a plan, specification or set of requirements before work starts:
+ * `ambiguity`, `scope`, `feasibility` and `testability`.
+ */
+export const critique: readonly Lens[] = catalog([
+  [
+    'ambiguity',
+    'Statements two readers could implement differently: vague terms, undefined names, unstated ' +
+      'units or defaults, requirements that conflict, and decisions left implicit.',
+  ],
+  [
+    'scope',
+    'Whether the work is the right size: goals and non-goals stated, nothing the goal needs left ' +
+      'out, nothing included that it does not need, and a first version that stands on its own.',
+  ],
+  [
+    'feasibility',
+    'Whether it can work as written: technical constraints, dependencies and ordering, effort ' +
+      'against the time and people available, and the riskiest assumption it rests on.',
+  ],
+  [
+    'testability',
+    'Whether every requirement can be checked: observable acceptance conditions, the test or ' +
+      'measurement that would show each one holds, and what cannot be verified as written.',
   ],
 ]);
 

@@ -27,6 +27,7 @@ import {
   promptOf,
   removeRoot,
   replayAfterTail,
+  roundTrip,
   runOptions,
   tailFailure,
 } from './std-harness.js';
@@ -123,8 +124,10 @@ describe('mapReduce', () => {
       coverage: { covered: letters, missing: [] },
       chunks: 3,
       failedChunks: 0,
+      failures: 0,
       status: 'complete',
     });
+    roundTrip(aggregate.MapReduceResult(), result.output);
     expect([...harness.ids()].sort()).toEqual([
       'mr/map/a/part',
       'mr/map/c/part',
@@ -166,9 +169,11 @@ describe('mapReduce', () => {
       coverage: { covered: ['a', 'b', 'e'], missing: ['c', 'd'] },
       chunks: 3,
       failedChunks: 1,
+      failures: 1,
       status: 'degraded',
     });
     expect(harness.count('mr/map/c/part')).toBe(1);
+    roundTrip(aggregate.MapReduceResult(), result.output);
     const reduce = harness.prompt('mr/reduce');
     expect(reduce.startsWith('Write one line.\n\n')).toBe(true);
     expect(reduce).toContain('Each part answers this task for a share of the items: Summarize');
@@ -188,9 +193,11 @@ describe('mapReduce', () => {
       coverage: { covered: [], missing: letters },
       chunks: 3,
       failedChunks: 3,
-      status: 'failed',
+      failures: 3,
+      status: 'degraded',
     });
     expect(harness.ids()).not.toContain('mr/reduce');
+    roundTrip(aggregate.MapReduceResult(), result.output);
 
     const idle = mappers();
     const empty = await run(summarize({ items: [] }), idle, 'empty');
@@ -200,10 +207,12 @@ describe('mapReduce', () => {
       coverage: { covered: [], missing: [] },
       chunks: 0,
       failedChunks: 0,
+      failures: 0,
       status: 'complete',
     });
     expect(idle.calls).toHaveLength(0);
     expect(Object.keys(empty.steps)).toEqual([]);
+    roundTrip(aggregate.MapReduceResult(), empty.output);
   });
 
   it('sends a structured schema, describes records and keys them by index by default', async () => {
@@ -250,8 +259,11 @@ describe('mapReduce', () => {
       coverage: { covered: ['0', '1', '2'], missing: [] },
       chunks: 2,
       failedChunks: 0,
+      failures: 0,
       status: 'complete',
     });
+    roundTrip(aggregate.MapReduceResult(types.Changes), result.output);
+    expect(aggregate.MapReduceResult().safeParse(result.output).success).toBe(false);
     expect(harness.ids().sort()).toEqual(['notes/map/0/part', 'notes/map/2/part', 'notes/reduce']);
     // Records default to their two-space JSON after the index key.
     expect(harness.prompt('notes/map/2/part')).toContain(
@@ -506,9 +518,12 @@ describe('decompose', () => {
     expect(result.output).toEqual({
       tasks,
       waves: [[tasks[0], tasks[2]], [tasks[1]], [tasks[3]]],
-      status: 'planned',
+      repaired: false,
+      failures: 0,
+      status: 'complete',
       problems: [],
     });
+    roundTrip(aggregate.DecomposeResult, result.output);
     expect(harness.ids()).toEqual(['plan/plan']);
     const prompt = harness.prompt('plan/plan');
     expect(
@@ -536,6 +551,36 @@ describe('decompose', () => {
     });
   });
 
+  it('takes read-only JSON and interfaces as context, and refuses other values first', async () => {
+    const files: readonly string[] = ['src/export.ts'];
+    const earlier: aggregate.DecomposeResult = {
+      tasks: [],
+      waves: [],
+      repaired: false,
+      problems: [],
+      failures: 0,
+      status: 'complete',
+    };
+    const harness = planner({ plan: [task('T1')] });
+    await run(plan({ context: { files, earlier } }), harness);
+    expect(harness.prompt('plan/plan')).toContain(
+      '### Background\n\n```json\n{\n  "files": [\n    "src/export.ts"\n  ],\n  "earlier": {\n    "tasks": [],',
+    );
+    const listed = planner({ plan: [task('T1')] });
+    await run(plan({ context: files }), listed, 'list');
+    expect(listed.prompt('plan/plan')).toContain(
+      '### Background\n\n```json\n[\n  "src/export.ts"\n]\n```',
+    );
+
+    const idle = planner({});
+    for (const [index, context] of [{ at: new Date(0) }, [Number.NaN]].entries()) {
+      await expect(run(plan({ context }), idle, `bad-${String(index)}`)).rejects.toThrow(
+        /^decompose context must be a string or a JSON value: Value is not canonical JSON at /u,
+      );
+    }
+    expect(idle.calls).toHaveLength(0);
+  });
+
   it('asks for one repair with every problem and reports what it fixed', async () => {
     const broken = [task('T1'), task('T1', ['T9', 'T9']), task('T2', ['T1'])];
     const fixed = [task('T1'), task('T3', ['T1']), task('T2', ['T1'])];
@@ -553,9 +598,12 @@ describe('decompose', () => {
     expect(result.output).toEqual({
       tasks: fixed,
       waves: [[fixed[0]], [fixed[1], fixed[2]]],
-      status: 'repaired',
+      repaired: true,
+      failures: 0,
+      status: 'complete',
       problems,
     });
+    roundTrip(aggregate.DecomposeResult, result.output);
     expect(harness.ids()).toEqual(['plan/plan', 'plan/repair']);
     const repair = harness.prompt('plan/repair');
     expect(repair).toContain('### Background\n\nKeep the CLI stable.');
@@ -596,7 +644,7 @@ describe('decompose', () => {
     expect(harness.prompt('plan/repair')).toBe(
       'repair 1: Task "T1" depends on "T5", which is not in the list.',
     );
-    expect(result.output).toMatchObject({ status: 'repaired', tasks: [task('T1')] });
+    expect(result.output).toMatchObject({ repaired: true, tasks: [task('T1')] });
 
     const idle = planner({});
     await expect(run(plan({ maxTasks: 0 }), idle, 'zero')).rejects.toThrow(

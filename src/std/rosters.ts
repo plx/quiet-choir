@@ -70,10 +70,17 @@ export const readers: Roster<Pick<typeof roles, ReaderRole>, readonly []> = defi
 });
 
 /**
+ * The role names in {@link standard}: every `std.roles` entry, those of {@link ReaderRole} plus the
+ * `write` roles (not the shell factories such as `std.roles.tester`).
+ */
+export type StandardRole =
+  ReaderRole | 'Editor' | 'Mechanic' | 'Surgeon' | 'CodexEditor' | 'CodexMechanic';
+
+/**
  * Every `std.roles` entry: those of {@link readers} plus the `write` roles `Editor`, `Mechanic`,
  * `Surgeon`, `CodexEditor` and `CodexMechanic`, which each need a grant under `requireGrants`.
  */
-export const standard: Roster<typeof roles, readonly []> = defineRoster({
+export const standard: Roster<Pick<typeof roles, StandardRole>, readonly []> = defineRoster({
   Clerk: roles.Clerk,
   Writer: roles.Writer,
   Scout: roles.Scout,

@@ -25,6 +25,7 @@ import {
   promptOf,
   removeRoot,
   replayAfterTail,
+  roundTrip,
   runOptions,
   tailFailure,
 } from './std-harness.js';
@@ -146,8 +147,10 @@ describe('lensPanel', () => {
       })),
       failed: [],
       quorum: true,
+      failures: 0,
       status: 'complete',
     });
+    roundTrip(panels.LensPanelResult(types.Findings), result.output);
     expect(mapIds(result)).toEqual(['panel/lens']);
     expect([...harness.ids()].sort()).toEqual([
       'panel/lens/correctness/read',
@@ -168,11 +171,13 @@ describe('lensPanel', () => {
     const output = result.output as unknown as panels.LensPanelResult<types.Findings>;
     expect(output.results.map((answer) => answer.lens.key)).toEqual(['correctness', 'tests']);
     expect(output.failed).toEqual([subset[1]]);
-    expect(output).toMatchObject({ quorum: true, status: 'degraded' });
+    expect(output).toMatchObject({ quorum: true, failures: 1, status: 'degraded' });
     expect(harness.count('panel/lens/security/read')).toBe(1);
 
     const most = await run(panel(), readers('security', 'tests'), 'most');
-    expect(most.output).toMatchObject({ quorum: false, status: 'degraded' });
+    expect(most.output).toMatchObject({ quorum: false, failures: 2, status: 'degraded' });
+    roundTrip(panels.LensPanelResult(types.Findings), output);
+    roundTrip(panels.LensPanelResult(types.Findings), most.output);
   });
 
   it('uses the task, a custom prompt and unique keys for repeated lens keys', async () => {
@@ -268,8 +273,10 @@ describe('vote', () => {
       missing: 0,
       seats: 3,
       reasons: ['yes: seat 0', 'yes: seat 1', 'no: seat 2'],
+      failures: 0,
       status: 'complete',
     });
+    roundTrip(panels.VoteResult, result.output);
     expect(mapIds(result)).toEqual(['v/seat']);
     expect([...harness.ids()].sort()).toEqual([
       'v/seat/0/ballot',
@@ -292,8 +299,10 @@ describe('vote', () => {
       missing: 1,
       seats: 3,
       reasons: ['yes: seat 0', 'no: seat 2'],
+      failures: 1,
       status: 'degraded',
     });
+    roundTrip(panels.VoteResult, result.output);
     expect(harness.count('v/seat/1/ballot')).toBe(1);
     expect(harness.prompt('v/seat/0/ballot')).toContain('## Context\n\nThe diff.');
   });
@@ -401,6 +410,7 @@ describe('verify', () => {
     const harness = skeptics();
     const result = await replayAfterTail(check(), null, harness, root);
     const output = result.output as unknown as panels.VerifyResult<types.Finding>;
+    roundTrip(panels.VerifyResult(types.Finding), output);
     expect(output.confirmed).toEqual([
       {
         key: segment(nullDeref),
@@ -428,7 +438,7 @@ describe('verify', () => {
         reasons: ['upheld: leaks', 'refuted: closed in finally'],
       },
     ]);
-    expect(output).toMatchObject({ failedVotes: 1, status: 'degraded' });
+    expect(output).toMatchObject({ failedVotes: 1, failures: 1, status: 'degraded' });
     expect(mapIds(result)).toEqual(
       ['verify/item', ...claims.map((claim) => `verify/item/${segment(claim)}/seat`)].sort(),
     );
@@ -481,6 +491,7 @@ describe('verify', () => {
       refuted: [{ key: '0', item: 'The cache is never invalidated.', against: 1 }],
       status: 'complete',
     });
+    roundTrip(panels.VerifyResult(z.string()), result.output);
   });
 
   it('replays JSON claims from a z.record workflow input after a resume without the input', async () => {
@@ -569,7 +580,7 @@ describe('verify', () => {
       check({
         key: undefined,
         seats: (item) => (item.severity === 'high' ? 2 : 1),
-        claim: (item) => `${item.file}: ${item.title}`,
+        describe: (item) => `${item.file}: ${item.title}`,
         prompts: {
           verify: (claim, seat, seats) => `${claim} [${String(seat)} of ${String(seats)}]`,
         },
@@ -592,7 +603,12 @@ describe('verify', () => {
       ['2', 1],
     ]);
     expect(output.refuted.map((verdict) => verdict.key)).toEqual(['1']);
-    expect(output).toMatchObject({ undecided: [], failedVotes: 0, status: 'complete' });
+    expect(output).toMatchObject({
+      undecided: [],
+      failedVotes: 0,
+      failures: 0,
+      status: 'complete',
+    });
   });
 
   it('suffixes repeated keys and records nothing for no items', async () => {
@@ -609,8 +625,10 @@ describe('verify', () => {
       refuted: [],
       undecided: [],
       failedVotes: 0,
+      failures: 0,
       status: 'complete',
     });
+    roundTrip(panels.VerifyResult(types.Finding), none.output);
     expect(none.maps ?? {}).toEqual({});
   });
 
@@ -672,6 +690,8 @@ describe('hunt', () => {
     );
     const result = await replayAfterTail(search(), null, harness, root);
     const output = result.output as unknown as panels.HuntResult;
+    roundTrip(panels.HuntResult, output);
+    expect(output.findings).toEqual([f1]);
     expect(output.confirmed.map((verdict) => verdict.item)).toEqual([f1]);
     expect(output.refuted.map((verdict) => verdict.item)).toEqual([f2]);
     expect(output).toMatchObject({
@@ -683,6 +703,7 @@ describe('hunt', () => {
       failedVotes: 0,
       callsAdmitted: 8,
       ended: 'dry',
+      failures: 0,
       status: 'complete',
     });
     expect(mapIds(result)).toEqual(
@@ -740,8 +761,10 @@ describe('hunt', () => {
       dryRounds: 2,
       failedFinders: 1,
       ended: 'dry',
+      failures: 1,
       status: 'degraded',
     });
+    roundTrip(panels.HuntResult, result.output);
     expect(harness.count('h/round/0/lens/a/find')).toBe(1);
   });
 
@@ -755,10 +778,17 @@ describe('hunt', () => {
     });
     const result = await run(search({ seats: 3 }), harness);
     const output = result.output as unknown as panels.HuntResult;
+    roundTrip(panels.HuntResult, output);
     expect(output.undecided.map((verdict) => [verdict.item.title, verdict.missing])).toEqual([
       ['First bug', 1],
     ]);
-    expect(output).toMatchObject({ failedVotes: 1, failedFinders: 0, status: 'degraded' });
+    expect(output).toMatchObject({
+      findings: [],
+      failedVotes: 1,
+      failedFinders: 0,
+      failures: 1,
+      status: 'degraded',
+    });
   });
 
   it('admits calls up to maxCalls, logs what it leaves out and ends at the call limit', async () => {
@@ -770,13 +800,16 @@ describe('hunt', () => {
       root,
     );
     const output = result.output as unknown as panels.HuntResult;
+    roundTrip(panels.HuntResult, output);
     expect(output.confirmed.map((verdict) => verdict.item)).toEqual([f2, f1]);
     expect(output).toMatchObject({
+      findings: [f2, f1],
       unverified: [f3],
       rounds: 1,
       callsAdmitted: 7,
       ended: 'call-limit',
-      status: 'call-limit',
+      failures: 0,
+      status: 'complete',
     });
     expect(harness.ids().filter((id) => id.endsWith('/verdict'))).toHaveLength(4);
     expect(logs(result)).toEqual([
@@ -790,13 +823,19 @@ describe('hunt', () => {
     const capped = await run(search({ perRound: 3, maxCalls: 2 }), lensCap, 'lens-cap');
     expect(lensCap.ids().sort()).toEqual(['h/round/0/lens/a/find', 'h/round/0/lens/b/find']);
     expect(capped.output).toMatchObject({ rounds: 1, callsAdmitted: 2, ended: 'call-limit' });
+    roundTrip(panels.HuntResult, capped.output);
     expect(logs(capped)).toEqual([
       ['Call limit: round 0 skips 1 lens(es).', { round: 0, skipped: ['c'] }],
     ]);
 
     const spent = hunters({ '0/a': [f1] });
     const exact = await run(search({ maxCalls: 3 }), spent, 'exact');
-    expect(exact.output).toMatchObject({ rounds: 1, callsAdmitted: 3, status: 'call-limit' });
+    expect(exact.output).toMatchObject({
+      rounds: 1,
+      callsAdmitted: 3,
+      ended: 'call-limit',
+      status: 'complete',
+    });
     expect(logs(exact)).toEqual([
       ['Call limit reached before round 1; the hunt ends.', { round: 1, maxCalls: 3 }],
     ]);
@@ -837,6 +876,25 @@ describe('hunt', () => {
     const busy = hunters({ '0/a': [f1] });
     const limited = await run(search({ rounds: 1 }), busy, 'limit');
     expect(limited.output).toMatchObject({ rounds: 1, ended: 'round-limit', status: 'complete' });
+  });
+
+  it('opens the default finder prompt with the task, and only the finder prompt', async () => {
+    const harness = hunters({ '0/a': [f1] });
+    await run(search({ task: 'Hunt for defects in the diff below.', rounds: 1 }), harness);
+    expect(harness.prompt('h/round/0/lens/a/find')).toMatch(
+      /^Hunt for defects in the diff below\. Work through one lens only, a: Charter a\.\n\n## Context\n\nThe parser\./u,
+    );
+    expect(harness.prompt(`h/round/0/item/${segment(f1)}/seat/0/verdict`)).toMatch(
+      /^Try to refute the claim below\./u,
+    );
+
+    const custom = hunters({});
+    await run(
+      search({ task: 'Unused.', rounds: 1, prompts: { find: (lens) => `find ${lens.key}` } }),
+      custom,
+      'custom',
+    );
+    expect(custom.prompt('h/round/0/lens/a/find')).toBe('find a');
   });
 
   it('refuses to replay finders after a call placement change', async () => {

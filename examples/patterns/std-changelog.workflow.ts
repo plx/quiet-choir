@@ -6,21 +6,19 @@ export default defineWorkflow({
   version: '1',
   roster: std.rosters.readers,
   input: z.object({ range: z.string().min(1) }),
-  output: z.object({ status: z.string(), notes: z.string(), missing: z.array(std.types.Sha) }),
+  // `result` holds the notes; `coverage.missing` lists the commits of chunks whose mapper failed.
+  output: std.patterns.MapReduceResult(std.types.Changes),
   async run(ctx, { range }) {
-    const shas = await std.exec.commits(ctx, 'commits', range);
-    const log = await std.exec.git(ctx, 'subjects', ['log', '--format=%H %s', range, '--']);
-    const lines = log.split('\n');
-    // Coverage is computed from the chunks that succeeded: a failed chunk's commits are missing.
-    const notes = await std.patterns.mapReduce(ctx, {
+    const commits = await std.exec.log(ctx, 'commits', range);
+    return std.patterns.mapReduce(ctx, {
       id: 'notes',
       team: { mapper: ctx.roster.Scribe, reducer: ctx.roster.Writer },
-      items: shas,
-      describe: (sha) => lines.find((line) => line.startsWith(sha)) ?? sha,
+      items: commits,
+      key: (commit) => commit.sha,
+      describe: (commit) => commit.subject,
       task: `Turn these commits from ${range} into change-log entries, one per distinct change.`,
       schema: std.types.Changes,
       reduce: 'Write Markdown release notes: breaking changes and migrations first, then by kind.',
     });
-    return { status: notes.status, notes: notes.result, missing: notes.coverage.missing };
   },
 });

@@ -1,7 +1,7 @@
 /**
  * Gates that decide in code from per-item agent evidence, re-exported from `std.patterns`:
  *
- * - {@link checklist} checks each acceptance criterion against a target, one `checker` call per
+ * - {@link checklist} checks each acceptance criterion against a subject, one `checker` call per
  *   criterion, and decides `done`, `not-done` or `unverified`.
  * - {@link gate} assesses a subject on several dimensions (by default `std.lenses.release`), has a
  *   panel of skeptics challenge every reported blocker, and decides `go`, `conditional-go` or
@@ -11,10 +11,12 @@
  * step IDs. No model makes the final decision: agents report a status with evidence for one
  * criterion or dimension, and the pattern combines them by fixed rules. A failed agent call is
  * journaled and becomes data (an errored criterion, a failed dimension, a missing seat), so a
- * resume decides the same way, and every result reports its failures and a `status`. The default
- * prompts are `std.text.brief`s that name the safe default for an unsure agent: `unverifiable` for
- * a checker, `concern` or `cannot-check` (never `pass`) for an assessor, and `refuted: true` for a
- * skeptic.
+ * resume decides the same way; every result counts those failures in `failures` and reports its
+ * health as `status` (`'degraded'` exactly when one occurred), apart from the decision. Each result
+ * interface has a schema of the same name, {@link ChecklistResult} and {@link GateResult}, for a
+ * workflow `output` or a saved result. The default prompts are `std.text.brief`s that name the safe
+ * default for an unsure agent: `unverifiable` for a checker, `concern` or `cannot-check` (never
+ * `pass`) for an assessor, and `refuted: true` for a skeptic.
  *
  * ```ts
  * import * as std from 'quiet-choir/std';
@@ -24,7 +26,7 @@
  * const acceptance = await std.patterns.checklist(ctx, {
  *   id: 'acceptance',
  *   team: { checker: ctx.roster.Reviewer },
- *   target: change,
+ *   subject: change,
  *   criteria: ['Invalid input is rejected with a message.', 'The new flag is documented.'],
  * });
  * const merge = await std.patterns.gate(ctx, {
@@ -40,14 +42,16 @@
  */
 import {
   defineTeam,
+  z,
   type JsonValue,
   type Prompt,
   type TeamOf,
   type WorkflowContext,
 } from '../index.js';
-import { assertUnique, tally, threshold, type Outcome, type Rule } from './data.js';
-import { release, type Lens } from './lenses.js';
+import { Health, assertUnique, tally, threshold, type Outcome, type Rule } from './data.js';
+import { LensSchema, release, type Lens } from './lenses.js';
 import {
+  Count,
   keyed,
   nonEmpty,
   placement,
@@ -61,9 +65,10 @@ import {
   Assessment,
   Criterion,
   CriterionResult,
+  GateDecision,
+  Outcome as OutcomeSchema,
   Refutation,
   type CheckStatus,
-  type GateDecision,
 } from './types.js';
 
 /**
@@ -93,7 +98,7 @@ interface PanelRecord {
 /** The slot {@link checklist} needs: one `checker` that checks each criterion. */
 export const ChecklistTeam: ReturnType<typeof defineTeam<'checker'>> = defineTeam({
   checker:
-    'Checks one acceptance criterion against the target from evidence it verifies itself and answers unverifiable when unsure. Fill with a read-only entry such as std.roles.Reviewer, or a shell entry built with std.claude.shell when criteria name commands to run.',
+    'Checks one acceptance criterion against the subject from evidence it verifies itself and answers unverifiable when unsure. Fill with a read-only entry such as std.roles.Reviewer, or a shell entry built with std.claude.shell when criteria name commands to run.',
 });
 /** The team record {@link checklist} takes: `{ readonly checker: Agent }`. */
 export type ChecklistTeam = TeamOf<typeof ChecklistTeam>;
@@ -101,11 +106,11 @@ export type ChecklistTeam = TeamOf<typeof ChecklistTeam>;
 /** Replacement prompts of {@link checklist}. */
 export interface ChecklistPrompts {
   /**
-   * The checker's prompt for one criterion against `target`. The default asks for a status
+   * The checker's prompt for one criterion against `subject`. The default asks for a status
    * decided from evidence the checker verified itself, follows the criterion's `how` when it has
    * one, and names `unverifiable` as the safe default.
    */
-  readonly check?: ((criterion: Criterion, target: string) => string | Prompt) | undefined;
+  readonly check?: ((criterion: Criterion, subject: string) => string | Prompt) | undefined;
 }
 
 /** Options of {@link checklist}. */
@@ -118,7 +123,7 @@ export interface ChecklistOptions {
    * What the criteria are checked against, such as a line naming a Git range followed by its
    * fenced diff, or where a deliverable lives.
    */
-  readonly target: string;
+  readonly subject: string;
   /**
    * The criteria, one checker call each: a string, whose ID is `C<n>` from its 1-based position
    * in this list, or a `std.types.Criterion` with its own ID and `how`. IDs must be unique.
@@ -128,7 +133,11 @@ export interface ChecklistOptions {
   readonly prompts?: ChecklistPrompts | undefined;
   /** How many criteria are checked at once; defaults to 4. */
   readonly concurrency?: number | undefined;
-  /** A revision for prompts and schemas the settled map's fingerprint does not show. */
+  /**
+   * A revision for what the settled map's fingerprint does not show, such as the schema. The
+   * team's agent configuration is not part of a map item either, so a completed item is reused
+   * after a role changes: change `version` when you change the agent that fills a slot.
+   */
   readonly version?: string | undefined;
   /** Options applied to every agent call (placement, retry, deadlines). */
   readonly calls?: CallDefaults | undefined;
@@ -142,6 +151,32 @@ export interface ChecklistEntry {
   readonly result: CriterionResult | null;
 }
 
+/** The schema of a {@link ChecklistEntry}. */
+export const ChecklistEntry: z.ZodType<ChecklistEntry> = z.strictObject({
+  criterion: Criterion,
+  result: CriterionResult.nullable(),
+});
+
+/** How many criteria of a {@link ChecklistResult} have each `std.types.CheckStatus`. */
+export interface ChecklistCounts {
+  /** Criteria that passed. */
+  readonly pass: number;
+  /** Criteria that failed. */
+  readonly fail: number;
+  /** Criteria that hold only in part. */
+  readonly partial: number;
+  /** Criteria the checker could not verify. */
+  readonly unverifiable: number;
+}
+
+/** The schema of a {@link ChecklistCounts}. */
+export const ChecklistCounts: z.ZodType<ChecklistCounts> = z.strictObject({
+  pass: Count,
+  fail: Count,
+  partial: Count,
+  unverifiable: Count,
+});
+
 /** Result of {@link checklist}. */
 export interface ChecklistResult {
   /**
@@ -151,25 +186,31 @@ export interface ChecklistResult {
   readonly verdict: 'done' | 'not-done' | 'unverified';
   /** Every criterion with its result, in input order. */
   readonly results: ChecklistEntry[];
-  /** How many criteria passed. */
-  readonly passed: number;
-  /** How many criteria failed. */
-  readonly failed: number;
-  /** How many criteria hold only in part. */
-  readonly partial: number;
-  /** How many criteria the checker could not verify. */
-  readonly unverifiable: number;
+  /**
+   * How many criteria the checker answered with each status; a criterion whose call failed is in
+   * none of them.
+   */
+  readonly counts: ChecklistCounts;
   /** How many checker calls failed; the failures are saved, so a resume does not retry them. */
-  readonly errors: number;
+  readonly failures: number;
   /** `'complete'` when every checker call succeeded, else `'degraded'`. */
   readonly status: 'complete' | 'degraded';
 }
 
+/** The schema of a {@link ChecklistResult}, for a workflow `output` or a saved result. */
+export const ChecklistResult: z.ZodType<ChecklistResult> = z.strictObject({
+  verdict: z.enum(['done', 'not-done', 'unverified']),
+  results: z.array(ChecklistEntry),
+  counts: ChecklistCounts,
+  failures: Count,
+  status: Health,
+});
+
 /** The default checker prompt; it names `unverifiable` as the safe default. */
-function checkPrompt(criterion: Criterion, target: string): string {
+function checkPrompt(criterion: Criterion, subject: string): string {
   return brief({
     task: `Check whether acceptance criterion ${criterion.id} holds for the target below: ${criterion.criterion}`,
-    context: target,
+    context: subject,
     guidance: [
       criterion.how.trim() === ''
         ? 'Choose the most direct check: read the code the criterion concerns, or inspect or run what it names.'
@@ -208,15 +249,16 @@ function criteriaOf(criteria: readonly (string | Criterion)[]): Criterion[] {
 }
 
 /**
- * Check every acceptance criterion against `target`, one `team.checker` call per criterion, and
+ * Check every acceptance criterion against `subject`, one `team.checker` call per criterion, and
  * decide the verdict in code. The calls form the settled map `<id>/criterion`, keyed by criterion
  * ID (made ID-safe), so criterion `C1` records `<id>/criterion/C1/check` (schema
- * `std.types.CriterionResult`). A failed call is journaled and counted in `errors`, and a resume
+ * `std.types.CriterionResult`). A failed call is journaled and counted in `failures`, and a resume
  * does not retry it.
  *
  * The verdict is `not-done` as soon as one criterion fails or holds only in part, `done` only
  * when every criterion passed, and `unverified` otherwise. The default prompt (a
- * `std.text.brief`) gives the criterion and the target, follows the criterion's `how`, and names
+ * `std.text.brief`) gives the criterion and the subject (calling it the target), follows the
+ * criterion's `how`, and names
  * `unverifiable` as the safe default when the evidence does not settle it. Each map item carries
  * its rendered prompt, so a prompt change is detected on resume.
  *
@@ -224,8 +266,9 @@ function criteriaOf(criteria: readonly (string | Criterion)[]): Criterion[] {
  * with `std.claude.shell` when criteria name commands to run.
  *
  * @param ctx - The workflow context the team was bound from.
- * @param options - The scope, the team, the target and the criteria, with optional prompts.
- * @returns The verdict, every criterion with its result, the counts by status and the status.
+ * @param options - The scope, the team, the subject and the criteria, with optional prompts.
+ * @returns The verdict, every criterion with its result, the counts by status, the failure count
+ * and the status.
  * @throws TypeError - Before any effect, when the `checker` slot is not filled, `criteria` is
  * empty, a string criterion is blank, a criterion object is not a valid `std.types.Criterion`, or
  * `concurrency` is not a positive integer.
@@ -240,10 +283,10 @@ export async function checklist(
   const { checker } = ChecklistTeam.from(options.team);
   const criteria = criteriaOf(options.criteria);
   const map = settledMap<PromptRecord>(options);
-  const { target, calls } = options;
+  const { subject, calls } = options;
   const prompt = options.prompts?.check ?? checkPrompt;
   const records: PromptRecord[] = keyed(criteria, (criterion) => criterion.id).map(
-    ({ key, item }) => ({ key, prompt: promptText(prompt(item, target)), ...placement(calls) }),
+    ({ key, item }) => ({ key, prompt: promptText(prompt(item, subject)), ...placement(calls) }),
   );
   const settled = await ctx.scope(options.id, () =>
     ctx.map('criterion', records, map, (record) =>
@@ -257,19 +300,24 @@ export async function checklist(
   });
   const count = (status: CheckStatus): number =>
     results.filter((entry) => entry.result?.status === status).length;
-  const passed = count('pass');
-  const failed = count('fail');
-  const partial = count('partial');
-  const errors = results.filter((entry) => entry.result === null).length;
-  return {
-    verdict: failed + partial > 0 ? 'not-done' : passed === results.length ? 'done' : 'unverified',
-    results,
-    passed,
-    failed,
-    partial,
+  const counts: ChecklistCounts = {
+    pass: count('pass'),
+    fail: count('fail'),
+    partial: count('partial'),
     unverifiable: count('unverifiable'),
-    errors,
-    status: statusOf(errors),
+  };
+  const failures = results.filter((entry) => entry.result === null).length;
+  return {
+    verdict:
+      counts.fail + counts.partial > 0
+        ? 'not-done'
+        : counts.pass === results.length
+          ? 'done'
+          : 'unverified',
+    results,
+    counts,
+    failures,
+    status: statusOf(failures),
   };
 }
 
@@ -339,11 +387,22 @@ export interface GateOptions {
   readonly prompts?: GatePrompts | undefined;
   /** How many dimensions, and separately how many blockers' panels, run at once; defaults to 4. */
   readonly concurrency?: number | undefined;
-  /** A revision for prompts and schemas the settled maps' fingerprints do not show. */
+  /**
+   * A revision for what the settled maps' fingerprints do not show, such as a schema. The team's
+   * agent configuration is not part of a map item either, so a completed item is reused after a
+   * role changes: change `version` when you change the agent that fills a slot.
+   */
   readonly version?: string | undefined;
   /** Options applied to every agent call (placement, retry, deadlines). */
   readonly calls?: CallDefaults | undefined;
 }
+
+/** The schema of a {@link GateDisposition}. */
+export const GateDisposition: z.ZodEnum<
+  z.util.ToEnum<
+    'pass' | 'concern' | 'blocker' | 'undecided' | 'downgraded' | 'cannot-check' | 'failed'
+  >
+> = z.enum(['pass', 'concern', 'blocker', 'undecided', 'downgraded', 'cannot-check', 'failed']);
 
 /**
  * What a dimension contributes to a {@link gate} decision:
@@ -379,6 +438,16 @@ export interface GateChallenge {
   readonly reasons: string[];
 }
 
+/** The schema of a {@link GateChallenge}. */
+export const GateChallenge: z.ZodType<GateChallenge> = z.strictObject({
+  outcome: OutcomeSchema,
+  upheld: Count,
+  against: Count,
+  missing: Count,
+  seats: Count,
+  reasons: z.array(z.string()),
+});
+
 /** One dimension's outcome in a {@link GateResult}. */
 export interface GateDimension {
   /** The dimension's key in the step IDs and the result lists: its lens key, made unique. */
@@ -392,6 +461,15 @@ export interface GateDimension {
   /** What the dimension contributes to the decision. */
   readonly disposition: GateDisposition;
 }
+
+/** The schema of a {@link GateDimension}. */
+export const GateDimension: z.ZodType<GateDimension> = z.strictObject({
+  key: z.string(),
+  lens: LensSchema,
+  assessment: Assessment.nullable(),
+  challenge: GateChallenge.nullable(),
+  disposition: GateDisposition,
+});
 
 /** Result of {@link gate}. */
 export interface GateResult {
@@ -421,9 +499,27 @@ export interface GateResult {
   readonly reasons: string[];
   /** How many skeptic seats failed across all blockers. */
   readonly failedVotes: number;
+  /** How many assessor and skeptic calls failed: `failed.length + failedVotes`. */
+  readonly failures: number;
   /** `'complete'` when every assessor and seat answered, else `'degraded'`. */
   readonly status: 'complete' | 'degraded';
 }
+
+/** The schema of a {@link GateResult}, for a workflow `output` or a saved result. */
+export const GateResult: z.ZodType<GateResult> = z.strictObject({
+  decision: GateDecision,
+  assessments: z.array(GateDimension),
+  blockers: z.array(z.string()),
+  undecided: z.array(z.string()),
+  downgraded: z.array(z.string()),
+  concerns: z.array(z.string()),
+  cannotCheck: z.array(z.string()),
+  failed: z.array(z.string()),
+  reasons: z.array(z.string()),
+  failedVotes: Count,
+  failures: Count,
+  status: Health,
+});
 
 /** The default opening sentence of the assessor prompt. */
 const GATE_TASK = 'Assess whether the subject below is ready to ship.';
@@ -516,7 +612,7 @@ function dispositionOf(
  * @param options - The scope, the team and the subject, with optional task, dimensions, seats,
  * rule and prompts.
  * @returns The decision, every dimension's assessment and disposition, the dimension keys by
- * disposition, the reasons, the failed seat count and the status.
+ * disposition, the reasons, the failed seat count, the failure count and the status.
  * @throws TypeError - Before any effect, when the `assessor` or `skeptic` slot is not filled,
  * `dimensions` is empty, `seats` or `concurrency` is not a positive integer, or the rule is invalid
  * for `seats`.
@@ -643,6 +739,7 @@ export async function gate(ctx: WorkflowContext, options: GateOptions): Promise<
       failed,
       reasons,
       failedVotes,
+      failures: failed.length + failedVotes,
       status: statusOf(failed.length + failedVotes),
     };
   });

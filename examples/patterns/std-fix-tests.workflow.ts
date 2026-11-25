@@ -10,13 +10,8 @@ export default defineWorkflow({
     rounds: std.types.limit(3, 6),
     task: z.string().min(1).optional(),
   }),
-  output: z.object({
-    status: z.enum(['green', 'red']),
-    rounds: z.int(),
-    fixedBy: z.enum(['mechanic', 'surgeon']).nullable(),
-    checks: z.array(std.types.CheckOutcome),
-    failedFixes: z.int(),
-  }),
+  // `outcome` is the check command's verdict; no agent report can make it green.
+  output: std.patterns.FixUntilGreenResult,
   run: (ctx, input) =>
     std.patterns.fixUntilGreen(ctx, {
       id: 'fix',

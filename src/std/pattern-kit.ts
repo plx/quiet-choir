@@ -2,7 +2,8 @@
  * Shared plumbing for the std pattern modules (`panels`, `revise`, `select`, `aggregate`, `gates`,
  * `investigate`, `edits`) and `flow`. Only {@link CallDefaults} is public, re-exported as
  * `std.patterns.CallDefaults`; the other exports are helpers those modules import directly, so they
- * agree on defaults, option validation, settled-map keys and what settled-map records carry.
+ * agree on defaults, option validation, settled-map keys, what settled-map records carry and how
+ * result schemas count.
  *
  * ```ts
  * import { keyed, placement, positiveInt, settledMap } from './pattern-kit.js';
@@ -20,20 +21,44 @@
  *
  * @module
  */
-import type { AgentWorktree, BoundCallOptions, JsonValue, MapOptions } from '../index.js';
-import { uniqueKeys } from './data.js';
+import {
+  z,
+  type AgentWorktree,
+  type BoundCallOptions,
+  type JsonValue,
+  type MapOptions,
+} from '../index.js';
+import { canonicalJson, uniqueKeys } from './data.js';
 
 /**
  * Options applied to every agent call a pattern makes; the pattern sets the prompt, schema and error
  * mode. The placement (`cwd`, `addDirs`, `worktree`) is part of what a resume checks, in settled
  * maps too: a resume with another placement refuses the completed calls instead of reusing them.
  * `retry` and the deadlines are policy and may change between runs.
+ *
+ * The team's agent configuration (model, effort, tools, persona, bound `addDirs`) is not part of a
+ * settled-map item, so a completed item is reused after a role changes, where a direct call to the
+ * changed agent would refuse to replay. Change the pattern's `version` when you change the agent
+ * that fills a slot.
  */
 export type CallDefaults = Omit<BoundCallOptions, 'prompt' | 'onError'>;
 
-/** A worktree selection as JSON: a handle by its ID and pinned base, else the base it starts from. */
+/**
+ * A worktree selection as JSON: a handle by its ID and pinned base, else the base it starts from.
+ * The legacy `'worktree'` spelling the runtime still accepts counts as `true`; any other value that
+ * is not an object (from an untyped caller) is kept when it is a string, number or boolean, else
+ * recorded as null, and the call itself reports it.
+ */
 function worktreeIdentity(worktree: AgentWorktree): JsonValue {
-  if (worktree === true) return { base: 'HEAD' };
+  const value: unknown = worktree;
+  if (worktree === true || value === 'worktree') return { base: 'HEAD' };
+  if (typeof value !== 'object' || value === null) {
+    return typeof value === 'string' ||
+      typeof value === 'boolean' ||
+      (typeof value === 'number' && Number.isFinite(value))
+      ? value
+      : null;
+  }
   if ('id' in worktree) return { id: worktree.id, base: worktree.base };
   return { base: worktree.base ?? 'HEAD' };
 }
@@ -196,4 +221,31 @@ export function settledMap<T extends { readonly key: string }>(
  */
 export function statusOf(failed: number): 'complete' | 'degraded' {
   return failed === 0 ? 'complete' : 'degraded';
+}
+
+/**
+ * A count in a pattern result's schema, such as `failures` or `rounds`: a nonnegative integer.
+ * Every result schema shares this one instance; JSON Schema inlines it at each use.
+ */
+export const Count: z.ZodInt = z.int().min(0);
+
+/**
+ * Check a `context` option before any effect: absent, a string, or a JSON value (read-only arrays
+ * and interfaces included), so a value that would not render as JSON throws instead of failing
+ * inside a prompt.
+ *
+ * @param pattern - The pattern's name, for the message.
+ * @param context - The option's value.
+ * @throws TypeError - `<pattern> context must be a string or a JSON value: <reason>`.
+ */
+export function checkContext(pattern: string, context: unknown): void {
+  if (context === undefined || typeof context === 'string') return;
+  try {
+    canonicalJson(context);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new TypeError(`${pattern} context must be a string or a JSON value: ${reason}`, {
+      cause: error,
+    });
+  }
 }
